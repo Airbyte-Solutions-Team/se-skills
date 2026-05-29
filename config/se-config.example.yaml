@@ -1,0 +1,32 @@
+# SE identity config — copy this to ~/airbyte-work/.se-config.yaml and fill in YOUR values.
+# Each team member maintains their own. Do NOT commit your real config to the repo.
+#
+# Skills use this for:
+#  - [SE name] placeholder in generated outputs
+#  - Call attribution in post-call (matches transcript attendees to determine if you were on the call)
+#  - Email signatures in follow-up-email
+#  - Salesforce org alias for CRM enrichment
+
+name: "Your Name"
+email: "you@airbyte.io"
+slack_handle: "@you"
+role: "Solutions Engineer"
+
+# Optional aliases (nicknames, alternate spellings) used in transcript matching
+aliases:
+  - "Nickname"
+
+# AEs you typically pair with (helps post-call attribution)
+ae_pairings:
+  - name: "AE Name"
+    role: "AE"
+
+# Salesforce integration (used by se-workflow-router, deal-assessment, biz-qual,
+# tech-qual, connector-feasibility, internal-prep)
+salesforce:
+  # The alias you used in `sf org login web --alias <alias>`. Confirm via `sf org list`.
+  org_alias: "airbyte-prod"
+  # Directory the MCP runs from — workspace root, consistent across the team
+  query_directory: "~/airbyte-work"
+  # Set false to disable SFDC reads entirely (skills degrade gracefully)
+  enabled: true

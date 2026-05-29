@@ -1,0 +1,267 @@
+---
+name: tech-qual
+description: Generates a technical qualification document for a prospect evaluating Airbyte. Requires at least one transcript with technical discovery (refuses otherwise). Reads prior deployment-qual, biz-qual, and connector-feasibility outputs to avoid re-deriving; defers deployment-model decision to deployment-model-qual. Covers data sources/destinations, volume and latency requirements, infrastructure preferences (with verification caveat on compliance certifications), and integration complexity. Use when the user says "tech qual", "technical qualification", "assess their stack", or wants to understand if Airbyte is technically a fit.
+---
+
+# Technical Qualification Skill
+
+You are helping a Solutions Engineer at Airbyte assess whether a prospect is a strong technical fit and identify any implementation risks or gaps.
+
+## Input
+
+The user will provide one or more of:
+- Company name and deal context
+- Notes from technical discovery calls
+- Information about their current data stack
+
+## Hard Prerequisite: Call Data Required
+
+**This skill requires at least one customer transcript containing technical discovery.** Technical fit assessment is synthesis of stated requirements — without customer voice on their stack, volume, security, and integration needs, the output is hypothesis.
+
+If zero transcripts exist (local + Gong checked): **REFUSE TO RUN.** Output:
+> "Cannot generate tech-qual for [Customer] — no technical discovery in source material. Recommend: run `prep-call` to plan a technical discovery call, then re-run after transcript is saved."
+
+## Before generating: read prior outputs
+
+Tech qual builds on earlier work. Before generating, check `~/airbyte-work/01-customers/<Customer>/` for and read:
+- **`deployment-qual-*.md`** — if exists, the deployment model is already qualified. Reference its verdict in your Deployment Model section; don't re-derive. If it doesn't exist and the customer has non-trivial requirements, **suggest running `deployment-model-qual` first**.
+- **`biz-qual-*.md`** — pulls in MEDDPICC Decision Criteria, which directly inform what to evaluate technically
+- **`connector-feasibility-*.md`** — already-done connector coverage analysis; reference it instead of re-doing
+- **Prior `tech-qual-*.md`** — if one exists, compare and note movement
+
+Cite the source documents inline (filename + date) when pulling in prior conclusions.
+
+## Output mode
+
+Default = full tech-qual doc (all 7 areas with detailed assessment).
+
+If user signals brief mode (`--brief`, `quick tech qual`, `tech summary`): produce just the Technical Fit Summary scorecard table + top 3 technical risks + recommended next actions. Skip detailed area sections, team readiness, and questions-still-needed. See `_se-playbook.md` "Output Mode" for the unified brief-mode rule.
+
+## Output Format
+
+---
+
+## Technical Qualification: [Company Name]
+**Date:** [today's date]
+**SE owner:** [SE name]
+**Technical contact(s):** [name / title if known]
+**Prerequisite — deployment model:** [Reference deployment-qual-*.md verdict, or "Not yet qualified — recommend running `deployment-model-qual` first"]
+**Prerequisite — connector feasibility:** [Reference connector-feasibility-*.md, or "High-level scan only — recommend running `connector-feasibility` for detailed coverage"]
+
+---
+
+### Technical Fit Summary
+**Overall fit:** 🟢 Strong / 🟡 Moderate / 🔴 Weak / ⬜ Insufficient info
+
+| Area | Status | Notes |
+|------|--------|-------|
+| Data sources | 🟢 / 🟡 / 🔴 / ⬜ | |
+| Destinations | 🟢 / 🟡 / 🔴 / ⬜ | |
+| Volume & scale | 🟢 / 🟡 / 🔴 / ⬜ | |
+| Deployment model | 🟢 / 🟡 / 🔴 / ⬜ | |
+| Security & compliance | 🟢 / 🟡 / 🔴 / ⬜ | |
+| Integration complexity | 🟢 / 🟡 / 🔴 / ⬜ | |
+| Team capability | 🟢 / 🟡 / 🔴 / ⬜ | |
+
+---
+
+### Data Sources & Destinations
+
+**Sources (what data are they moving FROM):**
+| Source | Connector exists? | Notes |
+|--------|-------------------|-------|
+| [e.g., Salesforce] | ✅ / ⚠️ custom needed / ❓ unknown | |
+
+**Destinations (where does data need to land):**
+| Destination | Connector exists? | Notes |
+|-------------|-------------------|-------|
+| [e.g., Snowflake] | ✅ / ⚠️ custom needed / ❓ unknown | |
+
+**Connector gaps:**
+- [ ] [Any sources or destinations not covered by Airbyte's catalog]
+
+---
+
+### Data Volume & Scale
+- **Estimated rows/events per day:** 
+- **Number of pipelines / connections needed:** 
+- **Sync frequency required:** [Real-time / hourly / daily / weekly]
+- **Data retention / history requirements:** 
+- **Peak load characteristics:** 
+
+**Assessment:**
+- [Notes on whether this is within Airbyte's supported scale range]
+- [Flag any volume or latency requirements that could be a fit risk]
+
+---
+
+### Deployment Model
+*If `deployment-qual-*.md` exists for this customer, summarize its verdict here and reference the doc — don't re-derive. Use this section for technical implications, not for re-qualifying.*
+
+- **Verdict (from deployment-qual):** [🟢 Cloud Pro viable / 🟡 with caveats / 🔴 not viable]
+- **Preferred deployment:** [Airbyte Cloud / Self-Managed Enterprise / Open Source]
+- **Cloud provider:** [AWS / GCP / Azure / Multi-cloud]
+- **Region requirements:** [US / EU / APAC / specific region]
+- **Network/VPC requirements:** [VPC peering, private link, etc.]
+- **On-prem or air-gapped requirement:** [Yes / No]
+
+**Assessment:**
+- [Notes on deployment fit and any constraints]
+
+---
+
+### Security & Compliance
+- **Compliance requirements:** [SOC 2 / HIPAA / GDPR / PCI / ISO 27001 / other — flag whether real (handling regulated data) vs. aspirational]
+- **Data residency requirements:** 
+- **SSO/SAML required:** [Yes / No]
+- **RBAC requirements:** 
+- **Audit logging required:** [Yes / No]
+- **Encryption requirements:** [at rest / in transit / customer-managed keys — note that customer-managed KMS is SME-only, not Cloud]
+
+**Assessment:**
+- [Flag any compliance requirements that need validation against Airbyte's *current* certifications — do NOT assert SOC 2 / HIPAA / etc. status without verifying]
+- **Verify before asserting:** Airbyte's certifications change over time. If the customer's compliance requirement is mission-critical, mark the row as "needs verification" rather than green-lighting based on assumption
+
+---
+
+### Current Stack & Integration Context
+- **Current ETL/ELT tools:** [Fivetran / Stitch / custom / dbt / etc.]
+- **Orchestration layer:** [Airflow / Prefect / dbt Cloud / none]
+- **Data warehouse/lake:** 
+- **Transformation layer:** 
+- **Monitoring/observability:** 
+- **Migration complexity:** [Lift-and-shift / re-architecture needed / greenfield]
+
+**Assessment:**
+- [Notes on integration with existing tooling]
+- [Migration risks or dependencies]
+
+---
+
+### Team & Implementation Readiness
+- **Data engineering team size:** 
+- **Technical champion:** [name / role]
+- **Internal capacity for implementation:** [High / Medium / Low]
+- **Implementation timeline expectation:** 
+- **Need for professional services:** [Yes / No / Possibly]
+
+---
+
+### Technical Risks & Open Items
+| Risk | Severity | Notes |
+|------|----------|-------|
+| [e.g., Custom connector needed for key source] | High | |
+| [e.g., Sub-minute latency requirement] | Medium | |
+| [e.g., Air-gapped deployment not yet validated] | High | |
+
+---
+
+### Questions Still Needed
+- [ ] [Unanswered technical question 1]
+- [ ] [Unanswered technical question 2]
+- [ ] [Unanswered technical question 3]
+
+---
+
+### Recommended Next Actions
+1. [e.g., Validate connector coverage for [source X] — check catalog or open ticket]
+2. [e.g., Schedule technical deep-dive to walk through deployment architecture]
+3. [e.g., Share security questionnaire / SOC 2 report]
+
+---
+
+## Style
+
+- Specific over vague — replace "TBD" with explicit open questions naming who/what is needed
+- Flag blockers clearly with High severity
+- Extract technical signals from transcripts; cite source (transcript date + speaker) for each material claim
+- Use ✅ ⚠️ ❓ for connector status, 🟢 🟡 🔴 ⬜ for fit assessments
+- Don't assert Airbyte certification status without verifying — mark as "needs verification" if mission-critical
+
+---
+
+## SE Best Practices Applied to Technical Qualification
+
+Read `~/.claude/skills/_se-playbook.md` for full framework details.
+
+### Salesforce Enrichment (active opp — technical fields the AE captured)
+Per `_se-playbook.md` "Salesforce Enrichment." Pull the **active opp** technical fields:
+- `Most_important_sources__c`, `Most_Important_Destinations__c` → sources/destinations
+- `No_of_Databases__c`, `No_of_API_Sources__c`, `Monthly_Data_Volume__c` → volume & scale
+- `Refresh_Frequency__c` → sync/latency
+- `Required_features_functionality__c` → decision criteria
+- `Use_case_description__c`, `Airbyte_Use_Case__c` → use case
+- `Region__c`, `Billing_Country__c` → data residency (feeds deployment-model)
+- `Support_SLA__c`, `Contracted_Data_Workers__c` → enterprise needs / sizing
+- `POV_Created__c`, `POV_Completed__c` → POC status
+
+**How to use it:** SFDC has the AE's technical capture. Use it to pre-fill the tech-qual scaffold, then validate + deepen against the transcripts. **Gaps between the SFDC tech fields and the transcript detail = exactly what to confirm on the next call** (flag these). If SFDC unavailable, skip per graceful-degradation.
+
+### Source Freshness Check (Gong Fallback)
+Per `_se-playbook.md` ("Source Freshness Check"): if the most-recent local transcript is more than **14 days old**, search Gong for newer calls before scoring technical fit. Technical requirements (volume, latency, connectors, deployment) often firm up in the most recent call.
+- Pull the **most recent call only** — do not bulk-pull
+- Save to `_transcripts/<Customer-Name>-MM.DD.YY.txt` BEFORE using it (per CLAUDE.md)
+
+### Deployment model FIRST (per Gary's CLAUDE.md)
+Before any other section, confirm: Cloud SaaS / Self-Managed Enterprise / Hybrid. If they have air-gap, data residency, BYOK, or VPC isolation hard requirements, Cloud is not viable — requalify or park. Don't fill out the rest of this doc if deployment model isn't sorted. Flag this as a 🔴 blocker.
+
+### Apply SPIN to technical questions
+Volume, latency, and connector questions should not be flat "what's your volume?" Use the Problem → Implication chain:
+- **Situation:** "How are you moving data from Salesforce to Snowflake today?"
+- **Problem:** "What breaks most often?"
+- **Implication:** "When that breaks, what's the downstream impact — who notices first, what reports go stale, what decisions get delayed?"
+- **Need-Payoff:** "If schema changes were handled automatically with no engineering involvement, what would your team work on instead?"
+
+Add an Implication-style follow-up under each technical section.
+
+### Surface paper-process landmines early (MEDDPICC P)
+Technical qual is when security/legal landmines surface. Don't wait. Add specific questions:
+- "Does InfoSec require a security questionnaire? When can it start?"
+- "Will legal require a redline cycle on the DPA? What's the typical timeline?"
+- "Is there a vendor risk management process we should be in flight on?"
+
+Map answers to a Paper Process section. Vague answers = high risk.
+
+### Reframe connector-count comparisons (Challenger)
+If the customer is comparing connector counts to Fivetran/Matillion, that's a Reframe opportunity, not a feature debate. Add a `### Reframe Opportunities` callout: it's not count, it's coverage of *their* stack + how the long tail gets built (manifest-only + custom CDK). Flag for Gary to use in next call.
+
+### "Build it ourselves" is the competition (MEDDPICC C)
+Always include "build internally" as a competitor in tech qual — it's often the strongest alternative. Surface their actual current-state cost: engineer hours/week, on-call burden, schema-drift handling, opportunity cost. Without this number, you can't win the TCO conversation.
+
+### Anti-patterns to avoid in this skill
+- Tech qual filled out before deployment model is confirmed
+- Connector list without coverage assessment ("we have Salesforce" ≠ "we have the auth + objects + sync mode they need")
+- Volume/latency answers taken at face value without asking what happens when they're missed
+- Listing compliance requirements without checking which are real vs. aspirational ("HIPAA" — are they actually handling PHI in this pipeline?)
+
+---
+
+## After Generating
+
+### Auto-save (default)
+
+Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save to:
+```
+~/airbyte-work/01-customers/<Customer>/outputs/tech-qual/tech-qual-<YYYY-MM-DD>-<descriptor>.md
+```
+
+Create folders if missing. Append `-v2` etc. for same-day duplicates. User can suppress with `--no-save`.
+
+### Source Coverage
+
+Include a Source Coverage section at the top reporting transcripts read (with line counts), prior qual docs consulted, MCP queries run (`list_connectors` etc.), and Airbyte certification claims marked as "needs verification."
+
+### SE Identity
+
+Read `~/airbyte-work/.se-config.yaml` for the `[SE name]` field.
+
+---
+
+## Changelog
+
+- **2026-05-28** — Salesforce enrichment added (reads from sf-mcp via mcp__salesforce__run_soql_query). Pulls AE-view MEDDPICC / technical / forecast fields per the playbook field map; assertive SFDC-vs-reality mismatch flagging; graceful degradation if SFDC disabled. Org alias + query dir from .se-config.yaml.
+
+- **2026-05-28** — Auto-save to outputs/<skill>/ folder (default; --no-save to suppress). Source Coverage section required (anti-hallucination). Reads SE identity from ~/airbyte-work/.se-config.yaml. Output filename: <skill>-YYYY-MM-DD-<descriptor>.md.
+
+- **2026-05-27** — Hard prerequisite: refuses to run without technical-discovery transcript. Reads prior outputs (deployment-qual, biz-qual, connector-feasibility). Deployment Model section now references deployment-qual verdict instead of re-deriving. Security & Compliance "verify before asserting" caveat for certifications. SPIN-style technical questions. Style normalized.
+- **2026-05-27** — Initial scaffold.

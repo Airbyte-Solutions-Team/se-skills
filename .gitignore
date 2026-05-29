@@ -1,0 +1,14 @@
+# Never commit a real SE config — each person keeps their own outside the repo
+.se-config.yaml
+config/se-config.yaml
+
+# Backups / local cruft
+*.bak
+*.bak-*
+.DS_Store
+
+# Customer data must NEVER land in this repo — it lives in ~/airbyte-work/01-customers/
+# (guard against accidental copies)
+**/01-customers/
+**/_transcripts/
+*-transcript*

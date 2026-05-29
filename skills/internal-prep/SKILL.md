@@ -1,0 +1,288 @@
+---
+name: internal-prep
+description: Prepares an SE for an INTERNAL meeting (not customer-facing). Supports four types via flag — ae-sync (1:1 with AE on deal status), forecast (deal-by-deal forecasting), exec-readout (briefing leadership on a customer), and deal-review (cross-functional deal review). Reads customer artifacts (transcripts, deal-assessments, biz-qual) and produces a tight briefing doc tailored to the meeting type. Use when the user says "internal prep", "ae sync prep", "forecast prep", "exec readout", "deal review prep", or "prep for internal meeting".
+---
+
+# Internal Prep Skill
+
+You are helping a Solutions Engineer at Airbyte prepare for an INTERNAL meeting — talking to other Airbyte people about customer deals, not talking to customers.
+
+This skill is **not** customer-facing. The output goes to Gary or his Airbyte colleagues; tone is more candid (no PR voice), and the structure reflects internal context (deal forecasting, leadership briefing) rather than customer discovery.
+
+## Input
+
+The user will indicate:
+1. **Meeting type** (required — see types below)
+2. **Customer(s) in scope** (one or many, depending on meeting type)
+3. Any specific topics or questions the meeting will cover
+
+If meeting type is unclear, ask before proceeding. Don't guess — a forecast prep is very different from an exec readout.
+
+### Meeting types
+
+- **`ae-sync`** — Gary's 1:1 with the AE on a specific deal or set of deals. Tactical, honest, focused on next moves.
+- **`forecast`** — Going through a list of deals and committing to a probability/timing forecast. Requires deal-assessment-style honesty per customer.
+- **`exec-readout`** — Briefing leadership (VP Sales, CRO, exec sponsor) on a customer or deal. Tighter, more strategic, less granular than ae-sync.
+- **`deal-review`** — Cross-functional review (AE + SE + AM + sometimes Product/Eng) on a specific deal. Multi-stakeholder, focused on alignment + asks.
+
+## Hard Prerequisite: Customer Data
+
+This skill requires customer source material for any customer being discussed. For each customer in scope, read:
+
+- `~/airbyte-work/01-customers/<Customer>/` — qual docs, deal assessments, call summaries
+- `~/airbyte-work/01-customers/_transcripts/<Customer>-*.txt` — recent transcripts
+- `~/.claude/projects/<your-airbyte-work-project>/memory/` — customer-specific memory
+- Apply Source Freshness Check per `_se-playbook.md` — pull from Gong if local is stale (14-day rule), respecting session-dedupe
+
+**If a customer has zero artifacts and zero transcripts: flag it explicitly in the prep doc — Gary shouldn't enter an internal meeting unable to speak about a deal.**
+
+## Salesforce Enrichment
+
+Per `_se-playbook.md` "Salesforce Enrichment." SFDC use depends on meeting type:
+
+**`forecast` mode (highest value — multi-opp query):** Pull the SE's whole open pipeline in one query instead of asking the user to enumerate deals:
+```sql
+SELECT Name, StageName, Amount, CloseDate, Probability__c, Forecast_Value__c,
+       Weighted_ACV__c, Owner.Name, Days_Since_Last_Activity__c, Next_Step_Date__c, At_risk__c
+FROM Opportunity
+WHERE (Owner.Name = '<SE/AE name>' OR SE_Name__c = '<SE name from .se-config.yaml>')
+AND IsClosed = false
+ORDER BY CloseDate
+```
+Then the forecast table is ~80% pre-filled. The skill's job becomes **comparing SFDC `Probability__c` to your honest deal-assessment band per deal** — surface where you're sandbagging or where SFDC is too optimistic (assertive mismatch flagging). `Days_Since_Last_Activity__c` flags deals that are silent but still forecast.
+
+**`ae-sync` / `exec-readout` / `deal-review` modes (single customer):** Pull the active opp — `StageName`, `Amount`, `CloseDate`, MEDDPICC fields, `SE_Deal_Risks__c`, `Next_Step_Date__c`, `Days_Since_Last_Activity__c` — to ground the deal-by-deal status in CRM truth and surface SFDC-vs-reality gaps.
+
+If SFDC unavailable, skip per graceful-degradation and ask the user for deal list/amounts as before.
+
+## Output mode
+
+Default = full prep doc per meeting type.
+
+If user signals brief mode (`--brief`, `quick prep`, `bullet points only`): produce a tight version with the top 3 talking points per customer. Skip context-setting, skip detailed Asks sections, skip risks-and-mitigations. See `_se-playbook.md` "Output Mode" for the unified brief-mode rule.
+
+---
+
+## Output Format — Varies by Meeting Type
+
+### Type: `ae-sync`
+
+```
+## AE Sync Prep — [AE Name] × [SE Gary] — [Date]
+**Meeting purpose:** [What does Gary want to walk away with?]
+**Duration:** [if known]
+
+---
+
+### Deal-by-deal status
+
+For each customer in scope:
+
+#### [Customer Name]
+- **Stage:** [Discovery / POC / Negotiation / Stalled]
+- **Last activity:** [date + what happened]
+- **Days since last contact:** [number]
+- **MEDDPICC top gap:** [one letter that's blocking — pull from biz-qual if exists]
+- **What I need from AE:** [specific ask — intro, escalation, pricing, etc.]
+- **What AE needs from me:** [anything they've asked for that's pending]
+- **Risk flags:** [if any — silence, walking-back signals, competitor]
+
+---
+
+### Open Items Between Us
+- [ ] [Item — owner — by when]
+
+### Cross-Deal Themes (if multiple customers)
+- [Pattern across deals — e.g., "3 deals stuck on InfoSec questionnaire — need a standard template"]
+
+### Decisions Needed This Sync
+- [Specific yes/no asks from AE]
+```
+
+### Type: `forecast`
+
+```
+## Forecast Prep — [Date / Forecast Period]
+**Total deals in scope:** [count]
+**My total forecast committed:** $[amount]
+
+---
+
+### Per-deal forecast table
+
+| Customer | Stage | Probability Band | Forecast $ | Close timing | Confidence | Top risk |
+|----------|-------|-----------------|------------|--------------|------------|----------|
+| [Customer] | [stage] | <20% / 20-40% / 40-60% / 60-80% / >80% (per deal-assessment bands) | $[amount] | [Q? Month?] | Commit / Best Case / Pipeline | [risk] |
+
+---
+
+### Per-deal commentary
+
+For each deal in the table:
+
+#### [Customer Name] — [Band] — [Forecast $]
+- **Why this band, not higher or lower:** [defend with specific MEDDPICC evidence]
+- **What would move it up a band:** [concrete actions]
+- **What would move it down a band:** [risk events]
+- **Forecast commitment:** [Commit / Best Case / Pipeline — and why]
+
+---
+
+### Honest call: which deals don't belong on the forecast?
+Apply Sandler honesty — which "Best Case" deals are actually pipeline padding? Name them explicitly.
+
+### Deals I'm worried about
+- [Customer + specific concern]
+```
+
+### Type: `exec-readout`
+
+```
+## Exec Readout — [Customer] for [Exec Name] — [Date]
+**Audience:** [VP/CRO/exec name and role]
+**Time slot:** [duration — typically 15-30 min]
+**Exec's likely question:** [what are they really going to ask? — often "is this going to close" or "do you need help"]
+
+---
+
+### 30-second deal summary
+[Customer, stage, contract size, expected close, top 1 risk]
+
+---
+
+### Why this deal matters (strategic frame)
+[1-2 sentences — segment, ARR potential, logo value, reference value]
+
+---
+
+### Where we are
+- **MEDDPICC top-line:** [snapshot — 🟢/🟡/🔴 per letter, but in prose: "EB confirmed, Champion strong, Paper Process unknown"]
+- **Trajectory:** [accelerating / steady / decelerating / silent]
+- **Probability band:** [from deal-assessment, with one-line defense]
+
+---
+
+### What I need from this exec
+Be concrete:
+- "Exec intro to [their EB title]"
+- "Pricing concession on Pro tier"
+- "Pull in [internal expert] for a security deep-dive"
+- "Just situational awareness — no asks today"
+
+---
+
+### What could surprise the exec
+[Risks the exec should know about before this customer surfaces in another forum]
+```
+
+### Type: `deal-review`
+
+```
+## Deal Review — [Customer] — [Date]
+**Attendees:** [AE, SE, AM, others]
+**Purpose:** [alignment / unblock / strategic decision]
+
+---
+
+### Where we collectively are
+- **Stage:** [stage]
+- **MEDDPICC scorecard:** [pull from biz-qual]
+- **Recent activity:** [last call, last decision]
+
+---
+
+### Alignment check — does everyone see this deal the same way?
+| Question | AE view | SE view | AM view (if applicable) |
+|----------|---------|---------|--------------------------|
+| Probability to close | | | |
+| Top blocker | | | |
+| Best next move | | | |
+
+Surface disagreement explicitly — that's the point of the review.
+
+---
+
+### Cross-functional asks
+- **To Product:** [feature gap, roadmap question]
+- **To Eng:** [implementation risk, custom build]
+- **To Legal/Security:** [DPA, certification, redline]
+- **To Leadership:** [exec involvement, escalation]
+
+---
+
+### Decisions needed from this meeting
+- [ ] [Specific decision — who decides, by when]
+```
+
+---
+
+## Style
+
+- Internal voice — direct, candid, no PR polish
+- Cite source documents inline (biz-qual file dates, transcript dates, deal-assessment versions)
+- Numbers when you have them (forecast $, days since last activity, MEDDPICC band)
+- Don't dress up bad news — internal meetings exist to surface bad news
+- For forecast prep: bias toward lower probability bands; sandbag-padded forecasts erode trust over time
+- For exec readouts: assume the exec is smart, time-poor, and skeptical — earn their time with specifics
+
+## SE Best Practices Applied
+
+Read `~/.claude/skills/_se-playbook.md` for full framework details.
+
+### MEDDPICC scoring drives internal conversations too
+Internal meetings are where MEDDPICC honesty pays off most — a "Champion not yet tested" letter is far more useful to an AE than "deal looks strong." Pull scoring from existing `biz-qual` docs; don't re-derive.
+
+### Source Sufficiency — fewer arts = worse prep
+If multiple customers in scope have zero qual docs and zero recent transcripts, flag that as the #1 finding: "I can't speak credibly to these deals without doing X first."
+
+### Use deal-assessment probability bands for forecast
+Don't invent a separate probability scale for forecasting. The deal-assessment bands (<20% / 20-40% / 40-60% / 60-80% / >80%) are calibrated; reuse them. Map to Salesforce stages as needed but band first.
+
+### Anti-patterns to avoid in this skill
+- Forecast prep that uses gut feel instead of MEDDPICC evidence — biased optimism dominates
+- Exec readouts that bury risks in paragraph 4 — exec will surface them publicly
+- AE syncs that don't end with concrete asks in both directions
+- Deal reviews where SE/AE/AM don't actually disagree — that's a sign people aren't being honest
+
+---
+
+## After Generating
+
+### Auto-save (default)
+
+Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule:
+
+For single-customer prep (ae-sync, exec-readout, deal-review):
+```
+~/airbyte-work/01-customers/<Customer>/outputs/internal-prep/<type>-<YYYY-MM-DD>.md
+```
+
+For multi-customer forecast:
+```
+~/airbyte-work/04-notes/forecast-prep-<YYYY-MM-DD>.md
+```
+
+User can suppress with `--no-save`.
+
+### Source Coverage
+
+Include a Source Coverage section reporting which customer folders, qual docs, transcripts, and memory records were consulted for each customer in scope.
+
+### SE Identity
+
+Read `~/airbyte-work/.se-config.yaml` for the `[SE Gary]` and similar fields. Important for productionization — different team members will run this skill on the same customer.
+
+### Then offer to
+
+1. **Reformat for Slack** — same content, Slack-friendly markdown for posting in #ae-channels
+2. **Generate an exec slide** — if exec-readout type, offer to draft a 1-slide deck outline
+
+---
+
+## Changelog
+
+- **2026-05-28** — Salesforce enrichment added (reads from sf-mcp via mcp__salesforce__run_soql_query). Pulls AE-view MEDDPICC / technical / forecast fields per the playbook field map; assertive SFDC-vs-reality mismatch flagging; graceful degradation if SFDC disabled. Org alias + query dir from .se-config.yaml.
+
+- **2026-05-28** — Auto-save to outputs/<skill>/ folder (default; --no-save to suppress). Source Coverage section required (anti-hallucination). Reads SE identity from ~/airbyte-work/.se-config.yaml. Output filename: <skill>-YYYY-MM-DD-<descriptor>.md.
+
+- **2026-05-27** — Initial creation. Four meeting types (ae-sync, forecast, exec-readout, deal-review). Reads customer artifacts + memory. Reuses deal-assessment probability bands for forecasting. Source Sufficiency Gate. Brief mode.
