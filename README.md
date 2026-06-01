@@ -63,7 +63,7 @@ se-workflow-router        ← run anytime: "what should I do next on X?"
 
 ### 1. Clone + install the skills
 ```bash
-git clone <this-repo-url> ~/airbyte-work/02-repos/se-skills
+git clone https://github.com/Airbyte-Solutions-Team/se-skills ~/airbyte-work/02-repos/se-skills
 cd ~/airbyte-work/02-repos/se-skills
 ./install.sh
 ```
