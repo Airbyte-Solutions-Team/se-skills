@@ -1,6 +1,6 @@
 # SE Playbook — Frameworks & Tactics
 
-This is the canonical reference for SE craft. All SE skills in `~/.claude/skills/` (prep-call, post-call, biz-qual, tech-qual, poc-plan, deal-assessment, connector-feasibility, deployment-model-qual, follow-up-email, objection-handler, internal-prep, se-workflow-router) reference this document. When a skill fires, it should read the relevant section here and apply the tactics.
+This is the canonical reference for SE craft. All SE skills in `~/.claude/skills/` (prep-call, post-call, biz-qual, tech-qual, poc-plan, deal-assessment, connector-feasibility, deployment-model-qual, follow-up-email, objection-handler, internal-prep, next-move, account-refresher) reference this document. When a skill fires, it should read the relevant section here and apply the tactics.
 
 **Not a skill itself** — the leading underscore prevents auto-trigger. Read it on demand from other skills.
 
@@ -257,7 +257,7 @@ Skills that produce working artifacts (call prep, qualification docs, deal asses
 
 ### Exemptions
 
-**`se-workflow-router` is exempt.** Router output is ephemeral — it's a "what to do right now" diagnostic that goes stale within hours of being acted on. Saving it just creates noise in `outputs/workflow-status/` with no future reader. Router default = chat output only; saves only on explicit user request.
+**`next-move` is exempt.** Router output is ephemeral — it's a "what to do right now" diagnostic that goes stale within hours of being acted on. Saving it just creates noise in `outputs/workflow-status/` with no future reader. Router default = chat output only; saves only on explicit user request.
 
 All other SE skills follow the auto-save rule.
 
@@ -332,11 +332,11 @@ The model can produce plausible-looking summaries from partial reads, and the us
 ### Example
 
 > **Source Coverage:**
-> - Read in full: `Acme-04.01.26.txt` (566 lines), `Acme-03.31.26.txt` (1247 lines)
-> - Skimmed for key topics: `Acme-03.25.26.txt` (489 lines)
-> - Inventoried but not read: `Acme 03.24.26.rtf` (RTF — content extracted as plaintext)
+> - Read in full: `Invesco-04.01.26.txt` (566 lines), `Invesco-03.31.26.txt` (1247 lines)
+> - Skimmed for key topics: `Invesco-03.25.26.txt` (489 lines)
+> - Inventoried but not read: `Invesco 03.24.26.rtf` (RTF — content extracted as plaintext)
 > - Local notes read: `2026-03-11_ssl_certificate_error_diagnostic.md`
-> - Memory: `project_acme_flex_ca_cert.md` (last updated 04.09.26)
+> - Memory: `project_invesco_flex_ca_cert.md` (last updated 04.09.26)
 
 If a skill claims to do thorough work but reads only part of a source, this section will reveal it.
 
@@ -344,8 +344,8 @@ If a skill claims to do thorough work but reads only part of a source, this sect
 
 ## Memory Check (Active Project Context)
 
-Before synthesizing for a customer, check the persistent memory directory at `~/.claude/projects/<your-airbyte-work-project>/memory/` (the project folder Claude Code creates for your `~/airbyte-work` workspace — the exact name is derived from your home path, e.g. `-Users-<you>-airbyte-work`) for any project memories matching this customer. These often hold critical context not in transcripts:
-- Active blockers (e.g., the Acme 403 secret storage issue)
+Before synthesizing for a customer, check the persistent memory directory at `~/.claude/projects/-Users-gary-yang-airbyte-work/memory/` for any project memories matching this customer. These often hold critical context not in transcripts:
+- Active blockers (e.g., the Invesco 403 secret storage issue)
 - Stakeholder dynamics
 - Decisions made between calls
 - Status of pending Airbyte-side actions
@@ -393,7 +393,7 @@ find ~/airbyte-work/01-customers/_transcripts/ -iname "<Customer>*" -mmin -30
 
 Every skill that hits Gong must include this line in its output (in the Source Coverage section):
 
-> **Session dedupe check:** Ran `find _transcripts/ -iname "Acme*" -mmin -30` → [found `Acme-2026-05-28.txt` saved 4 min ago, using it / no recent files, proceeding with Gong query]
+> **Session dedupe check:** Ran `find _transcripts/ -iname "Lumitec*" -mmin -30` → [found `Lumitec-2026-05-28.txt` saved 4 min ago, using it / no recent files, proceeding with Gong query]
 
 This makes the dedupe visible and lets the user verify it's working.
 
@@ -457,7 +457,7 @@ Don't read SFDC field-by-field. Read it for three kinds of signal:
 
 ### Mismatch-flagging posture: ASSERTIVE
 
-When SFDC and reality (transcripts, local artifacts, your read) disagree, **call it out as an explicit finding every time** — don't bury it or soften it. Treat the CRM as a hypothesis to test, not as truth. A dedicated "⚠️ SFDC vs. Reality" callout in the output is the right pattern. This is the single highest-value thing SFDC enrichment provides — the Acme Flex deal showed exactly why (SFDC said Closed/Lost; local artifacts hadn't caught up).
+When SFDC and reality (transcripts, local artifacts, your read) disagree, **call it out as an explicit finding every time** — don't bury it or soften it. Treat the CRM as a hypothesis to test, not as truth. A dedicated "⚠️ SFDC vs. Reality" callout in the output is the right pattern. This is the single highest-value thing SFDC enrichment provides — the Invesco Flex deal showed exactly why (SFDC said Closed/Lost; local artifacts hadn't caught up).
 
 ### Field Reference (Airbyte SFDC Opportunity custom fields)
 
@@ -527,7 +527,7 @@ When synthesizing across multiple transcripts, notes, or memory records for a cu
 
 6. **When in doubt, trust the most recent statement from the most senior stakeholder on that topic.** Recency and authority compound — they're not independent axes.
 
-7. **Cite sources inline.** When making a claim, reference the transcript date and speaker. Not "the customer is concerned about X" but "the technical lead raised X on 04.01, having mentioned it in passing 03.25 — the concern is sharpening, not fading."
+7. **Cite sources inline.** When making a claim, reference the transcript date and speaker. Not "the customer is concerned about X" but "Raghu raised X on 04.01, having mentioned it in passing 03.25 — the concern is sharpening, not fading."
 
 ---
 
@@ -539,7 +539,7 @@ For known accounts, quick refreshes, or back-to-back use, a tight version is mor
 
 ### How brief mode triggers
 - User says `--brief`, `quick`, `short version`, `1-pager`, `summary mode`, or similar
-- User explicitly references a prior full version: "give me the short version of last week's Acme assessment"
+- User explicitly references a prior full version: "give me the short version of last week's Invesco assessment"
 
 ### Unified brief-mode rule (applies to all SE skills)
 

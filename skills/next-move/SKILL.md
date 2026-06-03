@@ -1,5 +1,5 @@
 ---
-name: se-workflow-router
+name: next-move
 description: Determines where a customer sits in the SE workflow and recommends which skill to invoke next. Inspects local artifacts, transcripts, and memory to infer deal stage, surface gaps, and suggest the 1-3 highest-value next moves. Use when the user says "where am I on <customer>", "what's next for <customer>", "next move on <customer>", "route <customer>", "what should I do next on <customer>", or "workflow for <customer>".
 ---
 
@@ -11,7 +11,7 @@ This skill **does not generate customer-facing content.** It routes Gary to the 
 
 ## Input
 
-The user will name a customer (e.g., "where am I on Acme", "next move for Globex"). Required input is just the customer name — everything else is inferred.
+The user will name a customer (e.g., "where am I on Invesco", "next move for Build-Manufacturing"). Required input is just the customer name — everything else is inferred.
 
 If no customer is named, ask before proceeding.
 
@@ -62,7 +62,7 @@ Check `~/airbyte-work/01-customers/_transcripts/` for files matching the custome
 - Days since most recent (vs. today)
 
 ### 3. Memory
-Check `~/.claude/projects/<your-airbyte-work-project>/memory/` for any project memory files matching the customer. Specifically look for active blockers, pending Airbyte-side actions, or status flags.
+Check `~/.claude/projects/-Users-gary-yang-airbyte-work/memory/` for any project memory files matching the customer. Specifically look for active blockers, pending Airbyte-side actions, or status flags.
 
 ### 4. Notion (optional)
 Don't auto-query Notion. If the user explicitly asks for "deeper context" or if local artifacts are very thin, use `Notion:search` to find the customer's parent page.
@@ -213,7 +213,7 @@ Any stage + objection raised on most recent call
 *Things to do that aren't a skill — but matter for moving the deal. Surface these alongside skill recommendations so they don't get lost.*
 
 Examples of external actions:
-- **Slack/email Airbyte engineering** — about a customer-facing blocker pending on our side (e.g., "Acme 403 secret storage error pending engineering action per memory — 7 weeks now")
+- **Slack/email Airbyte engineering** — about a customer-facing blocker pending on our side (e.g., "Invesco 403 secret storage error pending engineering action per memory — 7 weeks now")
 - **Loop in AE/AM** — schedule a sync to align on a deal direction
 - **Escalate to leadership** — for at-risk deals or deals needing exec sponsorship
 - **Customer outreach** — when silence has crossed a threshold and no skill captures the moment (e.g., "57 days silent — Slack/email customer directly to force a real answer")

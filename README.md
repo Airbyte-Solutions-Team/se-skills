@@ -21,7 +21,8 @@ Built by Gary Yang (Solutions Engineer, Airbyte). Designed to be team-shareable.
 | `follow-up-email` | Drafts customer emails in your voice | "follow-up email", "draft email" |
 | `objection-handler` | Voss-style talk track for a customer objection | "objection", "how do I respond to X" |
 | `internal-prep` | Internal meeting prep (ae-sync / forecast / exec-readout / deal-review) | "internal prep", "forecast prep" |
-| `se-workflow-router` | Diagnoses where a customer sits + recommends the next skill | "where am I on X", "what's next for X" |
+| `account-refresher` | Fast "catch me up" briefing on an account (players, history, state, open items) | "refresh me on X", "catch me up on X" |
+| `next-move` | Diagnoses where a customer sits + recommends the next skill | "where am I on X", "what's next for X" |
 
 Plus the shared reference (not a skill): **`_se-playbook.md`** — the SE-craft canon all skills read from.
 
@@ -52,29 +53,35 @@ follow-up-email           ← drafts in your voice, as needed
 objection-handler         ← when a concern surfaces
 internal-prep             ← AE syncs, forecasts, exec readouts
 
-se-workflow-router        ← run anytime: "what should I do next on X?"
+next-move        ← run anytime: "what should I do next on X?"
 ```
 
-**Not sure what to run?** Invoke `se-workflow-router` ("where am I on Acme") — it inspects the customer's state and tells you.
+**Not sure what to run?** Invoke `next-move` ("where am I on Acme") — it inspects the customer's state and tells you. **Just need to get oriented before a call?** Invoke `account-refresher` ("catch me up on Acme") — it briefs you on the state of play without the routing.
 
 ---
 
 ## Setup (for a new team member)
 
-### 1. Clone + install the skills
-```bash
-git clone https://github.com/Airbyte-Solutions-Team/se-skills ~/airbyte-work/02-repos/se-skills
-cd ~/airbyte-work/02-repos/se-skills
-./install.sh
-```
-`install.sh` symlinks each skill into `~/.claude/skills/`. Because they're symlinks, a later `git pull` updates your installed skills instantly. The script won't clobber any real (non-symlink) skill folders you already have — it warns instead.
+### 1. Skills
+Copy the skill folders + `_se-playbook.md` + `README.md` into your `~/.claude/skills/`.
 
 ### 2. SE identity config
-```bash
-cp config/se-config.example.yaml ~/airbyte-work/.se-config.yaml
-# then edit ~/airbyte-work/.se-config.yaml with your name / email / org alias
+Create `~/airbyte-work/.se-config.yaml` with your details:
+```yaml
+name: "Your Name"
+email: "you@airbyte.io"
+slack_handle: "@you"
+role: "Solutions Engineer"
+aliases: ["Nickname"]
+ae_pairings:
+  - name: "Your AE"
+    role: "AE"
+salesforce:
+  org_alias: "airbyte-prod"
+  query_directory: "~/airbyte-work"
+  enabled: true
 ```
-Skills read this for the `[SE name]` placeholder, call attribution, email signatures, and SFDC org alias. **Your real config is gitignored — never commit it.**
+Skills read this for the `[SE name]` placeholder, call attribution, email signatures, and SFDC org alias.
 
 ### 3. Gong MCP (transcripts)
 Already configured if you use the team Gong MCP. Skills pull AE call transcripts automatically.
@@ -105,7 +112,7 @@ Restart Claude Code. If you skip this, skills degrade gracefully (no SFDC enrich
 └── (transcripts in ~/airbyte-work/01-customers/_transcripts/)
 ```
 
-Filename format: `<skill>-YYYY-MM-DD-<descriptor>[-vN].md`. Outputs auto-save by default; pass `--no-save` to suppress. (Exception: `se-workflow-router` is ephemeral — saves only on request.)
+Filename format: `<skill>-YYYY-MM-DD-<descriptor>[-vN].md`. Outputs auto-save by default; pass `--no-save` to suppress. (Exception: `next-move` is ephemeral — saves only on request.)
 
 ---
 

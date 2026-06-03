@@ -21,7 +21,7 @@ ae_pairings:
   - name: "AE Name"
     role: "AE"
 
-# Salesforce integration (used by se-workflow-router, deal-assessment, biz-qual,
+# Salesforce integration (used by next-move, deal-assessment, biz-qual,
 # tech-qual, connector-feasibility, internal-prep)
 salesforce:
   # The alias you used in `sf org login web --alias <alias>`. Confirm via `sf org list`.
