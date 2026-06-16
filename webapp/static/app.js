@@ -113,13 +113,20 @@ async function pageMember(memberId, tab = "active") {
 
   const ownerLabel = (a) =>
     a.owner === memberId ? '<span class="badge owned">yours</span>'
-      : (a.owner ? `<span class="badge">${esc(a.owner)}</span>` : '<span class="badge unowned" title="No owner recorded — created before ownership tracking. Click ⋯ → Claim to take ownership.">unowned</span>');
+      : (a.owner ? `<span class="badge">${esc(a.owner)}</span>` : '<span class="badge unowned" title="No owner recorded — created before ownership tracking. Use ⋯ → Claim to take ownership.">unowned</span>');
 
-  // Active/archived card: metadata-rich, with a top-right ⋯ menu
-  const acctCard = (a, isArchived) => `
-    <div class="card acct-card${isArchived ? " archived-card" : ""}" data-acct="${esc(a.name)}">
-      <div class="card-menu">
-        <button class="kebab" data-acct="${esc(a.name)}" aria-label="Account actions">⋯</button>
+  // Account row (list layout): name + aligned metadata columns + ⋯ menu.
+  const acctRow = (a, isArchived) => `
+    <div class="acct-row${isArchived ? " is-archived" : ""}" data-acct="${esc(a.name)}">
+      <a href="#/account/${encodeURIComponent(a.name)}" class="acct-row-main">
+        <span class="acct-name">${esc(a.name)}</span>
+        <span class="acct-col col-sfdc" data-sfdc="${esc(a.name)}"><span class="sfdc-val muted">…</span></span>
+        <span class="acct-col col-updated">${a.last_updated ? esc(a.last_updated) : '<span class="muted">—</span>'}</span>
+        <span class="acct-col col-outputs">${a.output_count} <span class="muted">out</span></span>
+        <span class="acct-col col-owner">${ownerLabel(a)}${isArchived ? ' <span class="badge">archived</span>' : ""}</span>
+      </a>
+      <div class="acct-row-menu">
+        <button class="kebab" aria-label="Account actions">⋯</button>
         <div class="dropdown-menu hidden">
           ${isArchived
             ? `<button class="menu-item unarchive-btn" data-acct="${esc(a.name)}">Unarchive</button>`
@@ -128,27 +135,34 @@ async function pageMember(memberId, tab = "active") {
           <button class="menu-item danger delete-btn" data-acct="${esc(a.name)}">Delete…</button>
         </div>
       </div>
-      <a href="#/account/${encodeURIComponent(a.name)}" class="card-link">
-        <h3>${esc(a.name)}</h3>
-        <div class="card-stats">
-          <span class="stat" data-sfdc="${esc(a.name)}"><span class="muted">SFDC</span> <span class="sfdc-val">…</span></span>
-          <span class="stat"><span class="muted">Updated</span> ${a.last_updated ? esc(a.last_updated) : "—"}</span>
-          <span class="stat"><span class="muted">Outputs</span> ${a.output_count}</span>
-        </div>
-      </a>
-      <div class="card-foot-meta">${ownerLabel(a)}${isArchived ? ' <span class="badge">archived</span>' : ""}</div>
     </div>`;
 
-  const trashCard = (t) => `
-    <div class="card trash-card">
-      <h3>${esc(t.name)}</h3>
-      <div class="card-stats"><span class="stat"><span class="muted">Deleted</span> ${esc(t.deleted_at)}</span></div>
-      <div class="card-foot"><button class="ghost small restore-btn" data-tid="${esc(t.trash_id)}">Restore</button></div>
+  const trashRow = (t) => `
+    <div class="acct-row trash-row">
+      <div class="acct-row-main no-link">
+        <span class="acct-name">${esc(t.name)}</span>
+        <span class="acct-col col-updated"><span class="muted">deleted</span> ${esc(t.deleted_at)}</span>
+        <span class="acct-col"></span><span class="acct-col"></span>
+      </div>
+      <div class="acct-row-menu"><button class="ghost small restore-btn" data-tid="${esc(t.trash_id)}">Restore</button></div>
     </div>`;
 
   const showing = tab === "trash" ? trash : (tab === "archived" ? archived : active);
-  const renderCard = tab === "trash" ? trashCard : (a) => acctCard(a, tab === "archived");
+  const renderRow = tab === "trash" ? trashRow : (a) => acctRow(a, tab === "archived");
   const emptyMsg = { active: "No active accounts. Create one to get started.", archived: "No archived accounts.", trash: "Trash is empty." }[tab];
+
+  // Column header (only for active/archived list)
+  const listHeader = tab === "trash" ? "" : `
+    <div class="acct-row acct-head">
+      <div class="acct-row-main no-link">
+        <span class="acct-name">Account</span>
+        <span class="acct-col col-sfdc">SFDC stage / amount</span>
+        <span class="acct-col col-updated">Updated</span>
+        <span class="acct-col col-outputs">Outputs</span>
+        <span class="acct-col col-owner">Owner</span>
+      </div>
+      <div class="acct-row-menu"></div>
+    </div>`;
 
   view.innerHTML = `
     <div class="row">
@@ -163,8 +177,8 @@ async function pageMember(memberId, tab = "active") {
       <button class="tab ${tab === "archived" ? "active" : ""}" data-tab="archived">Archived (${archived.length})</button>
       <button class="tab ${tab === "trash" ? "active" : ""}" data-tab="trash">Trash (${trash.length})</button>
     </div>
-    <div class="grid" id="acct-grid">
-      ${showing.length ? showing.map(renderCard).join("") : `<div class="empty">${emptyMsg}</div>`}
+    <div class="acct-list" id="acct-grid">
+      ${showing.length ? listHeader + showing.map(renderRow).join("") : `<div class="empty">${emptyMsg}</div>`}
     </div>`;
 
   view.querySelectorAll(".tab").forEach((t) => { t.onclick = () => pageMember(memberId, t.dataset.tab); });

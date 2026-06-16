@@ -25,38 +25,56 @@ header { border-bottom: 1px solid var(--line); background: var(--panel); positio
 .theme-toggle { background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 15px; line-height: 1; cursor: pointer; }
 .theme-toggle:hover { border-color: var(--accent); }
 
-/* ── enriched account cards ───────────────────────────────────────────── */
-.acct-card { position: relative; cursor: default; }
-.acct-card .card-link { display: block; text-decoration: none; color: inherit; }
-.acct-card h3 { margin: 0 0 10px; }
-.card-stats { display: flex; flex-direction: column; gap: 4px; margin: 8px 0 4px; }
-.card-stats .stat { font-size: 13px; color: var(--text); }
-.card-stats .stat .muted { display: inline-block; min-width: 64px; }
-.card-foot-meta { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
-.badge.unowned { color: var(--warn); border-color: var(--warn); cursor: help; }
+/* ── account list (rows, table-style) ─────────────────────────────────── */
+.acct-list { border: 1px solid var(--line); border-radius: 12px; overflow: visible; background: var(--panel); }
+.acct-row { display: flex; align-items: center; border-bottom: 1px solid var(--line); position: relative; }
+.acct-row:last-child { border-bottom: none; }
+.acct-row:not(.acct-head):hover { background: var(--panel2); }
 
-/* kebab ⋯ menu top-right of card */
-.card-menu { position: absolute; top: 10px; right: 10px; z-index: 20; }
-.kebab { background: transparent; border: 1px solid transparent; color: var(--muted); border-radius: 6px; padding: 2px 8px; font-size: 18px; line-height: 1; cursor: pointer; }
-.kebab:hover { color: var(--text); border-color: var(--line); background: var(--panel2); }
-.card-menu .dropdown-menu {
-  position: absolute; right: 0; top: calc(100% + 4px);
-  background: var(--panel); /* solid card-panel color, fully opaque */
-  border: 1px solid var(--line); border-radius: 8px; padding: 6px;
-  min-width: 190px; z-index: 30;
-  box-shadow: 0 10px 30px rgba(0,0,0,.5), 0 0 0 1px var(--line);
-  isolation: isolate;
+/* the clickable main area = a 5-column grid so everything lines up */
+.acct-row-main {
+  flex: 1; display: grid;
+  grid-template-columns: minmax(180px, 1.6fr) minmax(160px, 1.4fr) 120px 90px 120px;
+  align-items: center; gap: 16px;
+  padding: 14px 18px; text-decoration: none; color: inherit; min-width: 0;
 }
-:root[data-theme="light"] .card-menu .dropdown-menu { box-shadow: 0 10px 30px rgba(0,0,0,.18), 0 0 0 1px var(--line); }
-.card-menu .dropdown-menu.hidden { display: none; }
-/* make the card itself a positioning context so the menu layers above its content */
-.acct-card { isolation: isolate; }
-.menu-item { display: block; width: 100%; text-align: left; background: transparent; border: none; color: var(--text); border-radius: 6px; padding: 8px 10px; font-size: 13px; cursor: pointer; white-space: nowrap; }
-.menu-item:hover { background: var(--panel2); }
-.menu-item.danger { color: var(--danger); }
+.acct-row-main.no-link { cursor: default; }
+.acct-name { font-weight: 600; font-size: 15px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acct-col { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acct-col .muted { color: var(--muted); }
+.col-owner { text-align: right; }
+
+/* header row */
+.acct-head { background: var(--panel2); border-radius: 12px 12px 0 0; }
+.acct-head .acct-row-main { padding-top: 11px; padding-bottom: 11px; }
+.acct-head .acct-name, .acct-head .acct-col {
+  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: var(--muted);
+}
+.acct-row.is-archived { opacity: .65; }
+
+/* right-side ⋯ menu cell */
+.acct-row-menu { position: relative; padding: 0 12px; flex: 0 0 auto; }
+.kebab { background: transparent; border: 1px solid transparent; color: var(--muted); border-radius: 6px; padding: 2px 10px; font-size: 18px; line-height: 1; cursor: pointer; }
+.kebab:hover { color: var(--text); border-color: var(--line); background: var(--panel); }
+.acct-row-menu .dropdown-menu {
+  position: absolute; right: 12px; top: calc(100% - 2px);
+  /* Explicit solid off-color — same in both themes, fully opaque, clearly a menu */
+  background: #2b3242;
+  border: 1px solid #3a4255; border-radius: 10px; padding: 6px;
+  min-width: 190px; z-index: 100;
+  box-shadow: 0 14px 36px rgba(0,0,0,.45);
+}
+.acct-row-menu .dropdown-menu.hidden { display: none; }
+
+.menu-item { display: block; width: 100%; text-align: left; background: transparent; border: none; color: #e6e8ee; border-radius: 6px; padding: 9px 12px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.menu-item:hover { background: #3a4255; }
+.menu-item.danger { color: #ff8585; }
 .menu-item.danger:hover { background: var(--danger); color: #fff; }
 .menu-item.danger.armed { background: var(--danger); color: #fff; font-weight: 600; }
-.trash-card h3 { margin: 0 0 8px; }
+
+.badge.unowned { color: var(--warn); border-color: var(--warn); cursor: help; }
+.restore-btn { white-space: nowrap; }
+.trash-row .acct-row-main { grid-template-columns: minmax(180px, 1fr) 1fr; }
 
 /* ── help page (clean, structured) ────────────────────────────────────── */
 

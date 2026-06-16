@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>SE Skills — Local Hub</title>
-  <link rel="stylesheet" href="/style.css" />
+  <title>Solutions Team Hub</title>
+  <link rel="stylesheet" href="/style.css" id="css-link" />
 </head>
 <body>
   <header>
@@ -40,6 +40,14 @@
     </div>
   </div>
 
-  <script src="/app.js"></script>
+  <script>
+    // Cache-bust CSS so style changes always take effect on reload (StaticFiles
+    // sends etag/last-modified; a version query forces a fresh fetch each session).
+    (function () {
+      var l = document.getElementById("css-link");
+      l.href = "/style.css?v=" + Date.now();
+    })();
+  </script>
+  <script src="/app.js?v=20260616b"></script>
 </body>
 </html>
