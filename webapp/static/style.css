@@ -243,8 +243,11 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 #skill-blurb .hint-line { color: var(--muted); font-size: 12px; margin-top: 8px; }
 #skill-blurb .hint-line b { color: var(--text); font-weight: 600; }
 
-.status { margin-top: 16px; padding: 12px; border-radius: 8px; background: var(--panel2); }
+.status { margin-top: 16px; padding: 12px; border-radius: 8px; background: var(--panel2); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .status.hidden, .output.hidden { display: none; }
+.run-head { font-weight: 600; }
+.run-dismiss { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 14px; line-height: 1; padding: 4px 8px; border-radius: 6px; }
+.run-dismiss:hover { color: var(--text); background: var(--panel); }
 .status.running { color: var(--warn); }
 .status.ok { color: var(--accent2); }
 .status.err { color: #ff6b6b; }

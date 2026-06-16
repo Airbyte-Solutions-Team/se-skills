@@ -9,6 +9,15 @@ const api = async (path, opts) => {
 };
 const esc = (s) => (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
+// "ran 8 min ago" from an epoch-seconds timestamp.
+function relTime(epochSec) {
+  const diff = Math.max(0, Date.now() / 1000 - epochSec);
+  if (diff < 60) return "just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)} hr ago`;
+  return `${Math.floor(diff / 86400)} d ago`;
+}
+
 // Poll a background job until it finishes. `onTick` gets the job snapshot each
 // poll; resolves with the final job. Polling is independent of any page — if
 // you navigate away and the element is gone, onTick simply no-ops.
@@ -481,30 +490,32 @@ async function pageOpportunity(account, slug, oppName) {
   const fStatus = document.getElementById("freebar-status");
   const fOutput = document.getElementById("freebar-output");
 
+  const dismissRun = () => { fStatus.className = "status hidden"; fOutput.className = "output hidden"; fOutput.innerHTML = ""; };
+
   // Reflect a job snapshot into the status/output area. Safe to call after
   // navigating away (the elements just won't exist — guarded by callers).
-  const renderJob = (job) => {
+  // `finishedAt` (epoch seconds) drives the "ran N min ago" label on recovery.
+  const renderJob = (job, finishedAt) => {
     if (job.status === "running") {
       fStatus.className = "status running";
-      fStatus.innerHTML = `<span class="spinner"></span>Running ${esc(job.skill || "instruction")} on ${esc(account)} · ${esc(oppName)} … (keeps running even if you leave this page)`;
+      fStatus.innerHTML = `<span class="run-head"><span class="spinner"></span>Running ${esc(job.skill || "instruction")} on ${esc(account)} · ${esc(oppName)} … (keeps running even if you leave this page)</span>`;
       freeBtn.disabled = true;
       return;
     }
     freeBtn.disabled = false;
     const ok = job.ok;
     fStatus.className = ok ? "status ok" : "status err";
-    // Some skills (e.g. next-move) are chat-only by design and write no file —
-    // so don't promise a saved file. Point the user to both possibilities and
-    // always show the run's output below.
-    fStatus.innerHTML = ok
-      ? `Done. The result is shown below. If the skill saved a file, reload this opportunity to see it in the outputs list. <button class="linklike" id="freebar-reload">Reload</button>`
-      : "Run finished with an error. See output below.";
+    const ago = finishedAt ? ` · ran ${relTime(finishedAt)}` : "";
+    const head = ok
+      ? `✓ ${esc(job.skill || "run")}${ago} — result below`
+      : `✕ ${esc(job.skill || "run")}${ago} — finished with an error`;
+    fStatus.innerHTML = `<span class="run-head">${head}</span><button class="run-dismiss" id="run-dismiss" title="Dismiss">✕</button>`;
     if (job.stdout || job.stderr) {
       fOutput.className = "output md-body";
       fOutput.innerHTML = mdToHtml(job.stdout || "") + (job.stderr ? `<hr/><pre class="md-pre"><code>[stderr]\n${esc(job.stderr)}</code></pre>` : "");
     }
-    const rl = document.getElementById("freebar-reload");
-    if (rl) rl.onclick = () => pageOpportunity(account, slug, oppName);
+    const dz = document.getElementById("run-dismiss");
+    if (dz) dz.onclick = dismissRun;
   };
 
   const watch = (jobId) => pollJob(jobId, (job) => {
@@ -513,17 +524,17 @@ async function pageOpportunity(account, slug, oppName) {
   });
 
   // Recover a run started earlier (e.g. you backed out and came back).
-  // If one is still running, re-attach. Otherwise surface the most recent
-  // finished run's output so an ephemeral/chat-only result (e.g. next-move,
-  // which by design writes no file) isn't lost when you navigate away.
+  // 1) If one is still running in memory, re-attach and poll it.
+  // 2) Otherwise read the last finished run from disk — survives a server
+  //    restart, and chat-only results (e.g. next-move, which writes no file)
+  //    aren't lost. One record per skill, overwritten on re-run.
   const existing = await api(`/api/jobs?account=${encodeURIComponent(account)}&opp_slug=${encodeURIComponent(slug)}`).catch(() => []);
   const running = existing.find((j) => j.status === "running");
   if (running) {
     renderJob(running); watch(running.job_id);
-  } else if (existing.length) {
-    const last = existing[existing.length - 1];
-    const full = await api(`/api/jobs/${encodeURIComponent(last.job_id)}`).catch(() => null);
-    if (full && full.status !== "running") renderJob(full);
+  } else {
+    const last = await api(`/api/accounts/${encodeURIComponent(account)}/last-run?opp_slug=${encodeURIComponent(slug)}`).catch(() => null);
+    if (last && last.skill) renderJob({ status: "done", ok: last.ok, skill: last.skill, stdout: last.stdout, stderr: last.stderr }, last.finished_at);
   }
 
   // Start a run. `skill` = run that named skill (typed text becomes context);
@@ -533,7 +544,7 @@ async function pageOpportunity(account, slug, oppName) {
     if (!skill && !free) return;
     suggestBox.classList.add("hidden");
     fStatus.className = "status running";
-    fStatus.innerHTML = `<span class="spinner"></span>Starting…`;
+    fStatus.innerHTML = `<span class="run-head"><span class="spinner"></span>Starting…</span>`;
     freeBtn.disabled = true;
     const payload = skill
       ? { account, opportunity: oppName, opp_slug: slug, skill, extra: free || null }

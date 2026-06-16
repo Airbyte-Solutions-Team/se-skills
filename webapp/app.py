@@ -25,6 +25,7 @@ solving multi-user auth + data isolation first (see README).
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import subprocess
@@ -244,8 +245,8 @@ def list_outputs(account: str, opp: str | None = None) -> list[dict]:
         return []
     items = []
     for skill_dir in sorted(base.iterdir()):
-        if not skill_dir.is_dir():
-            continue
+        if not skill_dir.is_dir() or skill_dir.name.startswith("."):
+            continue  # skip hidden dirs like .runs (internal run-result cache)
         for f in sorted(skill_dir.glob("*.md")):
             st = f.stat()
             items.append({
@@ -829,7 +830,45 @@ def _build_prompt(body: InvokeBody, account: str, out_dir) -> str:
     return prompt
 
 
-async def _run_job(job_id: str, prompt: str):
+def _runs_dir(account: str, opp_slug: str | None) -> Path | None:
+    """Hidden per-opportunity folder holding the last result of each skill run.
+    One file per skill (overwritten on re-run) — so e.g. next-move always has
+    exactly one record. Hidden (.runs) so it never shows in the outputs list.
+    Returns None when there's no opportunity scope (nothing to persist)."""
+    if not opp_slug:
+        return None
+    return CUSTOMERS_DIR / account / "opportunities" / opp_slug / "outputs" / ".runs"
+
+
+def _persist_run(account: str, opp_slug: str | None, skill: str, record: dict) -> None:
+    d = _runs_dir(account, opp_slug)
+    if not d:
+        return
+    d.mkdir(parents=True, exist_ok=True)
+    # one file per skill id — overwrite on re-run
+    safe_skill = re.sub(r"[^A-Za-z0-9._-]", "-", skill or "freeform")
+    (d / f"{safe_skill}.json").write_text(json.dumps(record))
+
+
+def _latest_run(account: str, opp_slug: str | None) -> dict | None:
+    """The most recently finished run for this opportunity (newest across all
+    skill files). Read on page load so a result survives navigating away and
+    even a server restart."""
+    d = _runs_dir(account, opp_slug)
+    if not d or not d.exists():
+        return None
+    best = None
+    for f in d.glob("*.json"):
+        try:
+            rec = json.loads(f.read_text())
+        except Exception:
+            continue
+        if best is None or (rec.get("finished_at", 0) > best.get("finished_at", 0)):
+            best = rec
+    return best
+
+
+async def _run_job(job_id: str, prompt: str, meta: dict):
     job = JOBS[job_id]
     cmd = ["claude", "-p", prompt, "--permission-mode", "acceptEdits"]
     try:
@@ -850,6 +889,16 @@ async def _run_job(job_id: str, prompt: str):
                    stderr="Skill run timed out after 10 minutes.")
     except Exception as e:  # noqa: BLE001 — surface any launch failure to the UI
         job.update(status="error", ok=False, stdout="", stderr=f"{type(e).__name__}: {e}")
+
+    # Persist the finished result to disk (one file per skill, overwritten).
+    try:
+        _persist_run(meta["account"], meta.get("opp_slug"), meta["skill"], {
+            "skill": meta["skill"], "opportunity": meta.get("opportunity"),
+            "ok": job.get("ok"), "stdout": job.get("stdout", ""), "stderr": job.get("stderr", ""),
+            "finished_at": datetime.now(timezone.utc).timestamp(),
+        })
+    except Exception:
+        pass  # persistence is best-effort; the in-memory job still works
 
 
 @app.post("/api/invoke")
@@ -876,13 +925,27 @@ async def api_invoke(body: InvokeBody):
             return JSONResponse({"job_id": jid, "status": "running", "reused": True})
 
     job_id = uuid.uuid4().hex[:12]
+    skill_id = body.skill or "freeform"
     JOBS[job_id] = {
         "status": "running", "ok": None, "stdout": "", "stderr": "",
-        "skill": body.skill or "freeform", "account": account,
+        "skill": skill_id, "account": account,
         "opportunity": body.opportunity, "opp_slug": opp_slug, "sig": sig,
     }
-    asyncio.create_task(_run_job(job_id, prompt))
+    meta = {"account": account, "opp_slug": opp_slug, "skill": skill_id, "opportunity": body.opportunity}
+    asyncio.create_task(_run_job(job_id, prompt, meta))
     return JSONResponse({"job_id": job_id, "status": "running", "reused": False})
+
+
+@app.get("/api/accounts/{account}/last-run")
+def api_last_run(account: str, opp_slug: str | None = None):
+    """The most recent finished run for an opportunity, read from disk. Lets a
+    result survive both navigation and a server restart. 204 if none."""
+    account = _safe(account)
+    opp_slug = _safe(opp_slug) if opp_slug else None
+    rec = _latest_run(account, opp_slug)
+    if not rec:
+        return JSONResponse(status_code=204, content=None)
+    return rec
 
 
 @app.get("/api/jobs/{job_id}")
