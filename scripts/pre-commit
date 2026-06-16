@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Pre-commit hook: block commits where the docs have drifted from skills/.
+# Installed by scripts/install-hooks.sh (or copy to .git/hooks/pre-commit).
+set -euo pipefail
+repo_root="$(git rev-parse --show-toplevel)"
+if [[ -x "$repo_root/scripts/check-sync.sh" ]]; then
+  "$repo_root/scripts/check-sync.sh" || {
+    echo ""
+    echo "Commit blocked by check-sync. Fix the drift above, or bypass with: git commit --no-verify"
+    exit 1
+  }
+fi

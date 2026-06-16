@@ -46,22 +46,69 @@ SE_CONFIG = WORKSPACE / ".se-config.yaml"
 WEBAPP_DIR = Path(__file__).resolve().parent
 TEAM_FILE = WEBAPP_DIR / "team-members.yaml"
 
-# The skills this app can invoke, with a human label and whether they need a
-# customer arg. Mirrors the suite; keep in sync with skills/ folder.
-SKILLS = [
-    {"id": "account-refresher", "label": "Account Refresher", "blurb": "Fast catch-me-up briefing"},
-    {"id": "prep-call", "label": "Prep Call", "blurb": "Tech-discovery call prep"},
-    {"id": "post-call", "label": "Post-Call Summary", "blurb": "Summarize latest call"},
-    {"id": "biz-qual", "label": "Biz Qual (MEDDPICC)", "blurb": "Business qualification"},
-    {"id": "tech-qual", "label": "Tech Qual", "blurb": "Technical fit assessment"},
-    {"id": "deployment-model-qual", "label": "Deployment Qual", "blurb": "Cloud vs Self-Managed"},
-    {"id": "connector-feasibility", "label": "Connector Feasibility", "blurb": "Source/dest coverage"},
-    {"id": "poc-plan", "label": "POC Plan", "blurb": "Scope a proof of concept"},
-    {"id": "deal-assessment", "label": "Deal Assessment", "blurb": "Honest deal-health read"},
-    {"id": "follow-up-email", "label": "Follow-up Email", "blurb": "Draft an email"},
-    {"id": "objection-handler", "label": "Objection Handler", "blurb": "Talk track for a concern"},
-    {"id": "next-move", "label": "Next Move", "blurb": "What to do next on this deal"},
+# Where the skills live. Prefer the installed location; fall back to the repo
+# copy next to this webapp (skills/ is a sibling of webapp/).
+SKILLS_DIRS = [
+    Path(os.path.expanduser("~/.claude/skills")),
+    WEBAPP_DIR.parent / "skills",
 ]
+
+# Optional presentation overrides: preferred display order + friendlier labels/
+# blurbs than raw frontmatter. NOT the source of truth for WHICH skills exist —
+# that's derived from the skill folders on disk (see discover_skills). A new
+# skill appears automatically; add an entry here only to tune how it's shown.
+SKILL_PRESENTATION = {
+    "account-refresher":     {"label": "Account Refresher",     "blurb": "Fast catch-me-up briefing", "order": 1},
+    "prep-call":             {"label": "Prep Call",             "blurb": "Tech-discovery call prep", "order": 2},
+    "post-call":             {"label": "Post-Call Summary",     "blurb": "Summarize latest call", "order": 3},
+    "biz-qual":              {"label": "Biz Qual (MEDDPICC)",   "blurb": "Business qualification", "order": 4},
+    "tech-qual":             {"label": "Tech Qual",             "blurb": "Technical fit assessment", "order": 5},
+    "deployment-model-qual": {"label": "Deployment Qual",       "blurb": "Cloud vs Self-Managed", "order": 6},
+    "connector-feasibility": {"label": "Connector Feasibility", "blurb": "Source/dest coverage", "order": 7},
+    "poc-plan":              {"label": "POC Plan",              "blurb": "Scope a proof of concept", "order": 8},
+    "deal-assessment":       {"label": "Deal Assessment",       "blurb": "Honest deal-health read", "order": 9},
+    "follow-up-email":       {"label": "Follow-up Email",       "blurb": "Draft an email", "order": 10},
+    "objection-handler":     {"label": "Objection Handler",     "blurb": "Talk track for a concern", "order": 11},
+    "internal-prep":         {"label": "Internal Prep",         "blurb": "AE sync / forecast / exec readout prep", "order": 12},
+    "next-move":             {"label": "Next Move",             "blurb": "What to do next on this deal", "order": 13},
+}
+
+# Source of truth for WHICH skills belong to this suite: the repo's own
+# skills/ folder (a sibling of webapp/). This scopes the app to the SE suite
+# and deliberately excludes other skills the user may have in ~/.claude/skills/
+# (remotion, find-skills, etc.). A new SE skill added to the repo appears
+# automatically; unrelated global skills never leak in.
+SUITE_SKILLS_DIR = WEBAPP_DIR.parent / "skills"
+
+
+def discover_skills() -> list[dict]:
+    """Every folder with a SKILL.md under the repo's skills/ dir is a suite skill.
+    `_se-playbook.md` is shared reference (leading underscore → excluded).
+    Presentation (label/blurb/order) overlaid from SKILL_PRESENTATION when present;
+    otherwise a sensible default is derived so a newly-added skill still shows."""
+    found = []
+    if SUITE_SKILLS_DIR.exists():
+        for d in sorted(SUITE_SKILLS_DIR.iterdir()):
+            if not d.is_dir() or d.name.startswith("_") or d.name.startswith("."):
+                continue
+            if not (d / "SKILL.md").exists():
+                continue
+            sid = d.name
+            pres = SKILL_PRESENTATION.get(sid, {})
+            found.append({
+                "id": sid,
+                "label": pres.get("label") or sid.replace("-", " ").title(),
+                "blurb": pres.get("blurb") or "",
+                "order": pres.get("order", 999),
+            })
+    # Fallback: if the repo skills/ dir isn't found, use the presentation list
+    if not found:
+        found = [{"id": k, **v} for k, v in SKILL_PRESENTATION.items()]
+    found.sort(key=lambda s: (s.get("order", 999), s["label"]))
+    return [{"id": s["id"], "label": s["label"], "blurb": s["blurb"]} for s in found]
+
+
+SKILLS = discover_skills()
 SKILL_IDS = {s["id"] for s in SKILLS}
 
 # ---------------------------------------------------------------------------
@@ -249,14 +296,6 @@ def api_output_content(path: str):
 @app.get("/api/skills")
 def api_skills():
     return SKILLS
-
-
-# Where the skills live. Prefer the installed location; fall back to the repo copy
-# next to this webapp (skills/ is a sibling of webapp/).
-SKILLS_DIRS = [
-    Path(os.path.expanduser("~/.claude/skills")),
-    WEBAPP_DIR.parent / "skills",
-]
 
 
 def _find_skill_file(skill_id: str) -> Path | None:
