@@ -9,6 +9,19 @@ const api = async (path, opts) => {
 };
 const esc = (s) => (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
+// Poll a background job until it finishes. `onTick` gets the job snapshot each
+// poll; resolves with the final job. Polling is independent of any page — if
+// you navigate away and the element is gone, onTick simply no-ops.
+async function pollJob(jobId, onTick) {
+  while (true) {
+    const job = await api(`/api/jobs/${encodeURIComponent(jobId)}`).catch(() => null);
+    if (!job) return null;
+    if (onTick) onTick(job);
+    if (job.status !== "running") return job;
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+}
+
 // Minimal, dependency-free Markdown → HTML for rendering skill outputs nicely.
 // Handles: headings, bold/italic, inline code, code fences, tables, blockquotes,
 // hr, ordered/unordered lists (incl. [ ] checkboxes), paragraphs.
@@ -445,24 +458,52 @@ async function pageOpportunity(account, slug, oppName) {
   const freeBtn = document.getElementById("opp-free-run");
   const fStatus = document.getElementById("freebar-status");
   const fOutput = document.getElementById("freebar-output");
+
+  // Reflect a job snapshot into the status/output area. Safe to call after
+  // navigating away (the elements just won't exist — guarded by callers).
+  const renderJob = (job) => {
+    if (job.status === "running") {
+      fStatus.className = "status running";
+      fStatus.innerHTML = `<span class="spinner"></span>Running ${esc(job.skill || "instruction")} on ${esc(account)} · ${esc(oppName)} … (keeps running even if you leave this page)`;
+      freeBtn.disabled = true;
+      return;
+    }
+    freeBtn.disabled = false;
+    const ok = job.ok;
+    fStatus.className = ok ? "status ok" : "status err";
+    fStatus.textContent = ok
+      ? "Done. Output saved — reload this opportunity to see it in the list below."
+      : "Run finished with an error. See output below.";
+    if (job.stdout || job.stderr) {
+      fOutput.className = "output md-body";
+      fOutput.innerHTML = mdToHtml(job.stdout || "") + (job.stderr ? `<hr/><pre class="md-pre"><code>[stderr]\n${esc(job.stderr)}</code></pre>` : "");
+    }
+  };
+
+  const watch = (jobId) => pollJob(jobId, (job) => {
+    // Only update if we're still on this opportunity's page.
+    if (document.getElementById("freebar-status")) renderJob(job);
+  });
+
+  // Recover a run started earlier (e.g. you backed out and came back).
+  const existing = await api(`/api/jobs?account=${encodeURIComponent(account)}&opp_slug=${encodeURIComponent(slug)}`).catch(() => []);
+  const running = existing.find((j) => j.status === "running");
+  if (running) { renderJob(running); watch(running.job_id); }
+
   const runFree = async () => {
     const free = freeInput.value.trim();
     if (!free) return;
     fStatus.className = "status running";
-    fStatus.innerHTML = `<span class="spinner"></span>Running your instruction on ${esc(account)} · ${esc(oppName)} … (this can take a minute)`;
+    fStatus.innerHTML = `<span class="spinner"></span>Starting…`;
     freeBtn.disabled = true;
     try {
       const res = await api("/api/invoke", {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ account, opportunity: oppName, opp_slug: slug, freeform: free }),
       });
-      fStatus.className = res.ok ? "status ok" : "status err";
-      fStatus.textContent = res.ok ? "Done. Output saved — refresh or scroll down to see it below." : "Instruction returned a non-zero exit. See output below.";
-      fOutput.className = "output md-body";
-      fOutput.innerHTML = mdToHtml(res.stdout || "") + (res.stderr ? `<hr/><pre class="md-pre"><code>[stderr]\n${esc(res.stderr)}</code></pre>` : "");
+      await watch(res.job_id);
     } catch (e) {
       fStatus.className = "status err"; fStatus.textContent = "Error: " + e.message;
-    } finally {
       freeBtn.disabled = false;
     }
   };
@@ -512,20 +553,30 @@ function openInvoke(account, opp = null) {
     payload.extra = document.getElementById("skill-extra").value.trim() || null;
     const label = sel.value;
     status.className = "status running";
-    status.innerHTML = `<span class="spinner"></span>Running <b>${esc(label)}</b> on ${esc(ctx)} … (this can take a minute)`;
+    status.innerHTML = `<span class="spinner"></span>Starting <b>${esc(label)}</b> on ${esc(ctx)} …`;
     document.getElementById("invoke-run").disabled = true;
     try {
       const res = await api("/api/invoke", {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify(payload),
       });
-      status.className = res.ok ? "status ok" : "status err";
-      status.textContent = res.ok ? "Done. Output saved — close this to see it in the opportunity's outputs." : "Skill returned a non-zero exit. See output below.";
-      output.className = "output md-body";
-      output.innerHTML = mdToHtml(res.stdout || "") + (res.stderr ? `<hr/><pre class="md-pre"><code>[stderr]\n${esc(res.stderr)}</code></pre>` : "");
+      // Poll the background job. The run continues server-side even if the
+      // modal is closed; reopening shows it still running via job recovery.
+      await pollJob(res.job_id, (job) => {
+        if (modal.classList.contains("hidden")) return; // closed — stop updating UI
+        if (job.status === "running") {
+          status.className = "status running";
+          status.innerHTML = `<span class="spinner"></span>Running <b>${esc(label)}</b> on ${esc(ctx)} … (keeps running even if you close this)`;
+          return;
+        }
+        status.className = job.ok ? "status ok" : "status err";
+        status.textContent = job.ok ? "Done. Output saved — close this to see it in the opportunity's outputs." : "Skill returned a non-zero exit. See output below.";
+        output.className = "output md-body";
+        output.innerHTML = mdToHtml(job.stdout || "") + (job.stderr ? `<hr/><pre class="md-pre"><code>[stderr]\n${esc(job.stderr)}</code></pre>` : "");
+        document.getElementById("invoke-run").disabled = false;
+      });
     } catch (e) {
       status.className = "status err"; status.textContent = "Error: " + e.message;
-    } finally {
       document.getElementById("invoke-run").disabled = false;
     }
   };

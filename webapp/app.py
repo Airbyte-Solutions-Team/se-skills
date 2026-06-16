@@ -28,6 +28,7 @@ import asyncio
 import os
 import re
 import subprocess
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -788,6 +789,58 @@ class InvokeBody(BaseModel):
     freeform: str | None = None     # full free-text instruction (instead of a dropdown skill)
 
 
+# ---------------------------------------------------------------------------
+# Skill invocation runs as a BACKGROUND JOB so the HTTP request returns
+# immediately. A long-running `claude -p` held the request (and a browser
+# connection) for minutes — navigating away abandoned the fetch, orphaned the
+# subprocess, and saturated the per-host connection pool so other pages hung.
+# Now: POST /api/invoke starts the job + returns a job_id; the run continues
+# server-side even if you navigate away; GET /api/jobs/{id} polls for status.
+# ---------------------------------------------------------------------------
+JOBS: dict[str, dict] = {}
+
+
+def _build_prompt(body: InvokeBody, account: str, out_dir) -> str:
+    if body.freeform:
+        prompt = body.freeform.strip() + f" (for the account {account}"
+        if body.opportunity:
+            prompt += f", opportunity '{body.opportunity}'"
+        prompt += ".)"
+    else:
+        prompt = f"Use the {body.skill} skill for {account}."
+        if body.opportunity:
+            prompt += f" This is for the opportunity '{body.opportunity}'."
+        if body.extra:
+            prompt += f" Additional context: {body.extra.strip()}"
+    if out_dir:
+        prompt += (f" IMPORTANT: save any output file under {out_dir}/<skill-name>/ "
+                   f"instead of the default account outputs folder.")
+    return prompt
+
+
+async def _run_job(job_id: str, prompt: str):
+    job = JOBS[job_id]
+    cmd = ["claude", "-p", prompt, "--permission-mode", "acceptEdits"]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, cwd=str(WORKSPACE),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        job["pid"] = proc.pid
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
+        job.update(status="done", ok=proc.returncode == 0,
+                   stdout=stdout.decode(errors="replace"),
+                   stderr=stderr.decode(errors="replace"))
+    except FileNotFoundError:
+        job.update(status="error", ok=False, stdout="",
+                   stderr="`claude` CLI not found on PATH — is Claude Code installed?")
+    except asyncio.TimeoutError:
+        job.update(status="error", ok=False, stdout="",
+                   stderr="Skill run timed out after 10 minutes.")
+    except Exception as e:  # noqa: BLE001 — surface any launch failure to the UI
+        job.update(status="error", ok=False, stdout="", stderr=f"{type(e).__name__}: {e}")
+
+
 @app.post("/api/invoke")
 async def api_invoke(body: InvokeBody):
     account = _safe(body.account)
@@ -799,47 +852,48 @@ async def api_invoke(body: InvokeBody):
         out_dir = CUSTOMERS_DIR / account / "opportunities" / opp_slug / "outputs"
         out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Build the prompt. Either a known skill, or a freeform instruction.
-    if body.freeform:
-        prompt = body.freeform.strip() + f" (for the account {account}"
-        if body.opportunity:
-            prompt += f", opportunity '{body.opportunity}'"
-        prompt += ".)"
-    else:
-        if body.skill not in SKILL_IDS:
-            raise HTTPException(400, f"Unknown skill: {body.skill}")
-        prompt = f"Use the {body.skill} skill for {account}."
-        if body.opportunity:
-            prompt += f" This is for the opportunity '{body.opportunity}'."
-        if body.extra:
-            prompt += f" Additional context: {body.extra.strip()}"
+    if not body.freeform and body.skill not in SKILL_IDS:
+        raise HTTPException(400, f"Unknown skill: {body.skill}")
 
-    # If scoping to an opportunity, tell the skill where to save so per-opp
-    # outputs stay separate. (Skills auto-save; we override the directory.)
-    if out_dir:
-        prompt += (f" IMPORTANT: save any output file under {out_dir}/<skill-name>/ "
-                   f"instead of the default account outputs folder.")
+    prompt = _build_prompt(body, account, out_dir)
 
-    cmd = ["claude", "-p", prompt, "--permission-mode", "acceptEdits"]
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, cwd=str(WORKSPACE),
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
-    except FileNotFoundError:
-        raise HTTPException(500, "`claude` CLI not found on PATH — is Claude Code installed?")
-    except asyncio.TimeoutError:
-        raise HTTPException(504, "Skill run timed out after 10 minutes")
+    # Reuse an already-running job for the same (account, opp, skill/freeform)
+    # so re-entering the page doesn't kick off a duplicate run.
+    sig = (account, opp_slug, body.skill or "freeform", (body.freeform or body.extra or "")[:80])
+    for jid, j in JOBS.items():
+        if j.get("sig") == sig and j.get("status") == "running":
+            return JSONResponse({"job_id": jid, "status": "running", "reused": True})
 
-    return JSONResponse({
-        "skill": body.skill or "freeform",
-        "account": account,
-        "opportunity": body.opportunity,
-        "ok": proc.returncode == 0,
-        "stdout": stdout.decode(errors="replace"),
-        "stderr": stderr.decode(errors="replace"),
-    })
+    job_id = uuid.uuid4().hex[:12]
+    JOBS[job_id] = {
+        "status": "running", "ok": None, "stdout": "", "stderr": "",
+        "skill": body.skill or "freeform", "account": account,
+        "opportunity": body.opportunity, "opp_slug": opp_slug, "sig": sig,
+    }
+    asyncio.create_task(_run_job(job_id, prompt))
+    return JSONResponse({"job_id": job_id, "status": "running", "reused": False})
+
+
+@app.get("/api/jobs/{job_id}")
+def api_job(job_id: str):
+    job = JOBS.get(job_id)
+    if not job:
+        raise HTTPException(404, "Unknown job")
+    return {k: v for k, v in job.items() if k != "sig"}
+
+
+@app.get("/api/jobs")
+def api_jobs_for(account: str | None = None, opp_slug: str | None = None):
+    """List jobs (optionally filtered) so a page can recover a run it launched
+    earlier — e.g. after you backed out and came back."""
+    out = []
+    for jid, j in JOBS.items():
+        if account and j.get("account") != account:
+            continue
+        if opp_slug and j.get("opp_slug") != opp_slug:
+            continue
+        out.append({"job_id": jid, **{k: v for k, v in j.items() if k not in ("sig", "stdout", "stderr")}})
+    return out
 
 
 # Serve the static frontend at root
