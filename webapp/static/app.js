@@ -421,6 +421,12 @@ async function pageOpportunity(account, slug, oppName) {
       <div><h1>${esc(oppName)}</h1><p class="sub">${esc(account)} · outputs &amp; skills</p></div>
       <button class="primary" id="invoke-btn">⚡ Invoke Skill</button>
     </div>
+    <div class="freebar">
+      <input id="opp-free" type="text" placeholder="Or type a free-text instruction (e.g. “run a deal assessment focused on the security objection”)…" />
+      <button class="primary small" id="opp-free-run">Run</button>
+    </div>
+    <div id="freebar-status" class="status hidden"></div>
+    <div id="freebar-output" class="output hidden"></div>
     <h2>Generated outputs</h2>
     <div class="outputs" id="outputs">
       ${outputs.length ? outputs.map((o) => `
@@ -433,6 +439,35 @@ async function pageOpportunity(account, slug, oppName) {
     el.onclick = () => openOutput(el.dataset.path, el.dataset.title);
   });
   document.getElementById("invoke-btn").onclick = () => openInvoke(account, { slug, name: oppName });
+
+  // Free-text instruction bar — runs the agent without picking a named skill
+  const freeInput = document.getElementById("opp-free");
+  const freeBtn = document.getElementById("opp-free-run");
+  const fStatus = document.getElementById("freebar-status");
+  const fOutput = document.getElementById("freebar-output");
+  const runFree = async () => {
+    const free = freeInput.value.trim();
+    if (!free) return;
+    fStatus.className = "status running";
+    fStatus.innerHTML = `<span class="spinner"></span>Running your instruction on ${esc(account)} · ${esc(oppName)} … (this can take a minute)`;
+    freeBtn.disabled = true;
+    try {
+      const res = await api("/api/invoke", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ account, opportunity: oppName, opp_slug: slug, freeform: free }),
+      });
+      fStatus.className = res.ok ? "status ok" : "status err";
+      fStatus.textContent = res.ok ? "Done. Output saved — refresh or scroll down to see it below." : "Instruction returned a non-zero exit. See output below.";
+      fOutput.className = "output md-body";
+      fOutput.innerHTML = mdToHtml(res.stdout || "") + (res.stderr ? `<hr/><pre class="md-pre"><code>[stderr]\n${esc(res.stderr)}</code></pre>` : "");
+    } catch (e) {
+      fStatus.className = "status err"; fStatus.textContent = "Error: " + e.message;
+    } finally {
+      freeBtn.disabled = false;
+    }
+  };
+  freeBtn.onclick = runFree;
+  freeInput.onkeydown = (e) => { if (e.key === "Enter") runFree(); };
 }
 
 async function openOutput(path, title) {
@@ -464,24 +499,6 @@ function openInvoke(account, opp = null) {
   };
   sel.onchange = setBlurb; setBlurb();
   document.getElementById("skill-extra").value = "";
-  document.getElementById("free-text").value = "";
-
-  // Mode toggle: skill picker vs. free-text instruction
-  let mode = "skill";
-  const skillMode = document.getElementById("skill-mode");
-  const freeModeEl = document.getElementById("free-mode");
-  const btnSkill = document.getElementById("mode-skill");
-  const btnFree = document.getElementById("mode-free");
-  const setMode = (mDist) => {
-    mode = mDist;
-    btnSkill.classList.toggle("active", mode === "skill");
-    btnFree.classList.toggle("active", mode === "free");
-    skillMode.classList.toggle("hidden", mode !== "skill");
-    freeModeEl.classList.toggle("hidden", mode !== "free");
-  };
-  btnSkill.onclick = () => setMode("skill");
-  btnFree.onclick = () => setMode("free");
-  setMode("skill");
 
   const status = document.getElementById("invoke-status");
   const output = document.getElementById("invoke-output");
@@ -491,16 +508,9 @@ function openInvoke(account, opp = null) {
   document.getElementById("invoke-cancel").onclick = () => modal.classList.add("hidden");
   document.getElementById("invoke-run").onclick = async () => {
     const payload = { account, opportunity: opp?.name || null, opp_slug: opp?.slug || null };
-    let label;
-    if (mode === "free") {
-      const free = document.getElementById("free-text").value.trim();
-      if (!free) { alert("Enter an instruction, or switch to 'Pick a skill'."); return; }
-      payload.freeform = free; label = "custom instruction";
-    } else {
-      payload.skill = sel.value;
-      payload.extra = document.getElementById("skill-extra").value.trim() || null;
-      label = sel.value;
-    }
+    payload.skill = sel.value;
+    payload.extra = document.getElementById("skill-extra").value.trim() || null;
+    const label = sel.value;
     status.className = "status running";
     status.innerHTML = `<span class="spinner"></span>Running <b>${esc(label)}</b> on ${esc(ctx)} … (this can take a minute)`;
     document.getElementById("invoke-run").disabled = true;

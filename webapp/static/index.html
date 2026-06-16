@@ -24,10 +24,6 @@
   <div id="modal" class="modal hidden">
     <div class="modal-card">
       <h3 id="modal-title">Invoke skill</h3>
-      <div class="invoke-mode">
-        <button id="mode-skill" class="mode-btn active">Pick a skill</button>
-        <button id="mode-free" class="mode-btn">Free-text instruction</button>
-      </div>
       <div id="skill-mode">
         <label>Skill
           <select id="skill-select"></select>
@@ -35,11 +31,6 @@
         <div id="skill-blurb" class="muted"></div>
         <label>Optional context (e.g. an objection, a specific question)
           <textarea id="skill-extra" rows="3" placeholder="Leave blank for default behavior"></textarea>
-        </label>
-      </div>
-      <div id="free-mode" class="hidden">
-        <label>Instruction — describe what you want the AI to do
-          <textarea id="free-text" rows="4" placeholder="e.g. Run a deal assessment but focus on the security objection and the Fivetran comparison"></textarea>
         </label>
       </div>
       <div class="modal-actions">
@@ -59,6 +50,6 @@
       l.href = "/style.css?v=" + Date.now();
     })();
   </script>
-  <script src="/app.js?v=20260616i"></script>
+  <script src="/app.js?v=20260616j"></script>
 </body>
 </html>

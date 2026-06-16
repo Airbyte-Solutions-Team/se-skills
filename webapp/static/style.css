@@ -132,11 +132,11 @@ header { border-bottom: 1px solid var(--line); background: var(--panel); positio
 /* inside the expand drawer the rows are lighter / tighter */
 .opp-drawer .opp-list { border: 1px solid var(--line); }
 
-/* ── invoke modal: mode toggle (skill vs free-text) ───────────────────── */
-.invoke-mode { display: flex; gap: 6px; margin: 4px 0 12px; }
-.mode-btn { flex: 1; background: var(--panel2); color: var(--muted); border: 1px solid var(--line); border-radius: 8px; padding: 8px; font-size: 13px; cursor: pointer; }
-.mode-btn.active { background: var(--accent); color: #0b0d12; border-color: var(--accent); font-weight: 600; }
-#free-mode.hidden, #skill-mode.hidden { display: none; }
+/* free-text instruction bar on the opportunity page (below the opp name) */
+.freebar { display: flex; gap: 8px; align-items: center; margin: 4px 0 18px; }
+.freebar input { flex: 1; font: inherit; font-size: 14px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 11px 14px; }
+.freebar input:focus { outline: none; border-color: var(--accent); }
+.freebar .small { white-space: nowrap; }
 
 /* ── help page (clean, structured) ────────────────────────────────────── */
 
