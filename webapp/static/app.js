@@ -417,6 +417,14 @@ function initTheme() {
 async function route() {
   const h = location.hash.slice(1) || "/";
   try {
+    // In-page anchor on the Help page (TOC chips → scroll to a skill card).
+    // Don't re-route; just ensure Help is rendered and scroll to the card.
+    if (h.startsWith("help-")) {
+      if (!document.getElementById(h)) await pageHelp();
+      const el = document.getElementById(h);
+      if (el) { el.scrollIntoView({ behavior: "smooth", block: "start" }); el.classList.add("help-flash"); setTimeout(() => el.classList.remove("help-flash"), 1200); }
+      return;
+    }
     if (h === "/" || h === "") return pageMembers();
     if (h === "/help") return pageHelp();
     const [, kind, arg] = h.split("/");

@@ -42,6 +42,7 @@ header { border-bottom: 1px solid var(--line); background: var(--panel); positio
 .acct-name { font-weight: 600; font-size: 15px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .acct-col { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .acct-col .muted { color: var(--muted); }
+.col-outputs { text-align: center; }
 .col-owner { text-align: right; }
 
 /* header row */
@@ -59,10 +60,10 @@ header { border-bottom: 1px solid var(--line); background: var(--panel); positio
 .acct-row-menu .dropdown-menu {
   position: absolute; left: 8px; top: calc(100% - 2px);
   /* Explicit solid off-color — same in both themes, fully opaque, clearly a menu */
-  background: #2b3242;
-  border: 1px solid #3a4255; border-radius: 10px; padding: 6px;
-  min-width: 190px; z-index: 100;
-  box-shadow: 0 14px 36px rgba(0,0,0,.45);
+  background-color: #2b3242 !important;
+  border: 1px solid #4a5268; border-radius: 10px; padding: 6px;
+  min-width: 200px; z-index: 100;
+  box-shadow: 0 16px 40px rgba(0,0,0,.6);
 }
 .acct-row-menu .dropdown-menu.hidden { display: none; }
 
@@ -100,6 +101,8 @@ header { border-bottom: 1px solid var(--line); background: var(--panel); positio
 .chip-skill { background: var(--panel2); color: var(--text); font-family: ui-monospace, monospace; }
 .chip-skill:hover { border-color: var(--accent); color: var(--accent); }
 .help-warn { color: var(--warn); font-size: 13px; margin-top: 10px; }
+.help-card.help-flash { animation: helpflash 1.2s ease-out; }
+@keyframes helpflash { 0% { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); } 100% { border-color: var(--line); box-shadow: none; } }
 main { max-width: 1100px; margin: 0 auto; padding: 28px 20px 80px; }
 h1 { font-size: 24px; margin: 0 0 4px; }
 h2 { font-size: 18px; margin: 28px 0 12px; }
@@ -133,12 +136,6 @@ h2 { font-size: 18px; margin: 28px 0 12px; }
 .archived-card { opacity: .8; }
 .archived-card .card-foot button { opacity: 1; }
 
-/* archive dropdown (two-step confirm) */
-.dropdown { position: relative; }
-.dropdown-menu { position: absolute; right: 0; bottom: calc(100% + 6px); background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 6px; min-width: 180px; box-shadow: 0 8px 24px rgba(0,0,0,.4); z-index: 8; }
-.dropdown-menu.hidden { display: none; }
-button.danger { background: transparent; color: #ff6b6b; border-color: #ff6b6b; width: 100%; text-align: left; }
-button.danger:hover { background: #ff6b6b; color: #0b0d12; }
 button { font: inherit; border-radius: 8px; padding: 9px 16px; cursor: pointer; border: 1px solid var(--line); }
 button.primary { background: var(--accent); color: #0b0d12; border-color: var(--accent); font-weight: 600; }
 button.ghost { background: transparent; color: var(--text); }
