@@ -195,7 +195,7 @@ async function pageMember(memberId, tab = "active") {
     } catch (e) { alert("Could not create account: " + e.message); }
   };
 
-  // ⋯ kebab menus — one open at a time, close on outside click
+  // ⋮ kebab menus — one open at a time
   const closeMenus = () => view.querySelectorAll(".dropdown-menu").forEach((mn) => mn.classList.add("hidden"));
   view.querySelectorAll(".kebab").forEach((b) => {
     b.onclick = (e) => {
@@ -205,7 +205,6 @@ async function pageMember(memberId, tab = "active") {
       closeMenus(); if (!open) menu.classList.remove("hidden");
     };
   });
-  document.addEventListener("click", closeMenus, { once: true });
 
   const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
 
@@ -435,6 +434,19 @@ async function route() {
     view.innerHTML = `<div class="empty">Error: ${esc(e.message)}</div>`;
   }
 }
+
+// Global: close any open card dropdown when clicking outside it, or on Escape.
+// Attached once (not per-render) so listeners don't stack.
+function closeAllDropdowns() {
+  document.querySelectorAll(".dropdown-menu").forEach((mn) => mn.classList.add("hidden"));
+}
+document.addEventListener("click", (e) => {
+  // If the click wasn't on a kebab button or inside an open menu, close everything.
+  if (!e.target.closest(".kebab") && !e.target.closest(".dropdown-menu")) {
+    closeAllDropdowns();
+  }
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeAllDropdowns(); });
 
 (async function init() {
   initTheme();
