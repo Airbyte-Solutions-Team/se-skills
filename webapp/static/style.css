@@ -36,13 +36,23 @@ header { border-bottom: 1px solid var(--line); background: var(--panel); positio
 .badge.unowned { color: var(--warn); border-color: var(--warn); cursor: help; }
 
 /* kebab ⋯ menu top-right of card */
-.card-menu { position: absolute; top: 10px; right: 10px; z-index: 3; }
+.card-menu { position: absolute; top: 10px; right: 10px; z-index: 20; }
 .kebab { background: transparent; border: 1px solid transparent; color: var(--muted); border-radius: 6px; padding: 2px 8px; font-size: 18px; line-height: 1; cursor: pointer; }
 .kebab:hover { color: var(--text); border-color: var(--line); background: var(--panel2); }
-.card-menu .dropdown-menu { position: absolute; right: 0; top: calc(100% + 4px); background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 5px; min-width: 180px; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+.card-menu .dropdown-menu {
+  position: absolute; right: 0; top: calc(100% + 4px);
+  background: var(--panel); /* solid card-panel color, fully opaque */
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px;
+  min-width: 190px; z-index: 30;
+  box-shadow: 0 10px 30px rgba(0,0,0,.5), 0 0 0 1px var(--line);
+  isolation: isolate;
+}
+:root[data-theme="light"] .card-menu .dropdown-menu { box-shadow: 0 10px 30px rgba(0,0,0,.18), 0 0 0 1px var(--line); }
 .card-menu .dropdown-menu.hidden { display: none; }
-.menu-item { display: block; width: 100%; text-align: left; background: transparent; border: none; color: var(--text); border-radius: 6px; padding: 8px 10px; font-size: 13px; cursor: pointer; }
-.menu-item:hover { background: var(--panel); }
+/* make the card itself a positioning context so the menu layers above its content */
+.acct-card { isolation: isolate; }
+.menu-item { display: block; width: 100%; text-align: left; background: transparent; border: none; color: var(--text); border-radius: 6px; padding: 8px 10px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.menu-item:hover { background: var(--panel2); }
 .menu-item.danger { color: var(--danger); }
 .menu-item.danger:hover { background: var(--danger); color: #fff; }
 .menu-item.danger.armed { background: var(--danger); color: #fff; font-weight: 600; }
