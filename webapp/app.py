@@ -214,9 +214,18 @@ def accounts_for_member(member_id: str) -> dict:
     }
 
 
-def list_outputs(account: str) -> list[dict]:
-    """Every saved skill output for an account, newest first."""
-    base = CUSTOMERS_DIR / account / "outputs"
+def _slug(name: str) -> str:
+    """Filesystem-safe slug for an opportunity name."""
+    s = re.sub(r"[^A-Za-z0-9]+", "-", (name or "").strip()).strip("-")
+    return s[:80] or "opportunity"
+
+
+def list_outputs(account: str, opp: str | None = None) -> list[dict]:
+    """Saved skill outputs, newest first. If `opp` given, scope to that
+    opportunity's outputs; otherwise the account-level outputs folder
+    (legacy / account-wide)."""
+    base = (CUSTOMERS_DIR / account / "opportunities" / opp / "outputs") if opp \
+        else (CUSTOMERS_DIR / account / "outputs")
     if not base.exists():
         return []
     items = []
@@ -235,6 +244,50 @@ def list_outputs(account: str) -> list[dict]:
             })
     items.sort(key=lambda x: x["mtime"], reverse=True)
     return items
+
+
+async def sfdc_opportunities(account: str) -> list[dict]:
+    """All SFDC opportunities for an account (not just the 'best' one).
+    Each: name, stage, stage_num, amount, close_date, type, is_closed, ae, slug.
+    Best-effort; returns [] if SFDC unavailable."""
+    sf = _sf_config()
+    if not sf.get("enabled", True):
+        return []
+    alias = sf.get("org_alias", "airbyte-prod")
+    like = account.replace("-", " ").replace("'", "")
+    soql = (
+        "SELECT Name, StageName, Stage_Number__c, Amount, CloseDate, Type, "
+        "IsClosed, Owner.Name "
+        f"FROM Opportunity WHERE Account.Name LIKE '{like}%' ORDER BY CloseDate DESC"
+    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "sf", "data", "query", "--query", soql, "--target-org", alias, "--json",
+            cwd=str(WORKSPACE),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=25)
+        if proc.returncode != 0:
+            return []
+        import json as _json
+        records = _json.loads(out).get("result", {}).get("records", [])
+    except Exception:
+        return []
+    opps = []
+    for r in records:
+        name = r.get("Name") or "Opportunity"
+        opps.append({
+            "name": name,
+            "slug": _slug(name),
+            "stage": r.get("StageName"),
+            "stage_num": r.get("Stage_Number__c"),
+            "amount": r.get("Amount"),
+            "close_date": r.get("CloseDate"),
+            "type": r.get("Type"),
+            "is_closed": r.get("IsClosed"),
+            "ae": ((r.get("Owner") or {}).get("Name")),
+        })
+    return opps
 
 
 # ---------------------------------------------------------------------------
@@ -353,9 +406,30 @@ def api_create_account(body: CreateAccount):
 
 
 @app.get("/api/accounts/{account}/outputs")
-def api_outputs(account: str):
+def api_outputs(account: str, opp: str | None = None):
     account = _safe(account)
-    return list_outputs(account)
+    if opp:
+        opp = _safe(opp)  # opp slug is also path-segment safe
+    return list_outputs(account, opp)
+
+
+@app.get("/api/accounts/{account}/opportunities")
+async def api_opportunities(account: str):
+    """SFDC opportunities for an account + per-opp local output counts.
+    Falls back to a single synthetic 'General' opp if SFDC is unavailable so
+    the account is still usable offline."""
+    account = _safe(account)
+    opps = await sfdc_opportunities(account)
+    if not opps:
+        # offline / no SFDC: present one default opportunity bucket
+        opps = [{"name": "General", "slug": "general", "stage": None, "stage_num": None,
+                 "amount": None, "close_date": None, "type": None, "is_closed": None, "ae": None}]
+    # attach local output counts per opp
+    for o in opps:
+        odir = CUSTOMERS_DIR / account / "opportunities" / o["slug"] / "outputs"
+        cnt = len(list(odir.rglob("*.md"))) if odir.exists() else 0
+        o["output_count"] = cnt
+    return opps
 
 
 class SetOwner(BaseModel):
@@ -673,31 +747,51 @@ def api_skills_help():
 
 
 class InvokeBody(BaseModel):
-    skill: str
     account: str
-    extra: str | None = None  # optional free-text appended to the prompt (e.g. an objection)
+    skill: str | None = None        # a known skill id (dropdown)
+    opportunity: str | None = None  # opp name (for context + output scoping)
+    opp_slug: str | None = None     # opp folder slug
+    extra: str | None = None        # free-text appended to the prompt
+    freeform: str | None = None     # full free-text instruction (instead of a dropdown skill)
 
 
 @app.post("/api/invoke")
 async def api_invoke(body: InvokeBody):
-    if body.skill not in SKILL_IDS:
-        raise HTTPException(400, f"Unknown skill: {body.skill}")
     account = _safe(body.account)
 
-    # Build the natural-language prompt that triggers the skill, the same way
-    # you'd type it into Claude Code. The skill's own description handles routing.
-    prompt = f"Use the {body.skill} skill for {account}."
-    if body.extra:
-        prompt += f" Additional context: {body.extra.strip()}"
+    # Determine the opportunity output folder (scope outputs per-opportunity).
+    opp_slug = _safe(body.opp_slug) if body.opp_slug else None
+    out_dir = None
+    if opp_slug:
+        out_dir = CUSTOMERS_DIR / account / "opportunities" / opp_slug / "outputs"
+        out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Headless Claude Code, run from the workspace so skills + MCPs + files resolve.
+    # Build the prompt. Either a known skill, or a freeform instruction.
+    if body.freeform:
+        prompt = body.freeform.strip() + f" (for the account {account}"
+        if body.opportunity:
+            prompt += f", opportunity '{body.opportunity}'"
+        prompt += ".)"
+    else:
+        if body.skill not in SKILL_IDS:
+            raise HTTPException(400, f"Unknown skill: {body.skill}")
+        prompt = f"Use the {body.skill} skill for {account}."
+        if body.opportunity:
+            prompt += f" This is for the opportunity '{body.opportunity}'."
+        if body.extra:
+            prompt += f" Additional context: {body.extra.strip()}"
+
+    # If scoping to an opportunity, tell the skill where to save so per-opp
+    # outputs stay separate. (Skills auto-save; we override the directory.)
+    if out_dir:
+        prompt += (f" IMPORTANT: save any output file under {out_dir}/<skill-name>/ "
+                   f"instead of the default account outputs folder.")
+
     cmd = ["claude", "-p", prompt, "--permission-mode", "acceptEdits"]
     try:
         proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            cwd=str(WORKSPACE),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            *cmd, cwd=str(WORKSPACE),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
     except FileNotFoundError:
@@ -706,8 +800,9 @@ async def api_invoke(body: InvokeBody):
         raise HTTPException(504, "Skill run timed out after 10 minutes")
 
     return JSONResponse({
-        "skill": body.skill,
+        "skill": body.skill or "freeform",
         "account": account,
+        "opportunity": body.opportunity,
         "ok": proc.returncode == 0,
         "stdout": stdout.decode(errors="replace"),
         "stderr": stderr.decode(errors="replace"),

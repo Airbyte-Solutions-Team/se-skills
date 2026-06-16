@@ -93,6 +93,20 @@ header { border-bottom: 1px solid var(--line); background: var(--panel); positio
 .badge.unowned { color: var(--warn); border-color: var(--warn); cursor: help; }
 .restore-btn { white-space: nowrap; }
 
+/* ── opportunity cards (account → opps) ───────────────────────────────── */
+.opp-grid { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.opp-card { display: block; }
+.opp-card h3 { margin: 0 0 10px; font-size: 15px; }
+.opp-meta { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.opp-meta .opp-amt { font-weight: 600; font-variant-numeric: tabular-nums; }
+.opp-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; }
+
+/* ── invoke modal: mode toggle (skill vs free-text) ───────────────────── */
+.invoke-mode { display: flex; gap: 6px; margin: 4px 0 12px; }
+.mode-btn { flex: 1; background: var(--panel2); color: var(--muted); border: 1px solid var(--line); border-radius: 8px; padding: 8px; font-size: 13px; cursor: pointer; }
+.mode-btn.active { background: var(--accent); color: #0b0d12; border-color: var(--accent); font-weight: 600; }
+#free-mode.hidden, #skill-mode.hidden { display: none; }
+
 /* ── help page (clean, structured) ────────────────────────────────────── */
 
 /* Skills help page */

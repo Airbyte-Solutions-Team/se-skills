@@ -317,13 +317,43 @@ async function pageMember(memberId, tab = "active") {
   });
 }
 
-// ---- Page: account (outputs + invoke) ------------------------------------
+// ---- Page: account → list of opportunities -------------------------------
 async function pageAccount(account) {
   setCrumbs([{ label: "Team", href: "#/" }, { label: account }]);
-  const outputs = await api(`/api/accounts/${encodeURIComponent(account)}/outputs`);
+  view.innerHTML = `<div class="row"><div><h1>${esc(account)}</h1><p class="sub">Opportunities — pick one to view outputs &amp; run skills</p></div></div>
+    <div class="empty" id="opps-loading">Loading opportunities from Salesforce…</div>`;
+  const opps = await api(`/api/accounts/${encodeURIComponent(account)}/opportunities`).catch(() => []);
+
+  const fmtAmt = (n) => (n || n === 0) ? "$" + Number(n).toLocaleString() : "—";
+  const card = (o) => `
+    <a class="card opp-card" href="#/opp/${encodeURIComponent(account)}/${encodeURIComponent(o.slug)}/${encodeURIComponent(o.name)}">
+      <h3>${esc(o.name)}</h3>
+      <div class="opp-meta">
+        <span>${o.stage_num ? esc(o.stage_num) : (o.stage ? esc(o.stage) : '<span class="muted">no stage</span>')}</span>
+        <span class="opp-amt">${fmtAmt(o.amount)}</span>
+      </div>
+      <div class="opp-sub">
+        ${o.type ? `<span class="badge">${esc(o.type)}</span>` : ""}
+        ${o.close_date ? `<span class="muted">close ${esc(o.close_date)}</span>` : ""}
+        ${o.is_closed === false ? '<span class="badge owned">open</span>' : (o.is_closed ? '<span class="badge">closed</span>' : "")}
+        <span class="muted">${o.output_count} output${o.output_count === 1 ? "" : "s"}</span>
+      </div>
+    </a>`;
+
+  view.innerHTML = `
+    <div class="row"><div><h1>${esc(account)}</h1><p class="sub">Opportunities — pick one to view outputs &amp; run skills</p></div></div>
+    <div class="grid opp-grid">
+      ${opps.length ? opps.map(card).join("") : `<div class="empty">No opportunities found.</div>`}
+    </div>`;
+}
+
+// ---- Page: opportunity (outputs + invoke) --------------------------------
+async function pageOpportunity(account, slug, oppName) {
+  setCrumbs([{ label: "Team", href: "#/" }, { label: account, href: `#/account/${encodeURIComponent(account)}` }, { label: oppName }]);
+  const outputs = await api(`/api/accounts/${encodeURIComponent(account)}/outputs?opp=${encodeURIComponent(slug)}`);
   view.innerHTML = `
     <div class="row">
-      <div><h1>${esc(account)}</h1><p class="sub">Outputs &amp; skills</p></div>
+      <div><h1>${esc(oppName)}</h1><p class="sub">${esc(account)} · outputs &amp; skills</p></div>
       <button class="primary" id="invoke-btn">⚡ Invoke Skill</button>
     </div>
     <h2>Generated outputs</h2>
@@ -332,13 +362,12 @@ async function pageAccount(account) {
         <div class="out-item" data-path="${encodeURIComponent(o.path)}" data-title="${esc(o.skill)} — ${esc(o.filename)}">
           <div><div class="skill">${esc(o.skill)}</div><div class="when">${esc(o.filename)}</div></div>
           <div class="when">${esc(o.modified)} UTC</div>
-        </div>`).join("") : `<div class="empty">No outputs yet. Invoke a skill to generate one.</div>`}
+        </div>`).join("") : `<div class="empty">No outputs yet for this opportunity. Invoke a skill to generate one.</div>`}
     </div>`;
-
   document.querySelectorAll(".out-item").forEach((el) => {
     el.onclick = () => openOutput(el.dataset.path, el.dataset.title);
   });
-  document.getElementById("invoke-btn").onclick = () => openInvoke(account);
+  document.getElementById("invoke-btn").onclick = () => openInvoke(account, { slug, name: oppName });
 }
 
 async function openOutput(path, title) {
@@ -351,8 +380,10 @@ async function openOutput(path, title) {
 
 // ---- Invoke modal ---------------------------------------------------------
 const modal = document.getElementById("modal");
-function openInvoke(account) {
-  document.getElementById("modal-title").textContent = `Invoke skill — ${account}`;
+// opp = { slug, name } | null
+function openInvoke(account, opp = null) {
+  const ctx = opp ? `${account} · ${opp.name}` : account;
+  document.getElementById("modal-title").textContent = `Invoke — ${ctx}`;
   const sel = document.getElementById("skill-select");
   sel.innerHTML = SKILLS.map((s) => `<option value="${s.id}">${esc(s.label)}</option>`).join("");
   const blurb = document.getElementById("skill-blurb");
@@ -368,6 +399,25 @@ function openInvoke(account) {
   };
   sel.onchange = setBlurb; setBlurb();
   document.getElementById("skill-extra").value = "";
+  document.getElementById("free-text").value = "";
+
+  // Mode toggle: skill picker vs. free-text instruction
+  let mode = "skill";
+  const skillMode = document.getElementById("skill-mode");
+  const freeModeEl = document.getElementById("free-mode");
+  const btnSkill = document.getElementById("mode-skill");
+  const btnFree = document.getElementById("mode-free");
+  const setMode = (mDist) => {
+    mode = mDist;
+    btnSkill.classList.toggle("active", mode === "skill");
+    btnFree.classList.toggle("active", mode === "free");
+    skillMode.classList.toggle("hidden", mode !== "skill");
+    freeModeEl.classList.toggle("hidden", mode !== "free");
+  };
+  btnSkill.onclick = () => setMode("skill");
+  btnFree.onclick = () => setMode("free");
+  setMode("skill");
+
   const status = document.getElementById("invoke-status");
   const output = document.getElementById("invoke-output");
   status.className = "status hidden"; output.className = "output hidden"; output.textContent = "";
@@ -375,20 +425,28 @@ function openInvoke(account) {
 
   document.getElementById("invoke-cancel").onclick = () => modal.classList.add("hidden");
   document.getElementById("invoke-run").onclick = async () => {
-    const skill = sel.value;
-    const extra = document.getElementById("skill-extra").value.trim();
+    const payload = { account, opportunity: opp?.name || null, opp_slug: opp?.slug || null };
+    let label;
+    if (mode === "free") {
+      const free = document.getElementById("free-text").value.trim();
+      if (!free) { alert("Enter an instruction, or switch to 'Pick a skill'."); return; }
+      payload.freeform = free; label = "custom instruction";
+    } else {
+      payload.skill = sel.value;
+      payload.extra = document.getElementById("skill-extra").value.trim() || null;
+      label = sel.value;
+    }
     status.className = "status running";
-    status.innerHTML = `<span class="spinner"></span>Running <b>${esc(skill)}</b> on ${esc(account)} … (this can take a minute)`;
+    status.innerHTML = `<span class="spinner"></span>Running <b>${esc(label)}</b> on ${esc(ctx)} … (this can take a minute)`;
     document.getElementById("invoke-run").disabled = true;
     try {
       const res = await api("/api/invoke", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ skill, account, extra: extra || null }),
+        body: JSON.stringify(payload),
       });
       status.className = res.ok ? "status ok" : "status err";
-      status.textContent = res.ok ? "Done. Output saved — open the account to read the formatted report." : "Skill returned a non-zero exit. See output below.";
+      status.textContent = res.ok ? "Done. Output saved — close this to see it in the opportunity's outputs." : "Skill returned a non-zero exit. See output below.";
       output.className = "output md-body";
-      // Render the skill's markdown output formatted, not raw.
       output.innerHTML = mdToHtml(res.stdout || "") + (res.stderr ? `<hr/><pre class="md-pre"><code>[stderr]\n${esc(res.stderr)}</code></pre>` : "");
     } catch (e) {
       status.className = "status err"; status.textContent = "Error: " + e.message;
@@ -482,9 +540,12 @@ async function route() {
     }
     if (h === "/" || h === "") return pageMembers();
     if (h === "/help") return pageHelp();
-    const [, kind, arg] = h.split("/");
-    if (kind === "member") return pageMember(decodeURIComponent(arg));
-    if (kind === "account") return pageAccount(decodeURIComponent(arg));
+    const parts = h.split("/");          // ["", kind, arg, ...]
+    const kind = parts[1];
+    if (kind === "member") return pageMember(decodeURIComponent(parts[2]));
+    if (kind === "account") return pageAccount(decodeURIComponent(parts[2]));
+    if (kind === "opp") return pageOpportunity(
+      decodeURIComponent(parts[2]), decodeURIComponent(parts[3]), decodeURIComponent(parts[4] || parts[3]));
     pageMembers();
   } catch (e) {
     view.innerHTML = `<div class="empty">Error: ${esc(e.message)}</div>`;
