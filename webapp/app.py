@@ -251,6 +251,104 @@ def api_skills():
     return SKILLS
 
 
+# Where the skills live. Prefer the installed location; fall back to the repo copy
+# next to this webapp (skills/ is a sibling of webapp/).
+SKILLS_DIRS = [
+    Path(os.path.expanduser("~/.claude/skills")),
+    WEBAPP_DIR.parent / "skills",
+]
+
+
+def _find_skill_file(skill_id: str) -> Path | None:
+    for base in SKILLS_DIRS:
+        f = base / skill_id / "SKILL.md"
+        if f.exists():
+            return f
+    return None
+
+
+def _parse_frontmatter(text: str) -> tuple[dict, str]:
+    """Return (frontmatter_dict, body) for a `---`-delimited YAML frontmatter file."""
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            fm = yaml.safe_load(text[3:end]) or {}
+            return (fm if isinstance(fm, dict) else {}), text[end + 4:]
+    return {}, text
+
+
+def _extract_triggers(description: str) -> list[str]:
+    """Pull the quoted trigger phrases out of a skill description (…says "x", "y"…)."""
+    return re.findall(r'"([^"]+)"', description or "")
+
+
+def _section(body: str, *header_keywords: str) -> str | None:
+    """Find a markdown section whose heading contains any keyword; return its text (trimmed, capped)."""
+    lines = body.splitlines()
+    for i, ln in enumerate(lines):
+        if ln.startswith("#"):
+            heading = ln.lstrip("#").strip().lower()
+            if any(k in heading for k in header_keywords):
+                # collect until next heading of same-or-higher level
+                level = len(ln) - len(ln.lstrip("#"))
+                out = []
+                for nxt in lines[i + 1:]:
+                    if nxt.startswith("#") and (len(nxt) - len(nxt.lstrip("#"))) <= level:
+                        break
+                    out.append(nxt)
+                txt = "\n".join(out).strip()
+                if txt:
+                    return txt[:1200]
+    return None
+
+
+def _derive_help(skill_id: str, label: str, blurb: str) -> dict:
+    """Build a human-friendly help entry by parsing the skill's SKILL.md live."""
+    f = _find_skill_file(skill_id)
+    entry = {
+        "id": skill_id,
+        "label": label,
+        "summary": blurb,
+        "description": "",
+        "triggers": [],
+        "prerequisites": None,
+        "data_sources": None,
+        "output_location": None,
+        "found": False,
+    }
+    if not f:
+        return entry
+    fm, body = _parse_frontmatter(f.read_text())
+    desc = fm.get("description", "")
+    entry["found"] = True
+    entry["description"] = desc
+    entry["triggers"] = _extract_triggers(desc)
+
+    # Prerequisites — skills state these in a "Hard Prerequisite" section
+    entry["prerequisites"] = _section(body, "prerequisite", "requires", "source sufficiency")
+
+    # Data sources — Salesforce Enrichment / Source Freshness / Sources sections
+    entry["data_sources"] = _section(body, "salesforce enrichment", "sources", "source freshness")
+
+    # Output location — target the auto-save path specifically (under outputs/),
+    # not the first 01-customers path (which is often a _transcripts source path).
+    # Paths appear in fenced code blocks (no backticks), so match the bare path.
+    if "ephemeral" in body.lower() and re.search(r"saves? only on", body, re.I):
+        entry["output_location"] = "Ephemeral — not auto-saved (saves only on request)"
+    else:
+        m = re.search(r"(~/airbyte-work/01-customers/\S*?/outputs/\S+)", body)
+        if m:
+            entry["output_location"] = m.group(1).strip("`")
+
+    return entry
+
+
+@app.get("/api/skills/help")
+def api_skills_help():
+    """Help doc content, auto-extracted from each skill's SKILL.md so it never drifts."""
+    return [_derive_help(s["id"], s["label"], s["blurb"]) for s in SKILLS]
+
+
 class InvokeBody(BaseModel):
     skill: str
     account: str

@@ -204,11 +204,46 @@ function openInvoke(account) {
   };
 }
 
+// ---- Page: skills help ----------------------------------------------------
+async function pageHelp() {
+  setCrumbs([{ label: "Team", href: "#/" }, { label: "Skills Help" }]);
+  const help = await api("/api/skills/help");
+  const section = (title, body) =>
+    body ? `<div class="help-sec"><span class="help-label">${title}</span><div class="help-body">${esc(body)}</div></div>` : "";
+  const triggers = (t) =>
+    t && t.length ? `<div class="help-sec"><span class="help-label">Triggers</span>
+      <div class="help-body">${t.map((x) => `<code class="trig">${esc(x)}</code>`).join(" ")}</div></div>` : "";
+
+  view.innerHTML = `
+    <h1>Skills Help</h1>
+    <p class="sub">Every skill you can invoke, what it does, when to use it, and what it needs. Auto-generated from the skill files — always current.</p>
+    <div class="help-toc">
+      ${help.map((s) => `<a href="#help-${s.id}" class="toc-item">${esc(s.label)}</a>`).join("")}
+    </div>
+    <div class="help-list">
+      ${help.map((s) => `
+        <div class="help-card" id="help-${s.id}">
+          <div class="help-head">
+            <h2>${esc(s.label)}</h2>
+            <code class="skill-id">${esc(s.id)}</code>
+          </div>
+          <p class="help-summary">${esc(s.summary)}</p>
+          ${section("What it does", s.description)}
+          ${triggers(s.triggers)}
+          ${section("Prerequisites", s.prerequisites)}
+          ${section("Data sources", s.data_sources)}
+          ${s.output_location ? section("Output saved to", s.output_location) : ""}
+          ${!s.found ? `<div class="help-warn">⚠️ SKILL.md not found — install the skills (./install.sh)</div>` : ""}
+        </div>`).join("")}
+    </div>`;
+}
+
 // ---- Router ---------------------------------------------------------------
 async function route() {
   const h = location.hash.slice(1) || "/";
   try {
     if (h === "/" || h === "") return pageMembers();
+    if (h === "/help") return pageHelp();
     const [, kind, arg] = h.split("/");
     if (kind === "member") return pageMember(decodeURIComponent(arg));
     if (kind === "account") return pageAccount(decodeURIComponent(arg));

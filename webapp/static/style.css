@@ -14,6 +14,24 @@ header { border-bottom: 1px solid var(--line); background: var(--panel); positio
 .crumbs { color: var(--muted); font-size: 14px; }
 .crumbs a { color: var(--accent); text-decoration: none; }
 .crumbs span.sep { margin: 0 8px; color: var(--line); }
+.help-link { margin-left: auto; color: var(--accent); text-decoration: none; font-size: 14px; border: 1px solid var(--line); padding: 6px 12px; border-radius: 8px; }
+.help-link:hover { border-color: var(--accent); }
+
+/* Skills help page */
+.help-toc { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 28px; }
+.help-toc .toc-item { font-size: 13px; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; text-decoration: none; }
+.help-toc .toc-item:hover { border-color: var(--accent); color: var(--accent); }
+.help-list { display: flex; flex-direction: column; gap: 16px; }
+.help-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px 22px; scroll-margin-top: 80px; }
+.help-head { display: flex; align-items: baseline; gap: 12px; }
+.help-head h2 { margin: 0; font-size: 18px; }
+.skill-id { font: 12px ui-monospace, monospace; color: var(--muted); background: var(--panel2); padding: 2px 8px; border-radius: 6px; }
+.help-summary { color: var(--text); margin: 6px 0 14px; }
+.help-sec { display: grid; grid-template-columns: 130px 1fr; gap: 14px; padding: 8px 0; border-top: 1px solid var(--line); }
+.help-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .4px; padding-top: 2px; }
+.help-body { color: var(--text); font-size: 14px; white-space: pre-wrap; }
+code.trig { background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; font: 13px ui-monospace, monospace; color: var(--accent2); display: inline-block; margin: 2px 0; }
+.help-warn { color: var(--warn); font-size: 13px; margin-top: 10px; }
 main { max-width: 1100px; margin: 0 auto; padding: 28px 20px 80px; }
 h1 { font-size: 24px; margin: 0 0 4px; }
 h2 { font-size: 18px; margin: 28px 0 12px; }
