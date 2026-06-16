@@ -102,6 +102,8 @@ async function pageMembers() {
 
 // ---- Page: member's accounts ---------------------------------------------
 // `tab` is "active" (default), "archived", or "trash"
+let _sort = (() => { try { return JSON.parse(localStorage.getItem("se-hub-sort")) || { key: "updated", dir: -1 }; } catch { return { key: "updated", dir: -1 }; } })();
+
 async function pageMember(memberId, tab = "active") {
   const members = await api("/api/members");
   const m = members.find((x) => x.id === memberId) || { id: memberId, name: memberId };
@@ -110,30 +112,64 @@ async function pageMember(memberId, tab = "active") {
   const active = data.active || [];
   const archived = data.archived || [];
   const trash = await api("/api/trash").catch(() => []);
+  let showing = tab === "trash" ? trash : (tab === "archived" ? archived : active);
 
-  const ownerLabel = (a) =>
-    a.owner === memberId ? '<span class="badge owned">yours</span>'
-      : (a.owner ? `<span class="badge">${esc(a.owner)}</span>` : '<span class="badge unowned" title="No owner recorded — created before ownership tracking. Use ⋯ → Claim to take ownership.">unowned</span>');
+  // SFDC enrichment fetched up front so it's sortable (small, fast, cached per render)
+  let sfdc = {};
+  if (tab !== "trash" && showing.length) {
+    sfdc = await api("/api/sfdc/stage-amount", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ accounts: showing.map((a) => a.name) }) }).catch(() => ({}));
+    showing = showing.map((a) => ({ ...a, _sfdc: sfdc[a.name] || {} }));
+  }
 
-  // Account row (list layout): ⋮ menu on the LEFT, then name + aligned columns.
+  // ── Sorting ──────────────────────────────────────────────────────────
+  const sortVal = (a, key) => {
+    switch (key) {
+      case "name": return a.name.toLowerCase();
+      case "stage": return (a._sfdc?.stage_num ? parseFloat(a._sfdc.stage_num) : -1);
+      case "amount": return (a._sfdc?.amount ?? -1);
+      case "ae": return (a._sfdc?.ae || "").toLowerCase();
+      case "updated": return a.last_updated_ts || 0;
+      case "outputs": return a.output_count || 0;
+      case "owner": return (a.owner || "").toLowerCase();
+      default: return 0;
+    }
+  };
+  if (tab !== "trash") {
+    showing = [...showing].sort((x, y) => {
+      const vx = sortVal(x, _sort.key), vy = sortVal(y, _sort.key);
+      if (vx < vy) return -1 * _sort.dir;
+      if (vx > vy) return 1 * _sort.dir;
+      return 0;
+    });
+  }
+  const sortArrow = (key) => _sort.key === key ? (_sort.dir === 1 ? " ▲" : " ▼") : "";
+
+  // ── Row rendering ────────────────────────────────────────────────────
+  const fmtAmt = (n) => (n || n === 0) ? "$" + Number(n).toLocaleString() : '<span class="muted">—</span>';
+  const stageCell = (s) => s?.stage_num ? esc(s.stage_num) : (s?.stage ? esc(s.stage) : '<span class="muted">—</span>');
+  const aeCell = (s) => s?.ae ? esc(s.ae) : '<span class="muted">—</span>';
+
   const acctRow = (a, isArchived) => `
     <div class="acct-row${isArchived ? " is-archived" : ""}" data-acct="${esc(a.name)}">
+      <label class="acct-check"><input type="checkbox" class="row-check" data-acct="${esc(a.name)}" /></label>
       <div class="acct-row-menu">
         <button class="kebab" aria-label="Account actions">⋮</button>
         <div class="dropdown-menu hidden">
           ${isArchived
             ? `<button class="menu-item unarchive-btn" data-acct="${esc(a.name)}">Unarchive</button>`
-            : `<button class="menu-item claim-btn" data-acct="${esc(a.name)}" data-owner="${a.owner === memberId}">${a.owner === memberId ? "✓ Owned by you" : "Claim ownership"}</button>
-               <button class="menu-item archive-btn" data-acct="${esc(a.name)}">Archive</button>`}
+            : `<button class="menu-item archive-btn" data-acct="${esc(a.name)}">Archive</button>`}
           <button class="menu-item danger delete-btn" data-acct="${esc(a.name)}">Delete…</button>
         </div>
       </div>
       <a href="#/account/${encodeURIComponent(a.name)}" class="acct-row-main">
         <span class="acct-name">${esc(a.name)}</span>
-        <span class="acct-col col-sfdc" data-sfdc="${esc(a.name)}"><span class="sfdc-val muted">…</span></span>
+        <span class="acct-col col-stage">${stageCell(a._sfdc)}</span>
+        <span class="acct-col col-amount">${fmtAmt(a._sfdc?.amount)}</span>
+        <span class="acct-col col-ae">${aeCell(a._sfdc)}</span>
         <span class="acct-col col-updated">${a.last_updated ? esc(a.last_updated) : '<span class="muted">—</span>'}</span>
         <span class="acct-col col-outputs">${a.output_count}</span>
-        <span class="acct-col col-owner">${ownerLabel(a)}${isArchived ? ' <span class="badge">archived</span>' : ""}</span>
+        <span class="acct-col col-owner">${a.owner === memberId ? '<span class="badge owned">you</span>' : `<span class="badge">${esc(a.owner || "—")}</span>`}${isArchived ? ' <span class="badge">archived</span>' : ""}</span>
       </a>
     </div>`;
 
@@ -142,27 +178,26 @@ async function pageMember(memberId, tab = "active") {
       <div class="acct-row-menu"><button class="ghost small restore-btn" data-tid="${esc(t.trash_id)}">Restore</button></div>
       <div class="acct-row-main no-link">
         <span class="acct-name">${esc(t.name)}</span>
-        <span class="acct-col col-sfdc"></span>
-        <span class="acct-col col-updated"><span class="muted">deleted</span> ${esc(t.deleted_at)}</span>
-        <span class="acct-col col-outputs"></span>
-        <span class="acct-col col-owner"></span>
+        <span class="acct-col" style="grid-column: span 5;"><span class="muted">deleted</span> ${esc(t.deleted_at)}</span>
       </div>
     </div>`;
 
-  const showing = tab === "trash" ? trash : (tab === "archived" ? archived : active);
   const renderRow = tab === "trash" ? trashRow : (a) => acctRow(a, tab === "archived");
   const emptyMsg = { active: "No active accounts. Create one to get started.", archived: "No archived accounts.", trash: "Trash is empty." }[tab];
 
-  // Column header (only for active/archived list) — spacer cell matches the menu width
+  const hCell = (key, label, cls) => `<span class="acct-col ${cls} sortable" data-sort="${key}">${label}${sortArrow(key)}</span>`;
   const listHeader = tab === "trash" ? "" : `
     <div class="acct-row acct-head">
+      <label class="acct-check"><input type="checkbox" id="check-all" /></label>
       <div class="acct-row-menu"></div>
       <div class="acct-row-main no-link">
-        <span class="acct-name">Account</span>
-        <span class="acct-col col-sfdc">SFDC stage / amount</span>
-        <span class="acct-col col-updated">Updated</span>
-        <span class="acct-col col-outputs">Outputs</span>
-        <span class="acct-col col-owner">Owner</span>
+        <span class="acct-name sortable" data-sort="name">Account${sortArrow("name")}</span>
+        ${hCell("stage", "SFDC Stage", "col-stage")}
+        ${hCell("amount", "Amount", "col-amount")}
+        ${hCell("ae", "AE", "col-ae")}
+        ${hCell("updated", "Updated", "col-updated")}
+        ${hCell("outputs", "Outputs", "col-outputs")}
+        ${hCell("owner", "Owner", "col-owner")}
       </div>
     </div>`;
 
@@ -179,11 +214,31 @@ async function pageMember(memberId, tab = "active") {
       <button class="tab ${tab === "archived" ? "active" : ""}" data-tab="archived">Archived (${archived.length})</button>
       <button class="tab ${tab === "trash" ? "active" : ""}" data-tab="trash">Trash (${trash.length})</button>
     </div>
+    <div id="bulk-bar" class="bulk-bar hidden">
+      <span id="bulk-count" class="bulk-count"></span>
+      <div class="bulk-actions">
+        ${tab === "archived"
+          ? `<button class="ghost small bulk-unarchive">Unarchive</button>`
+          : `<button class="ghost small bulk-archive">Archive</button>`}
+        <button class="ghost small bulk-claim">Make me owner</button>
+        <select class="bulk-transfer-sel"><option value="">Transfer to…</option>${
+          members.filter((x) => x.id !== memberId).map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select>
+        <button class="danger small bulk-delete">Delete…</button>
+      </div>
+    </div>
     <div class="acct-list" id="acct-grid">
       ${showing.length ? listHeader + showing.map(renderRow).join("") : `<div class="empty">${emptyMsg}</div>`}
     </div>`;
 
   view.querySelectorAll(".tab").forEach((t) => { t.onclick = () => pageMember(memberId, t.dataset.tab); });
+
+  // Sortable headers
+  view.querySelectorAll(".sortable").forEach((h) => h.onclick = () => {
+    const key = h.dataset.sort;
+    _sort = (_sort.key === key) ? { key, dir: -_sort.dir } : { key, dir: 1 };
+    localStorage.setItem("se-hub-sort", JSON.stringify(_sort));
+    pageMember(memberId, tab);
+  });
 
   document.getElementById("create-acct").onclick = async () => {
     const name = document.getElementById("new-acct").value.trim();
@@ -195,7 +250,36 @@ async function pageMember(memberId, tab = "active") {
     } catch (e) { alert("Could not create account: " + e.message); }
   };
 
-  // ⋮ kebab menus — one open at a time
+  // ── Multi-select + bulk bar ──────────────────────────────────────────
+  const bulkBar = document.getElementById("bulk-bar");
+  const checks = () => Array.from(view.querySelectorAll(".row-check"));
+  const selected = () => checks().filter((c) => c.checked).map((c) => c.dataset.acct);
+  const refreshBulk = () => {
+    const sel = selected();
+    if (sel.length) { bulkBar.classList.remove("hidden"); document.getElementById("bulk-count").textContent = `${sel.length} selected`; }
+    else bulkBar.classList.add("hidden");
+  };
+  checks().forEach((c) => c.onchange = refreshBulk);
+  const checkAll = document.getElementById("check-all");
+  if (checkAll) checkAll.onchange = () => { checks().forEach((c) => (c.checked = checkAll.checked)); refreshBulk(); };
+
+  const runBulk = async (action, owner) => {
+    const accounts = selected();
+    if (!accounts.length) return;
+    if (action === "delete" && !confirm(`Move ${accounts.length} account(s) to trash? They can be restored.`)) return;
+    await api(`/api/bulk/${action}`, { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ accounts, owner }) });
+    pageMember(memberId, tab);
+  };
+  bulkBar.querySelector(".bulk-archive")?.addEventListener("click", () => runBulk("archive"));
+  bulkBar.querySelector(".bulk-unarchive")?.addEventListener("click", () => runBulk("unarchive"));
+  bulkBar.querySelector(".bulk-claim")?.addEventListener("click", () => runBulk("set-owner", memberId));
+  bulkBar.querySelector(".bulk-delete")?.addEventListener("click", () => runBulk("delete"));
+  bulkBar.querySelector(".bulk-transfer-sel")?.addEventListener("change", (e) => {
+    if (e.target.value) runBulk("set-owner", e.target.value);
+  });
+
+  // ⋮ kebab menus
   const closeMenus = () => view.querySelectorAll(".dropdown-menu").forEach((mn) => mn.classList.add("hidden"));
   view.querySelectorAll(".kebab").forEach((b) => {
     b.onclick = (e) => {
@@ -207,7 +291,6 @@ async function pageMember(memberId, tab = "active") {
   });
 
   const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
-
   view.querySelectorAll(".archive-btn").forEach((b) => b.onclick = async (e) => {
     stop(e); await api(`/api/accounts/${encodeURIComponent(b.dataset.acct)}/archive`, { method: "POST" });
     pageMember(memberId, "active");
@@ -216,49 +299,22 @@ async function pageMember(memberId, tab = "active") {
     stop(e); await api(`/api/accounts/${encodeURIComponent(b.dataset.acct)}/unarchive`, { method: "POST" });
     pageMember(memberId, "archived");
   });
-  view.querySelectorAll(".claim-btn").forEach((b) => b.onclick = async (e) => {
-    stop(e);
-    if (b.dataset.owner === "true") return; // already yours
-    await api(`/api/accounts/${encodeURIComponent(b.dataset.acct)}/owner`, {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ owner: memberId }) });
-    pageMember(memberId, "active");
-  });
   view.querySelectorAll(".delete-btn").forEach((b) => b.onclick = (e) => {
     stop(e);
     const acct = b.dataset.acct;
-    // two-step confirm: turn the menu item into a confirm
     if (b.dataset.armed !== "1") {
       b.dataset.armed = "1"; b.textContent = `Confirm delete “${acct}”`; b.classList.add("armed");
       setTimeout(() => { if (b.dataset.armed === "1") { b.dataset.armed = "0"; b.textContent = "Delete…"; b.classList.remove("armed"); } }, 4000);
       return;
     }
     api(`/api/accounts/${encodeURIComponent(acct)}`, { method: "DELETE" })
-      .then(() => pageMember(memberId, "active"))
-      .catch((err) => alert("Delete failed: " + err.message));
+      .then(() => pageMember(memberId, "active")).catch((err) => alert("Delete failed: " + err.message));
   });
   view.querySelectorAll(".restore-btn").forEach((b) => b.onclick = async (e) => {
     stop(e);
     try { await api(`/api/trash/${encodeURIComponent(b.dataset.tid)}/restore`, { method: "POST" }); pageMember(memberId, "trash"); }
     catch (err) { alert("Restore failed: " + err.message); }
   });
-
-  // Async SFDC stage/amount enrichment — fill the "…" placeholders without blocking render
-  if (tab !== "trash" && showing.length) {
-    api("/api/sfdc/stage-amount", { method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ accounts: showing.map((a) => a.name) }) })
-      .then((map) => {
-        view.querySelectorAll(".col-sfdc[data-sfdc]").forEach((el) => {
-          const info = map[el.dataset.sfdc];
-          const val = el.querySelector(".sfdc-val");
-          if (info && info.stage) {
-            const amt = info.amount ? ` · $${Number(info.amount).toLocaleString()}` : "";
-            val.textContent = info.stage + amt;
-            val.classList.remove("muted");
-          } else { val.textContent = "—"; }
-        });
-      })
-      .catch(() => view.querySelectorAll(".sfdc-val").forEach((v) => (v.textContent = "—")));
-  }
 }
 
 // ---- Page: account (outputs + invoke) ------------------------------------

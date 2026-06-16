@@ -250,21 +250,19 @@ def _sf_config() -> dict:
 
 
 async def sfdc_stage_amount(account_names: list[str]) -> dict:
-    """Return {account_name: {stage, amount}} for the most relevant open (else latest)
-    opportunity per account. One query for all names. Best-effort."""
+    """Return {account_name: {stage, stage_num, amount, ae}} for the most relevant
+    open (else latest) opportunity per account. One query for all names. Best-effort.
+    `ae` is the Salesforce Account/Opportunity Owner. Returns {} on any failure."""
     sf = _sf_config()
     if not sf.get("enabled", True) or not account_names:
         return {}
     alias = sf.get("org_alias", "airbyte-prod")
-    # Build a SOQL IN-list of escaped account-name LIKE matches is messy; instead
-    # match Account.Name against the set with OR LIKE clauses (folder names are
-    # Title-Hyphen; SFDC names have spaces, so compare loosely on the first token).
-    # Simpler + safe: query open opps for accounts whose name starts with any token.
     likes = " OR ".join(
         f"Account.Name LIKE '{n.replace('-', ' ').replace(chr(39), '')}%'" for n in account_names[:50]
     )
     soql = (
-        "SELECT Account.Name, StageName, Amount, CloseDate, IsClosed, Type "
+        "SELECT Account.Name, StageName, Stage_Number__c, Amount, CloseDate, "
+        "IsClosed, Type, Owner.Name "
         f"FROM Opportunity WHERE {likes} ORDER BY CloseDate DESC"
     )
     try:
@@ -281,27 +279,29 @@ async def sfdc_stage_amount(account_names: list[str]) -> dict:
     except Exception:
         return {}
 
-    # Pick the best opp per account: prefer open + non-renewal, else most recent.
     by_acct: dict[str, dict] = {}
     folder_for = {n.replace("-", " ").lower(): n for n in account_names}
     for r in records:
         acct_name = ((r.get("Account") or {}).get("Name") or "").lower()
-        # map back to the folder name via prefix match
         folder = next((fn for key, fn in folder_for.items() if acct_name.startswith(key) or key.startswith(acct_name)), None)
         if not folder:
             continue
         cand = {
             "stage": r.get("StageName"),
+            "stage_num": r.get("Stage_Number__c"),
             "amount": r.get("Amount"),
+            "ae": ((r.get("Owner") or {}).get("Name")),
             "open": not r.get("IsClosed"),
             "renewal": (r.get("Type") == "Renewal"),
         }
         cur = by_acct.get(folder)
-        # priority: open & non-renewal > open > first seen (already date-desc)
         def score(c): return (2 if c["open"] and not c["renewal"] else (1 if c["open"] else 0))
         if cur is None or score(cand) > score(cur):
             by_acct[folder] = cand
-    return {k: {"stage": v["stage"], "amount": v["amount"]} for k, v in by_acct.items()}
+    return {
+        k: {"stage": v["stage"], "stage_num": v["stage_num"], "amount": v["amount"], "ae": v["ae"]}
+        for k, v in by_acct.items()
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -409,12 +409,60 @@ def api_delete_account(account: str):
     acc_dir = CUSTOMERS_DIR / account
     if not acc_dir.is_dir():
         raise HTTPException(404, "Unknown account")
+    return _do_delete(account)
+
+
+def _do_delete(account: str) -> dict:
+    acc_dir = CUSTOMERS_DIR / account
     trash = CUSTOMERS_DIR / "_trash"
     trash.mkdir(exist_ok=True)
     stamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d-%H%M%S")
     dest = trash / f"{account}__{stamp}"
     shutil.move(str(acc_dir), str(dest))
     return {"name": account, "deleted": True, "trash_id": dest.name}
+
+
+# ── Bulk actions (multi-select) ───────────────────────────────────────────
+class BulkBody(BaseModel):
+    accounts: list[str]
+    owner: str | None = None  # for transfer / make-owner
+
+
+@app.post("/api/bulk/{action}")
+def api_bulk(action: str, body: BulkBody):
+    """Apply an action to many accounts at once.
+    action ∈ archive | unarchive | delete | set-owner."""
+    names = [_safe(n) for n in body.accounts]
+    if not names:
+        raise HTTPException(400, "No accounts given")
+    results = []
+    for name in names:
+        acc_dir = CUSTOMERS_DIR / name
+        if not acc_dir.is_dir():
+            results.append({"name": name, "ok": False, "error": "not found"})
+            continue
+        try:
+            if action == "archive":
+                _archived_file(acc_dir).write_text(datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+            elif action == "unarchive":
+                f = _archived_file(acc_dir)
+                if f.exists():
+                    f.unlink()
+            elif action == "delete":
+                _do_delete(name)
+            elif action == "set-owner":
+                if not body.owner:
+                    raise ValueError("owner required for set-owner")
+                _owner_file(acc_dir).write_text(_safe(body.owner))
+            else:
+                raise HTTPException(400, f"Unknown bulk action: {action}")
+            results.append({"name": name, "ok": True})
+        except HTTPException:
+            raise
+        except Exception as e:
+            results.append({"name": name, "ok": False, "error": str(e)})
+    return {"action": action, "owner": body.owner, "results": results,
+            "ok": sum(1 for r in results if r["ok"]), "failed": sum(1 for r in results if not r["ok"])}
 
 
 TRASH_DIR = CUSTOMERS_DIR / "_trash"
