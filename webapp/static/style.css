@@ -96,6 +96,12 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 .modal-card label { display: block; margin: 14px 0 6px; font-size: 13px; color: var(--muted); }
 .modal-card select, .modal-card textarea { width: 100%; font: inherit; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
 .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+/* skill hint in the invoke modal */
+#skill-blurb { margin: 8px 0 4px; padding: 12px 14px; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; }
+#skill-blurb .hint-what { color: var(--text); font-size: 13px; line-height: 1.5; }
+#skill-blurb .hint-line { color: var(--muted); font-size: 12px; margin-top: 8px; }
+#skill-blurb .hint-line b { color: var(--text); font-weight: 600; }
+
 .status { margin-top: 16px; padding: 12px; border-radius: 8px; background: var(--panel2); }
 .status.hidden, .output.hidden { display: none; }
 .status.running { color: var(--warn); }

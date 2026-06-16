@@ -10,6 +10,7 @@ const api = async (path, opts) => {
 const esc = (s) => (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 let SKILLS = [];
+let SKILLS_HELP = {}; // id -> rich help entry (description, triggers, prerequisites, output)
 
 function setCrumbs(parts) {
   crumbs.innerHTML = parts
@@ -172,7 +173,16 @@ function openInvoke(account) {
   const sel = document.getElementById("skill-select");
   sel.innerHTML = SKILLS.map((s) => `<option value="${s.id}">${esc(s.label)}</option>`).join("");
   const blurb = document.getElementById("skill-blurb");
-  const setBlurb = () => { blurb.textContent = (SKILLS.find((s) => s.id === sel.value) || {}).blurb || ""; };
+  const setBlurb = () => {
+    const h = SKILLS_HELP[sel.value] || {};
+    const base = SKILLS.find((s) => s.id === sel.value) || {};
+    const trig = (h.triggers || []).slice(0, 4).map((t) => `<code class="trig">${esc(t)}</code>`).join(" ");
+    blurb.innerHTML = `
+      <div class="hint-what">${esc(h.description || base.blurb || "")}</div>
+      ${h.prerequisites ? `<div class="hint-line"><b>Needs:</b> ${esc(h.prerequisites.split("\n")[0]).slice(0, 160)}</div>` : ""}
+      ${h.output_location ? `<div class="hint-line"><b>Saves to:</b> <span class="muted">${esc(h.output_location)}</span></div>` : ""}
+      ${trig ? `<div class="hint-line"><b>Triggers:</b> ${trig}</div>` : ""}`;
+  };
   sel.onchange = setBlurb; setBlurb();
   document.getElementById("skill-extra").value = "";
   const status = document.getElementById("invoke-status");
@@ -255,6 +265,10 @@ async function route() {
 
 (async function init() {
   try { SKILLS = await api("/api/skills"); } catch { SKILLS = []; }
+  try {
+    const help = await api("/api/skills/help");
+    SKILLS_HELP = Object.fromEntries(help.map((h) => [h.id, h]));
+  } catch { SKILLS_HELP = {}; }
   window.addEventListener("hashchange", route);
   route();
 })();
