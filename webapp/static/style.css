@@ -133,10 +133,24 @@ header { border-bottom: 1px solid var(--line); background: var(--panel); positio
 .opp-drawer .opp-list { border: 1px solid var(--line); }
 
 /* free-text instruction bar on the opportunity page (below the opp name) */
-.freebar { display: flex; gap: 8px; align-items: center; margin: 4px 0 18px; }
-.freebar input { flex: 1; font: inherit; font-size: 14px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 11px 14px; }
+.freebar { display: flex; gap: 8px; align-items: flex-start; margin: 4px 0 18px; }
+.freebar-input-wrap { flex: 1; position: relative; }
+.freebar input { width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 11px 14px; }
 .freebar input:focus { outline: none; border-color: var(--accent); }
 .freebar .small { white-space: nowrap; }
+
+/* suggestive skill dropdown under the free-text input */
+.free-suggest {
+  position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 50;
+  background-color: #2b3242; border: 1px solid #4a5268; border-radius: 10px; padding: 5px;
+  box-shadow: 0 16px 40px rgba(0,0,0,.5);
+}
+.free-suggest.hidden { display: none; }
+.sug-item { display: flex; flex-direction: column; gap: 2px; padding: 9px 12px; border-radius: 7px; cursor: pointer; }
+.sug-item:hover, .sug-item.active { background: #3a4255; }
+.sug-label { font-size: 13px; font-weight: 600; color: #e6e8ee; }
+.sug-blurb { font-size: 12px; color: #aeb4c2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.linklike { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; padding: 0; text-decoration: underline; }
 
 /* ── help page (clean, structured) ────────────────────────────────────── */
 

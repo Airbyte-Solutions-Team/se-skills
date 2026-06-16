@@ -97,6 +97,22 @@ function setCrumbs(parts) {
     .join('<span class="sep">/</span>');
 }
 
+// Build the leading crumbs for an account: Team → <Owner Name> → Account.
+// The owner crumb links back to that member's accounts page. Falls back to
+// just Team → Account if the owner can't be resolved.
+async function accountCrumbs(account) {
+  const crumbsArr = [{ label: "Team", href: "#/" }];
+  try {
+    const meta = await api(`/api/accounts/${encodeURIComponent(account)}`);
+    if (meta.owner) {
+      const members = await api("/api/members").catch(() => []);
+      const m = members.find((x) => x.id === meta.owner);
+      crumbsArr.push({ label: m ? m.name : meta.owner, href: `#/member/${encodeURIComponent(meta.owner)}` });
+    }
+  } catch { /* no owner / offline — Team → Account is fine */ }
+  return crumbsArr;
+}
+
 // ---- Page: members --------------------------------------------------------
 async function pageMembers() {
   setCrumbs([{ label: "Team" }]);
@@ -375,11 +391,25 @@ async function pageMember(memberId, tab = "active") {
         drawer.innerHTML = `<div class="opp-drawer-loading">Loading opportunities…</div>`;
         const opps = await api(`/api/accounts/${encodeURIComponent(acct)}/opportunities`).catch(() => []);
         drawer.dataset.loaded = "1";
-        drawer.innerHTML = opps.length ? `<div class="opp-list">${opps.map((o) => oppRow(acct, o)).join("")}</div>`
+        drawer.innerHTML = opps.length ? `<div class="opp-list">${oppHeaderRow()}${opps.map((o) => oppRow(acct, o)).join("")}</div>`
           : `<div class="opp-drawer-loading muted">No opportunities found.</div>`;
       }
     };
   });
+}
+
+// Shared opportunity header row (used in the expand drawer and the account page)
+function oppHeaderRow() {
+  return `
+    <div class="opp-row opp-row-head no-link">
+      <span class="opp-row-name">Opportunity</span>
+      <span class="opp-row-col opp-row-stage">SFDC Stage</span>
+      <span class="opp-row-col opp-row-amount">Amount</span>
+      <span class="opp-row-col opp-row-type">Type</span>
+      <span class="opp-row-col opp-row-close">Close Date</span>
+      <span class="opp-row-col opp-row-status">Status</span>
+      <span class="opp-row-col opp-row-outputs">Outputs</span>
+    </div>`;
 }
 
 // Shared opportunity row (used in the expand drawer and the account page)
@@ -402,32 +432,21 @@ function oppRow(account, o) {
 
 // ---- Page: account → list of opportunities -------------------------------
 async function pageAccount(account) {
-  setCrumbs([{ label: "Team", href: "#/" }, { label: account }]);
+  setCrumbs([...(await accountCrumbs(account)), { label: account }]);
   view.innerHTML = `<div class="row"><div><h1>${esc(account)}</h1><p class="sub">Opportunities — pick one to view outputs &amp; run skills</p></div></div>
     <div class="empty" id="opps-loading">Loading opportunities from Salesforce…</div>`;
   const opps = await api(`/api/accounts/${encodeURIComponent(account)}/opportunities`).catch(() => []);
 
-  const oppHeader = `
-    <div class="opp-row opp-row-head no-link">
-      <span class="opp-row-name">Opportunity</span>
-      <span class="opp-row-col opp-row-stage">SFDC Stage</span>
-      <span class="opp-row-col opp-row-amount">Amount</span>
-      <span class="opp-row-col opp-row-type">Type</span>
-      <span class="opp-row-col opp-row-close">Close Date</span>
-      <span class="opp-row-col opp-row-status">Status</span>
-      <span class="opp-row-col opp-row-outputs">Outputs</span>
-    </div>`;
-
   view.innerHTML = `
     <div class="row"><div><h1>${esc(account)}</h1><p class="sub">Opportunities — pick one to view outputs &amp; run skills</p></div></div>
     <div class="opp-list">
-      ${opps.length ? oppHeader + opps.map((o) => oppRow(account, o)).join("") : `<div class="empty">No opportunities found.</div>`}
+      ${opps.length ? oppHeaderRow() + opps.map((o) => oppRow(account, o)).join("") : `<div class="empty">No opportunities found.</div>`}
     </div>`;
 }
 
 // ---- Page: opportunity (outputs + invoke) --------------------------------
 async function pageOpportunity(account, slug, oppName) {
-  setCrumbs([{ label: "Team", href: "#/" }, { label: account, href: `#/account/${encodeURIComponent(account)}` }, { label: oppName }]);
+  setCrumbs([...(await accountCrumbs(account)), { label: account, href: `#/account/${encodeURIComponent(account)}` }, { label: oppName }]);
   const outputs = await api(`/api/accounts/${encodeURIComponent(account)}/outputs?opp=${encodeURIComponent(slug)}`);
   view.innerHTML = `
     <div class="row">
@@ -435,7 +454,10 @@ async function pageOpportunity(account, slug, oppName) {
       <button class="primary" id="invoke-btn">⚡ Invoke Skill</button>
     </div>
     <div class="freebar">
-      <input id="opp-free" type="text" placeholder="Or type a free-text instruction (e.g. “run a deal assessment focused on the security objection”)…" />
+      <div class="freebar-input-wrap">
+        <input id="opp-free" type="text" autocomplete="off" placeholder="Type an instruction, or a skill name to run it (e.g. “deal assessment focused on the security objection”)…" />
+        <div id="free-suggest" class="free-suggest hidden"></div>
+      </div>
       <button class="primary small" id="opp-free-run">Run</button>
     </div>
     <div id="freebar-status" class="status hidden"></div>
@@ -471,13 +493,18 @@ async function pageOpportunity(account, slug, oppName) {
     freeBtn.disabled = false;
     const ok = job.ok;
     fStatus.className = ok ? "status ok" : "status err";
-    fStatus.textContent = ok
-      ? "Done. Output saved — reload this opportunity to see it in the list below."
+    // Some skills (e.g. next-move) are chat-only by design and write no file —
+    // so don't promise a saved file. Point the user to both possibilities and
+    // always show the run's output below.
+    fStatus.innerHTML = ok
+      ? `Done. The result is shown below. If the skill saved a file, reload this opportunity to see it in the outputs list. <button class="linklike" id="freebar-reload">Reload</button>`
       : "Run finished with an error. See output below.";
     if (job.stdout || job.stderr) {
       fOutput.className = "output md-body";
       fOutput.innerHTML = mdToHtml(job.stdout || "") + (job.stderr ? `<hr/><pre class="md-pre"><code>[stderr]\n${esc(job.stderr)}</code></pre>` : "");
     }
+    const rl = document.getElementById("freebar-reload");
+    if (rl) rl.onclick = () => pageOpportunity(account, slug, oppName);
   };
 
   const watch = (jobId) => pollJob(jobId, (job) => {
@@ -486,20 +513,35 @@ async function pageOpportunity(account, slug, oppName) {
   });
 
   // Recover a run started earlier (e.g. you backed out and came back).
+  // If one is still running, re-attach. Otherwise surface the most recent
+  // finished run's output so an ephemeral/chat-only result (e.g. next-move,
+  // which by design writes no file) isn't lost when you navigate away.
   const existing = await api(`/api/jobs?account=${encodeURIComponent(account)}&opp_slug=${encodeURIComponent(slug)}`).catch(() => []);
   const running = existing.find((j) => j.status === "running");
-  if (running) { renderJob(running); watch(running.job_id); }
+  if (running) {
+    renderJob(running); watch(running.job_id);
+  } else if (existing.length) {
+    const last = existing[existing.length - 1];
+    const full = await api(`/api/jobs/${encodeURIComponent(last.job_id)}`).catch(() => null);
+    if (full && full.status !== "running") renderJob(full);
+  }
 
-  const runFree = async () => {
+  // Start a run. `skill` = run that named skill (typed text becomes context);
+  // otherwise run the typed text as a freeform instruction.
+  const startRun = async (skill) => {
     const free = freeInput.value.trim();
-    if (!free) return;
+    if (!skill && !free) return;
+    suggestBox.classList.add("hidden");
     fStatus.className = "status running";
     fStatus.innerHTML = `<span class="spinner"></span>Starting…`;
     freeBtn.disabled = true;
+    const payload = skill
+      ? { account, opportunity: oppName, opp_slug: slug, skill, extra: free || null }
+      : { account, opportunity: oppName, opp_slug: slug, freeform: free };
     try {
       const res = await api("/api/invoke", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ account, opportunity: oppName, opp_slug: slug, freeform: free }),
+        body: JSON.stringify(payload),
       });
       await watch(res.job_id);
     } catch (e) {
@@ -507,8 +549,54 @@ async function pageOpportunity(account, slug, oppName) {
       freeBtn.disabled = false;
     }
   };
-  freeBtn.onclick = runFree;
-  freeInput.onkeydown = (e) => { if (e.key === "Enter") runFree(); };
+
+  // ── Suggestive skill dropdown ─────────────────────────────────────────
+  // As you type, surface skills whose label / id / triggers match a word.
+  const suggestBox = document.getElementById("free-suggest");
+  const matchSkills = (q) => {
+    q = q.toLowerCase();
+    const words = q.split(/\s+/).filter((w) => w.length >= 3);
+    if (!words.length) return [];
+    return SKILLS.map((s) => {
+      const help = SKILLS_HELP[s.id] || {};
+      const hay = [s.id, s.label, help.description, ...(help.triggers || [])].join(" ").toLowerCase();
+      // score = how many typed words appear in this skill's text
+      let score = 0;
+      for (const w of words) if (hay.includes(w)) score += (s.label.toLowerCase().includes(w) || s.id.includes(w)) ? 2 : 1;
+      return { s, score };
+    }).filter((x) => x.score > 0).sort((a, b) => b.score - a.score).slice(0, 5).map((x) => x.s);
+  };
+  let sugIndex = -1, sugList = [];
+  const renderSuggest = () => {
+    sugList = matchSkills(freeInput.value.trim());
+    if (!sugList.length) { suggestBox.classList.add("hidden"); sugIndex = -1; return; }
+    suggestBox.innerHTML = sugList.map((s, i) => {
+      const h = SKILLS_HELP[s.id] || {};
+      return `<div class="sug-item${i === sugIndex ? " active" : ""}" data-skill="${esc(s.id)}">
+        <span class="sug-label">⚡ ${esc(s.label)}</span>
+        <span class="sug-blurb">${esc((h.description || s.blurb || "").slice(0, 90))}</span>
+      </div>`;
+    }).join("");
+    suggestBox.classList.remove("hidden");
+    suggestBox.querySelectorAll(".sug-item").forEach((el) => {
+      el.onmousedown = (e) => { e.preventDefault(); startRun(el.dataset.skill); };
+    });
+  };
+  freeInput.oninput = () => { sugIndex = -1; renderSuggest(); };
+  freeInput.onblur = () => setTimeout(() => suggestBox.classList.add("hidden"), 120);
+  freeInput.onfocus = () => { if (freeInput.value.trim()) renderSuggest(); };
+
+  freeBtn.onclick = () => startRun();
+  freeInput.onkeydown = (e) => {
+    const open = !suggestBox.classList.contains("hidden") && sugList.length;
+    if (e.key === "ArrowDown" && open) { e.preventDefault(); sugIndex = (sugIndex + 1) % sugList.length; renderSuggest(); }
+    else if (e.key === "ArrowUp" && open) { e.preventDefault(); sugIndex = (sugIndex - 1 + sugList.length) % sugList.length; renderSuggest(); }
+    else if (e.key === "Escape") { suggestBox.classList.add("hidden"); sugIndex = -1; }
+    else if (e.key === "Enter") {
+      if (open && sugIndex >= 0) startRun(sugList[sugIndex].id);  // chose a suggestion
+      else startRun();                                            // run as freeform
+    }
+  };
 }
 
 async function openOutput(path, title) {

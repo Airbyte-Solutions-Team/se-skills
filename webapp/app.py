@@ -439,6 +439,17 @@ def api_create_account(body: CreateAccount):
     return {"name": folder, "created": created, "owner": body.owner}
 
 
+@app.get("/api/accounts/{account}")
+def api_account(account: str):
+    """Lightweight account meta — used by the frontend to build breadcrumbs
+    (Team → owner → account → …)."""
+    account = _safe(account)
+    acc_dir = CUSTOMERS_DIR / account
+    if not acc_dir.exists():
+        raise HTTPException(404, "Unknown account")
+    return {"name": account, "owner": _read_owner(acc_dir)}
+
+
 @app.get("/api/accounts/{account}/outputs")
 def api_outputs(account: str, opp: str | None = None):
     account = _safe(account)
