@@ -115,18 +115,11 @@ async function pageMember(memberId, tab = "active") {
     a.owner === memberId ? '<span class="badge owned">yours</span>'
       : (a.owner ? `<span class="badge">${esc(a.owner)}</span>` : '<span class="badge unowned" title="No owner recorded — created before ownership tracking. Use ⋯ → Claim to take ownership.">unowned</span>');
 
-  // Account row (list layout): name + aligned metadata columns + ⋯ menu.
+  // Account row (list layout): ⋮ menu on the LEFT, then name + aligned columns.
   const acctRow = (a, isArchived) => `
     <div class="acct-row${isArchived ? " is-archived" : ""}" data-acct="${esc(a.name)}">
-      <a href="#/account/${encodeURIComponent(a.name)}" class="acct-row-main">
-        <span class="acct-name">${esc(a.name)}</span>
-        <span class="acct-col col-sfdc" data-sfdc="${esc(a.name)}"><span class="sfdc-val muted">…</span></span>
-        <span class="acct-col col-updated">${a.last_updated ? esc(a.last_updated) : '<span class="muted">—</span>'}</span>
-        <span class="acct-col col-outputs">${a.output_count} <span class="muted">out</span></span>
-        <span class="acct-col col-owner">${ownerLabel(a)}${isArchived ? ' <span class="badge">archived</span>' : ""}</span>
-      </a>
       <div class="acct-row-menu">
-        <button class="kebab" aria-label="Account actions">⋯</button>
+        <button class="kebab" aria-label="Account actions">⋮</button>
         <div class="dropdown-menu hidden">
           ${isArchived
             ? `<button class="menu-item unarchive-btn" data-acct="${esc(a.name)}">Unarchive</button>`
@@ -135,25 +128,35 @@ async function pageMember(memberId, tab = "active") {
           <button class="menu-item danger delete-btn" data-acct="${esc(a.name)}">Delete…</button>
         </div>
       </div>
+      <a href="#/account/${encodeURIComponent(a.name)}" class="acct-row-main">
+        <span class="acct-name">${esc(a.name)}</span>
+        <span class="acct-col col-sfdc" data-sfdc="${esc(a.name)}"><span class="sfdc-val muted">…</span></span>
+        <span class="acct-col col-updated">${a.last_updated ? esc(a.last_updated) : '<span class="muted">—</span>'}</span>
+        <span class="acct-col col-outputs">${a.output_count}</span>
+        <span class="acct-col col-owner">${ownerLabel(a)}${isArchived ? ' <span class="badge">archived</span>' : ""}</span>
+      </a>
     </div>`;
 
   const trashRow = (t) => `
     <div class="acct-row trash-row">
+      <div class="acct-row-menu"><button class="ghost small restore-btn" data-tid="${esc(t.trash_id)}">Restore</button></div>
       <div class="acct-row-main no-link">
         <span class="acct-name">${esc(t.name)}</span>
+        <span class="acct-col col-sfdc"></span>
         <span class="acct-col col-updated"><span class="muted">deleted</span> ${esc(t.deleted_at)}</span>
-        <span class="acct-col"></span><span class="acct-col"></span>
+        <span class="acct-col col-outputs"></span>
+        <span class="acct-col col-owner"></span>
       </div>
-      <div class="acct-row-menu"><button class="ghost small restore-btn" data-tid="${esc(t.trash_id)}">Restore</button></div>
     </div>`;
 
   const showing = tab === "trash" ? trash : (tab === "archived" ? archived : active);
   const renderRow = tab === "trash" ? trashRow : (a) => acctRow(a, tab === "archived");
   const emptyMsg = { active: "No active accounts. Create one to get started.", archived: "No archived accounts.", trash: "Trash is empty." }[tab];
 
-  // Column header (only for active/archived list)
+  // Column header (only for active/archived list) — spacer cell matches the menu width
   const listHeader = tab === "trash" ? "" : `
     <div class="acct-row acct-head">
+      <div class="acct-row-menu"></div>
       <div class="acct-row-main no-link">
         <span class="acct-name">Account</span>
         <span class="acct-col col-sfdc">SFDC stage / amount</span>
@@ -161,7 +164,6 @@ async function pageMember(memberId, tab = "active") {
         <span class="acct-col col-outputs">Outputs</span>
         <span class="acct-col col-owner">Owner</span>
       </div>
-      <div class="acct-row-menu"></div>
     </div>`;
 
   view.innerHTML = `
@@ -246,12 +248,13 @@ async function pageMember(memberId, tab = "active") {
     api("/api/sfdc/stage-amount", { method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ accounts: showing.map((a) => a.name) }) })
       .then((map) => {
-        view.querySelectorAll(".stat[data-sfdc]").forEach((el) => {
+        view.querySelectorAll(".col-sfdc[data-sfdc]").forEach((el) => {
           const info = map[el.dataset.sfdc];
           const val = el.querySelector(".sfdc-val");
           if (info && info.stage) {
             const amt = info.amount ? ` · $${Number(info.amount).toLocaleString()}` : "";
             val.textContent = info.stage + amt;
+            val.classList.remove("muted");
           } else { val.textContent = "—"; }
         });
       })

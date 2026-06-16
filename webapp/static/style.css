@@ -52,12 +52,12 @@ header { border-bottom: 1px solid var(--line); background: var(--panel); positio
 }
 .acct-row.is-archived { opacity: .65; }
 
-/* right-side ⋯ menu cell */
-.acct-row-menu { position: relative; padding: 0 12px; flex: 0 0 auto; }
-.kebab { background: transparent; border: 1px solid transparent; color: var(--muted); border-radius: 6px; padding: 2px 10px; font-size: 18px; line-height: 1; cursor: pointer; }
+/* left ⋮ menu cell — fixed width so the header spacer + rows align */
+.acct-row-menu { position: relative; flex: 0 0 44px; display: flex; align-items: center; justify-content: center; }
+.kebab { background: transparent; border: 1px solid transparent; color: var(--muted); border-radius: 6px; padding: 4px 8px; font-size: 18px; line-height: 1; cursor: pointer; }
 .kebab:hover { color: var(--text); border-color: var(--line); background: var(--panel); }
 .acct-row-menu .dropdown-menu {
-  position: absolute; right: 12px; top: calc(100% - 2px);
+  position: absolute; left: 8px; top: calc(100% - 2px);
   /* Explicit solid off-color — same in both themes, fully opaque, clearly a menu */
   background: #2b3242;
   border: 1px solid #3a4255; border-radius: 10px; padding: 6px;
@@ -74,7 +74,6 @@ header { border-bottom: 1px solid var(--line); background: var(--panel); positio
 
 .badge.unowned { color: var(--warn); border-color: var(--warn); cursor: help; }
 .restore-btn { white-space: nowrap; }
-.trash-row .acct-row-main { grid-template-columns: minmax(180px, 1fr) 1fr; }
 
 /* ── help page (clean, structured) ────────────────────────────────────── */
 
