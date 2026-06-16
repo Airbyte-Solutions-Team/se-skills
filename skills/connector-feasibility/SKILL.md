@@ -1,20 +1,28 @@
 ---
 name: connector-feasibility
-description: Checks a customer's source/destination list against the Airbyte connector registry. Flags missing connectors, identifies candidates for custom builds (manifest-only vs full CDK), and surfaces known issues. Use when the user says "connector feasibility", "check connectors", "do we have connectors for X", "feasibility check", or provides a list of sources/destinations during tech qual.
+description: Validates whether Airbyte connectors actually solve a customer's specific use case — not just whether the connector exists. Reconstructs the use case and requirements from transcripts/SFDC/qual docs, validates each needed connector against those requirements (objects, sync modes, auth, volume, latency), surfaces constraints and edge cases given the customer's context, and generates per-connector questions the SE should ask the customer to fully confirm fit. Use when the user says "connector feasibility", "check connectors", "do we have connectors for X", "feasibility check", or provides a list of sources/destinations during tech qual.
 ---
 
 # Connector Feasibility Skill
 
-You are helping a Solutions Engineer at Airbyte assess whether a customer's required data sources and destinations are covered by Airbyte's connector catalog. This is a critical step in technical qualification.
+You are helping a Solutions Engineer at Airbyte determine whether Airbyte's connectors **actually solve this customer's specific use case** — not merely whether a connector with the right name exists. A connector existing is necessary but not sufficient: it has to support the customer's *objects, sync modes, auth model, volume, and latency*, and there are usually constraints and edge cases that only matter given the customer's particular context.
+
+The most valuable thing this skill does is **surface what the SE still needs to ask the customer** to fully confirm fit — the requirements a connector eval depends on that the customer hasn't yet specified.
 
 ## Input
 
-The user will provide either:
-- A list of sources and destinations (e.g., "Salesforce, NetSuite, internal Postgres → Snowflake")
-- A customer name (look in `01-customers/<Customer>/` and transcripts for mentioned systems)
-- A pasted list from a customer email or RFP
+The user provides a customer name (preferred — so the skill can reconstruct the full use case) or an explicit list of systems.
 
-If the input is ambiguous, ask which connectors are sources vs. destinations.
+## Step 1 — Reconstruct the use case + requirements
+
+Before checking any connector, build a picture of what the customer is actually trying to do. Pull from:
+- **Transcripts** (`01-customers/_transcripts/<Customer>-*`) — what systems, what data, what they said about volume/latency/history
+- **Salesforce** (per `_se-playbook.md` Salesforce Enrichment): `Most_important_sources__c`, `Most_Important_Destinations__c`, `No_of_Databases__c`, `No_of_API_Sources__c`, `Monthly_Data_Volume__c`, `Refresh_Frequency__c`, `Use_case_description__c`, `Required_features_functionality__c`
+- **Prior qual docs** (`tech-qual-*.md`, `biz-qual-*.md`) in the customer's outputs folder
+
+Produce a short **Use Case Summary** at the top: what data flows from where to where, why, at what volume/cadence, with what history needs. If the use case is thin (little said), note that — it directly drives the "questions to ask" section.
+
+If only a bare system list is given with no customer context, say so and lean heavily on Step 3 (questions to ask) since you can't validate against requirements you don't have.
 
 ## Output mode
 
@@ -22,18 +30,41 @@ Default = full feasibility doc (coverage summary, per-connector table, gap analy
 
 If user signals brief mode (`--brief`, `quick coverage check`, `coverage summary`): produce just Coverage Summary table (counts by status) + bullet list of gaps with one-line build recommendations. Skip per-connector tables, reframe talk track, TCO callout. See `_se-playbook.md` "Output Mode" for the unified brief-mode rule.
 
-## How to Check
+## Step 2 — Validate each connector AGAINST the use case (not just existence)
 
-For each system in the list:
+For each system the customer needs, go through this chain. "The connector exists" is step 2a, not the answer.
 
-1. **Search the Airbyte registry** — use the `mcp__airbyte-mcp__list_connectors` tool to find matches. Returns connector existence and basic metadata.
-2. **Get connector details for capability check** — for matched connectors, use `mcp__airbyte-mcp__get_connector_info` to verify auth methods, supported streams/objects, sync modes. "Salesforce exists" ≠ "Salesforce supports the customer's exact use case."
-3. **For close-but-not-exact matches** (e.g., customer says "Postgres") — confirm flavor: Postgres CDC, Postgres standard source, etc.
-4. **For missing connectors** — assess buildability:
-   - Use `shared-airbyte-skills:connector-type-identification` to determine the right build path (manifest-only YAML vs. low-code with Python vs. full Python CDK vs. Java/Kotlin CDK) — don't guess
-   - Check the API documentation publicly available
-   - Use `discovering-connectors` skill for capability framing
-5. **For health of known connectors** — use `mcp__airbyte-ops-mcp__query_prod_failed_sync_attempts_for_connector` or `shared-airbyte-skills:connector-health-check` to surface known reliability issues. Flag any connector that's currently in rollout or has elevated failure rates.
+1. **Exists?** — `mcp__airbyte-mcp__list_connectors` to find matches. For "Postgres"-type names, confirm the flavor (Postgres CDC vs. standard source).
+2. **Capability fit** — `mcp__airbyte-mcp__get_connector_info` to pull the connector's actual auth methods, supported streams/objects, and sync modes. Then **compare against what the customer needs:**
+   - **Objects/streams:** do they need a specific object/table the connector doesn't expose? (e.g., a custom Salesforce object, a NetSuite saved search)
+   - **Sync mode:** do they need incremental/CDC on a stream that only supports full refresh? This is a frequent silent dealbreaker.
+   - **Auth model:** does the connector's auth match what the customer can provide? (OAuth app approval, IP allowlisting, service account, etc.)
+   - **Latency:** their `Refresh_Frequency__c` / stated cadence vs. what the connector + tier supports (sub-hourly is Pro-only).
+   - **Volume:** their `Monthly_Data_Volume__c` vs. realistic throughput; flag rate-limit risk on API sources.
+3. **Constraints & edge cases given THEIR context** — surface the gotchas that bite *this* use case specifically, e.g.:
+   - API rate limits at their volume / number of instances (multi-tenant Shopify, per-account API quotas)
+   - CDC prerequisites not yet enabled (Oracle LogMiner, MySQL binlog, Postgres WAL)
+   - Nested/unstructured data or schema drift on the streams they care about
+   - Historical backfill limits (API only returns N months; they need 3 years)
+   - Network reachability (on-prem DB, NAS, PrivateLink requirement)
+   - PII / compliance on specific streams that affects deployment model
+4. **Health** — `mcp__airbyte-ops-mcp__query_prod_failed_sync_attempts_for_connector` or `shared-airbyte-skills:connector-health-check` for reliability/rollout issues on the connectors they need.
+5. **If missing** — assess buildability via `shared-airbyte-skills:connector-type-identification` (build path) + public API docs + `discovering-connectors`.
+
+## Step 3 — Surface what the SE still needs to ask
+
+This is the highest-value output. For **each connector**, compare what a confident feasibility call *requires knowing* against what the customer has *actually said* (from Step 1). Every gap becomes a specific question for the SE to ask.
+
+The per-connector "needs to know" checklist:
+- Which exact **objects/streams/tables**? (named, not "their data")
+- **Sync mode** needed — full refresh, incremental, or CDC?
+- **Auth** they can provide — and any approval/security process around it?
+- **Volume** (rows/records) and **frequency** (how fresh)?
+- **Historical backfill** depth required?
+- **Network access** — cloud-reachable, or on-prem/VPN/PrivateLink?
+- Any **transformation/filtering** expected at extract time?
+
+Only surface questions for items **not already answered** in the transcripts/SFDC. If the customer already said "we need Salesforce Opportunity + Account, incremental, OAuth, ~2M rows, hourly" — don't re-ask; mark it validated. If they said "we need Salesforce" and nothing else — surface all of the above as open questions. Be specific: "Ask which NetSuite objects — our connector supports SuiteTalk REST records but not all SuiteAnalytics datasets."
 
 ## Output Format
 
@@ -41,28 +72,33 @@ For each system in the list:
 
 ## Connector Feasibility: [Customer Name]
 **Date:** [today's date]
-**Source of list:** [transcript / email / user-provided]
+**Sources read:** [transcripts (with dates) / SFDC / qual docs]
+
+### Use Case Summary
+[2-4 sentences reconstructed from Step 1: what data, from where to where, why, at what volume/cadence, with what history. State explicitly if the use case is thin.]
 
 ---
 
-### Coverage Summary
-| Status | Count |
-|--------|-------|
-| Available (certified) | X |
-| Available (community/alpha) | X |
-| Missing — custom build needed | X |
-| Unclear — needs clarification | X |
+### Fit Verdict
+For each needed connector, the verdict is not just exists/missing — it's **does it solve their use case**:
+
+| System | Connector | Exists? | Use-case fit | Confidence | Top risk / gap |
+|--------|-----------|---------|--------------|------------|----------------|
+| Salesforce | source-salesforce | ✅ Certified | 🟢 Validated / 🟡 Likely, needs confirmation / 🔴 Gap | High / Med / Low | [e.g., need to confirm incremental on custom objects] |
+| Oracle (CDC) | source-oracle | ✅ Pro | 🟡 Needs confirmation | Med | LogMiner not confirmed enabled |
+| [System] | — | ❌ Missing | 🔴 Build needed | — | [build path + effort] |
+
+**Confidence** reflects how much is *validated* vs. *assumed* — Low confidence means the "Questions to ask" section below has open items for this connector.
+
+For each available connector, flag known reliability issues (sync failures, rollout in progress) inline.
 
 ---
 
-### Available Connectors
-
-| System | Connector | Type | Cert Level | Notes |
-|--------|-----------|------|------------|-------|
-| Salesforce | source-salesforce | Source | Certified | OAuth, full incremental support |
-| Snowflake | destination-snowflake | Destination | Certified | Recommended for analytics workloads |
-
-For each: flag if there are known issues (sync failures, slow performance, rollout in progress).
+### Constraints & Edge Cases (given their context)
+*The gotchas that matter for THIS use case — not generic.*
+- [e.g., "14 Shopify instances → per-store API rate limits; parallelism + scheduling matter for the 15-min target"]
+- [e.g., "Oracle CDC requires LogMiner enabled — not confirmed; without it, only full refresh / cursor available"]
+- [e.g., "NetSuite historical backfill: SuiteTalk REST returns limited history; confirm how far back they need"]
 
 ---
 
@@ -89,15 +125,25 @@ For each missing connector, provide:
 
 ---
 
-### Clarifications Needed
-- [Any ambiguity in the customer's list — e.g., "Postgres" could be self-hosted or RDS, source or destination]
+### ⭐ Questions to Ask the Customer (to fully validate fit)
+*The highest-value output. Per connector, only the items NOT yet answered in the transcripts/SFDC. These are what the SE should raise to confirm the connector actually solves the use case. Be specific and explain why each matters.*
+
+**[Connector / System]**
+- [ ] [Specific question] — *why it matters: [the connector capability or constraint it resolves]*
+  - e.g., "Which Salesforce objects do you need synced — standard only, or custom objects too? *Our connector covers standard + custom, but custom objects need API access enabled on their side.*"
+  - e.g., "Do you need change-data-capture (every change) on Orders, or is an hourly snapshot enough? *Determines whether we use CDC vs. incremental, which changes setup + cost.*"
+
+**[Connector / System]**
+- [ ] [Specific question] — *why it matters: …*
+
+*If a connector is fully validated (all needs-to-know answered), say "✓ Fully validated — no open questions" rather than inventing questions.*
 
 ---
 
 ### Recommended Next Steps
-1. [Confirm ambiguous items with customer]
-2. [Decide on custom build path for gaps — internal eng vs. partner vs. customer-led]
-3. [Schedule POC scoping if coverage is sufficient]
+1. [Ask the open questions above — ideally before POC scoping]
+2. [Decide on custom build path for any gaps — internal eng vs. partner vs. customer-led]
+3. [Schedule POC scoping if coverage + validation are sufficient]
 
 ---
 
@@ -184,6 +230,8 @@ If a connector is only available on Cloud (or only on Self-Managed), flag it. Th
 ---
 
 ## Changelog
+
+- **2026-06-16** — Reworked from a catalog lookup into a use-case feasibility assessment: reconstructs the use case + requirements from transcripts/SFDC/qual docs, validates each connector against the customer's actual objects/sync-modes/auth/volume/latency (not just existence), surfaces context-specific constraints & edge cases, and generates per-connector "Questions to Ask the Customer" from requirement gaps so the SE knows what to confirm. Fit Verdict table replaces plain coverage list.
 
 - **2026-05-28** — Salesforce enrichment added (reads from sf-mcp via mcp__salesforce__run_soql_query). Pulls AE-view MEDDPICC / technical / forecast fields per the playbook field map; assertive SFDC-vs-reality mismatch flagging; graceful degradation if SFDC disabled. Org alias + query dir from .se-config.yaml.
 
