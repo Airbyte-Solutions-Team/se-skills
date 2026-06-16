@@ -149,6 +149,19 @@ def member_by_id(member_id: str) -> dict | None:
     return next((m for m in load_team() if m.get("id") == member_id), None)
 
 
+def _member_id_from_name(name: str, existing_ids: set[str]) -> str:
+    """Stable, unique id from a display name (e.g. 'Ryan Waskewich' -> 'ryan-waskewich')."""
+    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "member"
+    mid, n = base, 2
+    while mid in existing_ids:
+        mid = f"{base}-{n}"; n += 1
+    return mid
+
+
+def save_team(members: list[dict]) -> None:
+    TEAM_FILE.write_text(yaml.safe_dump({"members": members}, sort_keys=False, allow_unicode=True))
+
+
 # ---------------------------------------------------------------------------
 # Accounts & outputs — read straight from the filesystem the skills produce
 # ---------------------------------------------------------------------------
@@ -366,6 +379,26 @@ app = FastAPI(title="SE Skills — Local Hub")
 @app.get("/api/members")
 def api_members():
     return load_team()
+
+
+class CreateMember(BaseModel):
+    name: str
+    role: str | None = None
+    email: str | None = None
+
+
+@app.post("/api/members")
+def api_create_member(body: CreateMember):
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(400, "Name is required")
+    members = load_team()
+    existing = {m.get("id") for m in members}
+    mid = _member_id_from_name(name, existing)
+    member = {"id": mid, "name": name, "email": (body.email or "").strip(), "role": (body.role or "Solutions Engineer").strip()}
+    members.append(member)
+    save_team(members)
+    return member
 
 
 @app.get("/api/members/{member_id}/accounts")

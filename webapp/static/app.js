@@ -89,8 +89,17 @@ async function pageMembers() {
   setCrumbs([{ label: "Team" }]);
   const members = await api("/api/members");
   view.innerHTML = `
-    <h1>Solutions Team</h1>
-    <p class="sub">Pick a team member to see their accounts.</p>
+    <div class="row">
+      <div><h1>Solutions Team</h1><p class="sub">Pick a team member to see their accounts.</p></div>
+      <button class="primary small" id="add-member-btn">+ Add Team Member</button>
+    </div>
+    <div id="add-member-form" class="add-member-form hidden">
+      <input id="m-name" type="text" placeholder="Full name *" />
+      <input id="m-role" type="text" placeholder="Title (e.g. Solutions Engineer)" />
+      <input id="m-email" type="text" placeholder="Email" />
+      <button class="primary small" id="m-save">Add</button>
+      <button class="ghost small" id="m-cancel">Cancel</button>
+    </div>
     <div class="grid">
       ${members.map((m) => `
         <a class="card" href="#/member/${encodeURIComponent(m.id)}">
@@ -98,6 +107,26 @@ async function pageMembers() {
           <div class="meta">${esc(m.role || "")}${m.email ? " · " + esc(m.email) : ""}</div>
         </a>`).join("")}
     </div>`;
+
+  const form = document.getElementById("add-member-form");
+  document.getElementById("add-member-btn").onclick = () => {
+    form.classList.toggle("hidden");
+    if (!form.classList.contains("hidden")) document.getElementById("m-name").focus();
+  };
+  document.getElementById("m-cancel").onclick = () => form.classList.add("hidden");
+  document.getElementById("m-save").onclick = async () => {
+    const name = document.getElementById("m-name").value.trim();
+    if (!name) { alert("Name is required"); return; }
+    try {
+      await api("/api/members", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name,
+          role: document.getElementById("m-role").value.trim() || null,
+          email: document.getElementById("m-email").value.trim() || null,
+        }) });
+      pageMembers(); // refresh
+    } catch (e) { alert("Could not add member: " + e.message); }
+  };
 }
 
 // ---- Page: member's accounts ---------------------------------------------
@@ -171,7 +200,9 @@ async function pageMember(memberId, tab = "active") {
         <span class="acct-col col-outputs">${a.output_count}</span>
         <span class="acct-col col-owner">${a.owner === memberId ? '<span class="badge owned">you</span>' : `<span class="badge">${esc(a.owner || "—")}</span>`}${isArchived ? ' <span class="badge">archived</span>' : ""}</span>
       </a>
-    </div>`;
+      <button class="acct-expand" data-acct="${esc(a.name)}" aria-label="Show opportunities" title="Show opportunities">▸</button>
+    </div>
+    <div class="opp-drawer hidden" data-drawer="${esc(a.name)}"></div>`;
 
   const trashRow = (t) => `
     <div class="acct-row trash-row">
@@ -194,11 +225,12 @@ async function pageMember(memberId, tab = "active") {
         <span class="acct-name sortable" data-sort="name">Account${sortArrow("name")}</span>
         ${hCell("stage", "SFDC Stage", "col-stage")}
         ${hCell("amount", "Amount", "col-amount")}
-        ${hCell("ae", "AE", "col-ae")}
+        ${hCell("ae", "Account Executive", "col-ae")}
         ${hCell("updated", "Updated", "col-updated")}
         ${hCell("outputs", "Outputs", "col-outputs")}
         ${hCell("owner", "Owner", "col-owner")}
       </div>
+      <span class="acct-expand-spacer"></span>
     </div>`;
 
   view.innerHTML = `
@@ -315,6 +347,44 @@ async function pageMember(memberId, tab = "active") {
     try { await api(`/api/trash/${encodeURIComponent(b.dataset.tid)}/restore`, { method: "POST" }); pageMember(memberId, "trash"); }
     catch (err) { alert("Restore failed: " + err.message); }
   });
+
+  // ── Expand row → inline opportunities (most recent → least recent) ──────
+  view.querySelectorAll(".acct-expand").forEach((btn) => {
+    btn.onclick = async (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const acct = btn.dataset.acct;
+      const drawer = view.querySelector(`.opp-drawer[data-drawer="${CSS.escape(acct)}"]`);
+      const isOpen = !drawer.classList.contains("hidden");
+      if (isOpen) { drawer.classList.add("hidden"); btn.classList.remove("open"); return; }
+      btn.classList.add("open");
+      drawer.classList.remove("hidden");
+      if (!drawer.dataset.loaded) {
+        drawer.innerHTML = `<div class="opp-drawer-loading">Loading opportunities…</div>`;
+        const opps = await api(`/api/accounts/${encodeURIComponent(acct)}/opportunities`).catch(() => []);
+        drawer.dataset.loaded = "1";
+        drawer.innerHTML = opps.length ? `<div class="opp-list">${opps.map((o) => oppRow(acct, o)).join("")}</div>`
+          : `<div class="opp-drawer-loading muted">No opportunities found.</div>`;
+      }
+    };
+  });
+}
+
+// Shared opportunity row (used in the expand drawer and the account page)
+function oppRow(account, o) {
+  const fmtAmt = (n) => (n || n === 0) ? "$" + Number(n).toLocaleString() : '<span class="muted">—</span>';
+  const stage = o.stage_num ? esc(o.stage_num) : (o.stage ? esc(o.stage) : '<span class="muted">—</span>');
+  const statusBadge = o.is_closed === false ? '<span class="badge owned">open</span>'
+    : (o.is_closed ? '<span class="badge">closed</span>' : "");
+  return `
+    <a class="opp-row" href="#/opp/${encodeURIComponent(account)}/${encodeURIComponent(o.slug)}/${encodeURIComponent(o.name)}">
+      <span class="opp-row-name">${esc(o.name)}</span>
+      <span class="opp-row-col opp-row-stage">${stage}</span>
+      <span class="opp-row-col opp-row-amount">${fmtAmt(o.amount)}</span>
+      <span class="opp-row-col opp-row-type">${o.type ? esc(o.type) : '<span class="muted">—</span>'}</span>
+      <span class="opp-row-col opp-row-close">${o.close_date ? esc(o.close_date) : '<span class="muted">—</span>'}</span>
+      <span class="opp-row-col opp-row-status">${statusBadge}</span>
+      <span class="opp-row-col opp-row-outputs">${o.output_count}</span>
+    </a>`;
 }
 
 // ---- Page: account → list of opportunities -------------------------------
@@ -324,26 +394,21 @@ async function pageAccount(account) {
     <div class="empty" id="opps-loading">Loading opportunities from Salesforce…</div>`;
   const opps = await api(`/api/accounts/${encodeURIComponent(account)}/opportunities`).catch(() => []);
 
-  const fmtAmt = (n) => (n || n === 0) ? "$" + Number(n).toLocaleString() : "—";
-  const card = (o) => `
-    <a class="card opp-card" href="#/opp/${encodeURIComponent(account)}/${encodeURIComponent(o.slug)}/${encodeURIComponent(o.name)}">
-      <h3>${esc(o.name)}</h3>
-      <div class="opp-meta">
-        <span>${o.stage_num ? esc(o.stage_num) : (o.stage ? esc(o.stage) : '<span class="muted">no stage</span>')}</span>
-        <span class="opp-amt">${fmtAmt(o.amount)}</span>
-      </div>
-      <div class="opp-sub">
-        ${o.type ? `<span class="badge">${esc(o.type)}</span>` : ""}
-        ${o.close_date ? `<span class="muted">close ${esc(o.close_date)}</span>` : ""}
-        ${o.is_closed === false ? '<span class="badge owned">open</span>' : (o.is_closed ? '<span class="badge">closed</span>' : "")}
-        <span class="muted">${o.output_count} output${o.output_count === 1 ? "" : "s"}</span>
-      </div>
-    </a>`;
+  const oppHeader = `
+    <div class="opp-row opp-row-head no-link">
+      <span class="opp-row-name">Opportunity</span>
+      <span class="opp-row-col opp-row-stage">SFDC Stage</span>
+      <span class="opp-row-col opp-row-amount">Amount</span>
+      <span class="opp-row-col opp-row-type">Type</span>
+      <span class="opp-row-col opp-row-close">Close Date</span>
+      <span class="opp-row-col opp-row-status">Status</span>
+      <span class="opp-row-col opp-row-outputs">Outputs</span>
+    </div>`;
 
   view.innerHTML = `
     <div class="row"><div><h1>${esc(account)}</h1><p class="sub">Opportunities — pick one to view outputs &amp; run skills</p></div></div>
-    <div class="grid opp-grid">
-      ${opps.length ? opps.map(card).join("") : `<div class="empty">No opportunities found.</div>`}
+    <div class="opp-list">
+      ${opps.length ? oppHeader + opps.map((o) => oppRow(account, o)).join("") : `<div class="empty">No opportunities found.</div>`}
     </div>`;
 }
 

@@ -35,10 +35,19 @@ header { border-bottom: 1px solid var(--line); background: var(--panel); positio
    Account | Stage | Amount | AE | Updated | Outputs | Owner */
 .acct-row-main {
   flex: 1; display: grid;
-  grid-template-columns: minmax(150px, 1.4fr) 150px 100px minmax(110px, 1fr) 100px 80px 110px;
+  grid-template-columns: minmax(150px, 1.4fr) 150px 120px minmax(110px, 1fr) 100px 80px 110px;
   align-items: center; gap: 14px;
   padding: 14px 18px; text-decoration: none; color: inherit; min-width: 0;
 }
+
+/* expand chevron on the far right — reveals the opportunity drawer */
+.acct-expand { flex: 0 0 40px; background: transparent; border: none; color: var(--muted); font-size: 15px; cursor: pointer; padding: 8px; border-radius: 6px; transition: transform .15s ease, color .15s ease; }
+.acct-expand:hover { color: var(--text); background: var(--panel2); }
+.acct-expand.open { transform: rotate(90deg); color: var(--accent); }
+.acct-expand-spacer { flex: 0 0 40px; }
+.opp-drawer { background: var(--bg); border-bottom: 1px solid var(--line); padding: 6px 18px 12px 60px; }
+.opp-drawer.hidden { display: none; }
+.opp-drawer-loading { padding: 12px 0; font-size: 13px; color: var(--muted); }
 .acct-row-main.no-link { cursor: default; }
 .acct-name { font-weight: 600; font-size: 15px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .acct-col { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -57,6 +66,8 @@ header { border-bottom: 1px solid var(--line); background: var(--panel); positio
 .acct-head .acct-name, .acct-head .acct-col {
   font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: var(--muted);
 }
+/* let header labels wrap instead of truncating (e.g. "Account Executive") */
+.acct-head .acct-col { white-space: normal; overflow: visible; line-height: 1.25; }
 .sortable { cursor: pointer; user-select: none; }
 .sortable:hover { color: var(--text); }
 .acct-row.is-archived { opacity: .65; }
@@ -93,13 +104,33 @@ header { border-bottom: 1px solid var(--line); background: var(--panel); positio
 .badge.unowned { color: var(--warn); border-color: var(--warn); cursor: help; }
 .restore-btn { white-space: nowrap; }
 
-/* ── opportunity cards (account → opps) ───────────────────────────────── */
-.opp-grid { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
-.opp-card { display: block; }
-.opp-card h3 { margin: 0 0 10px; font-size: 15px; }
-.opp-meta { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
-.opp-meta .opp-amt { font-weight: 600; font-variant-numeric: tabular-nums; }
-.opp-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; }
+/* ── add team member form ─────────────────────────────────────────────── */
+.add-member-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin: 0 0 20px; }
+.add-member-form.hidden { display: none; }
+.add-member-form input { font: inherit; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; min-width: 200px; }
+
+/* ── opportunity rows (account → opps, top-to-bottom like the account list) ─ */
+.opp-list { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--panel); }
+.opp-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 2fr) 150px 120px 120px 120px 90px 80px;
+  align-items: center; gap: 14px;
+  padding: 13px 18px; text-decoration: none; color: inherit;
+  border-bottom: 1px solid var(--line);
+}
+.opp-row:last-child { border-bottom: none; }
+.opp-row:not(.opp-row-head):hover { background: var(--panel2); }
+.opp-row.no-link { cursor: default; }
+.opp-row-name { font-weight: 600; font-size: 14px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.opp-row-col { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.opp-row-amount { text-align: right; font-variant-numeric: tabular-nums; }
+.opp-row-outputs { text-align: center; }
+.opp-row-head { background: var(--panel2); }
+.opp-row-head .opp-row-name, .opp-row-head .opp-row-col {
+  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: var(--muted);
+}
+/* inside the expand drawer the rows are lighter / tighter */
+.opp-drawer .opp-list { border: 1px solid var(--line); }
 
 /* ── invoke modal: mode toggle (skill vs free-text) ───────────────────── */
 .invoke-mode { display: flex; gap: 6px; margin: 4px 0 12px; }

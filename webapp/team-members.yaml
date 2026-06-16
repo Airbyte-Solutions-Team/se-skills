@@ -1,14 +1,9 @@
-# Solutions Team members shown on the main page of the local hub.
-# `id` is used to tag account ownership (the .owner file in each account folder).
-# Edit to match your team. If this file is absent, the app falls back to the
-# single SE in ~/airbyte-work/.se-config.yaml.
-
 members:
-  - id: gary
-    name: "Gary Yang"
-    email: "gary.yang@airbyte.io"
-    role: "Solutions Engineer"
-  # - id: teammate
-  #   name: "Teammate Name"
-  #   email: "teammate@airbyte.io"
-  #   role: "Solutions Engineer"
+- id: gary
+  name: Gary Yang
+  email: gary.yang@airbyte.io
+  role: Solutions Engineer
+- id: ryan-waskewich
+  name: Ryan Waskewich
+  email: ryan.waskewich@airbyte.io
+  role: Solutions Engineer
