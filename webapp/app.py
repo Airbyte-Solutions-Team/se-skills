@@ -113,7 +113,7 @@ def list_accounts() -> list[dict]:
     for d in sorted(CUSTOMERS_DIR.iterdir()):
         if not d.is_dir() or d.name.startswith("_") or d.name.startswith("."):
             continue
-        out.append({"name": d.name, "owner": _read_owner(d)})
+        out.append({"name": d.name, "owner": _read_owner(d), "archived": _is_archived(d)})
     return out
 
 
@@ -126,12 +126,24 @@ def _read_owner(account_dir: Path) -> str | None:
     return f.read_text().strip() if f.exists() else None
 
 
-def accounts_for_member(member_id: str) -> list[dict]:
-    """Accounts owned by this member, plus unowned ones (shown to everyone)."""
+def _archived_file(account_dir: Path) -> Path:
+    return account_dir / ".archived"
+
+
+def _is_archived(account_dir: Path) -> bool:
+    return _archived_file(account_dir).exists()
+
+
+def accounts_for_member(member_id: str) -> dict:
+    """Accounts owned by this member, plus unowned ones — split into active and archived."""
     all_accounts = list_accounts()
-    owned = [a for a in all_accounts if a["owner"] == member_id]
-    unowned = [a for a in all_accounts if a["owner"] is None]
-    return owned + unowned
+    visible = [a for a in all_accounts if a["owner"] == member_id or a["owner"] is None]
+    # owned first, then unowned, within each bucket
+    visible.sort(key=lambda a: (a["owner"] != member_id, a["name"].lower()))
+    return {
+        "active": [a for a in visible if not a["archived"]],
+        "archived": [a for a in visible if a["archived"]],
+    }
 
 
 def list_outputs(account: str) -> list[dict]:
@@ -198,6 +210,31 @@ def api_create_account(body: CreateAccount):
 def api_outputs(account: str):
     account = _safe(account)
     return list_outputs(account)
+
+
+@app.post("/api/accounts/{account}/archive")
+def api_archive(account: str):
+    account = _safe(account)
+    acc_dir = CUSTOMERS_DIR / account
+    if not acc_dir.is_dir():
+        raise HTTPException(404, "Unknown account")
+    # Flag file only — data stays exactly in place, fully reversible.
+    _archived_file(acc_dir).write_text(
+        datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    )
+    return {"name": account, "archived": True}
+
+
+@app.post("/api/accounts/{account}/unarchive")
+def api_unarchive(account: str):
+    account = _safe(account)
+    acc_dir = CUSTOMERS_DIR / account
+    if not acc_dir.is_dir():
+        raise HTTPException(404, "Unknown account")
+    f = _archived_file(acc_dir)
+    if f.exists():
+        f.unlink()
+    return {"name": account, "archived": False}
 
 
 @app.get("/api/output", response_class=PlainTextResponse)

@@ -34,11 +34,32 @@ async function pageMembers() {
 }
 
 // ---- Page: member's accounts ---------------------------------------------
-async function pageMember(memberId) {
+// `tab` is "active" (default) or "archived"
+async function pageMember(memberId, tab = "active") {
   const members = await api("/api/members");
   const m = members.find((x) => x.id === memberId) || { id: memberId, name: memberId };
   setCrumbs([{ label: "Team", href: "#/" }, { label: m.name }]);
-  const accounts = await api(`/api/members/${encodeURIComponent(memberId)}/accounts`);
+  const data = await api(`/api/members/${encodeURIComponent(memberId)}/accounts`);
+  const active = data.active || [];
+  const archived = data.archived || [];
+  const showing = tab === "archived" ? archived : active;
+
+  const ownerBadge = (a) =>
+    a.owner === memberId ? '<span class="badge owned">yours</span>'
+      : (a.owner ? "" : '<span class="badge">unowned</span>');
+
+  const card = (a) => tab === "archived"
+    ? `<div class="card archived-card">
+         <a href="#/account/${encodeURIComponent(a.name)}" class="card-link"><h3>${esc(a.name)}</h3>
+           <div class="meta">${ownerBadge(a)} <span class="badge">archived</span></div></a>
+         <div class="card-foot"><button class="ghost small unarchive-btn" data-acct="${esc(a.name)}">Unarchive</button></div>
+       </div>`
+    : `<div class="card">
+         <a href="#/account/${encodeURIComponent(a.name)}" class="card-link"><h3>${esc(a.name)}</h3>
+           <div class="meta">${ownerBadge(a)}</div></a>
+         <div class="card-foot"><button class="ghost small archive-btn" data-acct="${esc(a.name)}">Archive</button></div>
+       </div>`;
+
   view.innerHTML = `
     <div class="row">
       <div><h1>${esc(m.name)}</h1><p class="sub">Accounts</p></div>
@@ -47,26 +68,48 @@ async function pageMember(memberId) {
         <button class="primary small" id="create-acct">+ Create Account</button>
       </div>
     </div>
+    <div class="tabs">
+      <button class="tab ${tab === "active" ? "active" : ""}" data-tab="active">Active (${active.length})</button>
+      <button class="tab ${tab === "archived" ? "active" : ""}" data-tab="archived">Archived (${archived.length})</button>
+    </div>
     <div class="grid" id="acct-grid">
-      ${accounts.length ? accounts.map((a) => `
-        <a class="card" href="#/account/${encodeURIComponent(a.name)}">
-          <h3>${esc(a.name)}</h3>
-          <div class="meta">${a.owner === memberId ? '<span class="badge owned">yours</span>' : (a.owner ? "" : '<span class="badge">unowned</span>')}</div>
-        </a>`).join("") : `<div class="empty">No accounts yet. Create one to get started.</div>`}
+      ${showing.length ? showing.map(card).join("")
+        : `<div class="empty">${tab === "archived" ? "No archived accounts." : "No active accounts. Create one to get started."}</div>`}
     </div>`;
 
+  // Tab switching
+  view.querySelectorAll(".tab").forEach((t) => {
+    t.onclick = () => pageMember(memberId, t.dataset.tab);
+  });
+
+  // Create
   document.getElementById("create-acct").onclick = async () => {
     const name = document.getElementById("new-acct").value.trim();
     if (!name) return;
     try {
       await api("/api/accounts", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
+        method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ name, owner: memberId }),
       });
-      pageMember(memberId); // refresh
+      pageMember(memberId, "active");
     } catch (e) { alert("Could not create account: " + e.message); }
   };
+
+  // Archive / Unarchive (stopPropagation so the card link doesn't fire)
+  view.querySelectorAll(".archive-btn").forEach((b) => {
+    b.onclick = async (e) => {
+      e.preventDefault(); e.stopPropagation();
+      await api(`/api/accounts/${encodeURIComponent(b.dataset.acct)}/archive`, { method: "POST" });
+      pageMember(memberId, "active");
+    };
+  });
+  view.querySelectorAll(".unarchive-btn").forEach((b) => {
+    b.onclick = async (e) => {
+      e.preventDefault(); e.stopPropagation();
+      await api(`/api/accounts/${encodeURIComponent(b.dataset.acct)}/unarchive`, { method: "POST" });
+      pageMember(memberId, "archived");
+    };
+  });
 }
 
 // ---- Page: account (outputs + invoke) ------------------------------------
