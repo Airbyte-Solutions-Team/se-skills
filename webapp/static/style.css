@@ -46,6 +46,13 @@ h2 { font-size: 18px; margin: 28px 0 12px; }
 .card:hover .card-foot button { opacity: 1; }
 .archived-card { opacity: .8; }
 .archived-card .card-foot button { opacity: 1; }
+
+/* archive dropdown (two-step confirm) */
+.dropdown { position: relative; }
+.dropdown-menu { position: absolute; right: 0; bottom: calc(100% + 6px); background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 6px; min-width: 180px; box-shadow: 0 8px 24px rgba(0,0,0,.4); z-index: 8; }
+.dropdown-menu.hidden { display: none; }
+button.danger { background: transparent; color: #ff6b6b; border-color: #ff6b6b; width: 100%; text-align: left; }
+button.danger:hover { background: #ff6b6b; color: #0b0d12; }
 button { font: inherit; border-radius: 8px; padding: 9px 16px; cursor: pointer; border: 1px solid var(--line); }
 button.primary { background: var(--accent); color: #0b0d12; border-color: var(--accent); font-weight: 600; }
 button.ghost { background: transparent; color: var(--text); }

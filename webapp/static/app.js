@@ -57,7 +57,14 @@ async function pageMember(memberId, tab = "active") {
     : `<div class="card">
          <a href="#/account/${encodeURIComponent(a.name)}" class="card-link"><h3>${esc(a.name)}</h3>
            <div class="meta">${ownerBadge(a)}</div></a>
-         <div class="card-foot"><button class="ghost small archive-btn" data-acct="${esc(a.name)}">Archive</button></div>
+         <div class="card-foot">
+           <div class="dropdown">
+             <button class="ghost small archive-toggle" data-acct="${esc(a.name)}" aria-haspopup="true">Archive ▾</button>
+             <div class="dropdown-menu hidden">
+               <button class="danger small archive-confirm" data-acct="${esc(a.name)}">Archive “${esc(a.name)}”</button>
+             </div>
+           </div>
+         </div>
        </div>`;
 
   view.innerHTML = `
@@ -95,14 +102,28 @@ async function pageMember(memberId, tab = "active") {
     } catch (e) { alert("Could not create account: " + e.message); }
   };
 
-  // Archive / Unarchive (stopPropagation so the card link doesn't fire)
-  view.querySelectorAll(".archive-btn").forEach((b) => {
+  // Archive: two-step. First click opens the dropdown; the confirm inside does it.
+  const closeAllMenus = () => view.querySelectorAll(".dropdown-menu").forEach((mn) => mn.classList.add("hidden"));
+  view.querySelectorAll(".archive-toggle").forEach((b) => {
+    b.onclick = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const menu = b.nextElementSibling;
+      const wasOpen = !menu.classList.contains("hidden");
+      closeAllMenus();           // only one open at a time
+      if (!wasOpen) menu.classList.remove("hidden");
+    };
+  });
+  view.querySelectorAll(".archive-confirm").forEach((b) => {
     b.onclick = async (e) => {
       e.preventDefault(); e.stopPropagation();
       await api(`/api/accounts/${encodeURIComponent(b.dataset.acct)}/archive`, { method: "POST" });
       pageMember(memberId, "active");
     };
   });
+  // Click anywhere else closes any open dropdown
+  document.addEventListener("click", closeAllMenus, { once: true });
+
+  // Unarchive (single action — restoring is non-destructive, no confirm needed)
   view.querySelectorAll(".unarchive-btn").forEach((b) => {
     b.onclick = async (e) => {
       e.preventDefault(); e.stopPropagation();
