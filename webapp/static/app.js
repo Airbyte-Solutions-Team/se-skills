@@ -9,6 +9,72 @@ const api = async (path, opts) => {
 };
 const esc = (s) => (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
+// Minimal, dependency-free Markdown → HTML for rendering skill outputs nicely.
+// Handles: headings, bold/italic, inline code, code fences, tables, blockquotes,
+// hr, ordered/unordered lists (incl. [ ] checkboxes), paragraphs.
+function mdToHtml(md) {
+  const lines = (md || "").replace(/\r\n/g, "\n").split("\n");
+  let html = "", i = 0;
+  const inline = (t) => esc(t)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>")
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+
+  while (i < lines.length) {
+    const ln = lines[i];
+
+    // code fence
+    if (/^```/.test(ln)) {
+      let buf = []; i++;
+      while (i < lines.length && !/^```/.test(lines[i])) { buf.push(lines[i]); i++; }
+      i++; html += `<pre class="md-pre"><code>${esc(buf.join("\n"))}</code></pre>`; continue;
+    }
+    // table (header row + --- separator)
+    if (/\|/.test(ln) && i + 1 < lines.length && /^\s*\|?[\s:-]+\|[\s:|-]*$/.test(lines[i + 1])) {
+      const row = (r) => r.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|").map((c) => c.trim());
+      const head = row(ln);
+      i += 2; const body = [];
+      while (i < lines.length && /\|/.test(lines[i]) && lines[i].trim()) { body.push(row(lines[i])); i++; }
+      html += `<table class="md-table"><thead><tr>${head.map((c) => `<th>${inline(c)}</th>`).join("")}</tr></thead><tbody>${
+        body.map((r) => `<tr>${r.map((c) => `<td>${inline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+      continue;
+    }
+    // heading
+    const h = ln.match(/^(#{1,6})\s+(.*)$/);
+    if (h) { const lvl = h[1].length; html += `<h${lvl} class="md-h md-h${lvl}">${inline(h[2])}</h${lvl}>`; i++; continue; }
+    // hr
+    if (/^\s*---\s*$/.test(ln)) { html += "<hr class='md-hr'/>"; i++; continue; }
+    // blockquote
+    if (/^>\s?/.test(ln)) {
+      let buf = [];
+      while (i < lines.length && /^>\s?/.test(lines[i])) { buf.push(lines[i].replace(/^>\s?/, "")); i++; }
+      html += `<blockquote class="md-quote">${inline(buf.join(" "))}</blockquote>`; continue;
+    }
+    // lists
+    if (/^\s*([-*]|\d+\.)\s+/.test(ln)) {
+      const ordered = /^\s*\d+\.\s+/.test(ln);
+      let buf = [];
+      while (i < lines.length && /^\s*([-*]|\d+\.)\s+/.test(lines[i])) {
+        let item = lines[i].replace(/^\s*([-*]|\d+\.)\s+/, "");
+        item = item.replace(/^\[ \]\s*/, "☐ ").replace(/^\[[xX]\]\s*/, "☑ ");
+        buf.push(`<li>${inline(item)}</li>`); i++;
+      }
+      html += ordered ? `<ol class="md-list">${buf.join("")}</ol>` : `<ul class="md-list">${buf.join("")}</ul>`;
+      continue;
+    }
+    // blank
+    if (!ln.trim()) { i++; continue; }
+    // paragraph (gather consecutive non-empty, non-special lines)
+    let buf = [ln]; i++;
+    while (i < lines.length && lines[i].trim() && !/^(#{1,6}\s|>|\s*([-*]|\d+\.)\s|```|\s*---\s*$)/.test(lines[i]) && !/\|/.test(lines[i])) {
+      buf.push(lines[i]); i++;
+    }
+    html += `<p class="md-p">${inline(buf.join(" "))}</p>`;
+  }
+  return html;
+}
+
 let SKILLS = [];
 let SKILLS_HELP = {}; // id -> rich help entry (description, triggers, prerequisites, output)
 
@@ -35,7 +101,7 @@ async function pageMembers() {
 }
 
 // ---- Page: member's accounts ---------------------------------------------
-// `tab` is "active" (default) or "archived"
+// `tab` is "active" (default), "archived", or "trash"
 async function pageMember(memberId, tab = "active") {
   const members = await api("/api/members");
   const m = members.find((x) => x.id === memberId) || { id: memberId, name: memberId };
@@ -43,35 +109,51 @@ async function pageMember(memberId, tab = "active") {
   const data = await api(`/api/members/${encodeURIComponent(memberId)}/accounts`);
   const active = data.active || [];
   const archived = data.archived || [];
-  const showing = tab === "archived" ? archived : active;
+  const trash = await api("/api/trash").catch(() => []);
 
-  const ownerBadge = (a) =>
+  const ownerLabel = (a) =>
     a.owner === memberId ? '<span class="badge owned">yours</span>'
-      : (a.owner ? "" : '<span class="badge">unowned</span>');
+      : (a.owner ? `<span class="badge">${esc(a.owner)}</span>` : '<span class="badge unowned" title="No owner recorded — created before ownership tracking. Click ⋯ → Claim to take ownership.">unowned</span>');
 
-  const card = (a) => tab === "archived"
-    ? `<div class="card archived-card">
-         <a href="#/account/${encodeURIComponent(a.name)}" class="card-link"><h3>${esc(a.name)}</h3>
-           <div class="meta">${ownerBadge(a)} <span class="badge">archived</span></div></a>
-         <div class="card-foot"><button class="ghost small unarchive-btn" data-acct="${esc(a.name)}">Unarchive</button></div>
-       </div>`
-    : `<div class="card">
-         <a href="#/account/${encodeURIComponent(a.name)}" class="card-link"><h3>${esc(a.name)}</h3>
-           <div class="meta">${ownerBadge(a)}</div></a>
-         <div class="card-foot">
-           <div class="dropdown">
-             <button class="ghost small archive-toggle" data-acct="${esc(a.name)}" aria-haspopup="true">Archive ▾</button>
-             <div class="dropdown-menu hidden">
-               <button class="danger small archive-confirm" data-acct="${esc(a.name)}">Archive “${esc(a.name)}”</button>
-             </div>
-           </div>
-         </div>
-       </div>`;
+  // Active/archived card: metadata-rich, with a top-right ⋯ menu
+  const acctCard = (a, isArchived) => `
+    <div class="card acct-card${isArchived ? " archived-card" : ""}" data-acct="${esc(a.name)}">
+      <div class="card-menu">
+        <button class="kebab" data-acct="${esc(a.name)}" aria-label="Account actions">⋯</button>
+        <div class="dropdown-menu hidden">
+          ${isArchived
+            ? `<button class="menu-item unarchive-btn" data-acct="${esc(a.name)}">Unarchive</button>`
+            : `<button class="menu-item claim-btn" data-acct="${esc(a.name)}" data-owner="${a.owner === memberId}">${a.owner === memberId ? "✓ Owned by you" : "Claim ownership"}</button>
+               <button class="menu-item archive-btn" data-acct="${esc(a.name)}">Archive</button>`}
+          <button class="menu-item danger delete-btn" data-acct="${esc(a.name)}">Delete…</button>
+        </div>
+      </div>
+      <a href="#/account/${encodeURIComponent(a.name)}" class="card-link">
+        <h3>${esc(a.name)}</h3>
+        <div class="card-stats">
+          <span class="stat" data-sfdc="${esc(a.name)}"><span class="muted">SFDC</span> <span class="sfdc-val">…</span></span>
+          <span class="stat"><span class="muted">Updated</span> ${a.last_updated ? esc(a.last_updated) : "—"}</span>
+          <span class="stat"><span class="muted">Outputs</span> ${a.output_count}</span>
+        </div>
+      </a>
+      <div class="card-foot-meta">${ownerLabel(a)}${isArchived ? ' <span class="badge">archived</span>' : ""}</div>
+    </div>`;
+
+  const trashCard = (t) => `
+    <div class="card trash-card">
+      <h3>${esc(t.name)}</h3>
+      <div class="card-stats"><span class="stat"><span class="muted">Deleted</span> ${esc(t.deleted_at)}</span></div>
+      <div class="card-foot"><button class="ghost small restore-btn" data-tid="${esc(t.trash_id)}">Restore</button></div>
+    </div>`;
+
+  const showing = tab === "trash" ? trash : (tab === "archived" ? archived : active);
+  const renderCard = tab === "trash" ? trashCard : (a) => acctCard(a, tab === "archived");
+  const emptyMsg = { active: "No active accounts. Create one to get started.", archived: "No archived accounts.", trash: "Trash is empty." }[tab];
 
   view.innerHTML = `
     <div class="row">
       <div><h1>${esc(m.name)}</h1><p class="sub">Accounts</p></div>
-      <div>
+      <div class="create-box">
         <input id="new-acct" type="text" placeholder="New account name…" />
         <button class="primary small" id="create-acct">+ Create Account</button>
       </div>
@@ -79,59 +161,88 @@ async function pageMember(memberId, tab = "active") {
     <div class="tabs">
       <button class="tab ${tab === "active" ? "active" : ""}" data-tab="active">Active (${active.length})</button>
       <button class="tab ${tab === "archived" ? "active" : ""}" data-tab="archived">Archived (${archived.length})</button>
+      <button class="tab ${tab === "trash" ? "active" : ""}" data-tab="trash">Trash (${trash.length})</button>
     </div>
     <div class="grid" id="acct-grid">
-      ${showing.length ? showing.map(card).join("")
-        : `<div class="empty">${tab === "archived" ? "No archived accounts." : "No active accounts. Create one to get started."}</div>`}
+      ${showing.length ? showing.map(renderCard).join("") : `<div class="empty">${emptyMsg}</div>`}
     </div>`;
 
-  // Tab switching
-  view.querySelectorAll(".tab").forEach((t) => {
-    t.onclick = () => pageMember(memberId, t.dataset.tab);
-  });
+  view.querySelectorAll(".tab").forEach((t) => { t.onclick = () => pageMember(memberId, t.dataset.tab); });
 
-  // Create
   document.getElementById("create-acct").onclick = async () => {
     const name = document.getElementById("new-acct").value.trim();
     if (!name) return;
     try {
-      await api("/api/accounts", {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name, owner: memberId }),
-      });
+      await api("/api/accounts", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name, owner: memberId }) });
       pageMember(memberId, "active");
     } catch (e) { alert("Could not create account: " + e.message); }
   };
 
-  // Archive: two-step. First click opens the dropdown; the confirm inside does it.
-  const closeAllMenus = () => view.querySelectorAll(".dropdown-menu").forEach((mn) => mn.classList.add("hidden"));
-  view.querySelectorAll(".archive-toggle").forEach((b) => {
+  // ⋯ kebab menus — one open at a time, close on outside click
+  const closeMenus = () => view.querySelectorAll(".dropdown-menu").forEach((mn) => mn.classList.add("hidden"));
+  view.querySelectorAll(".kebab").forEach((b) => {
     b.onclick = (e) => {
       e.preventDefault(); e.stopPropagation();
       const menu = b.nextElementSibling;
-      const wasOpen = !menu.classList.contains("hidden");
-      closeAllMenus();           // only one open at a time
-      if (!wasOpen) menu.classList.remove("hidden");
+      const open = !menu.classList.contains("hidden");
+      closeMenus(); if (!open) menu.classList.remove("hidden");
     };
   });
-  view.querySelectorAll(".archive-confirm").forEach((b) => {
-    b.onclick = async (e) => {
-      e.preventDefault(); e.stopPropagation();
-      await api(`/api/accounts/${encodeURIComponent(b.dataset.acct)}/archive`, { method: "POST" });
-      pageMember(memberId, "active");
-    };
-  });
-  // Click anywhere else closes any open dropdown
-  document.addEventListener("click", closeAllMenus, { once: true });
+  document.addEventListener("click", closeMenus, { once: true });
 
-  // Unarchive (single action — restoring is non-destructive, no confirm needed)
-  view.querySelectorAll(".unarchive-btn").forEach((b) => {
-    b.onclick = async (e) => {
-      e.preventDefault(); e.stopPropagation();
-      await api(`/api/accounts/${encodeURIComponent(b.dataset.acct)}/unarchive`, { method: "POST" });
-      pageMember(memberId, "archived");
-    };
+  const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
+
+  view.querySelectorAll(".archive-btn").forEach((b) => b.onclick = async (e) => {
+    stop(e); await api(`/api/accounts/${encodeURIComponent(b.dataset.acct)}/archive`, { method: "POST" });
+    pageMember(memberId, "active");
   });
+  view.querySelectorAll(".unarchive-btn").forEach((b) => b.onclick = async (e) => {
+    stop(e); await api(`/api/accounts/${encodeURIComponent(b.dataset.acct)}/unarchive`, { method: "POST" });
+    pageMember(memberId, "archived");
+  });
+  view.querySelectorAll(".claim-btn").forEach((b) => b.onclick = async (e) => {
+    stop(e);
+    if (b.dataset.owner === "true") return; // already yours
+    await api(`/api/accounts/${encodeURIComponent(b.dataset.acct)}/owner`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ owner: memberId }) });
+    pageMember(memberId, "active");
+  });
+  view.querySelectorAll(".delete-btn").forEach((b) => b.onclick = (e) => {
+    stop(e);
+    const acct = b.dataset.acct;
+    // two-step confirm: turn the menu item into a confirm
+    if (b.dataset.armed !== "1") {
+      b.dataset.armed = "1"; b.textContent = `Confirm delete “${acct}”`; b.classList.add("armed");
+      setTimeout(() => { if (b.dataset.armed === "1") { b.dataset.armed = "0"; b.textContent = "Delete…"; b.classList.remove("armed"); } }, 4000);
+      return;
+    }
+    api(`/api/accounts/${encodeURIComponent(acct)}`, { method: "DELETE" })
+      .then(() => pageMember(memberId, "active"))
+      .catch((err) => alert("Delete failed: " + err.message));
+  });
+  view.querySelectorAll(".restore-btn").forEach((b) => b.onclick = async (e) => {
+    stop(e);
+    try { await api(`/api/trash/${encodeURIComponent(b.dataset.tid)}/restore`, { method: "POST" }); pageMember(memberId, "trash"); }
+    catch (err) { alert("Restore failed: " + err.message); }
+  });
+
+  // Async SFDC stage/amount enrichment — fill the "…" placeholders without blocking render
+  if (tab !== "trash" && showing.length) {
+    api("/api/sfdc/stage-amount", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ accounts: showing.map((a) => a.name) }) })
+      .then((map) => {
+        view.querySelectorAll(".stat[data-sfdc]").forEach((el) => {
+          const info = map[el.dataset.sfdc];
+          const val = el.querySelector(".sfdc-val");
+          if (info && info.stage) {
+            const amt = info.amount ? ` · $${Number(info.amount).toLocaleString()}` : "";
+            val.textContent = info.stage + amt;
+          } else { val.textContent = "—"; }
+        });
+      })
+      .catch(() => view.querySelectorAll(".sfdc-val").forEach((v) => (v.textContent = "—")));
+  }
 }
 
 // ---- Page: account (outputs + invoke) ------------------------------------
@@ -162,7 +273,7 @@ async function openOutput(path, title) {
   const text = await api("/api/output?path=" + encodeURIComponent(decodeURIComponent(path)));
   view.innerHTML = `
     <div class="row"><h1>${esc(title)}</h1><button class="ghost" onclick="history.back()">← Back</button></div>
-    <div class="doc">${esc(text)}</div>`;
+    <div class="doc md-body">${mdToHtml(text)}</div>`;
   setCrumbs([{ label: "Team", href: "#/" }, { label: "output" }]);
 }
 
@@ -203,9 +314,10 @@ function openInvoke(account) {
         body: JSON.stringify({ skill, account, extra: extra || null }),
       });
       status.className = res.ok ? "status ok" : "status err";
-      status.textContent = res.ok ? "Done. Output saved — refresh the account to see it." : "Skill returned a non-zero exit. See output below.";
-      output.className = "output";
-      output.textContent = (res.stdout || "") + (res.stderr ? "\n\n[stderr]\n" + res.stderr : "");
+      status.textContent = res.ok ? "Done. Output saved — open the account to read the formatted report." : "Skill returned a non-zero exit. See output below.";
+      output.className = "output md-body";
+      // Render the skill's markdown output formatted, not raw.
+      output.innerHTML = mdToHtml(res.stdout || "") + (res.stderr ? `<hr/><pre class="md-pre"><code>[stderr]\n${esc(res.stderr)}</code></pre>` : "");
     } catch (e) {
       status.className = "status err"; status.textContent = "Error: " + e.message;
     } finally {
@@ -218,34 +330,70 @@ function openInvoke(account) {
 async function pageHelp() {
   setCrumbs([{ label: "Team", href: "#/" }, { label: "Skills Help" }]);
   const help = await api("/api/skills/help");
-  const section = (title, body) =>
-    body ? `<div class="help-sec"><span class="help-label">${title}</span><div class="help-body">${esc(body)}</div></div>` : "";
-  const triggers = (t) =>
-    t && t.length ? `<div class="help-sec"><span class="help-label">Triggers</span>
-      <div class="help-body">${t.map((x) => `<code class="trig">${esc(x)}</code>`).join(" ")}</div></div>` : "";
+
+  // A labeled row; `body` is plain text rendered as clean prose (bullets, line breaks).
+  const row = (label, body) => {
+    if (!body) return "";
+    const htmlBody = esc(body)
+      .replace(/^• /gm, "")                         // bullets handled by list below
+      .split("\n").filter((l) => l.trim());
+    const isList = body.split("\n").filter((l) => l.trim().startsWith("•")).length >= 2;
+    const content = isList
+      ? `<ul class="help-ul">${htmlBody.map((l) => `<li>${l}</li>`).join("")}</ul>`
+      : `<div class="help-prose">${htmlBody.map((l) => `<p>${l}</p>`).join("")}</div>`;
+    return `<div class="help-row"><div class="help-key">${label}</div><div class="help-val">${content}</div></div>`;
+  };
+  const chips = (label, arr, cls) =>
+    arr && arr.length
+      ? `<div class="help-row"><div class="help-key">${label}</div><div class="help-val">${arr.map((x) => `<span class="chip ${cls}">${esc(x)}</span>`).join(" ")}</div></div>`
+      : "";
+  const relatedChips = (label, ids) =>
+    ids && ids.length
+      ? `<div class="help-row"><div class="help-key">${label}</div><div class="help-val">${ids.map((id) => `<a href="#help-${id}" class="chip chip-skill">${esc(id)}</a>`).join(" ")}</div></div>`
+      : "";
 
   view.innerHTML = `
     <h1>Skills Help</h1>
-    <p class="sub">Every skill you can invoke, what it does, when to use it, and what it needs. Auto-generated from the skill files — always current.</p>
+    <p class="sub">Every skill you can invoke — what it does, the methodology behind it, what it needs, and how it works. Auto-generated from the skill files, always current.</p>
     <div class="help-toc">
       ${help.map((s) => `<a href="#help-${s.id}" class="toc-item">${esc(s.label)}</a>`).join("")}
     </div>
     <div class="help-list">
       ${help.map((s) => `
-        <div class="help-card" id="help-${s.id}">
+        <section class="help-card" id="help-${s.id}">
           <div class="help-head">
             <h2>${esc(s.label)}</h2>
             <code class="skill-id">${esc(s.id)}</code>
           </div>
           <p class="help-summary">${esc(s.summary)}</p>
-          ${section("What it does", s.description)}
-          ${triggers(s.triggers)}
-          ${section("Prerequisites", s.prerequisites)}
-          ${section("Data sources", s.data_sources)}
-          ${s.output_location ? section("Output saved to", s.output_location) : ""}
+          ${row("What it does", s.description)}
+          ${chips("Methodology", s.methodologies, "chip-method")}
+          ${chips("Triggers", s.triggers, "chip-trigger")}
+          ${row("How it works", s.how_it_works)}
+          ${relatedChips("Works with", s.related_skills)}
+          ${row("Prerequisites", s.prerequisites)}
+          ${row("Data sources", s.data_sources)}
+          ${s.output_location ? row("Output saved to", s.output_location) : ""}
           ${!s.found ? `<div class="help-warn">⚠️ SKILL.md not found — install the skills (./install.sh)</div>` : ""}
-        </div>`).join("")}
+        </section>`).join("")}
     </div>`;
+}
+
+// ---- Theme toggle ---------------------------------------------------------
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  const btn = document.getElementById("theme-toggle");
+  if (btn) btn.textContent = theme === "light" ? "☀️" : "🌙";
+}
+function initTheme() {
+  const saved = localStorage.getItem("se-hub-theme") || "dark";
+  applyTheme(saved);
+  const btn = document.getElementById("theme-toggle");
+  if (btn) btn.onclick = () => {
+    const next = (document.documentElement.getAttribute("data-theme") === "light") ? "dark" : "light";
+    localStorage.setItem("se-hub-theme", next);
+    applyTheme(next);
+  };
 }
 
 // ---- Router ---------------------------------------------------------------
@@ -264,6 +412,7 @@ async function route() {
 }
 
 (async function init() {
+  initTheme();
   try { SKILLS = await api("/api/skills"); } catch { SKILLS = []; }
   try {
     const help = await api("/api/skills/help");

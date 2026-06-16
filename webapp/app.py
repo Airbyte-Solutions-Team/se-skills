@@ -181,12 +181,33 @@ def _is_archived(account_dir: Path) -> bool:
     return _archived_file(account_dir).exists()
 
 
+def _account_meta(account_dir: Path) -> dict:
+    """Lightweight, filesystem-only card metadata: last-updated + output count."""
+    outputs_dir = account_dir / "outputs"
+    count = 0
+    latest = 0.0
+    if outputs_dir.exists():
+        for f in outputs_dir.rglob("*.md"):
+            count += 1
+            latest = max(latest, f.stat().st_mtime)
+    return {
+        "output_count": count,
+        "last_updated": (
+            datetime.fromtimestamp(latest, tz=timezone.utc).strftime("%Y-%m-%d") if latest else None
+        ),
+        "last_updated_ts": latest or None,
+    }
+
+
 def accounts_for_member(member_id: str) -> dict:
-    """Accounts owned by this member, plus unowned ones — split into active and archived."""
+    """Accounts owned by this member, plus unowned ones — split into active and archived.
+    Each account is enriched with filesystem card metadata (last-updated, output count)."""
     all_accounts = list_accounts()
     visible = [a for a in all_accounts if a["owner"] == member_id or a["owner"] is None]
-    # owned first, then unowned, within each bucket
-    visible.sort(key=lambda a: (a["owner"] != member_id, a["name"].lower()))
+    for a in visible:
+        a.update(_account_meta(CUSTOMERS_DIR / a["name"]))
+    # owned first, then unowned; within each, most-recently-updated first
+    visible.sort(key=lambda a: (a["owner"] != member_id, -(a["last_updated_ts"] or 0), a["name"].lower()))
     return {
         "active": [a for a in visible if not a["archived"]],
         "archived": [a for a in visible if a["archived"]],
@@ -217,6 +238,73 @@ def list_outputs(account: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Salesforce card enrichment — one batched SOQL for all accounts on a page.
+# Optional + best-effort: if sf isn't authed/installed, returns {} and the UI
+# just omits the stage/amount line. Loaded async so it never blocks the page.
+# ---------------------------------------------------------------------------
+def _sf_config() -> dict:
+    if SE_CONFIG.exists():
+        cfg = yaml.safe_load(SE_CONFIG.read_text()) or {}
+        return cfg.get("salesforce", {}) or {}
+    return {}
+
+
+async def sfdc_stage_amount(account_names: list[str]) -> dict:
+    """Return {account_name: {stage, amount}} for the most relevant open (else latest)
+    opportunity per account. One query for all names. Best-effort."""
+    sf = _sf_config()
+    if not sf.get("enabled", True) or not account_names:
+        return {}
+    alias = sf.get("org_alias", "airbyte-prod")
+    # Build a SOQL IN-list of escaped account-name LIKE matches is messy; instead
+    # match Account.Name against the set with OR LIKE clauses (folder names are
+    # Title-Hyphen; SFDC names have spaces, so compare loosely on the first token).
+    # Simpler + safe: query open opps for accounts whose name starts with any token.
+    likes = " OR ".join(
+        f"Account.Name LIKE '{n.replace('-', ' ').replace(chr(39), '')}%'" for n in account_names[:50]
+    )
+    soql = (
+        "SELECT Account.Name, StageName, Amount, CloseDate, IsClosed, Type "
+        f"FROM Opportunity WHERE {likes} ORDER BY CloseDate DESC"
+    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "sf", "data", "query", "--query", soql, "--target-org", alias, "--json",
+            cwd=str(WORKSPACE),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=25)
+        if proc.returncode != 0:
+            return {}
+        import json as _json
+        records = _json.loads(out).get("result", {}).get("records", [])
+    except Exception:
+        return {}
+
+    # Pick the best opp per account: prefer open + non-renewal, else most recent.
+    by_acct: dict[str, dict] = {}
+    folder_for = {n.replace("-", " ").lower(): n for n in account_names}
+    for r in records:
+        acct_name = ((r.get("Account") or {}).get("Name") or "").lower()
+        # map back to the folder name via prefix match
+        folder = next((fn for key, fn in folder_for.items() if acct_name.startswith(key) or key.startswith(acct_name)), None)
+        if not folder:
+            continue
+        cand = {
+            "stage": r.get("StageName"),
+            "amount": r.get("Amount"),
+            "open": not r.get("IsClosed"),
+            "renewal": (r.get("Type") == "Renewal"),
+        }
+        cur = by_acct.get(folder)
+        # priority: open & non-renewal > open > first seen (already date-desc)
+        def score(c): return (2 if c["open"] and not c["renewal"] else (1 if c["open"] else 0))
+        if cur is None or score(cand) > score(cur):
+            by_acct[folder] = cand
+    return {k: {"stage": v["stage"], "amount": v["amount"]} for k, v in by_acct.items()}
+
+
+# ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
 app = FastAPI(title="SE Skills — Local Hub")
@@ -232,6 +320,17 @@ def api_member_accounts(member_id: str):
     if not member_by_id(member_id):
         raise HTTPException(404, "Unknown member")
     return accounts_for_member(member_id)
+
+
+@app.post("/api/sfdc/stage-amount")
+async def api_sfdc_stage_amount(body: dict):
+    """Batched SFDC stage+amount for a list of account names. Best-effort; the UI
+    calls this after rendering cards and fills in the line if it resolves."""
+    names = body.get("accounts", [])
+    if not isinstance(names, list):
+        raise HTTPException(400, "accounts must be a list")
+    safe_names = [_safe(n) for n in names if isinstance(n, str)]
+    return await sfdc_stage_amount(safe_names)
 
 
 class CreateAccount(BaseModel):
@@ -259,6 +358,21 @@ def api_outputs(account: str):
     return list_outputs(account)
 
 
+class SetOwner(BaseModel):
+    owner: str
+
+
+@app.post("/api/accounts/{account}/owner")
+def api_set_owner(account: str, body: SetOwner):
+    """Claim/assign ownership of an account (writes the .owner file)."""
+    account = _safe(account)
+    acc_dir = CUSTOMERS_DIR / account
+    if not acc_dir.is_dir():
+        raise HTTPException(404, "Unknown account")
+    _owner_file(acc_dir).write_text(_safe(body.owner))
+    return {"name": account, "owner": body.owner}
+
+
 @app.post("/api/accounts/{account}/archive")
 def api_archive(account: str):
     account = _safe(account)
@@ -282,6 +396,62 @@ def api_unarchive(account: str):
     if f.exists():
         f.unlink()
     return {"name": account, "archived": False}
+
+
+import shutil  # noqa: E402
+
+
+@app.delete("/api/accounts/{account}")
+def api_delete_account(account: str):
+    """Delete is RECOVERABLE: move the account folder to 01-customers/_trash/
+    rather than hard-deleting. Never destroys customer data outright."""
+    account = _safe(account)
+    acc_dir = CUSTOMERS_DIR / account
+    if not acc_dir.is_dir():
+        raise HTTPException(404, "Unknown account")
+    trash = CUSTOMERS_DIR / "_trash"
+    trash.mkdir(exist_ok=True)
+    stamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d-%H%M%S")
+    dest = trash / f"{account}__{stamp}"
+    shutil.move(str(acc_dir), str(dest))
+    return {"name": account, "deleted": True, "trash_id": dest.name}
+
+
+TRASH_DIR = CUSTOMERS_DIR / "_trash"
+_TRASH_ID = re.compile(r"^[A-Za-z0-9 ._-]+__\d{8}-\d{6}$")  # <account>__<stamp>
+
+
+@app.get("/api/trash")
+def api_list_trash():
+    """Deleted accounts available to restore."""
+    if not TRASH_DIR.exists():
+        return []
+    out = []
+    for d in sorted(TRASH_DIR.iterdir(), reverse=True):
+        if not d.is_dir() or "__" not in d.name:
+            continue
+        orig, _, stamp = d.name.rpartition("__")
+        try:
+            deleted_at = datetime.strptime(stamp, "%Y%m%d-%H%M%S").strftime("%Y-%m-%d %H:%M")
+        except ValueError:
+            deleted_at = stamp
+        out.append({"trash_id": d.name, "name": orig, "deleted_at": deleted_at})
+    return out
+
+
+@app.post("/api/trash/{trash_id}/restore")
+def api_restore(trash_id: str):
+    if not _TRASH_ID.match(trash_id):
+        raise HTTPException(400, "Invalid trash id")
+    src = TRASH_DIR / trash_id
+    if not src.is_dir():
+        raise HTTPException(404, "Not in trash")
+    orig = trash_id.rpartition("__")[0]
+    dest = CUSTOMERS_DIR / orig
+    if dest.exists():
+        raise HTTPException(409, f"An account named {orig} already exists — rename or remove it first.")
+    shutil.move(str(src), str(dest))
+    return {"name": orig, "restored": True}
 
 
 @app.get("/api/output", response_class=PlainTextResponse)
@@ -341,6 +511,55 @@ def _section(body: str, *header_keywords: str) -> str | None:
     return None
 
 
+# Sales methodologies the skills are built on — detect which a skill uses.
+METHODOLOGIES = {
+    "MEDDPICC": ["meddpicc", "meddic"],
+    "SPIN": ["spin selling", "spin ", "implication question", "need-payoff"],
+    "Sandler": ["sandler", "pain funnel", "upfront contract", "negative reverse"],
+    "Challenger": ["challenger", "reframe", "rational drowning", "commercial teaching"],
+    "Chris Voss (tactical empathy)": ["voss", "mirror", "label", "calibrated question", "accusation"],
+    "Command of the Message": ["command of the message", "value framing"],
+}
+
+# Skill ids, for detecting cross-skill references in a body.
+_ALL_SKILL_IDS = set(SKILL_PRESENTATION.keys())
+
+
+def _detect_methodologies(text: str) -> list[str]:
+    low = text.lower()
+    return [name for name, kws in METHODOLOGIES.items() if any(k in low for k in kws)]
+
+
+def _detect_related_skills(self_id: str, text: str) -> list[str]:
+    """Other suite skills this one references (e.g. 'run deal-assessment', 'see prep-call')."""
+    found = []
+    for sid in _ALL_SKILL_IDS:
+        if sid == self_id:
+            continue
+        # match the bare id as a backticked ref or word boundary
+        if re.search(rf"`{re.escape(sid)}`|\b{re.escape(sid)}\b", text):
+            found.append(sid)
+    return sorted(found)
+
+
+def _clean_section(txt: str | None) -> str | None:
+    """Light-touch cleanup so the help reads as prose, not raw markdown:
+    strip leading list dashes/asterisks and heading hashes; collapse blank runs."""
+    if not txt:
+        return None
+    out = []
+    for ln in txt.splitlines():
+        s = ln.rstrip()
+        s = re.sub(r"^\s*#{1,6}\s*", "", s)        # drop heading hashes
+        s = re.sub(r"^\s*[-*]\s+", "• ", s)         # list dash/star → bullet
+        s = re.sub(r"\*\*(.+?)\*\*", r"\1", s)      # drop bold markers
+        s = re.sub(r"`([^`]+)`", r"\1", s)          # drop inline code backticks
+        out.append(s)
+    cleaned = "\n".join(out)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return cleaned or None
+
+
 def _derive_help(skill_id: str, label: str, blurb: str) -> dict:
     """Build a human-friendly help entry by parsing the skill's SKILL.md live."""
     f = _find_skill_file(skill_id)
@@ -350,6 +569,9 @@ def _derive_help(skill_id: str, label: str, blurb: str) -> dict:
         "summary": blurb,
         "description": "",
         "triggers": [],
+        "methodologies": [],
+        "how_it_works": None,
+        "related_skills": [],
         "prerequisites": None,
         "data_sources": None,
         "output_location": None,
@@ -363,15 +585,29 @@ def _derive_help(skill_id: str, label: str, blurb: str) -> dict:
     entry["description"] = desc
     entry["triggers"] = _extract_triggers(desc)
 
+    # Methodology — which sales frameworks this skill applies
+    entry["methodologies"] = _detect_methodologies(body)
+
+    # How it works — the SE-craft / "best practices applied" / how-to section
+    entry["how_it_works"] = _clean_section(
+        _section(body, "se best practices", "how it works", "how to", "the holistic read", "framework")
+    )
+
+    # Related skills — other suite skills this one points to
+    entry["related_skills"] = _detect_related_skills(skill_id, body)
+
     # Prerequisites — skills state these in a "Hard Prerequisite" section
-    entry["prerequisites"] = _section(body, "prerequisite", "requires", "source sufficiency")
+    entry["prerequisites"] = _clean_section(
+        _section(body, "prerequisite", "requires", "source sufficiency")
+    )
 
     # Data sources — Salesforce Enrichment / Source Freshness / Sources sections
-    entry["data_sources"] = _section(body, "salesforce enrichment", "sources", "source freshness")
+    entry["data_sources"] = _clean_section(
+        _section(body, "salesforce enrichment", "sources", "source freshness")
+    )
 
     # Output location — target the auto-save path specifically (under outputs/),
     # not the first 01-customers path (which is often a _transcripts source path).
-    # Paths appear in fenced code blocks (no backticks), so match the bare path.
     if "ephemeral" in body.lower() and re.search(r"saves? only on", body, re.I):
         entry["output_location"] = "Ephemeral — not auto-saved (saves only on request)"
     else:

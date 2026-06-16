@@ -1,7 +1,12 @@
-:root {
+:root, :root[data-theme="dark"] {
   --bg: #0f1117; --panel: #181b24; --panel2: #1f2330; --line: #2a2f3d;
   --text: #e6e8ee; --muted: #8b91a3; --accent: #6c8cff; --accent2: #4ade80;
-  --warn: #f5a623;
+  --warn: #f5a623; --danger: #ff6b6b;
+}
+:root[data-theme="light"] {
+  --bg: #f6f7f9; --panel: #ffffff; --panel2: #f0f2f6; --line: #d9dde6;
+  --text: #1a1d26; --muted: #6b7280; --accent: #3b5bdb; --accent2: #2f9e44;
+  --warn: #b8860b; --danger: #e03131;
 }
 * { box-sizing: border-box; }
 body {
@@ -14,8 +19,36 @@ header { border-bottom: 1px solid var(--line); background: var(--panel); positio
 .crumbs { color: var(--muted); font-size: 14px; }
 .crumbs a { color: var(--accent); text-decoration: none; }
 .crumbs span.sep { margin: 0 8px; color: var(--line); }
-.help-link { margin-left: auto; color: var(--accent); text-decoration: none; font-size: 14px; border: 1px solid var(--line); padding: 6px 12px; border-radius: 8px; }
+.bar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.help-link { color: var(--accent); text-decoration: none; font-size: 14px; border: 1px solid var(--line); padding: 6px 12px; border-radius: 8px; }
 .help-link:hover { border-color: var(--accent); }
+.theme-toggle { background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 15px; line-height: 1; cursor: pointer; }
+.theme-toggle:hover { border-color: var(--accent); }
+
+/* ── enriched account cards ───────────────────────────────────────────── */
+.acct-card { position: relative; cursor: default; }
+.acct-card .card-link { display: block; text-decoration: none; color: inherit; }
+.acct-card h3 { margin: 0 0 10px; }
+.card-stats { display: flex; flex-direction: column; gap: 4px; margin: 8px 0 4px; }
+.card-stats .stat { font-size: 13px; color: var(--text); }
+.card-stats .stat .muted { display: inline-block; min-width: 64px; }
+.card-foot-meta { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.badge.unowned { color: var(--warn); border-color: var(--warn); cursor: help; }
+
+/* kebab ⋯ menu top-right of card */
+.card-menu { position: absolute; top: 10px; right: 10px; z-index: 3; }
+.kebab { background: transparent; border: 1px solid transparent; color: var(--muted); border-radius: 6px; padding: 2px 8px; font-size: 18px; line-height: 1; cursor: pointer; }
+.kebab:hover { color: var(--text); border-color: var(--line); background: var(--panel2); }
+.card-menu .dropdown-menu { position: absolute; right: 0; top: calc(100% + 4px); background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 5px; min-width: 180px; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+.card-menu .dropdown-menu.hidden { display: none; }
+.menu-item { display: block; width: 100%; text-align: left; background: transparent; border: none; color: var(--text); border-radius: 6px; padding: 8px 10px; font-size: 13px; cursor: pointer; }
+.menu-item:hover { background: var(--panel); }
+.menu-item.danger { color: var(--danger); }
+.menu-item.danger:hover { background: var(--danger); color: #fff; }
+.menu-item.danger.armed { background: var(--danger); color: #fff; font-weight: 600; }
+.trash-card h3 { margin: 0 0 8px; }
+
+/* ── help page (clean, structured) ────────────────────────────────────── */
 
 /* Skills help page */
 .help-toc { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 28px; }
@@ -26,11 +59,19 @@ header { border-bottom: 1px solid var(--line); background: var(--panel); positio
 .help-head { display: flex; align-items: baseline; gap: 12px; }
 .help-head h2 { margin: 0; font-size: 18px; }
 .skill-id { font: 12px ui-monospace, monospace; color: var(--muted); background: var(--panel2); padding: 2px 8px; border-radius: 6px; }
-.help-summary { color: var(--text); margin: 6px 0 14px; }
-.help-sec { display: grid; grid-template-columns: 130px 1fr; gap: 14px; padding: 8px 0; border-top: 1px solid var(--line); }
-.help-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .4px; padding-top: 2px; }
-.help-body { color: var(--text); font-size: 14px; white-space: pre-wrap; }
-code.trig { background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; font: 13px ui-monospace, monospace; color: var(--accent2); display: inline-block; margin: 2px 0; }
+.help-summary { color: var(--text); margin: 6px 0 16px; font-size: 15px; }
+.help-row { display: grid; grid-template-columns: 130px 1fr; gap: 16px; padding: 12px 0; border-top: 1px solid var(--line); }
+.help-key { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .4px; padding-top: 3px; }
+.help-val { color: var(--text); font-size: 14px; line-height: 1.55; }
+.help-prose p { margin: 0 0 8px; }
+.help-prose p:last-child { margin: 0; }
+.help-ul { margin: 0; padding-left: 18px; }
+.help-ul li { margin: 0 0 5px; }
+.chip { display: inline-block; font-size: 12px; padding: 3px 10px; border-radius: 999px; margin: 2px 2px 2px 0; border: 1px solid var(--line); text-decoration: none; }
+.chip-method { background: var(--panel2); color: var(--accent); border-color: var(--accent); }
+.chip-trigger { background: var(--panel2); color: var(--accent2); font-family: ui-monospace, monospace; }
+.chip-skill { background: var(--panel2); color: var(--text); font-family: ui-monospace, monospace; }
+.chip-skill:hover { border-color: var(--accent); color: var(--accent); }
 .help-warn { color: var(--warn); font-size: 13px; margin-top: 10px; }
 main { max-width: 1100px; margin: 0 auto; padding: 28px 20px 80px; }
 h1 { font-size: 24px; margin: 0 0 4px; }
@@ -107,7 +148,28 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 .status.running { color: var(--warn); }
 .status.ok { color: var(--accent2); }
 .status.err { color: #ff6b6b; }
-.output { margin-top: 14px; background: #0b0d12; border: 1px solid var(--line); border-radius: 8px; padding: 14px; max-height: 360px; overflow: auto; white-space: pre-wrap; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
-.doc { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 24px; white-space: pre-wrap; font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.output { margin-top: 14px; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 16px; max-height: 420px; overflow: auto; }
+.doc { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 28px 32px; }
+
+/* ── rendered markdown (skill output reports) ─────────────────────────── */
+.md-body { font: 15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; color: var(--text); }
+.md-body .md-h { line-height: 1.3; margin: 22px 0 10px; }
+.md-body .md-h1 { font-size: 22px; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+.md-body .md-h2 { font-size: 18px; }
+.md-body .md-h3 { font-size: 15px; color: var(--accent); text-transform: none; }
+.md-body .md-h:first-child { margin-top: 0; }
+.md-body .md-p { margin: 10px 0; }
+.md-body .md-list { margin: 8px 0 12px; padding-left: 22px; }
+.md-body .md-list li { margin: 4px 0; }
+.md-body .md-quote { margin: 12px 0; padding: 8px 16px; border-left: 3px solid var(--accent); background: var(--panel2); border-radius: 0 8px 8px 0; color: var(--text); }
+.md-body .md-hr { border: none; border-top: 1px solid var(--line); margin: 20px 0; }
+.md-body code { background: var(--panel2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.md-body .md-pre { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 14px; overflow: auto; }
+.md-body .md-pre code { background: none; border: none; padding: 0; }
+.md-body .md-table { border-collapse: collapse; width: 100%; margin: 14px 0; font-size: 14px; }
+.md-body .md-table th, .md-body .md-table td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; vertical-align: top; }
+.md-body .md-table th { background: var(--panel2); font-weight: 600; }
+.md-body strong { font-weight: 600; }
+.md-body a { color: var(--accent); }
 .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--muted); border-top-color: var(--warn); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 8px; }
 @keyframes spin { to { transform: rotate(360deg); } }
