@@ -26,6 +26,16 @@ Built by Gary Yang (Solutions Engineer, Airbyte). Designed to be team-shareable.
 
 Plus the shared reference (not a skill): **`_se-playbook.md`** — the SE-craft canon all skills read from.
 
+### Local web app (optional)
+
+`webapp/` is a **local** UI over the suite — browse team member → their accounts → an account's generated outputs, and invoke any skill with a button. Runs on your machine using your existing Claude Code + MCPs + local files:
+
+```bash
+cd webapp && uv run app.py   # → http://127.0.0.1:8787
+```
+
+Local-only by design (invoking a skill needs compute + your auth + your data, which a static deploy can't provide). See `webapp/README.md`.
+
 ---
 
 ## The workflow chain

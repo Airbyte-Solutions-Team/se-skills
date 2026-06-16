@@ -12,3 +12,8 @@ config/se-config.yaml
 **/01-customers/
 **/_transcripts/
 *-transcript*
+
+# Web app local runtime
+webapp/__pycache__/
+**/__pycache__/
+*.pyc
