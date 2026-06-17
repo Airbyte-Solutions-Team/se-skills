@@ -359,6 +359,9 @@ async def sfdc_stage_amount(account_names: list[str]) -> dict:
             "stage_num": r.get("Stage_Number__c"),
             "amount": r.get("Amount"),
             "ae": ((r.get("Owner") or {}).get("Name")),
+            "type": r.get("Type"),
+            "close_date": r.get("CloseDate"),
+            "is_closed": r.get("IsClosed"),
             "open": not r.get("IsClosed"),
             "renewal": (r.get("Type") == "Renewal"),
         }
@@ -367,7 +370,8 @@ async def sfdc_stage_amount(account_names: list[str]) -> dict:
         if cur is None or score(cand) > score(cur):
             by_acct[folder] = cand
     return {
-        k: {"stage": v["stage"], "stage_num": v["stage_num"], "amount": v["amount"], "ae": v["ae"]}
+        k: {"stage": v["stage"], "stage_num": v["stage_num"], "amount": v["amount"],
+            "ae": v["ae"], "type": v["type"], "close_date": v["close_date"], "is_closed": v["is_closed"]}
         for k, v in by_acct.items()
     }
 

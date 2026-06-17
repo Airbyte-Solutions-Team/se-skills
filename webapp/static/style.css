@@ -31,12 +31,12 @@ header { border-bottom: 1px solid var(--line); background: var(--panel); positio
 .acct-row:last-child { border-bottom: none; }
 .acct-row:not(.acct-head):hover { background: var(--panel2); }
 
-/* the clickable main area = a 7-column grid so everything lines up:
-   Account | Stage | Amount | AE | Updated | Outputs | Owner */
+/* the clickable main area = a 9-column grid so everything lines up:
+   Account | Stage | Amount | Close Date | Type | AE | Updated | Outputs | Owner */
 .acct-row-main {
   flex: 1; display: grid;
-  grid-template-columns: minmax(150px, 1.4fr) 150px 120px minmax(110px, 1fr) 100px 80px 110px;
-  align-items: center; gap: 14px;
+  grid-template-columns: minmax(140px, 1.4fr) 140px 110px 100px 120px minmax(100px, 1fr) 95px 70px 100px;
+  align-items: center; gap: 12px;
   padding: 14px 18px; text-decoration: none; color: inherit; min-width: 0;
 }
 
@@ -53,8 +53,12 @@ header { border-bottom: 1px solid var(--line); background: var(--panel); positio
 .acct-col { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .acct-col .muted { color: var(--muted); }
 .col-amount { text-align: right; font-variant-numeric: tabular-nums; }
+.col-close { font-variant-numeric: tabular-nums; }
 .col-outputs { text-align: center; }
 .col-owner { text-align: right; }
+/* closed opportunities (won or lost) show their stage in red */
+.stage-closed { color: #ff6b6b; font-weight: 600; }
+.badge.badge-closed { color: #ff6b6b; border-color: #ff6b6b; }
 
 /* checkbox cell (left of the kebab) */
 .acct-check { flex: 0 0 36px; display: flex; align-items: center; justify-content: center; cursor: pointer; }

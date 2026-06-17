@@ -195,6 +195,8 @@ async function pageMember(memberId, tab = "active") {
       case "name": return a.name.toLowerCase();
       case "stage": return (a._sfdc?.stage_num ? parseFloat(a._sfdc.stage_num) : -1);
       case "amount": return (a._sfdc?.amount ?? -1);
+      case "close": return (a._sfdc?.close_date || "");
+      case "type": return (a._sfdc?.type || "").toLowerCase();
       case "ae": return (a._sfdc?.ae || "").toLowerCase();
       case "updated": return a.last_updated_ts || 0;
       case "outputs": return a.output_count || 0;
@@ -214,7 +216,14 @@ async function pageMember(memberId, tab = "active") {
 
   // ── Row rendering ────────────────────────────────────────────────────
   const fmtAmt = (n) => (n || n === 0) ? "$" + Number(n).toLocaleString() : '<span class="muted">—</span>';
-  const stageCell = (s) => s?.stage_num ? esc(s.stage_num) : (s?.stage ? esc(s.stage) : '<span class="muted">—</span>');
+  // Stage cell — render red when the opportunity is closed (won or lost).
+  const stageCell = (s) => {
+    const txt = s?.stage_num ? esc(s.stage_num) : (s?.stage ? esc(s.stage) : null);
+    if (!txt) return '<span class="muted">—</span>';
+    return s?.is_closed ? `<span class="stage-closed">${txt}</span>` : txt;
+  };
+  const typeCell = (s) => s?.type ? esc(s.type) : '<span class="muted">—</span>';
+  const dateCell = (d) => d ? esc(d) : '<span class="muted">—</span>';
   const aeCell = (s) => s?.ae ? esc(s.ae) : '<span class="muted">—</span>';
 
   const acctRow = (a, isArchived) => `
@@ -233,6 +242,8 @@ async function pageMember(memberId, tab = "active") {
         <span class="acct-name">${esc(a.name)}</span>
         <span class="acct-col col-stage">${stageCell(a._sfdc)}</span>
         <span class="acct-col col-amount">${fmtAmt(a._sfdc?.amount)}</span>
+        <span class="acct-col col-close">${dateCell(a._sfdc?.close_date)}</span>
+        <span class="acct-col col-type">${typeCell(a._sfdc)}</span>
         <span class="acct-col col-ae">${aeCell(a._sfdc)}</span>
         <span class="acct-col col-updated">${a.last_updated ? esc(a.last_updated) : '<span class="muted">—</span>'}</span>
         <span class="acct-col col-outputs">${a.output_count}</span>
@@ -263,6 +274,8 @@ async function pageMember(memberId, tab = "active") {
         <span class="acct-name sortable" data-sort="name">Account${sortArrow("name")}</span>
         ${hCell("stage", "SFDC Stage", "col-stage")}
         ${hCell("amount", "Amount", "col-amount")}
+        ${hCell("close", "Close Date", "col-close")}
+        ${hCell("type", "Type", "col-type")}
         ${hCell("ae", "Account Executive", "col-ae")}
         ${hCell("updated", "Updated", "col-updated")}
         ${hCell("outputs", "Outputs", "col-outputs")}
@@ -426,7 +439,7 @@ function oppRow(account, o) {
   const fmtAmt = (n) => (n || n === 0) ? "$" + Number(n).toLocaleString() : '<span class="muted">—</span>';
   const stage = o.stage_num ? esc(o.stage_num) : (o.stage ? esc(o.stage) : '<span class="muted">—</span>');
   const statusBadge = o.is_closed === false ? '<span class="badge owned">open</span>'
-    : (o.is_closed ? '<span class="badge">closed</span>' : "");
+    : (o.is_closed ? '<span class="badge badge-closed">closed</span>' : "");
   return `
     <a class="opp-row" href="#/opp/${encodeURIComponent(account)}/${encodeURIComponent(o.slug)}/${encodeURIComponent(o.name)}">
       <span class="opp-row-name">${esc(o.name)}</span>
