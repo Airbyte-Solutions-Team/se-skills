@@ -646,37 +646,28 @@ function openInvoke(account, opp = null) {
   modal.classList.remove("hidden");
 
   document.getElementById("invoke-cancel").onclick = () => modal.classList.add("hidden");
-  document.getElementById("invoke-run").onclick = async () => {
+  const runBtn = document.getElementById("invoke-run");
+  runBtn.onclick = async () => {
     const payload = { account, opportunity: opp?.name || null, opp_slug: opp?.slug || null };
     payload.skill = sel.value;
     payload.extra = document.getElementById("skill-extra").value.trim() || null;
-    const label = sel.value;
     status.className = "status running";
-    status.innerHTML = `<span class="spinner"></span>Starting <b>${esc(label)}</b> on ${esc(ctx)} …`;
-    document.getElementById("invoke-run").disabled = true;
+    status.innerHTML = `<span class="run-head"><span class="spinner"></span>Starting…</span>`;
+    runBtn.disabled = true;
     try {
-      const res = await api("/api/invoke", {
+      await api("/api/invoke", {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify(payload),
       });
-      // Poll the background job. The run continues server-side even if the
-      // modal is closed; reopening shows it still running via job recovery.
-      await pollJob(res.job_id, (job) => {
-        if (modal.classList.contains("hidden")) return; // closed — stop updating UI
-        if (job.status === "running") {
-          status.className = "status running";
-          status.innerHTML = `<span class="spinner"></span>Running <b>${esc(label)}</b> on ${esc(ctx)} … (keeps running even if you close this)`;
-          return;
-        }
-        status.className = job.ok ? "status ok" : "status err";
-        status.textContent = job.ok ? "Done. Output saved — close this to see it in the opportunity's outputs." : "Skill returned a non-zero exit. See output below.";
-        output.className = "output md-body";
-        output.innerHTML = mdToHtml(job.stdout || "") + (job.stderr ? `<hr/><pre class="md-pre"><code>[stderr]\n${esc(job.stderr)}</code></pre>` : "");
-        document.getElementById("invoke-run").disabled = false;
-      });
+      // Close the modal immediately and let the opportunity page take over —
+      // re-rendering it re-attaches to the now-running job and shows the live
+      // status + result inline (same place freebar results land).
+      modal.classList.add("hidden");
+      runBtn.disabled = false;
+      if (opp) pageOpportunity(account, opp.slug, opp.name);
     } catch (e) {
       status.className = "status err"; status.textContent = "Error: " + e.message;
-      document.getElementById("invoke-run").disabled = false;
+      runBtn.disabled = false;
     }
   };
 }
