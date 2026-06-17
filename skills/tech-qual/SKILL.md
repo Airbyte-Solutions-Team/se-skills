@@ -42,7 +42,7 @@ If user signals brief mode (`--brief`, `quick tech qual`, `tech summary`): produ
 ---
 
 ## Technical Qualification: [Company Name]
-**Date:** [today's date]
+**Date:** [today's date in long form, e.g. June 11, 2026]
 **SE owner:** [SE name]
 **Technical contact(s):** [name / title if known]
 **Prerequisite — deployment model:** [Reference deployment-qual-*.md verdict, or "Not yet qualified — recommend running `deployment-model-qual` first"]
@@ -242,10 +242,11 @@ Always include "build internally" as a competitor in tech qual — it's often th
 
 Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save to:
 ```
-~/airbyte-work/01-customers/<Customer>/outputs/tech-qual/tech-qual-<YYYY-MM-DD>-<descriptor>.md
+~/airbyte-work/01-customers/<Customer>/outputs/tech-qual/tech-qual-<YYYY-MM-DD>-<Descriptor>.md
 ```
 
 Create folders if missing. Append `-v2` etc. for same-day duplicates. User can suppress with `--no-save`.
+Filename rules (per `_se-playbook.md` "Filename format"): keep the numeric `YYYY-MM-DD` prefix, make the `<Descriptor>` **Title Case**, single-concept. Inside the document, write dates in long form (`June 11, 2026`) per "Date format inside documents".
 
 ### Source Coverage
 

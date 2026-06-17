@@ -54,7 +54,7 @@ These come directly from Gary's CLAUDE.md. Answer each one for the customer usin
 ---
 
 ## Deployment Model Qualification: [Customer]
-**Date:** [today, MM.DD.YY]
+**Date:** [today's date in long form, e.g. June 11, 2026]
 **Sources:** [transcripts, notes, Notion pages used]
 
 ---
@@ -162,6 +162,8 @@ Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save to:
 ```
 
 Append `-v2` etc. for same-day duplicates. User can suppress with `--no-save`.
+
+Inside the document, write dates in long form (`June 11, 2026`) per `_se-playbook.md` "Date format inside documents".
 
 ### Source Coverage
 

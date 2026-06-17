@@ -73,7 +73,7 @@ The punchy verdict should be honest, e.g.:
 ---
 
 ## <Customer> — Deal Assessment: <punchy verdict>
-**Date:** [today's date, MM.DD.YY]
+**Date:** [today's date in long form, e.g. June 11, 2026]
 **Stage:** [Discovery / POC / Negotiation / Closed Won / Closed Lost / Stalled]
 **Sources:** [list transcripts and notes used, with dates]
 
@@ -168,6 +168,8 @@ Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save to:
 ```
 
 Append `-v2` etc. if running multiple times same day. User can suppress with `--no-save`.
+
+Inside the document, write dates in long form (`June 11, 2026`) per `_se-playbook.md` "Date format inside documents".
 
 ### Source Coverage
 

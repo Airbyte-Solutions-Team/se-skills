@@ -56,7 +56,7 @@ Generate a structured summary with these sections. Default output is in the chat
 
 ---
 
-## Call Summary: [Customer Name] — [Call Date]
+## Call Summary: [Customer Name] — [call date in long form, e.g. June 11, 2026]
 **Call type:** [Discovery / Technical / Exec / POC review / etc. — infer from transcript]
 **Duration:** [if discernible]
 
@@ -108,10 +108,11 @@ The single most important next action. Be specific — "send POC proposal by Fri
 
 Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save the output automatically to:
 ```
-~/airbyte-work/01-customers/<Customer>/outputs/post-call/post-call-<YYYY-MM-DD>-<call-descriptor>.md
+~/airbyte-work/01-customers/<Customer>/outputs/post-call/post-call-<YYYY-MM-DD>-<Descriptor>.md
 ```
 
-Filename example: `post-call-2026-05-28-tech-discovery.md`. If a file already exists with the same name, append `-v2`, `-v3`, etc.
+Filename example: `post-call-2026-05-28-Tech-Discovery.md`. If a file already exists with the same name, append `-v2`, `-v3`, etc.
+Filename rules (per `_se-playbook.md` "Filename format"): keep the numeric `YYYY-MM-DD` prefix, make the `<Descriptor>` **Title Case**, single-concept. Inside the document, write dates in long form (`June 11, 2026`) per "Date format inside documents".
 
 Create the folder structure if it doesn't exist:
 ```bash

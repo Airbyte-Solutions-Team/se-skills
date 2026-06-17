@@ -204,7 +204,7 @@ Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save drafted emails
 ~/airbyte-work/01-customers/<Customer>/outputs/emails/email-<YYYY-MM-DD>-<purpose>.md
 ```
 
-Filename examples: `email-2026-05-28-recap.md`, `email-2026-05-28-nudge.md`, `email-2026-05-28-issue-403-secret.md`. User can suppress with `--no-save`.
+Filename examples: `email-2026-05-28-Recap.md`, `email-2026-05-28-Nudge.md`, `email-2026-05-28-Issue-403-Secret.md`. User can suppress with `--no-save`.
 
 ### Source Coverage
 

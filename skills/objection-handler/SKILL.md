@@ -115,7 +115,7 @@ If a customer was named, save the talk track to:
 ~/airbyte-work/01-customers/<Customer>/outputs/objection-handler/objection-<YYYY-MM-DD>-<category>.md
 ```
 
-Filename example: `objection-2026-05-28-data-residency.md`. User can suppress with `--no-save`.
+Filename example: `objection-2026-05-28-Data-Residency.md`. User can suppress with `--no-save`.
 
 For abstract objections (no customer named), don't auto-save — output to chat only.
 

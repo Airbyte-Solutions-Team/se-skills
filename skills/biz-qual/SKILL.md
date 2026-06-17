@@ -42,7 +42,7 @@ If user signals brief mode (`--brief`, `quick qual`, `qual summary`): produce ju
 ---
 
 ## Business Qualification: [Company Name]
-**Date:** [today's date]
+**Date:** [today's date in long form, e.g. June 11, 2026]
 **Deal stage:** [Discovery / Technical Eval / POC / Negotiation]
 **SE owner:** [SE name]
 
@@ -285,10 +285,11 @@ If you can't fill layer 3, pain isn't fully identified.
 
 Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save to:
 ```
-~/airbyte-work/01-customers/<Customer>/outputs/biz-qual/biz-qual-<YYYY-MM-DD>-<descriptor>.md
+~/airbyte-work/01-customers/<Customer>/outputs/biz-qual/biz-qual-<YYYY-MM-DD>-<Descriptor>.md
 ```
 
-Filename example: `biz-qual-2026-05-28-after-tech-call.md`. Create folders if missing. Append `-v2` etc. for same-day duplicates. User can suppress with `--no-save`.
+Filename example: `biz-qual-2026-05-28-Post-Tech-Call.md`. Create folders if missing. Append `-v2` etc. for same-day duplicates. User can suppress with `--no-save`.
+Filename rules (per `_se-playbook.md` "Filename format"): keep the numeric `YYYY-MM-DD` prefix, make the `<Descriptor>` **Title Case**, single-concept. Inside the document, write dates in long form (`June 11, 2026`) per "Date format inside documents".
 
 ### Source Coverage
 

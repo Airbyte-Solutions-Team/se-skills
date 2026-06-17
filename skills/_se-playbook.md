@@ -285,20 +285,26 @@ Transcripts continue to live in `~/airbyte-work/01-customers/_transcripts/`.
 
 ### Filename format
 
-**`<skill-type>-<YYYY-MM-DD>-<descriptor>[-vN].md`**
+**`<skill-type>-<YYYY-MM-DD>-<Descriptor>[-vN].md`**
 
 Examples:
-- `call-prep-2026-05-28-tech-discovery.md`
-- `post-call-2026-05-28-discovery-w-bill.md`
+- `call-prep-2026-05-28-Tech-Discovery.md`
+- `post-call-2026-05-28-Discovery.md`
 - `deal-assessment-2026-05-28.md`
 - `deal-assessment-2026-05-28-v2.md` (when re-run same day)
-- `biz-qual-2026-05-28-after-tech-call.md`
+- `biz-qual-2026-05-28-Post-Tech-Call.md`
 
 Rules:
-- Date prefix (`YYYY-MM-DD`) so files sort chronologically
-- Descriptor differentiates same-day outputs (call type, context, milestone)
+- Date prefix (`YYYY-MM-DD`) so files sort chronologically — **always keep this numeric format in filenames** (do NOT use "June 11" in a filename; it breaks chronological sort)
+- **Descriptor is Title Case**, hyphen-separated, no spaces. Capitalize the first letter of each word; keep short articles/conjunctions/prepositions lowercase (`a`, `an`, `the`, `and`, `or`, `of`, `for`, `to`, `vs`, `w`). E.g. `Pro-Upsell`, `Tech-Discovery`, `Migration-of-the-Pipeline`.
+- **Keep the descriptor to a single concept** — prefer `Pro-Upsell` or `Expansion` over awkward two-topic combos like `Intro-Expansion`. Pick the call/output's core substance.
 - Version suffix (`-v2`, `-v3`) only when explicitly re-running with new context the same day
-- Lowercase, hyphen-separated, no spaces
+
+### Date format inside documents
+
+In the **document body** (titles, headers, and prose — anything the user reads), write dates in long form: **`June 11, 2026`**, not `2026-06-11`.
+- This applies to every skill's output (the H1/title line especially).
+- Exception: leave dates that are *data fields* in their native format when that's clearer — e.g. an SFDC `CloseDate`, a filename reference, or a transcript ID. The rule targets human-facing title/header/prose dates, not raw data values.
 
 ### Suppress auto-save
 

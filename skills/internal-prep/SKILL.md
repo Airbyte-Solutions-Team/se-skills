@@ -65,6 +65,8 @@ If user signals brief mode (`--brief`, `quick prep`, `bullet points only`): prod
 
 ## Output Format — Varies by Meeting Type
 
+Inside the document, write dates in long form (`June 11, 2026`) per `_se-playbook.md` "Date format inside documents" — this applies to every `[Date]` placeholder below.
+
 ### Type: `ae-sync`
 
 ```

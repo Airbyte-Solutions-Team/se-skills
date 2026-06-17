@@ -62,7 +62,7 @@ Produce a structured call prep brief with the following sections:
 ---
 
 ## Call Prep: [Company Name]
-**Date:** [today's date]
+**Date:** [today's date in long form, e.g. June 11, 2026]
 **Meeting type:** [First call / Technical deep-dive / Exec / etc.]
 **Attendees (known):** [list if provided, otherwise leave blank]
 
@@ -310,10 +310,11 @@ Don't end prep with "follow up next week." Write the specific next-step you'll p
 
 Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save the prep doc automatically to:
 ```
-~/airbyte-work/01-customers/<Customer>/outputs/call-prep/call-prep-<YYYY-MM-DD>-<descriptor>.md
+~/airbyte-work/01-customers/<Customer>/outputs/call-prep/call-prep-<YYYY-MM-DD>-<Descriptor>.md
 ```
 
-Filename example: `call-prep-2026-05-28-tech-discovery.md`. Create folders if missing. Append `-v2` etc. if same-day duplicate.
+Filename example: `call-prep-2026-05-28-Tech-Discovery.md`. Create folders if missing. Append `-v2` etc. if same-day duplicate.
+Filename rules (per `_se-playbook.md` "Filename format"): keep the numeric `YYYY-MM-DD` prefix, make the `<Descriptor>` **Title Case**, single-concept. Inside the document, write dates in long form (`June 11, 2026`) per "Date format inside documents".
 
 User can suppress with `--no-save`.
 

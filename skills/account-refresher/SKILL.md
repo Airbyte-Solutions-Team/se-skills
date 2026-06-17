@@ -43,7 +43,7 @@ Keep it to ~1 page. This is a briefing, not a report.
 ---
 
 ## Account Refresher: [Customer]
-**As of:** [today's date]
+**As of:** [today's date in long form, e.g. June 11, 2026]
 **Source Coverage:** [1 line — what was read: N transcripts (most recent in full), qual docs, memory, SFDC opp]
 
 ---
@@ -102,6 +102,8 @@ Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save to:
 ~/airbyte-work/01-customers/<Customer>/outputs/account-refresher/account-refresher-<YYYY-MM-DD>.md
 ```
 Append `-v2` etc. for same-day duplicates. User can suppress with `--no-save`.
+
+Inside the document, write dates in long form (`June 11, 2026`) per `_se-playbook.md` "Date format inside documents".
 
 *Note: refreshers go stale fast (like router output). Auto-save is on for record-keeping, but don't treat a saved refresher as current days later — re-run it.*
 

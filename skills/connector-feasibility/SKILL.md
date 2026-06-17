@@ -71,7 +71,7 @@ Only surface questions for items **not already answered** in the transcripts/SFD
 ---
 
 ## Connector Feasibility: [Customer Name]
-**Date:** [today's date]
+**Date:** [today's date in long form, e.g. June 11, 2026]
 **Sources read:** [transcripts (with dates) / SFDC / qual docs]
 
 ### Use Case Summary
@@ -160,7 +160,7 @@ For each missing connector, provide:
 
 Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save to:
 ```
-~/airbyte-work/01-customers/<Customer>/outputs/connector-feasibility/connector-feasibility-<YYYY-MM-DD>-<descriptor>.md
+~/airbyte-work/01-customers/<Customer>/outputs/connector-feasibility/connector-feasibility-<YYYY-MM-DD>-<Descriptor>.md
 ```
 
 Append `-v2` etc. for same-day duplicates. User can suppress with `--no-save`.
