@@ -38,7 +38,7 @@ Apply **Source Coverage transparency** (report what you read) and **assertive SF
 
 ## Output Format
 
-Keep it to ~1 page. This is a briefing, not a report.
+Keep it to ~1 page. This is a briefing, not a report. Document structure follows `_se-playbook.md` → Output Document Format.
 
 ---
 
@@ -46,37 +46,46 @@ Keep it to ~1 page. This is a briefing, not a report.
 **As of:** [today's date in long form, e.g. June 11, 2026]
 **Source Coverage:** [1 line — what was read: N transcripts (most recent in full), qual docs, memory, SFDC opp]
 
+### At a Glance
+- **Current state:** [one-liner — what's actively happening: POC? eval? stalled? negotiating?]
+- **Key players:** [EB name (role)] · **Champion:** [name (role)]
+- **Last touch:** [date + what happened] · ==[N] days ago==
+- **Open items:** ==[N]==
+
+**Jump to:** [Who's Who](#whos-who) · [The Story So Far](#the-story-so-far) · [Where Things Stand](#where-things-stand-right-now) · [What's Open](#whats-open) · [Watch-outs](#watch-outs)
+
 ---
 
 ### The 10-Second Version
 [2-3 sentences. What is this account, what are they evaluating Airbyte for, and where do things stand right now. The "if you only read one thing" summary.]
 
-### Who's Who
+## Who's Who
 | Person | Role | Side | Notes |
 |--------|------|------|-------|
 | [name] | [title] | Customer / Partner / Airbyte | [champion? EB? technical lead? quiet?] |
 
 *Pull from transcripts + SFDC `Champion__c`/`Economic_Buyer__c`/`Owner`. Flag if SFDC names someone who hasn't appeared in transcripts.*
 
-### The Story So Far
+## The Story So Far
 [3-6 bullets, chronological. The arc of the relationship — how it started, key moments, what's been decided, what changed. Cite dates.]
 
-### Where Things Stand Right Now
+## Where Things Stand Right Now
 - **Current state:** [what's actively happening — POC? eval? stalled? negotiating?]
 - **SFDC says:** [stage, amount, close date, owner — and ⚠️ flag any mismatch with the local/transcript reality]
-- **Last contact:** [date + what happened] ([N] days ago)
+- **Last contact:** [date + what happened] (==[N] days ago==)
 - **Use case / what they want:** [1-2 lines]
 
-### What's Open
+## What's Open
 - [ ] [Open item / unanswered question / pending action — who owns it]
 - [ ] [...]
 
-### Watch-outs
+## Watch-outs
 - [Anything that would bite you if you walked in cold — a sensitivity, a blocker, a competitor, a promise made]
 
 ---
 
-*Need more than a refresher? → `deal-assessment` for health, `prep-call` to prep a specific call, `next-move` for what to do next.*
+> [!info] Need more than a refresher?
+> → `deal-assessment` for health, `prep-call` to prep a specific call, `next-move` for what to do next.
 
 ---
 
@@ -129,5 +138,7 @@ Per the playbook, surface gaps between SFDC and transcripts — but frame them n
 ---
 
 ## Changelog
+
+- **2026-06-18** — Applied the shared Output Document Format (`_se-playbook.md`): added At-a-Glance (current state, key players, last touch with ==days-since==, ==# open items==), a Jump-to index, promoted primary sections (Who's Who, The Story So Far, Where Things Stand, What's Open, Watch-outs) to H2, and moved the "where to go next" footer into an `[!info]` callout. Key-number emphasis on days-since-last-touch and open-item count.
 
 - **2026-06-03** — Initial creation. Informational account briefing (players / story / current state / open items) synthesized from local + transcripts + memory + Salesforce. Stays out of judgment (points to deal-assessment / prep-call / router). Router-like read depth. Auto-save + brief mode.

@@ -197,6 +197,8 @@ Every email must pass these tests (from CLAUDE.md):
 
 ## After Generating
 
+Exempt from the Output Document Format contract (see `_se-playbook.md`) — this is a customer email, so no At-a-Glance, Jump-to, TOC headings, or callouts.
+
 ### Auto-save (default)
 
 Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save drafted emails to:
@@ -221,6 +223,8 @@ Never send via Gmail MCP unless the user explicitly says "send it." Default is d
 ---
 
 ## Changelog
+
+- **2026-06-18** — Confirmed exempt from the shared Output Document Format (_se-playbook.md): follow-up-email is a customer-facing email, not a report — no At-a-Glance/Jump-to/callouts.
 
 - **2026-05-28** — Auto-save to outputs/<skill>/ folder (default; --no-save to suppress). Source Coverage section required (anti-hallucination). Reads SE identity from ~/airbyte-work/.se-config.yaml. Output filename: <skill>-YYYY-MM-DD-<descriptor>.md.
 

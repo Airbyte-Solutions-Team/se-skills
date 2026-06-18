@@ -44,9 +44,11 @@ If user signals brief mode (`--brief`, `quick POC plan`, `POC summary`): produce
 
 ## Output Format
 
+Document structure follows `_se-playbook.md` → Output Document Format (H1 title → At a Glance → Jump-to index → Source Coverage → H2 body sections, callouts, `==key==` emphasis).
+
 ---
 
-## POC Plan: [Company Name] × Airbyte
+# POC Plan: Acme × Airbyte
 **Date:** [today's date]
 **SE owner:** [SE name]
 **AE:** [AE name]
@@ -55,16 +57,26 @@ If user signals brief mode (`--brief`, `quick POC plan`, `POC summary`): produce
 **POC start date:** [date or TBD]
 **POC end date:** [date or TBD]
 
----
+### At a Glance
+- **Timeline:** ==[N] weeks== ([start] → [end]) · **Mid-POC checkpoint:** ==[date]==
+- **Success criteria:** ==[N]== ([M] must-have) · **Mutual commitments:** [N]
+- **Scope:** [sources → destination, POC data volume] · **Volume:** ==[e.g., 50M rows]==
+- **Top risk:** [one line]
 
-### POC Objective
+**Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [POC Objective](#poc-objective) · [Mutual Commitments](#mutual-commitments-upfront-contract--sandler) · [Success Criteria](#success-criteria) · [Scope](#scope) · [POC Architecture](#poc-architecture) · [Timeline & Milestones](#timeline--milestones) · [Roles & Responsibilities](#roles--responsibilities) · [Access & Prerequisites Checklist](#access--prerequisites-checklist) · [Risks & Mitigations](#risks--mitigations) · [POC Exit Criteria](#poc-exit-criteria) · [Story for Results Review](#story-for-results-review-pre-staged) · [Notes / Open Items](#notes--open-items)
+
+## Source Coverage
+[Prior qual docs read, transcripts referenced (line counts), external context pulled — see After Generating.]
+
+## POC Objective
 **In one sentence, what does this POC need to prove?**
 > [e.g., "Validate that Airbyte can replicate data from [Source A] and [Source B] into Snowflake reliably, at [X] volume, with acceptable latency, and meet [Company]'s security requirements."]
 
----
-
-### Mutual Commitments (Upfront Contract — Sandler)
+## Mutual Commitments (Upfront Contract — Sandler)
 **Required for any POC. A POC without a written upfront contract drifts.**
+
+> [!info] Mutual Commitments — Sandler upfront contract
+> This is the foundation of the POC; it gets signed off by champion + EB before kickoff. Without it, a "passed POC" can still stall — customers pass technically and disappear commercially.
 
 | Party | Commits to |
 |-------|------------|
@@ -75,11 +87,7 @@ If user signals brief mode (`--brief`, `quick POC plan`, `POC summary`): produce
 | **[Customer]** | If all must-have criteria are met, commit to a commercial conversation within 2 weeks of POC end |
 | **Both** | If criteria are not met, mutually agree the deal doesn't move forward (or explicitly extend scope with a renegotiated commitment) |
 
-**Why this matters:** Without these, a "passed POC" can still stall — customers pass technically and disappear commercially. This section gets signed off by champion + EB before kickoff.
-
----
-
-### Success Criteria
+## Success Criteria
 These are the specific, measurable outcomes that define a successful POC. Both parties should agree on these before the POC begins.
 
 | # | Criterion | How it will be measured | Must-have or Nice-to-have |
@@ -92,9 +100,7 @@ These are the specific, measurable outcomes that define a successful POC. Both p
 
 **POC passes if:** All must-have criteria are met.
 
----
-
-### Scope
+## Scope
 
 **In scope:**
 - [Use case 1 — e.g., Salesforce → Snowflake full refresh + incremental]
@@ -108,18 +114,14 @@ These are the specific, measurable outcomes that define a successful POC. Both p
 - [e.g., Production-scale volume testing]
 - [e.g., BI tool integration]
 
----
-
-### POC Architecture
+## POC Architecture
 **Deployment:** [Airbyte Cloud / Self-Managed on [cloud provider]]
 **Environment:** [Dedicated POC workspace / sandbox / their existing infra]
 **Data sources:** 
 **Destinations:** 
 **Approximate data volume for POC:** 
 
----
-
-### Timeline & Milestones
+## Timeline & Milestones
 *Adjust based on POC duration. Default below is a 4-week template — for 2-week POCs, compress; for 6-8 week enterprise POCs, expand the validation phase.*
 
 | Week | Milestone | Owner |
@@ -133,9 +135,7 @@ These are the specific, measurable outcomes that define a successful POC. Both p
 | End of POC | Results review call, success criteria scored | Both |
 | Post-POC | Commercial conversation / next steps | AE + SE |
 
----
-
-### Roles & Responsibilities
+## Roles & Responsibilities
 
 **Airbyte ([SE owner]):**
 - [ ] Configure initial workspace and connections
@@ -150,9 +150,7 @@ These are the specific, measurable outcomes that define a successful POC. Both p
 - [ ] Validate data accuracy against source of truth
 - [ ] Complete success criteria scoring at end of POC
 
----
-
-### Access & Prerequisites Checklist
+## Access & Prerequisites Checklist
 Before the POC can begin, the following must be in place:
 
 - [ ] Airbyte Cloud workspace provisioned (or self-managed environment set up)
@@ -162,9 +160,7 @@ Before the POC can begin, the following must be in place:
 - [ ] SSO/IdP details shared (if testing SSO)
 - [ ] Internal stakeholders aligned on POC scope and timeline
 
----
-
-### Risks & Mitigations
+## Risks & Mitigations
 
 | Risk | Likelihood | Mitigation |
 |------|------------|------------|
@@ -173,9 +169,10 @@ Before the POC can begin, the following must be in place:
 | [e.g., Stakeholder availability] | Medium | Lock milestone review dates upfront |
 | [e.g., Scope creep] | Medium | Enforce written scope; log any additions as post-POC |
 
----
+> [!risk] Top POC risk
+> [Name the single highest-likelihood/highest-impact risk from the table and the concrete mitigation. Access-provisioning delays and scope creep are the most common POC killers — call out whichever applies here.]
 
-### POC Exit Criteria
+## POC Exit Criteria
 At the end of the POC, one of three outcomes:
 
 | Outcome | Definition | Next step |
@@ -184,9 +181,7 @@ At the end of the POC, one of three outcomes:
 | **Conditional pass** | Must-haves met, minor gaps remain | Agree remediation plan, proceed to commercial |
 | **No-go** | One or more must-haves not met | Document gap, escalate to Product/Eng or disqualify |
 
----
-
-### Story for Results Review (Pre-staged)
+## Story for Results Review (Pre-staged)
 **The narrative you'll tell at the end of POC — designed during planning, not afterward.**
 
 Not "we synced data." Something like:
@@ -197,14 +192,12 @@ Pre-stage 2-3 narrative beats you'll be able to tell if the POC succeeds:
 2. [Narrative beat tied to a Must-Have criterion]
 3. [Narrative beat tied to a Need-Payoff moment]
 
----
-
-### Notes / Open Items
+## Notes / Open Items
 - [ ] [Any open question or dependency before POC can be confirmed]
 
 ---
 
-## Style
+## Style (poc-plan skill guidance — not part of output template)
 
 - Success criteria specific and measurable — reject vague criteria like "data looks correct"
 - Scope tight — a 2-week POC that passes beats a 6-week POC that drifts
@@ -275,6 +268,8 @@ Read `~/airbyte-work/.se-config.yaml` for the `[SE name]` field in the SE owner 
 ---
 
 ## Changelog
+
+- **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.
 
 - **2026-05-28** — Auto-save to outputs/<skill>/ folder (default; --no-save to suppress). Source Coverage section required (anti-hallucination). Reads SE identity from ~/airbyte-work/.se-config.yaml. Output filename: <skill>-YYYY-MM-DD-<descriptor>.md.
 

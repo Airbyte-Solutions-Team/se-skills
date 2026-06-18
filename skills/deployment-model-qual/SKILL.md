@@ -51,21 +51,37 @@ These come directly from Gary's CLAUDE.md. Answer each one for the customer usin
 
 ## Output Format
 
+Document structure follows `_se-playbook.md` → Output Document Format (At-a-Glance + Jump-to index, H2-per-section, callouts, `==key==` emphasis).
+
 ---
 
-## Deployment Model Qualification: [Customer]
+# Deployment Model Qualification: [Customer]
 **Date:** [today's date in long form, e.g. June 11, 2026]
 **Sources:** [transcripts, notes, Notion pages used]
 
+### At a Glance
+- **Verdict:** [one-liner — 🟢 Cloud Pro viable / 🟡 viable with caveats / 🔴 not viable, requalify]
+- **Hard constraint:** [the single requirement that drives the verdict, or "none — no hard blockers surfaced"]
+
+**Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [Verdict](#verdict) · [The Five Questions](#the-five-questions) · [Implications by Answer](#implications-by-answer) · [Recommended Next Action](#recommended-next-action) · [Discovery Questions for Next Call](#discovery-questions-for-next-call)
+
 ---
 
-### Verdict
+## Verdict
+
+Render the verdict as a callout, picking the type by status: `[!verdict]` if 🟢 Cloud Pro viable, `[!risk]` if 🟡 viable with caveats, `[!blocker]` if 🔴 not viable / requalify.
+
+```markdown
+> [!blocker] 🔴 Cloud Pro NOT viable — requalify to Self-Managed Enterprise
+> Customer requires customer-managed KMS (hard requirement, confirmed by CISO 06.10). Cloud Pro does not support BYOK. Hand to AE for SME motion.
+```
+
 **Status:** 🟢 Cloud Pro is viable / 🟡 Cloud Pro is viable with caveats / 🔴 Cloud Pro NOT viable — requalify or park
 **One-sentence rationale:** [punchy verdict]
 
 ---
 
-### The Five Questions
+## The Five Questions
 
 | # | Question | Customer Answer | Who answered (name + role) | Source (date) | Risk |
 |---|----------|-----------------|----------------------------|---------------|------|
@@ -79,7 +95,7 @@ These come directly from Gary's CLAUDE.md. Answer each one for the customer usin
 
 ---
 
-### Implications by Answer
+## Implications by Answer
 
 For each 🔴 answer above, state explicitly:
 - **What it breaks:** Cloud Pro [can/cannot] support this requirement because [reason].
@@ -94,7 +110,7 @@ For each 🟢 answer:
 
 ---
 
-### Recommended Next Action
+## Recommended Next Action
 ONE of:
 1. **Proceed with Cloud Pro.** All five questions answered 🟢. Move to tech qual / connector feasibility.
 2. **Proceed with caveats.** Mostly 🟢, with 1-2 🟡. Specific questions to resolve in next call before scoping POC.
@@ -104,7 +120,7 @@ ONE of:
 
 ---
 
-### Discovery Questions for Next Call
+## Discovery Questions for Next Call
 
 If any answer is Unknown or ambiguous, draft 3-5 specific questions Gary can ask to close the gap. Avoid generic phrasing — use SPIN/Sandler tactics. Examples:
 
@@ -183,6 +199,8 @@ Read `~/airbyte-work/.se-config.yaml` for the `[SE name]` field.
 ---
 
 ## Changelog
+
+- **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.
 
 - **2026-05-28** — Auto-save to outputs/<skill>/ folder (default; --no-save to suppress). Source Coverage section required (anti-hallucination). Reads SE identity from ~/airbyte-work/.se-config.yaml. Output filename: <skill>-YYYY-MM-DD-<descriptor>.md.
 

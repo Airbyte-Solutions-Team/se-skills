@@ -9,6 +9,30 @@ const api = async (path, opts) => {
 };
 const esc = (s) => (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
+// Slugify a heading into an anchor id (lowercase, strip inline markdown,
+// non-alphanumeric → "-"). De-dupe is handled per-render by the caller.
+function slugify(s) {
+  return (s || "")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/==([^=]+)==/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+// Strip inline markdown to plain text (for TOC sidebar labels).
+function stripInline(s) {
+  return (s || "")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/==([^=]+)==/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+}
+
 // "ran 8 min ago" from an epoch-seconds timestamp.
 function relTime(epochSec) {
   const diff = Math.max(0, Date.now() / 1000 - epochSec);
@@ -34,11 +58,14 @@ async function pollJob(jobId, onTick) {
 // Minimal, dependency-free Markdown → HTML for rendering skill outputs nicely.
 // Handles: headings, bold/italic, inline code, code fences, tables, blockquotes,
 // hr, ordered/unordered lists (incl. [ ] checkboxes), paragraphs.
-function mdToHtml(md) {
+// `toc` (optional) collects {level, text, id} for an auto-generated index.
+function mdToHtml(md, toc) {
   const lines = (md || "").replace(/\r\n/g, "\n").split("\n");
   let html = "", i = 0;
+  const seenIds = {};  // de-dupe heading ids within this render
   const inline = (t) => esc(t)
     .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/==([^=]+)==/g, '<mark class="md-key">$1</mark>')
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>")
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
@@ -62,12 +89,36 @@ function mdToHtml(md) {
         body.map((r) => `<tr>${r.map((c) => `<td>${inline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
       continue;
     }
-    // heading
+    // heading — emit a slug id and (optionally) collect into the TOC
     const h = ln.match(/^(#{1,6})\s+(.*)$/);
-    if (h) { const lvl = h[1].length; html += `<h${lvl} class="md-h md-h${lvl}">${inline(h[2])}</h${lvl}>`; i++; continue; }
+    if (h) {
+      const lvl = h[1].length;
+      let id = slugify(h[2]) || "section";
+      if (seenIds[id] != null) { seenIds[id]++; id = `${id}-${seenIds[id]}`; } else { seenIds[id] = 0; }
+      if (toc) toc.push({ level: lvl, text: stripInline(h[2]), id });
+      html += `<h${lvl} id="${id}" class="md-h md-h${lvl}">${inline(h[2])}</h${lvl}>`;
+      i++; continue;
+    }
     // hr
     if (/^\s*---\s*$/.test(ln)) { html += "<hr class='md-hr'/>"; i++; continue; }
-    // blockquote
+    // callout — GitHub-style admonition: > [!verdict|risk|blocker|info] title
+    // MUST come before the generic blockquote branch (which would swallow it).
+    const cm = ln.match(/^>\s*\[!(verdict|risk|blocker|info)\]\s*(.*)$/i);
+    if (cm) {
+      const type = cm[1].toLowerCase();
+      const title = cm[2].trim();
+      let buf = []; i++;
+      while (i < lines.length && /^>\s?/.test(lines[i]) && !/^>\s*\[!/.test(lines[i])) {
+        buf.push(lines[i].replace(/^>\s?/, "")); i++;
+      }
+      const body = buf.filter((l) => l.trim()).map((l) => inline(l)).join("<br>");
+      html += `<div class="callout callout-${type}">`
+        + (title ? `<div class="callout-title">${inline(title)}</div>` : "")
+        + (body ? `<div class="callout-body">${body}</div>` : "")
+        + `</div>`;
+      continue;
+    }
+    // blockquote (plain — no [!type] marker)
     if (/^>\s?/.test(ln)) {
       let buf = [];
       while (i < lines.length && /^>\s?/.test(lines[i])) { buf.push(lines[i].replace(/^>\s?/, "")); i++; }
@@ -625,10 +676,35 @@ async function pageOpportunity(account, slug, oppName) {
 
 async function openOutput(path, title) {
   const text = await api("/api/output?path=" + encodeURIComponent(decodeURIComponent(path)));
+  const toc = [];
+  const bodyHtml = mdToHtml(text, toc);
+  // Index of H2/H3 headings for the sticky sidebar (skip H1 title + H4+).
+  const tocHtml = toc
+    .filter((t) => t.level === 2 || t.level === 3)
+    .map((t) => `<a href="#toc-${t.id}" class="doc-toc-link lvl${t.level}">${esc(t.text)}</a>`)
+    .join("");
   view.innerHTML = `
     <div class="row"><h1>${esc(title)}</h1><button class="ghost" onclick="history.back()">← Back</button></div>
-    <div class="doc md-body">${mdToHtml(text)}</div>`;
+    <div class="doc-layout">
+      ${tocHtml ? `<aside class="doc-toc"><div class="doc-toc-head">On this page</div>${tocHtml}</aside>` : ""}
+      <article class="doc md-body">${bodyHtml}</article>
+    </div>`;
   setCrumbs([{ label: "Team", href: "#/" }, { label: "output" }]);
+
+  // Sidebar links scroll-jump locally (no router involvement).
+  view.querySelectorAll(".doc-toc-link").forEach((a) => {
+    a.onclick = (e) => {
+      e.preventDefault();
+      const el = document.getElementById(a.getAttribute("href").slice(5)); // strip "#toc-"
+      if (el) { el.scrollIntoView({ behavior: "smooth", block: "start" }); flashEl(el); }
+    };
+  });
+}
+
+// Brief highlight on an anchored element (reuses the help-flash animation).
+function flashEl(el) {
+  el.classList.add("doc-flash");
+  setTimeout(() => el.classList.remove("doc-flash"), 1200);
 }
 
 // ---- Invoke modal ---------------------------------------------------------
@@ -765,6 +841,14 @@ async function route() {
       if (!document.getElementById(h)) await pageHelp();
       const el = document.getElementById(h);
       if (el) { el.scrollIntoView({ behavior: "smooth", block: "start" }); el.classList.add("help-flash"); setTimeout(() => el.classList.remove("help-flash"), 1200); }
+      return;
+    }
+    // Doc sidebar TOC links use "#toc-…" — handled locally in openOutput; ignore here.
+    if (h.startsWith("toc-")) return;
+    // In-doc "Jump to" links target a heading id on the current page — scroll, don't route.
+    if (!h.startsWith("/") && document.getElementById(h)) {
+      const el = document.getElementById(h);
+      el.scrollIntoView({ behavior: "smooth", block: "start" }); flashEl(el);
       return;
     }
     if (h === "/" || h === "") return pageMembers();

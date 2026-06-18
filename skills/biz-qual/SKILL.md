@@ -39,16 +39,24 @@ If user signals brief mode (`--brief`, `quick qual`, `qual summary`): produce ju
 
 ## Output Format
 
----
-
-## Business Qualification: [Company Name]
-**Date:** [today's date in long form, e.g. June 11, 2026]
-**Deal stage:** [Discovery / Technical Eval / POC / Negotiation]
-**SE owner:** [SE name]
+Document structure follows `_se-playbook.md` → Output Document Format (At-a-Glance + Jump-to index, H2-per-section, callouts, `==key==` emphasis).
 
 ---
 
-### MEDDPICC Scorecard
+# Business Qualification: [Company Name]
+**Date:** [today's date in long form, e.g. June 11, 2026] · **Deal stage:** [Discovery / Technical Eval / POC / Negotiation] · **SE owner:** [SE name]
+
+### At a Glance
+- **MEDDPICC:** [one-line scorecard, e.g. `M🟢 E🔴 D🟡 D🟡 P🔴 I🟢 C🟡 C🟢`]
+- **Economic Buyer:** [name/title or "not identified"] · **Champion:** [name/title or "untested"]
+- **Biggest gap:** [the weakest/blocking letter — one line]
+- **Overall:** [Strong / Moderate / Weak]
+
+**Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [MEDDPICC Scorecard](#meddpicc-scorecard) · [Metrics](#metrics) · [Economic Buyer](#economic-buyer) · [Decision Criteria](#decision-criteria) · [Decision Process](#decision-process) · [Paper Process](#paper-process) · [Identify Pain](#identify-pain) · [Champion](#champion) · [Competition](#competition) · [Movement Since Last Qualification](#movement-since-last-qualification) · [Deal Risks](#deal-risks) · [Recommended Next Actions](#recommended-next-actions)
+
+---
+
+## MEDDPICC Scorecard
 
 | Element | Status | Source (transcript date + speaker) | Notes |
 |---------|--------|-------------------------------------|-------|
@@ -63,9 +71,19 @@ If user signals brief mode (`--brief`, `quick qual`, `qual summary`): produce ju
 
 **Overall qualification score:** [Strong / Moderate / Weak]
 
+Surface the weakest letters as callouts directly under the scorecard — `[!blocker]` for any 🔴 letter that blocks the deal, `[!risk]` for at-risk 🟡 letters that need confirmation:
+
+```markdown
+> [!blocker] Economic Buyer not identified
+> No one with budget authority has engaged. Champion can't name who signs a deal this size. This gates everything downstream.
+
+> [!risk] Paper Process unknown — end-of-quarter risk
+> No InfoSec/legal timeline confirmed. New-vendor onboarding can run ==60–90 days==; if not started now, the close date slips.
+```
+
 ---
 
-### Metrics
+## Metrics
 **What business outcomes are they trying to achieve?**
 - Quantified value: [e.g., "reduce pipeline build time from 3 weeks to 1 day", "consolidate 5 tools into 1"]
 - KPIs they've mentioned: 
@@ -76,7 +94,7 @@ If user signals brief mode (`--brief`, `quick qual`, `qual summary`): produce ju
 
 ---
 
-### Economic Buyer
+## Economic Buyer
 **Who controls the budget and can say yes?**
 - Name / title: 
 - Engaged: [Yes / No / Indirectly]
@@ -88,7 +106,7 @@ If user signals brief mode (`--brief`, `quick qual`, `qual summary`): produce ju
 
 ---
 
-### Decision Criteria
+## Decision Criteria
 **What does "winning" look like to them?**
 - Stated criteria: 
 - Unstated / inferred criteria: 
@@ -101,7 +119,7 @@ If user signals brief mode (`--brief`, `quick qual`, `qual summary`): produce ju
 
 ---
 
-### Decision Process
+## Decision Process
 **How will they make the decision?**
 - Evaluation steps: 
 - Key stakeholders involved: 
@@ -113,7 +131,7 @@ If user signals brief mode (`--brief`, `quick qual`, `qual summary`): produce ju
 
 ---
 
-### Paper Process
+## Paper Process
 **The legal/procurement/security steps between handshake and signed contract. Surface this early — surprises here kill end-of-quarter deals.**
 - InfoSec / security review: [required? owner? typical duration?]
 - Legal redline cycle: [DPA, MSA, order form — owner and timeline]
@@ -126,7 +144,7 @@ If user signals brief mode (`--brief`, `quick qual`, `qual summary`): produce ju
 
 ---
 
-### Identify Pain
+## Identify Pain
 **Apply the Sandler pain funnel — go three layers deep. If you can't fill layer 3, pain isn't fully identified.**
 
 **Layer 1 — Surface complaint (what they said):**
@@ -146,7 +164,7 @@ If user signals brief mode (`--brief`, `quick qual`, `qual summary`): produce ju
 
 ---
 
-### Champion
+## Champion
 **Who is selling Airbyte internally on our behalf?**
 - Name / title: 
 - Motivation: [Why do they personally win if Airbyte wins?]
@@ -166,7 +184,7 @@ If they only relay your messages, they're a coach — not a champion. Downgrade 
 
 ---
 
-### Competition
+## Competition
 **Who else are they considering — including the "do nothing" and "build it ourselves" options?**
 
 | Alternative | Status | Notes |
@@ -184,7 +202,7 @@ If they only relay your messages, they're a coach — not a champion. Downgrade 
 
 ---
 
-### Movement Since Last Qualification
+## Movement Since Last Qualification
 *If a prior biz-qual exists for this customer (check `~/airbyte-work/01-customers/<Customer>/biz-qual-*.md`), compare letter-by-letter:*
 
 | Letter | Prior status | Current status | Trend |
@@ -195,7 +213,7 @@ Flag any letter that regressed (especially Champion, EB, Pain) — that's a *wal
 
 ---
 
-### Deal Risks
+## Deal Risks
 | Risk | Severity | Mitigation |
 |------|----------|------------|
 | [e.g., No EB access] | High | |
@@ -204,7 +222,7 @@ Flag any letter that regressed (especially Champion, EB, Pain) — that's a *wal
 
 ---
 
-### Recommended Next Actions
+## Recommended Next Actions
 1. [Most critical gap to close — assign owner and date]
 2. [Second priority]
 3. [Third priority]
@@ -309,6 +327,8 @@ Wait for explicit yes/no on Notion / memory before doing those.
 ---
 
 ## Changelog
+
+- **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.
 
 - **2026-05-28** — Salesforce enrichment added (reads from sf-mcp via mcp__salesforce__run_soql_query). Pulls AE-view MEDDPICC / technical / forecast fields per the playbook field map; assertive SFDC-vs-reality mismatch flagging; graceful degradation if SFDC disabled. Org alias + query dir from .se-config.yaml.
 

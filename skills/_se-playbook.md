@@ -316,6 +316,77 @@ When a same-day file already exists with the same descriptor, append `-v2`, `-v3
 
 ---
 
+## Output Document Format
+
+Every saving skill produces a markdown document that is read both in the raw `.md` and in the Solutions Team Hub web app (which renders an auto-generated index sidebar, colored callouts, and key-number highlighting). Follow this shared structure so outputs are **sectionalized, scannable, and consistent**.
+
+### Top-of-document structure (in this order)
+
+```markdown
+# <Customer> — <Skill Title>: <one-line verdict/descriptor>
+**Date:** June 18, 2026 · **Stage:** <stage> · **<key>:** <value>   ← bold key-lines, long-form date
+
+### At a Glance
+- **Verdict:** <one line — wrap the headline figure in ==…==>
+- **<Label>:** <value> · **<Label>:** ==<key number>== · **<Label>:** <value>
+- **Top <blocker/risk/gap>:** <one line>
+
+**Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [<Section>](#slug) · …
+
+## Source Coverage
+…(anti-hallucination block — see Source Coverage Transparency)…
+
+## <First body section>
+### <subsection>
+…
+```
+
+- **At a Glance** is a short labeled key/value list (3–6 lines) — the single most decision-relevant facts. It is NOT a table or a card; just bold `**Label:**` pairs.
+- **Jump to** is a one-line list of links to the document's `##` sections. The web app also auto-builds a sidebar from the headings, but the inline Jump-to keeps the raw `.md` navigable. Anchor slugs are lowercase, non-alphanumeric → `-` (e.g. `## Fit Verdict` → `#fit-verdict`).
+
+### Heading rule (required for the index to work)
+
+- **Every top-level section is an H2 (`##`).** The web app sidebar and the Jump-to index only anchor headings. Never skip from H1 straight to H3 for a primary section.
+- Use **H3 (`###`)** for sub-parts. `At a Glance` is an H3 (it sits under the title block, not a navigable section).
+- Don't go deeper than H3 in output.
+
+### Callouts (verdicts, risks, blockers, questions)
+
+Use GitHub-style admonition syntax on a blockquote. The web app renders each as a colored box; in raw markdown it reads as a labeled quote. Reserve callouts for genuinely decision-relevant moments — a verdict, a real risk, a blocker, or the key questions to ask. **Don't wrap ordinary prose in callouts.**
+
+```markdown
+> [!verdict] <title>     ← green — go / viable / fully-validated / probability ≥60%
+> body line(s)…
+
+> [!risk] <title>        ← amber — caution / needs-confirmation / SFDC-vs-reality / band 20–60%
+> [!blocker] <title>     ← red — no-go / deal-killer / hard blocker / band <20%
+> [!info] <title>        ← blue — questions to ask / neutral key context
+```
+
+- First `>` line is `[!type]` + an optional bold title; following `>` lines are the body.
+- A plain `> quote` with no `[!type]` marker stays an ordinary blockquote — unchanged.
+
+### Key-number emphasis
+
+Wrap genuinely decision-relevant figures in `==…==` — the web app renders them bold + highlighted.
+
+```markdown
+Probability **==40–60%==**, deal size ==$<amount>==, latency ==13h → 15min==, ==31 days silent==.
+```
+
+- **Cap: 3–6 highlights per document.** Highlight the deal amount, the before→after figure, the probability band, days-silent, close date, coverage count — the numbers a reader scans for. **If everything is highlighted, nothing stands out.** Do not highlight every number, label, or date.
+
+### Exemptions
+
+- **`follow-up-email` is fully exempt** — it's a customer-facing email, not a report. No At-a-Glance, no Jump-to, no TOC headings, no callouts. Keep its existing email structure.
+- **`next-move` and `objection-handler` are light-touch** — already short and scannable. They may use a callout for the recommended next move / severity, but At-a-Glance and Jump-to are optional.
+
+### Backward compatibility
+
+The web app degrades gracefully: documents predating this contract still get an auto-generated sidebar from whatever headings they have; absent callouts/`==…==` simply render as normal text. No need to retrofit old outputs.
+
+---
+
 ## Source Coverage Transparency (Anti-Hallucination)
 
 When a skill processes large source material (transcripts, multi-doc synthesis), it must report what it actually read.
@@ -590,6 +661,8 @@ If/when built, this should be a separate skill (not a mode flag on biz-qual/deal
 ---
 
 ## Changelog
+
+- **2026-06-18** — Added the Output Document Format contract: standard top-of-doc structure (H1 title → At a Glance → Jump-to index → Source Coverage → H2 body sections), H2-per-section rule for the auto-index, GitHub-style callouts (`[!verdict]`/`[!risk]`/`[!blocker]`/`[!info]`), `==key==` number emphasis (3–6 cap), and exemptions (follow-up-email full; next-move + objection-handler light-touch). Pairs with the web app's TOC sidebar + callout/highlight rendering.
 
 - **2026-05-28** — Added Salesforce Enrichment (Shared Machinery) section: connection via sf-mcp + .se-config.yaml, opp-matching rule (most-recent-open, exclude renewals unless only-open), account-arc rule (deal-assessment + biz-qual only), the holistic three-signal read (truth-vs-story, trajectory, why-trio), ASSERTIVE mismatch-flagging posture, verified Airbyte SFDC field reference (incl. 2 deprecated fields to avoid).
 

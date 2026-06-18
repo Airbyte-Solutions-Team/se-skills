@@ -11,7 +11,7 @@ This skill **does not generate customer-facing content.** It routes Gary to the 
 
 ## Input
 
-The user will name a customer (e.g., "where am I on Invesco", "next move for Build-Manufacturing"). Required input is just the customer name — everything else is inferred.
+The user will name a customer (e.g., "where am I on Acme", "next move for Globex"). Required input is just the customer name — everything else is inferred.
 
 If no customer is named, ask before proceeding.
 
@@ -173,9 +173,15 @@ Any stage + objection raised on most recent call
 **Reasoning:** [1-2 sentences citing the specific artifacts/transcripts that put them here]
 
 **Overrides active (if any):**
-- 🔴 Stalled — [X days since last activity]
-- 🔴 Blocked — [memory cite + specific blocker]
-- 🟡 Active objection — [from transcript]
+
+> [!blocker] 🔴 Stalled / Blocked     ← use `[!blocker]` for a hard stall/block
+> 🔴 Stalled — [X days since last activity]
+> 🔴 Blocked — [memory cite + specific blocker]
+
+> [!risk] 🟡 Active objection     ← use `[!risk]` for an open objection
+> 🟡 Active objection — [from transcript]
+
+*(Only render the override callouts that actually apply; omit this block if none.)*
 
 ---
 
@@ -187,6 +193,9 @@ Any stage + objection raised on most recent call
 ---
 
 ### Recommended Next Moves (Top 3)
+
+> [!info] Top move: [Skill name] — [headline reason]
+> The single highest-value next move. [1-line why-now.]
 
 **1. [Skill name] — [headline reason]**
 - **Why now:** [1-2 sentence rationale tied to the gap or override]
@@ -213,7 +222,7 @@ Any stage + objection raised on most recent call
 *Things to do that aren't a skill — but matter for moving the deal. Surface these alongside skill recommendations so they don't get lost.*
 
 Examples of external actions:
-- **Slack/email Airbyte engineering** — about a customer-facing blocker pending on our side (e.g., "Invesco 403 secret storage error pending engineering action per memory — 7 weeks now")
+- **Slack/email Airbyte engineering** — about a customer-facing blocker pending on our side (e.g., "Acme 403 secret storage error pending engineering action per memory — 7 weeks now")
 - **Loop in AE/AM** — schedule a sync to align on a deal direction
 - **Escalate to leadership** — for at-risk deals or deals needing exec sponsorship
 - **Customer outreach** — when silence has crossed a threshold and no skill captures the moment (e.g., "57 days silent — Slack/email customer directly to force a real answer")
@@ -296,6 +305,8 @@ Avoid "run follow-up-email because it's been a while" without a substantive trig
 ---
 
 ## Changelog
+
+- **2026-06-18** — Callouts per `_se-playbook.md` → Output Document Format (next-move is light-touch: no At-a-Glance/Jump-to; output is ephemeral/chat-only by default). Wrapped the top Recommended Next Move in an `[!info]` callout; the Inferred-Stage overrides (🔴 Stalled/Blocked → `[!blocker]`, 🟡 Active objection → `[!risk]`) now render as callouts. Artifacts Inventory table and Recommended-Next-Moves structure unchanged.
 
 - **2026-05-28** — Salesforce enrichment added (reads from sf-mcp via mcp__salesforce__run_soql_query). Pulls AE-view MEDDPICC / technical / forecast fields per the playbook field map; assertive SFDC-vs-reality mismatch flagging; graceful degradation if SFDC disabled. Org alias + query dir from .se-config.yaml.
 

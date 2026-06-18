@@ -54,53 +54,56 @@ If the user signals brief mode (`--brief`, `quick summary`, `just the takeaways`
 
 Generate a structured summary with these sections. Default output is in the chat. Do NOT auto-write to Notion or local files — ask first (per Gary's CLAUDE.md default behavior rule).
 
+Document structure follows `_se-playbook.md` → Output Document Format (H1 title → At a Glance → Jump-to index → Source Coverage → H2 body sections, callouts, `==key==` emphasis).
+
 ---
 
-## Call Summary: [Customer Name] — [call date in long form, e.g. June 11, 2026]
+# Call Summary: Acme — [call date in long form, e.g. June 11, 2026]
 **Call type:** [Discovery / Technical / Exec / POC review / etc. — infer from transcript]
 **Duration:** [if discernible]
 
----
+### At a Glance
+- **Call date:** [long-form date] · **Attendees:** ==[N]==
+- **Action items:** ==[N]== · **Next step:** [one line]
+- **Deal-assessment update needed?** [yes/no — if yes, one line on what changed]
 
-### Attendees
+**Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [Attendees](#attendees) · [Key Takeaways](#key-takeaways) · [Action Items](#action-items) · [Open Questions / Follow-ups](#open-questions--follow-ups) · [New Objections / Concerns Surfaced](#new-objections--concerns-surfaced) · [Deal Health Signals](#deal-health-signals) · [Next Step](#next-step)
+*(Append [MEDDPICC Quick Pass](#meddpicc-quick-pass) and [Coaching Observations](#coaching-observations) to the Jump-to line only when those conditional sections are present — see SE Best Practices below.)*
+
+## Source Coverage
+[Transcript read in full (lines read / total), attribution determination, prior transcripts/summaries cross-referenced, memory files — see Source Coverage section above.]
+
+## Attendees
 - **Airbyte:** [names + roles]
 - **Customer:** [names + roles]
 
----
-
-### Key Takeaways
+## Key Takeaways
 3–6 bullets capturing the most important things learned. Lead with what changed in your understanding of the deal, not a chronological recap.
 
----
-
-### Action Items
+## Action Items
 Markdown checklist. Each item: who owns it, what they're doing, by when (if stated).
 - [ ] **[Owner]** — [action] *(by [date if mentioned])*
 
----
-
-### Open Questions / Follow-ups
+## Open Questions / Follow-ups
 Questions the customer asked that weren't fully answered, or that you committed to follow up on. These should feed the customer's Notion `Q&A` page.
 
----
+## New Objections / Concerns Surfaced
+Anything the customer raised that wasn't on your radar before the call — pricing, security, deployment model, competitor mentions, internal politics.
 
-### New Objections / Concerns Surfaced
-Anything the customer raised that wasn't on your radar before the call — pricing, security, deployment model, competitor mentions, internal politics. Flag the severity.
+> [!risk] [Title the new objection — only if a genuinely new concern surfaced]
+> [What they raised, who raised it, and the severity. Omit this callout if no new objection surfaced; if multiple, use one callout each for the material ones.]
 
----
-
-### Deal Health Signals
+## Deal Health Signals
 Quick read on what this call moved (or didn't):
 - **Positive signals:** [what they said/did that's good]
 - **Negative signals:** [hesitation, delays, scope shrinkage, etc.]
 - **Recommended Deal Assessment update?** [yes/no — if yes, briefly say what changed]
 
----
+> [!verdict] [Title the strongest positive signal — only if the call produced a genuinely strong positive]
+> [The signal and why it moves the deal forward — e.g., EB confirmed budget, champion pushed timeline up. Omit if the call was neutral or negative.]
 
-### Next Step
+## Next Step
 The single most important next action. Be specific — "send POC proposal by Friday" not "follow up".
-
----
 
 ## After Generating the Summary
 
@@ -129,7 +132,7 @@ User can suppress with `--no-save`.
 
 Wait for explicit yes/no on Notion / memory / deal-assessment before doing those.
 
-## Style
+## Style (post-call skill guidance — not part of output template)
 
 - Concise and scannable. This is a working doc, not a report.
 - Pull direct quotes from the transcript when they're load-bearing (especially for objections and commitments).
@@ -179,13 +182,13 @@ If prior transcripts or call summaries exist for this customer, read the "Cross-
 **Only include MEDDPICC Movement for AE-led discovery calls** (which feed into the SE's prep for follow-up tech calls). Full MEDDPICC scoring belongs in `biz-qual`, not post-call.
 
 Decision logic:
-- **AE-led discovery call (SE not on the call):** Add a `### MEDDPICC Quick Pass` section with brief 🟢/🟡/🔴 status per letter — enough signal to feed `prep-call` for the SE's follow-up. Don't run the full pain funnel or champion test here; that's biz-qual's job.
+- **AE-led discovery call (SE not on the call):** Add a `## MEDDPICC Quick Pass` section (H2, so it lands in the Jump-to index) with brief 🟢/🟡/🔴 status per letter — enough signal to feed `prep-call` for the SE's follow-up. Don't run the full pain funnel or champion test here; that's biz-qual's job.
 - **SE-attended call (tech-discovery, deep-dive, exec readout, POC review, etc.):** Skip MEDDPICC scoring entirely. Focus on call-specific data (attendees, takeaways, action items, objections, next step). Anyone who needs MEDDPICC scoring should run `biz-qual` directly.
 - **Unknown attribution:** Skip MEDDPICC by default; note "MEDDPICC skipped — call attribution unclear."
 
 ### Coaching layer — framed by call attribution
 
-Add a `### Coaching Observations` section. **Framing depends on call attribution** (per `_se-playbook.md` Call Attribution):
+Add a `## Coaching Observations` section (H2, so it lands in the Jump-to index). **Framing depends on call attribution** (per `_se-playbook.md` Call Attribution):
 
 **If SE was on the call (SE-attended):**
 Frame as "what to do differently next time." Direct critique of the SE's moves:
@@ -223,6 +226,8 @@ If the customer revealed a belief about their own business that Airbyte data cou
 ---
 
 ## Changelog
+
+- **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.
 
 - **2026-05-28** — Auto-save to outputs/<skill>/ folder (default; --no-save to suppress). Source Coverage section required (anti-hallucination). Reads SE identity from ~/airbyte-work/.se-config.yaml. Output filename: <skill>-YYYY-MM-DD-<descriptor>.md.
 

@@ -62,6 +62,8 @@ If user signals brief mode (`--brief`, `quick assessment`, `deal health summary`
 
 ## Output Format
 
+Document structure follows `_se-playbook.md` → Output Document Format (At-a-Glance + Jump-to index, H2-per-section, callouts, `==key==` emphasis).
+
 Title format: `<Customer> — Deal Assessment: <short punchy verdict>`
 
 The punchy verdict should be honest, e.g.:
@@ -72,14 +74,21 @@ The punchy verdict should be honest, e.g.:
 
 ---
 
-## <Customer> — Deal Assessment: <punchy verdict>
-**Date:** [today's date in long form, e.g. June 11, 2026]
-**Stage:** [Discovery / POC / Negotiation / Closed Won / Closed Lost / Stalled]
+# <Customer> — Deal Assessment: <punchy verdict>
+**Date:** [today's date in long form, e.g. June 11, 2026] · **Stage:** [Discovery / POC / Negotiation / Closed Won / Closed Lost / Stalled]
 **Sources:** [list transcripts and notes used, with dates]
+
+### At a Glance
+- **Probability:** ==[band, e.g. 40–60%]== ([dead/dying / at risk / likely / very likely / committed])
+- **Stage:** [stage] · **Trajectory:** [🟢 Accelerating / 🟡 Steady / 🔴 Decelerating / 🔴 Silent]
+- **#1 Blocker:** [one line — name the person/process/alternative]
+- **Driver:** [one line — what's pushing them now]
+
+**Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [Activity Trajectory](#activity-trajectory) · [Driver](#driver) · [Need](#need) · [Urgency](#urgency) · [What Would Close It](#what-would-close-it) · [Deal Blocker](#deal-blocker) · [What Would Lose It](#what-would-lose-it) · [Bottom Line](#bottom-line) · [Coaching Observations](#coaching-observations)
 
 ---
 
-### Activity Trajectory
+## Activity Trajectory
 *Silence is signal. Quantify the deal's cadence and whether it's healthy.*
 
 | Metric | Value |
@@ -91,32 +100,37 @@ The punchy verdict should be honest, e.g.:
 | Current trajectory | 🟢 Accelerating / 🟡 Steady / 🔴 Decelerating / 🔴 Silent (>30d) |
 
 **What this signals:**
-[1-2 sentences. Acceleration = healthy. Silence on a deal with a forcing function = serious deal-decay signal. Long gaps between meetings + verbal commitments not yet executed = walking it back. Be honest about what the cadence indicates.]
+[1-2 sentences. Acceleration = healthy. Silence on a deal with a forcing function = serious deal-decay signal. Long gaps between meetings + verbal commitments not yet executed = walking it back. Be honest about what the cadence indicates. Wrap a headline figure such as ==31 days silent== if it's decision-relevant.]
 
 ---
 
-### Driver
+## Driver
 What's pushing them to evaluate Airbyte *right now*? (Not what their general problem is — what made them pick up the phone this quarter.) If you can't identify one, say so plainly — that's a red flag.
 
-### Need
+## Need
 What do they actually require from the product? Be specific — connectors, deployment model, volume, latency, compliance. Distinguish must-have from nice-to-have.
 
-### Urgency
+## Urgency
 What's the forcing function and timeline? Contract renewal? Project deadline? Compliance deadline? Internal initiative? If urgency is vague ("sometime this year"), call it out.
 
-### What Would Close It
+## What Would Close It
 Specific levers that could move this to signature. Be concrete — "POC success on Workday source", "exec demo with their CDO", "pricing concession on Pro tier", "introducing them to reference customer in financial services".
 
-### Deal Blocker
+## Deal Blocker
 The primary obstacle to closing. There's usually one big thing. Name it. If there are multiple, rank them.
 
-### What Would Lose It
+## What Would Lose It
 What kills this deal entirely? Competitor selection? Budget cut? Internal build decision? Champion leaving? Be honest about the failure modes.
 
-### Bottom Line
+## Bottom Line
 One paragraph. Honest assessment of deal health. Not optimistic, not pessimistic — accurate.
 
-**Probability estimate — use bands, not point estimates:**
+**Probability estimate — use bands, not point estimates.** Render the chosen band as a verdict callout, picking the type by band: `[!verdict]` if ≥60%, `[!risk]` if 20–60%, `[!blocker]` if <20%. Wrap the band figure in `==…==`.
+
+```markdown
+> [!risk] Probability ==40–60%== (likely if execution stays clean)
+> In this band because: (1) confirmed EB engagement on 04.15, (2) champion passed all three tests, (3) but paper process is unknown and creates execution risk.
+```
 
 | Band | When to use |
 |------|-------------|
@@ -136,7 +150,7 @@ If you don't have enough signal to band, say "Unable to estimate — source base
 
 ---
 
-### Coaching Observations (For Gary's Growth)
+## Coaching Observations (For Gary's Growth)
 *This section is for Gary, not for the deal. Flag SE-craft issues surfaced by the source material:*
 
 - **Happy-ears moments:** Times when verbal positivity wasn't backed by a next step
@@ -211,13 +225,21 @@ Per `_se-playbook.md` "Salesforce Enrichment." This skill reads the **full accou
 - **Account arc:** all opps on the account — prior wins, prior losses (`Closed_Reason__c`, `Closed_Lost_Detail__c`, `Stage_Before_Closed_Lost__c`), existing ARR
 
 **How to use it (assertive mismatch flagging):**
-- Cross-reference every SFDC MEDDPICC field against the transcripts. AE filled "Champion: the champion" but the champion hasn't been on a call in 6 weeks → flag in a dedicated **⚠️ SFDC vs. Reality** section.
+- Cross-reference every SFDC MEDDPICC field against the transcripts. AE filled "Champion: the champion" but the champion hasn't been on a call in 6 weeks → flag it.
 - SFDC `Probability__c` vs. your honest probability band → surface the delta explicitly (this is the forecasting-honesty check).
 - Map the three whys to your Driver / Urgency / What-Would-Close sections — and flag where SFDC claims a driver/urgency the transcripts don't support.
 - Use prior-loss reasons to inform "What Would Lose It" (we've lost here before on X — is X still a risk?).
 - Use existing ARR to frame the deal: expansion vs. net-new changes the whole assessment.
 
-Add a **⚠️ SFDC vs. Reality** section to the output whenever there's a material gap. If SFDC unavailable, skip per graceful-degradation and note it.
+Whenever there's a material gap, add a `## SFDC vs. Reality` section to the output and render the mismatch as a `[!risk]` callout:
+
+```markdown
+## SFDC vs. Reality
+> [!risk] SFDC says Negotiation; reality is mid-discovery
+> AE set `StageName` = Negotiation and `Probability__c` = 80%, but `Days_Since_Last_Activity__c` = ==45== and no POV exists. Champion field names someone absent from every transcript. Treat the forecast as happy-ears.
+```
+
+If SFDC unavailable, skip per graceful-degradation and note it.
 
 ### Apply Cross-Transcript Analysis
 This skill almost always operates over multiple transcripts and notes. Read the "Cross-Transcript Analysis" section in `_se-playbook.md` before synthesizing. Specifically:
@@ -263,6 +285,8 @@ If a `Deal-Assessment-*.md` already exists for this customer, the new one MUST i
 ---
 
 ## Changelog
+
+- **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.
 
 - **2026-05-28** — Salesforce enrichment added (reads from sf-mcp via mcp__salesforce__run_soql_query). Pulls AE-view MEDDPICC / technical / forecast fields per the playbook field map; assertive SFDC-vs-reality mismatch flagging; graceful degradation if SFDC disabled. Org alias + query dir from .se-config.yaml.
 

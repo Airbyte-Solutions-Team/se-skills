@@ -65,160 +65,168 @@ If user signals brief mode (`--brief`, `quick prep`, `bullet points only`): prod
 
 ## Output Format — Varies by Meeting Type
 
-Inside the document, write dates in long form (`June 11, 2026`) per `_se-playbook.md` "Date format inside documents" — this applies to every `[Date]` placeholder below.
+Document structure follows `_se-playbook.md` → Output Document Format (H1 title → At a Glance → Jump-to index → H2 body sections, callouts, `==key==` emphasis) — applied per mode template below. Inside the document, write dates in long form (`June 11, 2026`) per `_se-playbook.md` "Date format inside documents" — this applies to every `[Date]` placeholder below.
 
 ### Type: `ae-sync`
 
 ```
-## AE Sync Prep — [AE Name] × [SE Gary] — [Date]
+# AE Sync Prep — [AE Name] × [SE Gary] — [Date]
 **Meeting purpose:** [What does Gary want to walk away with?]
 **Duration:** [if known]
 
----
+### At a Glance
+- **Meeting type:** AE sync (1:1 with [AE Name])
+- **Deals in scope:** [Customer A, Customer B, … — count]
+- **Headline ask:** [the single most important thing Gary needs from the AE]
 
-### Deal-by-deal status
+**Jump to:** [At a Glance](#at-a-glance) · [Deal-by-deal status](#deal-by-deal-status) · [Open Items Between Us](#open-items-between-us) · [Cross-Deal Themes](#cross-deal-themes-if-multiple-customers) · [Decisions Needed This Sync](#decisions-needed-this-sync)
+
+## Deal-by-deal status
 
 For each customer in scope:
 
-#### [Customer Name]
+### [Customer Name]
 - **Stage:** [Discovery / POC / Negotiation / Stalled]
 - **Last activity:** [date + what happened]
-- **Days since last contact:** [number]
+- **Days since last contact:** ==[number]==
 - **MEDDPICC top gap:** [one letter that's blocking — pull from biz-qual if exists]
 - **What I need from AE:** [specific ask — intro, escalation, pricing, etc.]
 - **What AE needs from me:** [anything they've asked for that's pending]
-- **Risk flags:** [if any — silence, walking-back signals, competitor]
 
----
+> [!risk] [Customer] — risk flag
+> [Only if a real risk exists — silence, walking-back signal, competitor surfacing. One callout per at-risk deal; omit for healthy deals.]
 
-### Open Items Between Us
+## Open Items Between Us
 - [ ] [Item — owner — by when]
 
-### Cross-Deal Themes (if multiple customers)
+## Cross-Deal Themes (if multiple customers)
 - [Pattern across deals — e.g., "3 deals stuck on InfoSec questionnaire — need a standard template"]
 
-### Decisions Needed This Sync
+## Decisions Needed This Sync
 - [Specific yes/no asks from AE]
 ```
 
 ### Type: `forecast`
 
 ```
-## Forecast Prep — [Date / Forecast Period]
+# Forecast Prep — [Date / Forecast Period]
 **Total deals in scope:** [count]
 **My total forecast committed:** $[amount]
 
----
+### At a Glance
+- **Meeting type:** Forecast review ([forecast period])
+- **Deals in scope:** ==[count]== · **Total committed:** ==$[amount]==
+- **Headline status:** [N] Commit / [N] Best Case / [N] Pipeline
 
-### Per-deal forecast table
+**Jump to:** [At a Glance](#at-a-glance) · [Per-deal forecast table](#per-deal-forecast-table) · [Per-deal commentary](#per-deal-commentary) · [Honest call: which deals don't belong on the forecast?](#honest-call-which-deals-dont-belong-on-the-forecast) · [Deals I'm worried about](#deals-im-worried-about)
+
+## Per-deal forecast table
 
 | Customer | Stage | Probability Band | Forecast $ | Close timing | Confidence | Top risk |
 |----------|-------|-----------------|------------|--------------|------------|----------|
 | [Customer] | [stage] | <20% / 20-40% / 40-60% / 60-80% / >80% (per deal-assessment bands) | $[amount] | [Q? Month?] | Commit / Best Case / Pipeline | [risk] |
 
----
-
-### Per-deal commentary
+## Per-deal commentary
 
 For each deal in the table:
 
-#### [Customer Name] — [Band] — [Forecast $]
+### [Customer Name] — [Band] — [Forecast $]
 - **Why this band, not higher or lower:** [defend with specific MEDDPICC evidence]
 - **What would move it up a band:** [concrete actions]
 - **What would move it down a band:** [risk events]
 - **Forecast commitment:** [Commit / Best Case / Pipeline — and why]
 
----
+> [!verdict] [Customer] — Commit at ==[band]==, ==$[amount]==
+> [Only for deals you're committing — the one-line evidence-backed defense of the commit. Use a [!verdict] callout per committed deal.]
 
-### Honest call: which deals don't belong on the forecast?
+## Honest call: which deals don't belong on the forecast?
 Apply Sandler honesty — which "Best Case" deals are actually pipeline padding? Name them explicitly.
 
-### Deals I'm worried about
+## Deals I'm worried about
 - [Customer + specific concern]
 ```
 
 ### Type: `exec-readout`
 
 ```
-## Exec Readout — [Customer] for [Exec Name] — [Date]
+# Exec Readout — [Customer] for [Exec Name] — [Date]
 **Audience:** [VP/CRO/exec name and role]
 **Time slot:** [duration — typically 15-30 min]
 **Exec's likely question:** [what are they really going to ask? — often "is this going to close" or "do you need help"]
 
----
+### At a Glance
+- **Meeting type:** Exec readout for [Exec Name] ([role])
+- **Deal in scope:** [Customer] · **Size:** ==$[amount]== · **Expected close:** ==[date]==
+- **Headline ask:** [the one thing you need from this exec — or "situational awareness, no asks"]
 
-### 30-second deal summary
+**Jump to:** [At a Glance](#at-a-glance) · [30-second deal summary](#30-second-deal-summary) · [Why this deal matters](#why-this-deal-matters-strategic-frame) · [Where we are](#where-we-are) · [What I need from this exec](#what-i-need-from-this-exec) · [What could surprise the exec](#what-could-surprise-the-exec)
+
+## 30-second deal summary
 [Customer, stage, contract size, expected close, top 1 risk]
 
----
-
-### Why this deal matters (strategic frame)
+## Why this deal matters (strategic frame)
 [1-2 sentences — segment, ARR potential, logo value, reference value]
 
----
-
-### Where we are
+## Where we are
 - **MEDDPICC top-line:** [snapshot — 🟢/🟡/🔴 per letter, but in prose: "EB confirmed, Champion strong, Paper Process unknown"]
 - **Trajectory:** [accelerating / steady / decelerating / silent]
-- **Probability band:** [from deal-assessment, with one-line defense]
+- **Probability band:** ==[from deal-assessment]== — [one-line defense]
 
----
-
-### What I need from this exec
+## What I need from this exec
 Be concrete:
 - "Exec intro to [their EB title]"
 - "Pricing concession on Pro tier"
 - "Pull in [internal expert] for a security deep-dive"
 - "Just situational awareness — no asks today"
 
----
+## What could surprise the exec
 
-### What could surprise the exec
-[Risks the exec should know about before this customer surfaces in another forum]
+> [!risk] [Title the risk the exec should hear from you first]
+> [The risk the exec should know about before this customer surfaces it in another forum. One callout per material risk; lead with the worst.]
 ```
 
 ### Type: `deal-review`
 
 ```
-## Deal Review — [Customer] — [Date]
+# Deal Review — [Customer] — [Date]
 **Attendees:** [AE, SE, AM, others]
 **Purpose:** [alignment / unblock / strategic decision]
 
----
+### At a Glance
+- **Meeting type:** Cross-functional deal review
+- **Deal in scope:** [Customer] · **Stage:** [stage] · **Size:** ==$[amount]==
+- **Headline status:** [aligned / misaligned on probability — the fault line to resolve]
 
-### Where we collectively are
+**Jump to:** [At a Glance](#at-a-glance) · [Where we collectively are](#where-we-collectively-are) · [Alignment check](#alignment-check--does-everyone-see-this-deal-the-same-way) · [Cross-functional asks](#cross-functional-asks) · [Decisions needed from this meeting](#decisions-needed-from-this-meeting)
+
+## Where we collectively are
 - **Stage:** [stage]
 - **MEDDPICC scorecard:** [pull from biz-qual]
 - **Recent activity:** [last call, last decision]
 
----
-
-### Alignment check — does everyone see this deal the same way?
+## Alignment check — does everyone see this deal the same way?
 | Question | AE view | SE view | AM view (if applicable) |
 |----------|---------|---------|--------------------------|
 | Probability to close | | | |
 | Top blocker | | | |
 | Best next move | | | |
 
-Surface disagreement explicitly — that's the point of the review.
+> [!risk] Misalignment to resolve
+> [Only if AE/SE/AM genuinely disagree — name the fault line (e.g., AE says 70%, SE says 30% on the same deal) and why. Surfacing disagreement is the point of the review; omit only if there's true alignment.]
 
----
-
-### Cross-functional asks
+## Cross-functional asks
 - **To Product:** [feature gap, roadmap question]
 - **To Eng:** [implementation risk, custom build]
 - **To Legal/Security:** [DPA, certification, redline]
 - **To Leadership:** [exec involvement, escalation]
 
----
-
-### Decisions needed from this meeting
+## Decisions needed from this meeting
 - [ ] [Specific decision — who decides, by when]
 ```
 
 ---
 
-## Style
+## Style (internal-prep skill guidance — not part of output template)
 
 - Internal voice — direct, candid, no PR polish
 - Cite source documents inline (biz-qual file dates, transcript dates, deal-assessment versions)
@@ -282,6 +290,8 @@ Read `~/airbyte-work/.se-config.yaml` for the `[SE Gary]` and similar fields. Im
 ---
 
 ## Changelog
+
+- **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis. Applied to all four mode templates (ae-sync, forecast, exec-readout, deal-review).
 
 - **2026-05-28** — Salesforce enrichment added (reads from sf-mcp via mcp__salesforce__run_soql_query). Pulls AE-view MEDDPICC / technical / forecast fields per the playbook field map; assertive SFDC-vs-reality mismatch flagging; graceful degradation if SFDC disabled. Org alias + query dir from .se-config.yaml.
 

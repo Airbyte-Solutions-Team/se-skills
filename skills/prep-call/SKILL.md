@@ -57,19 +57,31 @@ If user signals brief mode (`--brief`, `quick prep`, `1-pager`, `short version`)
 
 ## Output Format
 
-Produce a structured call prep brief with the following sections:
+Document structure follows `_se-playbook.md` → Output Document Format (H1 title → At a Glance → Jump-to index → Source Coverage → H2 body sections, callouts, `==key==` emphasis). Produce a structured call prep brief with the following sections:
 
 ---
 
-## Call Prep: [Company Name]
+# Call Prep: Acme
 **Date:** [today's date in long form, e.g. June 11, 2026]
 **Meeting type:** [First call / Technical deep-dive / Exec / etc.]
 **Attendees (known):** [list if provided, otherwise leave blank]
 
----
+### At a Glance
+- **Meeting type:** [tech discovery / exec / POC kickoff] · **Duration:** ==[e.g., 30 min]==
+- **Primary contact:** [name / title]
+- **Reframe hypothesis (1 line):** [the counterintuitive point of view you'll lead with]
+- **Top goal for this call:** [the one thing this call must accomplish]
 
-### What the AE Already Learned (from prior Gong call)
-*Only present if a prior AE call exists. This is the most important section — Gary inherits the AE's discovery and goes deeper from there. Skip this section in cold-prep mode and add a "Cold prep — no AE call found" callout instead.*
+**Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [What the AE Already Learned](#what-the-ae-already-learned-from-prior-gong-call) · [Company Snapshot](#company-snapshot) · [Why Airbyte (Hypothesis)](#why-airbyte-hypothesis) · [Reframe Hypothesis](#reframe-hypothesis-challenger) · [Upfront Contract](#upfront-contract-sandler) · [Where We Left Off](#where-we-left-off-if-follow-up-call) · [Discovery Questions](#discovery-questions) · [SPIN Implication Ladders](#spin-implication-ladders) · [Per-Persona Questions](#per-persona-questions) · [Suggested Agenda](#suggested-agenda-30-min) · [Watch-outs / Landmines](#watch-outs--landmines) · [Suggested Next Step](#suggested-next-step-concrete--date--attendees--agenda)
+
+## Source Coverage
+[AE Gong transcript path + line count, local notes, memory files, web queries — see After Generating. In cold-prep mode, state that explicitly here.]
+
+## What the AE Already Learned (from prior Gong call)
+*Only present if a prior AE call exists. This is the most important section — Gary inherits the AE's discovery and goes deeper from there. In cold-prep mode, skip the bullets below and emit the cold-prep risk callout instead.*
+
+> [!risk] Cold-prep mode — no AE call found
+> *(Include this callout ONLY in cold-prep mode.)* Checked Gong for 14 days, no AE business-discovery call found — proceeding with cold prep on pure research. The AE→SE handoff hasn't happened; treat all customer context below as hypothesis, not confirmed.
 
 - **AE call date + duration:** [date, length]
 - **Attendees on AE call:** [names + roles surfaced]
@@ -81,49 +93,40 @@ Produce a structured call prep brief with the following sections:
 - **Open questions the AE flagged for the SE:** [things the AE said "we'll have our SE answer that"]
 - **AE's read on the deal:** [if AE shared a temperature check on the call or in notes]
 
-### Company Snapshot
+## Company Snapshot
 - **What they do:** [1-2 sentence business description]
 - **Industry:** 
 - **Size:** [employees / ARR if known]
 - **Tech signals:** [any known tech stack, tools, or integrations — look for job postings, G2 reviews, BuiltWith signals]
 - **Recent news:** [funding, launches, acquisitions, leadership changes]
 
----
-
-### Why Airbyte (Hypothesis)
+## Why Airbyte (Hypothesis)
 Based on their profile, the most likely reasons they're evaluating Airbyte:
 - [Hypothesis 1 — e.g., scaling data pipelines beyond a manual solution]
 - [Hypothesis 2 — e.g., replacing a brittle custom ETL or legacy tool]
 - [Hypothesis 3 — e.g., need for connector breadth or self-hosted deployment]
 
----
-
-### Reframe Hypothesis (Challenger)
+## Reframe Hypothesis (Challenger)
 **ONE counterintuitive, data-backed reframe you'll lead with.** Not generic discovery — a point of view that reframes what they thought they were buying.
 
 > [Example: "Most data teams think their cost problem is warehouse spend. The data shows 60-70% of actual cost is engineering time maintaining custom connectors — invisible because it's salary, not SaaS."]
 
 Why this reframe for this customer: [brief rationale based on their stack/industry/news]
 
----
-
-### Upfront Contract (Sandler)
+## Upfront Contract (Sandler)
 **Your opener — sets agenda, outcomes, and mutual permission to disqualify.**
 
-> [Example: "We've got 30 minutes. I want to understand your current data integration pain and your evaluation criteria. You'll probably want to see how we handle [their likely use case]. By the end we should know whether a POC makes sense — or whether this isn't a fit. Sound good?"]
+> [!info] Upfront Contract opener
+> "We've got [duration]. I want to understand your current data integration pain and your evaluation criteria. You'll probably want to see how we handle [their likely use case]. By the end we should know whether a POC makes sense — or whether this isn't a fit. Sound good?"
 
----
-
-### Where We Left Off (if follow-up call)
+## Where We Left Off (if follow-up call)
 *Skip this section if first call. Otherwise: ground the call in the most recent transcript.*
 - Most recent call: [date]
 - Last stated next-step: [what was committed]
 - Topics that went quiet since: [anything from earlier calls that stopped being discussed]
 - Walking-it-back signals to address: [if any stakeholder has been softening commitment]
 
----
-
-### Discovery Questions
+## Discovery Questions
 
 *Two modes — depends on whether an AE call exists.*
 
@@ -186,8 +189,8 @@ Why this reframe for this customer: [brief rationale based on their stack/indust
 
 ---
 
-### SPIN Implication Ladders
-*For each top-2 likely pain point, pre-stage 2-3 Implication questions that force the customer to quantify the cost themselves.*
+## SPIN Implication Ladders
+*For each top-2 likely pain point, pre-stage 2-3 Implication questions that force the customer to quantify the cost themselves. Wrap the resulting cost framing in `==…==` where it's a headline figure (e.g., ==$80K/yr== of engineering capacity, ==13h → 15min== latency).*
 
 **Pain Hypothesis 1: [name the pain]**
 - "How often does X happen?" → [expected answer]
@@ -198,9 +201,7 @@ Why this reframe for this customer: [brief rationale based on their stack/indust
 **Pain Hypothesis 2: [name the pain]**
 - [Same structure]
 
----
-
-### Per-Persona Questions
+## Per-Persona Questions
 *If multiple personas will attend, tailor questions per persona. Same deck for everyone = #1 expansion killer.*
 
 **For [CDO / Data Eng VP / etc.]:**
@@ -213,9 +214,7 @@ Why this reframe for this customer: [brief rationale based on their stack/indust
 **For [Security / Compliance lead, if attending]:**
 - [Persona-specific question]
 
----
-
-### Suggested Agenda (30 min)
+## Suggested Agenda (30 min)
 | Time | Topic |
 |------|-------|
 | 0–5 min | Intros, confirm agenda |
@@ -224,15 +223,11 @@ Why this reframe for this customer: [brief rationale based on their stack/indust
 | 20–25 min | Airbyte overview / positioning to their situation |
 | 25–30 min | Next steps |
 
----
-
-### Watch-outs / Landmines
+## Watch-outs / Landmines
 - [Any competitors they likely use or have evaluated]
 - [Any known sensitivities — e.g., data residency, compliance, open-source skepticism]
 
----
-
-### Suggested Next Step (Concrete — date + attendees + agenda)
+## Suggested Next Step (Concrete — date + attendees + agenda)
 *"Follow up next week" is not a next step. Write the exact next-step you'll push for.*
 
 - **Meeting name:** [e.g., Technical deep-dive — security & deployment]
@@ -243,7 +238,7 @@ Why this reframe for this customer: [brief rationale based on their stack/indust
 
 ---
 
-## Style
+## Style (prep-call skill guidance — not part of output template)
 
 - Concise and scannable — this is a working doc, not a report
 - Flag when information is inferred vs. confirmed
@@ -335,6 +330,8 @@ Read `~/airbyte-work/.se-config.yaml` to populate the `[SE name]` field in heade
 ---
 
 ## Changelog
+
+- **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.
 
 - **2026-05-28** — Auto-save to outputs/<skill>/ folder (default; --no-save to suppress). Source Coverage section required (anti-hallucination). Reads SE identity from ~/airbyte-work/.se-config.yaml. Output filename: <skill>-YYYY-MM-DD-<descriptor>.md.
 

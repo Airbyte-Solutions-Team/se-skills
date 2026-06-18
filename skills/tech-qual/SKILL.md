@@ -39,18 +39,30 @@ If user signals brief mode (`--brief`, `quick tech qual`, `tech summary`): produ
 
 ## Output Format
 
+Document structure follows `_se-playbook.md` → Output Document Format (H1 title → At a Glance → Jump-to index → Source Coverage → H2 body sections, callouts, `==key==` emphasis).
+
 ---
 
-## Technical Qualification: [Company Name]
+# Technical Qualification: Acme
 **Date:** [today's date in long form, e.g. June 11, 2026]
 **SE owner:** [SE name]
 **Technical contact(s):** [name / title if known]
 **Prerequisite — deployment model:** [Reference deployment-qual-*.md verdict, or "Not yet qualified — recommend running `deployment-model-qual` first"]
 **Prerequisite — connector feasibility:** [Reference connector-feasibility-*.md, or "High-level scan only — recommend running `connector-feasibility` for detailed coverage"]
 
----
+### At a Glance
+- **Overall fit:** 🟢 Strong / 🟡 Moderate / 🔴 Weak / ⬜ Insufficient info
+- **Sources → destination:** [e.g., Salesforce + Postgres CDC → Snowflake] · **# connectors:** ==[N]==
+- **Volume:** ==[e.g., 50M rows/day]== · **Latency required:** ==[e.g., 15 min]==
+- **Deployment model:** [deferred to deployment-qual — verdict or "not yet qualified"]
+- **Top technical risk:** [one line]
 
-### Technical Fit Summary
+**Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [Technical Fit Summary](#technical-fit-summary) · [Data Sources & Destinations](#data-sources--destinations) · [Data Volume & Scale](#data-volume--scale) · [Deployment Model](#deployment-model) · [Security & Compliance](#security--compliance) · [Current Stack & Integration Context](#current-stack--integration-context) · [Team & Implementation Readiness](#team--implementation-readiness) · [Technical Risks & Open Items](#technical-risks--open-items) · [Questions Still Needed](#questions-still-needed) · [Recommended Next Actions](#recommended-next-actions)
+
+## Source Coverage
+[Transcripts read with line counts, prior qual docs consulted, MCP queries run, certification claims marked "needs verification" — see After Generating.]
+
+## Technical Fit Summary
 **Overall fit:** 🟢 Strong / 🟡 Moderate / 🔴 Weak / ⬜ Insufficient info
 
 | Area | Status | Notes |
@@ -63,9 +75,7 @@ If user signals brief mode (`--brief`, `quick tech qual`, `tech summary`): produ
 | Integration complexity | 🟢 / 🟡 / 🔴 / ⬜ | |
 | Team capability | 🟢 / 🟡 / 🔴 / ⬜ | |
 
----
-
-### Data Sources & Destinations
+## Data Sources & Destinations
 
 **Sources (what data are they moving FROM):**
 | Source | Connector exists? | Notes |
@@ -80,9 +90,7 @@ If user signals brief mode (`--brief`, `quick tech qual`, `tech summary`): produ
 **Connector gaps:**
 - [ ] [Any sources or destinations not covered by Airbyte's catalog]
 
----
-
-### Data Volume & Scale
+## Data Volume & Scale
 - **Estimated rows/events per day:** 
 - **Number of pipelines / connections needed:** 
 - **Sync frequency required:** [Real-time / hourly / daily / weekly]
@@ -93,9 +101,7 @@ If user signals brief mode (`--brief`, `quick tech qual`, `tech summary`): produ
 - [Notes on whether this is within Airbyte's supported scale range]
 - [Flag any volume or latency requirements that could be a fit risk]
 
----
-
-### Deployment Model
+## Deployment Model
 *If `deployment-qual-*.md` exists for this customer, summarize its verdict here and reference the doc — don't re-derive. Use this section for technical implications, not for re-qualifying.*
 
 - **Verdict (from deployment-qual):** [🟢 Cloud Pro viable / 🟡 with caveats / 🔴 not viable]
@@ -108,9 +114,7 @@ If user signals brief mode (`--brief`, `quick tech qual`, `tech summary`): produ
 **Assessment:**
 - [Notes on deployment fit and any constraints]
 
----
-
-### Security & Compliance
+## Security & Compliance
 - **Compliance requirements:** [SOC 2 / HIPAA / GDPR / PCI / ISO 27001 / other — flag whether real (handling regulated data) vs. aspirational]
 - **Data residency requirements:** 
 - **SSO/SAML required:** [Yes / No]
@@ -118,13 +122,10 @@ If user signals brief mode (`--brief`, `quick tech qual`, `tech summary`): produ
 - **Audit logging required:** [Yes / No]
 - **Encryption requirements:** [at rest / in transit / customer-managed keys — note that customer-managed KMS is SME-only, not Cloud]
 
-**Assessment:**
-- [Flag any compliance requirements that need validation against Airbyte's *current* certifications — do NOT assert SOC 2 / HIPAA / etc. status without verifying]
-- **Verify before asserting:** Airbyte's certifications change over time. If the customer's compliance requirement is mission-critical, mark the row as "needs verification" rather than green-lighting based on assumption
+> [!risk] Verify before asserting — compliance/certifications
+> Do NOT assert SOC 2 / HIPAA / GDPR / etc. status without verifying — Airbyte's certifications change over time. If the customer's compliance requirement is mission-critical, mark the row as "needs verification" rather than green-lighting based on assumption. Flag any requirement that needs validation against Airbyte's *current* certifications.
 
----
-
-### Current Stack & Integration Context
+## Current Stack & Integration Context
 - **Current ETL/ELT tools:** [Fivetran / Stitch / custom / dbt / etc.]
 - **Orchestration layer:** [Airflow / Prefect / dbt Cloud / none]
 - **Data warehouse/lake:** 
@@ -136,41 +137,36 @@ If user signals brief mode (`--brief`, `quick tech qual`, `tech summary`): produ
 - [Notes on integration with existing tooling]
 - [Migration risks or dependencies]
 
----
-
-### Team & Implementation Readiness
+## Team & Implementation Readiness
 - **Data engineering team size:** 
 - **Technical champion:** [name / role]
 - **Internal capacity for implementation:** [High / Medium / Low]
 - **Implementation timeline expectation:** 
 - **Need for professional services:** [Yes / No / Possibly]
 
----
-
-### Technical Risks & Open Items
+## Technical Risks & Open Items
 | Risk | Severity | Notes |
 |------|----------|-------|
 | [e.g., Custom connector needed for key source] | High | |
 | [e.g., Sub-minute latency requirement] | Medium | |
 | [e.g., Air-gapped deployment not yet validated] | High | |
 
----
+> [!blocker] [Only if a High-severity blocker exists — e.g., air-gapped deployment not validated, or deployment model unresolved]
+> [State the hard blocker and what must be true to clear it. Omit this callout if no High-severity blocker.]
 
-### Questions Still Needed
+## Questions Still Needed
 - [ ] [Unanswered technical question 1]
 - [ ] [Unanswered technical question 2]
 - [ ] [Unanswered technical question 3]
 
----
-
-### Recommended Next Actions
+## Recommended Next Actions
 1. [e.g., Validate connector coverage for [source X] — check catalog or open ticket]
 2. [e.g., Schedule technical deep-dive to walk through deployment architecture]
 3. [e.g., Share security questionnaire / SOC 2 report]
 
 ---
 
-## Style
+## Style (tech-qual skill guidance — not part of output template)
 
 - Specific over vague — replace "TBD" with explicit open questions naming who/what is needed
 - Flag blockers clearly with High severity
@@ -259,6 +255,8 @@ Read `~/airbyte-work/.se-config.yaml` for the `[SE name]` field.
 ---
 
 ## Changelog
+
+- **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.
 
 - **2026-05-28** — Salesforce enrichment added (reads from sf-mcp via mcp__salesforce__run_soql_query). Pulls AE-view MEDDPICC / technical / forecast fields per the playbook field map; assertive SFDC-vs-reality mismatch flagging; graceful degradation if SFDC disabled. Org alias + query dir from .se-config.yaml.
 

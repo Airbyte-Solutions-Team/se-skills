@@ -41,11 +41,17 @@ If user signals brief mode (`--brief`, `quick talk track`, `just the talk track`
 
 ## Output Format
 
+This skill is **light-touch** under `_se-playbook.md` → Output Document Format (no At-a-Glance, no Jump-to — it's already short and scannable). The one required callout is the severity indicator at the top.
+
 ---
 
 ### Objection: [restate it cleanly]
 **Category:** [bucket from above]
-**Severity:** [Low / Medium / High / Deal-killer]
+
+> [!blocker] [Category] — Deal-killer    ← use `[!blocker]` if Severity is Deal-killer or High
+> [or] [!risk] [Category] — Medium severity    ← use `[!risk]` if Medium
+> [or] [!info] [Category] — Low severity    ← use `[!info]` if Low
+> [one-line severity rationale]
 
 ---
 
@@ -184,6 +190,8 @@ Per the deployment-model guidance: don't spin. If Cloud can't meet their require
 ---
 
 ## Changelog
+
+- **2026-06-18** — Severity callout per `_se-playbook.md` → Output Document Format (objection-handler is light-touch: no At-a-Glance/Jump-to). The Severity indicator is now a top-of-output callout — `[!blocker]` for Deal-killer/High, `[!risk]` for Medium, `[!info]` for Low. Enforced Voss 4-step structure unchanged.
 
 - **2026-05-28** — Auto-save to outputs/<skill>/ folder (default; --no-save to suppress). Source Coverage section required (anti-hallucination). Reads SE identity from ~/airbyte-work/.se-config.yaml. Output filename: <skill>-YYYY-MM-DD-<descriptor>.md.
 

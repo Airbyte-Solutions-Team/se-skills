@@ -68,18 +68,35 @@ Only surface questions for items **not already answered** in the transcripts/SFD
 
 ## Output Format
 
+Document structure follows `_se-playbook.md` → Output Document Format (At-a-Glance + Jump-to index, H2-per-section, callouts, `==key==` emphasis).
+
 ---
 
-## Connector Feasibility: [Customer Name]
+# Connector Feasibility: [Customer Name]
 **Date:** [today's date in long form, e.g. June 11, 2026]
 **Sources read:** [transcripts (with dates) / SFDC / qual docs]
 
-### Use Case Summary
-[2-4 sentences reconstructed from Step 1: what data, from where to where, why, at what volume/cadence, with what history. State explicitly if the use case is thin.]
+### At a Glance
+- **Coverage:** ==[N of M]== connectors validated · **Gaps:** [count build-needed] · **Open questions:** [count]
+- **Top risk:** [one line — the biggest unvalidated assumption or hard gap]
+
+**Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [Use Case Summary](#use-case-summary) · [Fit Verdict](#fit-verdict) · [Constraints & Edge Cases](#constraints-edge-cases-given-their-context) · [Missing / Gap Connectors](#missing-gap-connectors) · [Questions to Ask the Customer](#questions-to-ask-the-customer-to-fully-validate-fit) · [Recommended Next Steps](#recommended-next-steps)
 
 ---
 
-### Fit Verdict
+## Use Case Summary
+[2-4 sentences reconstructed from Step 1: what data, from where to where, why, at what volume/cadence, with what history. State explicitly if the use case is thin.]
+
+If every needed connector is fully validated, lead with a verdict callout:
+
+```markdown
+> [!verdict] All ==N of N== connectors validated for the use case
+> source-salesforce, source-oracle (CDC), and destination-snowflake all support the required objects, sync modes, and volume. No open questions block POC scoping.
+```
+
+---
+
+## Fit Verdict
 For each needed connector, the verdict is not just exists/missing — it's **does it solve their use case**:
 
 | System | Connector | Exists? | Use-case fit | Confidence | Top risk / gap |
@@ -92,9 +109,16 @@ For each needed connector, the verdict is not just exists/missing — it's **doe
 
 For each available connector, flag known reliability issues (sync failures, rollout in progress) inline.
 
+Any missing/gap connector that **blocks the use case** (no connector and no viable workaround) → render as a `[!blocker]`:
+
+```markdown
+> [!blocker] No connector for [System] — blocks the [use-case] flow
+> [System] has no Airbyte connector. Build path: full Python CDK, ~2-6 weeks. No CSV-export workaround because they need near-real-time. This gates the POC.
+```
+
 ---
 
-### Constraints & Edge Cases (given their context)
+## Constraints & Edge Cases (given their context)
 *The gotchas that matter for THIS use case — not generic.*
 - [e.g., "14 Shopify instances → per-store API rate limits; parallelism + scheduling matter for the 15-min target"]
 - [e.g., "Oracle CDC requires LogMiner enabled — not confirmed; without it, only full refresh / cursor available"]
@@ -102,7 +126,7 @@ For each available connector, flag known reliability issues (sync failures, roll
 
 ---
 
-### Missing / Gap Connectors
+## Missing / Gap Connectors
 
 For each missing connector, provide:
 
@@ -125,22 +149,23 @@ For each missing connector, provide:
 
 ---
 
-### ⭐ Questions to Ask the Customer (to fully validate fit)
-*The highest-value output. Per connector, only the items NOT yet answered in the transcripts/SFDC. These are what the SE should raise to confirm the connector actually solves the use case. Be specific and explain why each matters.*
+## Questions to Ask the Customer (to fully validate fit)
+*The highest-value output. Per connector, only the items NOT yet answered in the transcripts/SFDC. These are what the SE should raise to confirm the connector actually solves the use case. Be specific and explain why each matters.* Wrap the per-connector questions in a `[!info]` callout:
 
-**[Connector / System]**
-- [ ] [Specific question] — *why it matters: [the connector capability or constraint it resolves]*
-  - e.g., "Which Salesforce objects do you need synced — standard only, or custom objects too? *Our connector covers standard + custom, but custom objects need API access enabled on their side.*"
-  - e.g., "Do you need change-data-capture (every change) on Orders, or is an hourly snapshot enough? *Determines whether we use CDC vs. incremental, which changes setup + cost.*"
+```markdown
+> [!info] Salesforce — open questions before POC
+> - [ ] Which Salesforce objects do you need synced — standard only, or custom objects too? *Our connector covers standard + custom, but custom objects need API access enabled on their side.*
+> - [ ] Do you need change-data-capture (every change) on Orders, or is an hourly snapshot enough? *Determines whether we use CDC vs. incremental, which changes setup + cost.*
 
-**[Connector / System]**
-- [ ] [Specific question] — *why it matters: …*
+> [!info] [Connector / System] — open questions
+> - [ ] [Specific question] — *why it matters: …*
+```
 
 *If a connector is fully validated (all needs-to-know answered), say "✓ Fully validated — no open questions" rather than inventing questions.*
 
 ---
 
-### Recommended Next Steps
+## Recommended Next Steps
 1. [Ask the open questions above — ideally before POC scoping]
 2. [Decide on custom build path for any gaps — internal eng vs. partner vs. customer-led]
 3. [Schedule POC scoping if coverage + validation are sufficient]
@@ -198,7 +223,7 @@ If the customer is comparing total connector counts to Fivetran/Stitch/Matillion
 2. How the long tail gets built when something's missing (manifest-only builder + custom CDK)
 3. Schema-drift and reliability over time, which count doesn't measure
 
-Add a `### Reframe Talk Track` section at the end with 2-3 sentences Gary can use if the customer reverts to a count comparison.
+Add a `## Reframe Talk Track` section at the end with 2-3 sentences Gary can use if the customer reverts to a count comparison.
 
 ### Anchor gaps in stated value (SPIN Implication)
 For each missing connector, don't just note effort — note the cost of not having it. Example:
@@ -213,7 +238,7 @@ For every missing connector, ask: what's the customer's mental model of "we'll j
 - Schema drift + auth refresh + pagination edge cases: ongoing
 - On-call burden when it breaks at 2am: real
 
-Include a short `### Build-vs-Adopt TCO` callout for any gap where customer might consider building. Numbers, not adjectives.
+Include a short `## Build-vs-Adopt TCO` section for any gap where customer might consider building. Numbers, not adjectives.
 
 ### Don't oversell — Sandler honesty
 If a connector is community-tier or has known reliability issues, say so plainly. Surprises in POC kill deals. Always include "Known issues" or "Reliability watch-outs" column when applicable. Customer trust > pretty coverage table.
@@ -230,6 +255,8 @@ If a connector is only available on Cloud (or only on Self-Managed), flag it. Th
 ---
 
 ## Changelog
+
+- **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.
 
 - **2026-06-16** — Reworked from a catalog lookup into a use-case feasibility assessment: reconstructs the use case + requirements from transcripts/SFDC/qual docs, validates each connector against the customer's actual objects/sync-modes/auth/volume/latency (not just existence), surfaces context-specific constraints & edge cases, and generates per-connector "Questions to Ask the Customer" from requirement gaps so the SE knows what to confirm. Fit Verdict table replaces plain coverage list.
 
