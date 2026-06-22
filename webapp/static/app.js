@@ -9,6 +9,17 @@ const api = async (path, opts) => {
 };
 const esc = (s) => (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
+// "prep-call" → "PREP CALL", "deal-assessment" → "DEAL ASSESSMENT"
+const prettySkill = (id) => (id || "").replace(/[-_]/g, " ").toUpperCase();
+
+// "2026-06-22 21:20" → "June 22, 2026"
+function longDate(ymd) {
+  const m = (ymd || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return ymd || "";
+  const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  return `${months[+m[2] - 1]} ${+m[3]}, ${m[1]}`;
+}
+
 // Slugify a heading into an anchor id (lowercase, strip inline markdown,
 // non-alphanumeric → "-"). De-dupe is handled per-render by the caller.
 function slugify(s) {
@@ -517,6 +528,26 @@ async function pageAccount(account) {
     </div>`;
 }
 
+// Render the Generated Outputs list grouped by day, with pretty skill names.
+function renderOutputGroups(outputs) {
+  const groups = {};  // "YYYY-MM-DD" -> [items]  (outputs already newest-first)
+  for (const o of outputs) {
+    const day = (o.modified || "").slice(0, 10);
+    (groups[day] = groups[day] || []).push(o);
+  }
+  return Object.keys(groups).sort().reverse().map((day) => `
+    <div class="out-group">
+      <div class="out-group-date">${esc(longDate(day))}</div>
+      <div class="out-group-items">
+        ${groups[day].map((o) => `
+          <div class="out-item" data-path="${encodeURIComponent(o.path)}" data-title="${esc(prettySkill(o.skill))} — ${esc(o.filename)}">
+            <div><div class="skill">${esc(prettySkill(o.skill))}</div><div class="when">${esc(o.filename)}</div></div>
+            <div class="when">${esc((o.modified || "").slice(11))} UTC</div>
+          </div>`).join("")}
+      </div>
+    </div>`).join("");
+}
+
 // ---- Page: opportunity (outputs + invoke) --------------------------------
 async function pageOpportunity(account, slug, oppName) {
   setCrumbs([...(await accountCrumbs(account)), { label: account, href: `#/account/${encodeURIComponent(account)}` }, { label: oppName }]);
@@ -540,14 +571,10 @@ async function pageOpportunity(account, slug, oppName) {
     <div id="freebar-output" class="output hidden"></div>
     <h2>Generated outputs</h2>
     <div class="outputs" id="outputs">
-      ${outputs.length ? outputs.map((o) => `
-        <div class="out-item" data-path="${encodeURIComponent(o.path)}" data-title="${esc(o.skill)} — ${esc(o.filename)}">
-          <div><div class="skill">${esc(o.skill)}</div><div class="when">${esc(o.filename)}</div></div>
-          <div class="when">${esc(o.modified)} UTC</div>
-        </div>`).join("") : `<div class="empty">No outputs yet for this opportunity. Invoke a skill to generate one.</div>`}
+      ${outputs.length ? renderOutputGroups(outputs) : `<div class="empty">No outputs yet for this opportunity. Invoke a skill to generate one.</div>`}
     </div>`;
   document.querySelectorAll(".out-item").forEach((el) => {
-    el.onclick = () => openOutput(el.dataset.path, el.dataset.title);
+    el.onclick = () => openOutput(el.dataset.path, el.dataset.title, { account, slug, oppName });
   });
   document.getElementById("invoke-btn").onclick = () => openInvoke(account, { slug, name: oppName });
 
@@ -557,7 +584,10 @@ async function pageOpportunity(account, slug, oppName) {
   const fStatus = document.getElementById("freebar-status");
   const fOutput = document.getElementById("freebar-output");
 
-  const dismissRun = () => { fStatus.className = "status hidden"; fOutput.className = "output hidden"; fOutput.innerHTML = ""; };
+  const dismissRun = () => {
+    fStatus.className = "status hidden"; fOutput.className = "output hidden"; fOutput.innerHTML = "";
+    document.getElementById("run-showmore")?.remove();
+  };
 
   // Reflect a job snapshot into the status/output area. Safe to call after
   // navigating away (the elements just won't exist — guarded by callers).
@@ -578,8 +608,21 @@ async function pageOpportunity(account, slug, oppName) {
       : `✕ ${esc(job.skill || "run")}${ago} — finished with an error`;
     fStatus.innerHTML = `<span class="run-head">${head}</span><button class="run-dismiss" id="run-dismiss" title="Dismiss">✕</button>`;
     if (job.stdout || job.stderr) {
-      fOutput.className = "output md-body";
+      // Collapsed preview, full page width, with a Show more / Show less toggle.
+      fOutput.className = "output md-body collapsed";
       fOutput.innerHTML = mdToHtml(job.stdout || "") + (job.stderr ? `<hr/><pre class="md-pre"><code>[stderr]\n${esc(job.stderr)}</code></pre>` : "");
+      let toggle = document.getElementById("run-showmore");
+      if (!toggle) {
+        toggle = document.createElement("button");
+        toggle.id = "run-showmore";
+        toggle.className = "linklike show-more";
+        toggle.onclick = () => {
+          const c = fOutput.classList.toggle("collapsed");
+          toggle.textContent = c ? "Show more ▾" : "Show less ▴";
+        };
+        fOutput.after(toggle);
+      }
+      toggle.textContent = fOutput.classList.contains("collapsed") ? "Show more ▾" : "Show less ▴";
     }
     const dz = document.getElementById("run-dismiss");
     if (dz) dz.onclick = dismissRun;
@@ -677,22 +720,74 @@ async function pageOpportunity(account, slug, oppName) {
   };
 }
 
-async function openOutput(path, title) {
+// Shorten a heading for the sidebar index: drop trailing parentheticals and
+// "— …" qualifiers so labels stay scannable (e.g. "Suggested Agenda (30 min)"
+// → "Suggested Agenda"; "What the AE Already Learned (from prior Gong call)"
+// → "What the AE Already Learned").
+function conciseLabel(text) {
+  return (text || "").replace(/\s*\([^)]*\)\s*$/, "").replace(/\s*[—–-]\s.*$/, "").trim() || text;
+}
+
+// `ctx` = { account, slug, oppName } so Back returns to the exact opportunity.
+async function openOutput(path, title, ctx) {
   const text = await api("/api/output?path=" + encodeURIComponent(decodeURIComponent(path)));
   const toc = [];
   const bodyHtml = mdToHtml(text, toc);
-  // Index of H2/H3 headings for the sticky sidebar (skip H1 title + H4+).
+
+  // Build the body DOM, then restructure: use the H1 as the page title, wrap
+  // each H2 section in its own bordered card, and drop the inline "Jump to"
+  // line (the sidebar replaces it).
+  const tmp = document.createElement("div");
+  tmp.innerHTML = bodyHtml;
+
+  // Friendly title = the doc's own H1 (fallback to the passed filename title).
+  const h1 = tmp.querySelector("h1");
+  const docTitle = h1 ? h1.textContent.trim() : title;
+  if (h1) h1.remove();
+
+  // Drop the "Jump to:" paragraph if the skill emitted one.
+  tmp.querySelectorAll("p.md-p").forEach((p) => {
+    if (/^\s*jump to:/i.test(p.textContent)) p.remove();
+  });
+
+  // Group the flat node list into H2-delimited sections, each a bordered card.
+  // Content before the first H2 (the At-a-Glance block, key-lines) is its own card.
+  const cards = [];
+  let cur = null;
+  const nodes = Array.from(tmp.childNodes);
+  for (const n of nodes) {
+    if (n.nodeType === 1 && n.tagName === "H2") {
+      cur = document.createElement("section");
+      cur.className = "doc-card";
+      cards.push(cur);
+    }
+    if (!cur) { cur = document.createElement("section"); cur.className = "doc-card"; cards.push(cur); }
+    cur.appendChild(n);
+  }
+  const cardsHtml = cards.map((c) => c.outerHTML).join("");
+
+  // Sidebar index — H2/H3 only, concise labels.
   const tocHtml = toc
     .filter((t) => t.level === 2 || t.level === 3)
-    .map((t) => `<a href="#toc-${t.id}" class="doc-toc-link lvl${t.level}">${esc(t.text)}</a>`)
+    .map((t) => `<a href="#toc-${t.id}" class="doc-toc-link lvl${t.level}">${esc(conciseLabel(t.text))}</a>`)
     .join("");
+
+  const backHref = ctx
+    ? `#/opp/${encodeURIComponent(ctx.account)}/${encodeURIComponent(ctx.slug)}/${encodeURIComponent(ctx.oppName)}`
+    : null;
   view.innerHTML = `
-    <div class="row"><h1>${esc(title)}</h1><button class="ghost" onclick="history.back()">← Back</button></div>
+    <div class="row"><h1>${esc(docTitle)}</h1>
+      <a class="ghost" id="doc-back" ${backHref ? `href="${backHref}"` : ""}>← Back</a></div>
     <div class="doc-layout">
       ${tocHtml ? `<aside class="doc-toc"><div class="doc-toc-head">On this page</div>${tocHtml}</aside>` : ""}
-      <article class="doc md-body">${bodyHtml}</article>
+      <article class="md-body">${cardsHtml}</article>
     </div>`;
-  setCrumbs([{ label: "Team", href: "#/" }, { label: "output" }]);
+  if (ctx) setCrumbs([...(await accountCrumbs(ctx.account)),
+                      { label: ctx.account, href: `#/account/${encodeURIComponent(ctx.account)}` },
+                      { label: ctx.oppName, href: backHref },
+                      { label: "output" }]);
+  else setCrumbs([{ label: "Team", href: "#/" }, { label: "output" }]);
+  if (!backHref) document.getElementById("doc-back").onclick = () => history.back();
 
   // Sidebar links scroll-jump locally (no router involvement).
   view.querySelectorAll(".doc-toc-link").forEach((a) => {
