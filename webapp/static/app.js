@@ -524,7 +524,10 @@ async function pageOpportunity(account, slug, oppName) {
   view.innerHTML = `
     <div class="row">
       <div><h1>${esc(oppName)}</h1><p class="sub">${esc(account)} · outputs &amp; skills</p></div>
-      <button class="primary" id="invoke-btn">⚡ Invoke Skill</button>
+      <div class="row-actions">
+        <a class="primary live-btn" href="#/live/${encodeURIComponent(account)}/${encodeURIComponent(slug)}/${encodeURIComponent(oppName)}">🎙 Live Transcribe</a>
+        <button class="primary" id="invoke-btn">⚡ Invoke Skill</button>
+      </div>
     </div>
     <div class="freebar">
       <div class="freebar-input-wrap">
@@ -707,6 +710,186 @@ function flashEl(el) {
   setTimeout(() => el.classList.remove("doc-flash"), 1200);
 }
 
+// ---- Page: live transcribe + AI copilot -----------------------------------
+let _liveState = null;  // { sessionId, sse, timer, askThread } while recording
+
+async function pageLive(account, slug, oppName) {
+  setCrumbs([...(await accountCrumbs(account)), { label: account, href: `#/account/${encodeURIComponent(account)}` },
+            { label: oppName, href: `#/opp/${encodeURIComponent(account)}/${encodeURIComponent(slug)}/${encodeURIComponent(oppName)}` },
+            { label: "Live" }]);
+
+  let devs = { devices: [], has_blackhole: false, model: "" };
+  try { devs = await api("/api/audio-devices"); }
+  catch (e) {
+    view.innerHTML = `<div class="row"><div><h1>Live Transcribe</h1><p class="sub">${esc(account)} · ${esc(oppName)}</p></div></div>
+      <div class="callout callout-blocker"><div class="callout-title">Audio capture unavailable</div>
+      <div class="callout-body">${esc(e.message)}<br>Run <code>brew install portaudio</code>, then restart the app. See the README → Live Transcribe setup.</div></div>`;
+    return;
+  }
+
+  const opts = (sel) => devs.devices.map((d) =>
+    `<option value="${d.index}">${esc(d.name)} (${d.channels}ch)</option>`).join("");
+
+  view.innerHTML = `
+    <div class="row">
+      <div><h1>🎙 Live Transcribe</h1><p class="sub">${esc(account)} · ${esc(oppName)} · model <code>${esc(devs.model)}</code></p></div>
+    </div>
+    <div class="live-setup" id="live-setup">
+      <label>Your mic (You)
+        <select id="dev-mic">${opts()}</select>
+      </label>
+      <label>Call audio — everyone else (optional)
+        <select id="dev-call"><option value="">— none (single stream, no labels) —</option>${opts()}</select>
+      </label>
+      <button class="primary" id="live-start">● Start</button>
+      <span id="live-timer" class="live-timer hidden">00:00</span>
+      <button class="danger live-stop hidden" id="live-stop">■ Stop &amp; Save</button>
+      ${devs.has_blackhole ? "" : `<span class="live-hint">No BlackHole/Aggregate detected — only your mic is capturable until you set it up (README).</span>`}
+    </div>
+    <div class="live-layout">
+      <section class="live-transcript" id="live-transcript">
+        <div class="live-col-head">Transcript</div>
+        <div class="live-segs" id="live-segs"><div class="empty">Press Start to begin transcribing.</div></div>
+      </section>
+      <section class="live-qa" id="live-qa">
+        <div class="live-col-head">Copilot Q&amp;A</div>
+        <div class="live-thread" id="live-thread"><div class="empty">Ask anything about the call below — e.g. “what do they actually need?”, “is a Snowflake connector feasible?”, “edge cases here?”</div></div>
+      </section>
+    </div>
+    <div class="live-askbar">
+      <input id="live-ask" type="text" autocomplete="off" placeholder="Ask the copilot about the live call…" disabled />
+      <button class="primary" id="live-send" disabled>Send</button>
+    </div>`;
+
+  const $ = (id) => document.getElementById(id);
+  const segsEl = $("live-segs"), threadEl = $("live-thread");
+  const askInput = $("live-ask"), sendBtn = $("live-send");
+  const startBtn = $("live-start"), stopBtn = $("live-stop"), timerEl = $("live-timer");
+
+  // ── Transcript rendering ────────────────────────────────────────────
+  let hasSegs = false;
+  const addSegment = (seg) => {
+    if (!hasSegs) { segsEl.innerHTML = ""; hasSegs = true; }
+    const who = seg.speaker ? `<span class="seg-who seg-${seg.speaker === "You" ? "you" : "call"}">${esc(seg.speaker)}</span>` : "";
+    const div = document.createElement("div");
+    div.className = "live-seg";
+    div.innerHTML = `<span class="seg-t">${esc(seg.t)}</span>${who}<span class="seg-text">${esc(seg.text)}</span>`;
+    segsEl.appendChild(div);
+    segsEl.scrollTop = segsEl.scrollHeight;
+  };
+
+  // ── Start / Stop ────────────────────────────────────────────────────
+  startBtn.onclick = async () => {
+    const mic = $("dev-mic").value;
+    const call = $("dev-call").value || null;
+    startBtn.disabled = true;
+    try {
+      const res = await api("/api/transcribe/start", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ account, opp_slug: slug, opportunity: oppName,
+                               mic_device: Number(mic), call_device: call === null ? null : Number(call) }),
+      });
+      _liveState = { sessionId: res.session_id };
+      segsEl.innerHTML = ""; hasSegs = false;
+      // SSE transcript stream
+      const sse = new EventSource(`/api/transcribe/${res.session_id}/stream`);
+      sse.addEventListener("segment", (e) => addSegment(JSON.parse(e.data)));
+      _liveState.sse = sse;
+      // UI → recording
+      $("dev-mic").disabled = $("dev-call").disabled = true;
+      startBtn.classList.add("hidden");
+      stopBtn.classList.remove("hidden"); timerEl.classList.remove("hidden");
+      askInput.disabled = sendBtn.disabled = false;
+      const t0 = Date.now();
+      _liveState.timer = setInterval(() => {
+        const s = Math.floor((Date.now() - t0) / 1000);
+        timerEl.textContent = `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+      }, 1000);
+      timerEl.classList.add("rec");
+    } catch (e) {
+      alert("Could not start: " + e.message); startBtn.disabled = false;
+    }
+  };
+
+  stopBtn.onclick = async () => {
+    if (!_liveState) return;
+    stopBtn.disabled = true;
+    try {
+      const res = await api(`/api/transcribe/${_liveState.sessionId}/stop`, { method: "POST" });
+      if (_liveState.sse) _liveState.sse.close();
+      if (_liveState.timer) clearInterval(_liveState.timer);
+      timerEl.classList.remove("rec");
+      segsEl.insertAdjacentHTML("beforeend",
+        `<div class="callout callout-verdict"><div class="callout-title">Saved (${res.segments} segments)</div>
+         <div class="callout-body">Transcript written to <code>${esc(res.saved_to.split("/").slice(-1)[0])}</code>.
+         <button class="linklike" id="run-postcall">Run post-call summary →</button></div></div>`);
+      segsEl.scrollTop = segsEl.scrollHeight;
+      const rp = document.getElementById("run-postcall");
+      if (rp) rp.onclick = () => openInvoke(account, { slug, name: oppName });
+      _liveState = null;
+      stopBtn.classList.add("hidden"); startBtn.classList.remove("hidden"); startBtn.disabled = false;
+      $("dev-mic").disabled = $("dev-call").disabled = false;
+      askInput.disabled = sendBtn.disabled = true;
+    } catch (e) { alert("Stop failed: " + e.message); stopBtn.disabled = false; }
+  };
+
+  // ── Ask bar ─────────────────────────────────────────────────────────
+  let threadHasItems = false;
+  const ask = async () => {
+    const q = askInput.value.trim();
+    if (!q || !_liveState) return;
+    askInput.value = "";
+    if (!threadHasItems) { threadEl.innerHTML = ""; threadHasItems = true; }
+    const item = document.createElement("div");
+    item.className = "qa-item";
+    item.innerHTML = `<div class="qa-q">${esc(q)}</div><div class="qa-a"><span class="qa-tag">…</span><span class="qa-body"></span></div>`;
+    threadEl.appendChild(item);
+    threadEl.scrollTop = threadEl.scrollHeight;
+    const tag = item.querySelector(".qa-tag"), bodyEl = item.querySelector(".qa-body");
+
+    const res = await fetch(`/api/transcribe/${_liveState.sessionId}/ask`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ question: q }),
+    });
+    const ctype = res.headers.get("content-type") || "";
+
+    if (ctype.includes("application/json")) {
+      const data = await res.json();
+      if (data.mode === "deep") {           // claude -p job → poll
+        tag.textContent = "🔧"; bodyEl.innerHTML = `<span class="muted">searching codebase &amp; skills…</span>`;
+        await pollJob(data.job_id, (job) => {
+          if (job.status !== "running") {
+            bodyEl.innerHTML = mdToHtml(job.stdout || job.stderr || "(no output)");
+            threadEl.scrollTop = threadEl.scrollHeight;
+          }
+        });
+      } else {                              // needs_deep / error
+        tag.textContent = "⚠️"; bodyEl.textContent = data.reason || data.error || "Unavailable.";
+      }
+      return;
+    }
+
+    // SSE token stream (quick path)
+    tag.textContent = "⚡";
+    const reader = res.body.getReader(); const dec = new TextDecoder();
+    let buf = "", acc = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const events = buf.split("\n\n"); buf = events.pop();
+      for (const ev of events) {
+        const m = ev.match(/^event: (\w+)\ndata: (.*)$/ms);
+        if (!m) continue;
+        if (m[1] === "token") { acc += JSON.parse(m[2]).text; bodyEl.innerHTML = mdToHtml(acc); threadEl.scrollTop = threadEl.scrollHeight; }
+        else if (m[1] === "error") { bodyEl.innerHTML = `<span class="muted">Error: ${esc(JSON.parse(m[2]).error)}</span>`; }
+      }
+    }
+  };
+  sendBtn.onclick = ask;
+  askInput.onkeydown = (e) => { if (e.key === "Enter") ask(); };
+}
+
 // ---- Invoke modal ---------------------------------------------------------
 const modal = document.getElementById("modal");
 // opp = { slug, name } | null
@@ -858,6 +1041,8 @@ async function route() {
     if (kind === "member") return pageMember(decodeURIComponent(parts[2]));
     if (kind === "account") return pageAccount(decodeURIComponent(parts[2]));
     if (kind === "opp") return pageOpportunity(
+      decodeURIComponent(parts[2]), decodeURIComponent(parts[3]), decodeURIComponent(parts[4] || parts[3]));
+    if (kind === "live") return pageLive(
       decodeURIComponent(parts[2]), decodeURIComponent(parts[3]), decodeURIComponent(parts[4] || parts[3]));
     pageMembers();
   } catch (e) {

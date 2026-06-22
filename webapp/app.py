@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["fastapi", "uvicorn[standard]", "pyyaml"]
+# dependencies = [
+#   "fastapi", "uvicorn[standard]", "pyyaml",
+#   "faster-whisper", "sounddevice", "numpy", "sse-starlette", "anthropic",
+# ]
 # ///
+# NOTE: live-transcribe needs the PortAudio system lib for sounddevice:
+#   brew install portaudio   (one-time)
+# and BlackHole for system-audio capture (see README → Live Transcribe setup).
 """
 SE Skills — local web app.
 
@@ -27,8 +33,10 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import queue
 import re
 import subprocess
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -972,6 +980,310 @@ def api_jobs_for(account: str | None = None, opp_slug: str | None = None):
             continue
         out.append({"job_id": jid, **{k: v for k, v in j.items() if k not in ("sig", "stdout", "stderr")}})
     return out
+
+
+# ---------------------------------------------------------------------------
+# Live Transcribe — capture Mac audio, transcribe with faster-whisper, stream
+# segments to the browser over SSE, and answer questions against the rolling
+# transcript (quick → Claude API; deep → claude -p via the job system).
+#
+# Audio libs (sounddevice, faster_whisper, numpy) and the Claude SDK are
+# imported LAZILY inside the session so the rest of the app boots even if the
+# user hasn't installed PortAudio/BlackHole yet.
+# ---------------------------------------------------------------------------
+SESSIONS: dict[str, "LiveSession"] = {}
+
+TARGET_SR = 16000          # whisper wants 16k mono
+WINDOW_SEC = 5.0           # transcribe ~5s windows
+SILENCE_RMS = 0.004        # skip near-silent windows
+WHISPER_MODEL = os.environ.get("SE_WHISPER_MODEL", "small")  # tiny/base/small/medium
+
+_WHISPER = None            # lazily-loaded shared model
+
+
+def _get_whisper():
+    global _WHISPER
+    if _WHISPER is None:
+        from faster_whisper import WhisperModel  # lazy
+        _WHISPER = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
+    return _WHISPER
+
+
+class _Channel:
+    """One capture stream (sounddevice) → 16k mono windows → faster-whisper.
+    `label` is the speaker tag for segments from this channel (e.g. You/Call)."""
+
+    def __init__(self, device_index, label, on_segment):
+        import sounddevice as sd  # lazy
+        import numpy as np
+        self.np = np
+        self.label = label
+        self.on_segment = on_segment      # callback(label, text) — runs in worker thread
+        self._stop = threading.Event()
+        self._q: "queue.Queue" = queue.Queue()
+        info = sd.query_devices(device_index, "input")
+        self.src_sr = int(info["default_samplerate"])
+        self.in_ch = info["max_input_channels"]
+
+        def cb(indata, frames, time_info, status):  # audio thread
+            mono = indata.mean(axis=1) if indata.ndim > 1 and indata.shape[1] > 1 else indata.reshape(-1)
+            if self.src_sr != TARGET_SR:
+                n_out = max(1, int(len(mono) * TARGET_SR / self.src_sr))
+                mono = np.interp(np.linspace(0, len(mono), n_out, endpoint=False),
+                                 np.arange(len(mono)), mono).astype(np.float32)
+            self._q.put(mono.astype(np.float32))
+
+        self._stream = sd.InputStream(device=device_index, channels=self.in_ch,
+                                      samplerate=self.src_sr, dtype="float32",
+                                      callback=cb, blocksize=int(self.src_sr * 0.1))
+        self._worker = threading.Thread(target=self._run, daemon=True)
+
+    def start(self):
+        self._stream.start()
+        self._worker.start()
+
+    def _run(self):
+        import collections
+        model = _get_whisper()
+        buf = collections.deque(); buflen = 0
+        need = int(TARGET_SR * WINDOW_SEC)
+        while not self._stop.is_set() or not self._q.empty():
+            try:
+                buf.append(self._q.get(timeout=0.3)); buflen += len(buf[-1])
+            except queue.Empty:
+                pass
+            if buflen >= need:
+                window = self.np.concatenate(list(buf)); buf.clear(); buflen = 0
+                if float(self.np.sqrt(self.np.mean(window ** 2))) < SILENCE_RMS:
+                    continue
+                try:
+                    segs, _ = model.transcribe(window, language="en", beam_size=1)
+                    text = " ".join(s.text.strip() for s in segs).strip()
+                except Exception:
+                    text = ""
+                if text:
+                    self.on_segment(self.label, text)
+
+    def stop(self):
+        self._stop.set()
+        try:
+            self._stream.stop(); self._stream.close()
+        except Exception:
+            pass
+
+
+class LiveSession:
+    def __init__(self, account, opp_slug, mic_device, call_device):
+        self.account = account
+        self.opp_slug = opp_slug
+        self.started_at = datetime.now(timezone.utc)
+        self.segments: list[dict] = []          # {t, speaker, text}
+        self.queue: "asyncio.Queue" = asyncio.Queue()
+        self.loop = asyncio.get_running_loop()
+        self.labeled = call_device is not None
+        self.channels: list[_Channel] = []
+
+        def on_segment(label, text):             # called from a worker thread
+            seg = {"t": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+                   "speaker": label, "text": text}
+            self.segments.append(seg)
+            # hop back onto the event loop to feed the SSE queue
+            self.loop.call_soon_threadsafe(self.queue.put_nowait, seg)
+
+        if self.labeled:
+            self.channels.append(_Channel(mic_device, "You", on_segment))
+            self.channels.append(_Channel(call_device, "Call", on_segment))
+        else:
+            self.channels.append(_Channel(mic_device, "", on_segment))
+
+    def start(self):
+        for c in self.channels:
+            c.start()
+
+    def stop(self):
+        for c in self.channels:
+            c.stop()
+
+    def transcript_text(self) -> str:
+        lines = []
+        for s in self.segments:
+            who = f"{s['speaker']}: " if s["speaker"] else ""
+            lines.append(f"[{s['t']}] {who}{s['text']}")
+        return "\n".join(lines)
+
+
+@app.get("/api/audio-devices")
+def api_audio_devices():
+    """Input devices for the mic/call pickers. Flags BlackHole presence."""
+    try:
+        import sounddevice as sd
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"Audio capture unavailable: {e}. Run `brew install portaudio` and reinstall deps.")
+    devices, has_blackhole = [], False
+    for i, d in enumerate(sd.query_devices()):
+        if d["max_input_channels"] > 0:
+            name = d["name"]
+            if "blackhole" in name.lower() or "aggregate" in name.lower():
+                has_blackhole = True
+            devices.append({"index": i, "name": name,
+                            "channels": d["max_input_channels"],
+                            "sample_rate": int(d["default_samplerate"])})
+    return {"devices": devices, "has_blackhole": has_blackhole, "model": WHISPER_MODEL}
+
+
+class StartLive(BaseModel):
+    account: str
+    opp_slug: str | None = None
+    opportunity: str | None = None
+    mic_device: int
+    call_device: int | None = None
+
+
+@app.post("/api/transcribe/start")
+async def api_transcribe_start(body: StartLive):
+    account = _safe(body.account)
+    opp_slug = _safe(body.opp_slug) if body.opp_slug else None
+    try:
+        sess = LiveSession(account, opp_slug, body.mic_device, body.call_device)
+        sess.opportunity = body.opportunity
+        sess.start()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"Could not start capture: {e}")
+    sid = uuid.uuid4().hex[:12]
+    SESSIONS[sid] = sess
+    return {"session_id": sid, "labeled": sess.labeled}
+
+
+@app.get("/api/transcribe/{session_id}/stream")
+async def api_transcribe_stream(session_id: str):
+    from sse_starlette.sse import EventSourceResponse
+    sess = SESSIONS.get(session_id)
+    if not sess:
+        raise HTTPException(404, "Unknown session")
+
+    async def gen():
+        # replay any segments already captured (e.g. reconnect)
+        for seg in list(sess.segments):
+            yield {"event": "segment", "data": json.dumps(seg)}
+        while session_id in SESSIONS:
+            try:
+                seg = await asyncio.wait_for(sess.queue.get(), timeout=15)
+                yield {"event": "segment", "data": json.dumps(seg)}
+            except asyncio.TimeoutError:
+                yield {"event": "ping", "data": "{}"}  # keep-alive
+
+    return EventSourceResponse(gen())
+
+
+# Heuristic: questions that need the codebase / a skill go to claude -p.
+_DEEP_HINTS = ("codebase", "connector", "feasib", "troubleshoot", "schema", "api ",
+               "rate limit", "cdc", "deployment", "self-managed", "repo", "error",
+               "poc", "meddpicc", "qualif", "edge case")
+
+
+class AskLive(BaseModel):
+    question: str
+
+
+@app.post("/api/transcribe/{session_id}/ask")
+async def api_transcribe_ask(session_id: str, body: AskLive):
+    sess = SESSIONS.get(session_id)
+    if not sess:
+        raise HTTPException(404, "Unknown session")
+    q = (body.question or "").strip()
+    if not q:
+        raise HTTPException(400, "Empty question")
+    transcript = sess.transcript_text()[-12000:]  # rolling window (tail)
+    deep = any(h in q.lower() for h in _DEEP_HINTS)
+
+    if deep:
+        # Route to claude -p (full repo + skill access) via the job system.
+        prompt = (
+            f"You are assisting a Solutions Engineer LIVE during a customer call for the account "
+            f"'{sess.account}'{(', opportunity ' + repr(sess.opportunity)) if getattr(sess, 'opportunity', None) else ''}. "
+            f"Here is the live call transcript so far:\n\n{transcript}\n\n"
+            f"The SE asks: {q}\n\n"
+            f"Answer concisely and practically for use mid-call. If it involves Airbyte connectors, "
+            f"deployment, or the codebase, use the relevant SE skills / inspect the repo as needed."
+        )
+        job_id = uuid.uuid4().hex[:12]
+        JOBS[job_id] = {"status": "running", "ok": None, "stdout": "", "stderr": "",
+                        "skill": "live-ask", "account": sess.account,
+                        "opportunity": getattr(sess, "opportunity", None),
+                        "opp_slug": sess.opp_slug, "sig": ("live", session_id, q[:60])}
+        meta = {"account": sess.account, "opp_slug": None, "skill": "live-ask",
+                "opportunity": getattr(sess, "opportunity", None)}
+        asyncio.create_task(_run_job(job_id, prompt, meta))
+        return {"mode": "deep", "job_id": job_id}
+
+    # Quick path → Claude API streaming (SSE).
+    api_key = os.environ.get("ANTHROPIC_API_KEY") or _anthropic_key_from_mcp()
+    if not api_key:
+        # No key → tell the client to re-route as deep so the ask-bar still works.
+        return JSONResponse({"mode": "needs_deep",
+                             "reason": "No ANTHROPIC_API_KEY for the quick path — re-ask routes to claude -p."})
+
+    from sse_starlette.sse import EventSourceResponse
+
+    async def gen():
+        try:
+            from anthropic import AsyncAnthropic
+            client = AsyncAnthropic(api_key=api_key)
+            system = ("You are a Solutions Engineer's live call copilot. Answer briefly and "
+                      "directly from the call transcript provided. If the question needs the "
+                      "Airbyte codebase or a deep skill, say so in one line.")
+            async with client.messages.stream(
+                model="claude-sonnet-4-6",
+                max_tokens=700,
+                system=system,
+                messages=[{"role": "user", "content":
+                           f"Live transcript so far:\n\n{transcript}\n\nQuestion: {q}"}],
+            ) as stream:
+                async for text in stream.text_stream:
+                    yield {"event": "token", "data": json.dumps({"text": text})}
+            yield {"event": "done", "data": "{}"}
+        except Exception as e:  # noqa: BLE001
+            yield {"event": "error", "data": json.dumps({"error": str(e)})}
+
+    return EventSourceResponse(gen())
+
+
+def _anthropic_key_from_mcp() -> str | None:
+    """Best-effort: read ANTHROPIC_API_KEY from a ~/.mcp/*.env if present."""
+    mcp = Path(os.path.expanduser("~/.mcp"))
+    if not mcp.exists():
+        return None
+    for f in mcp.glob("*.env"):
+        try:
+            for line in f.read_text().splitlines():
+                if line.startswith("ANTHROPIC_API_KEY="):
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+        except Exception:
+            pass
+    return None
+
+
+@app.post("/api/transcribe/{session_id}/stop")
+def api_transcribe_stop(session_id: str):
+    sess = SESSIONS.pop(session_id, None)
+    if not sess:
+        raise HTTPException(404, "Unknown session")
+    sess.stop()
+    text = sess.transcript_text()
+    # Save to _transcripts/<Customer>-MM.DD.YY.txt (the convention post-call consumes).
+    transcripts_dir = CUSTOMERS_DIR / "_transcripts"
+    transcripts_dir.mkdir(parents=True, exist_ok=True)
+    cust = _titlecase_folder(sess.account)
+    datestr = sess.started_at.astimezone().strftime("%m.%d.%y")
+    base = f"{cust}-{datestr}"
+    path = transcripts_dir / f"{base}.txt"
+    n = 2
+    while path.exists():
+        path = transcripts_dir / f"{base}-v{n}.txt"; n += 1
+    header = f"# Live transcript — {sess.account} — {sess.started_at.astimezone().strftime('%B %d, %Y %H:%M')}\n\n"
+    path.write_text(header + text + "\n")
+    return {"saved_to": str(path), "segments": len(sess.segments),
+            "chars": len(text), "transcript": text}
 
 
 # Serve the static frontend at root
