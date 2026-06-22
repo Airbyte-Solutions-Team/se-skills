@@ -266,10 +266,24 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 .doc { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 36px 44px; }
 
 /* boxed sections in the open-output reader — each H2 section is its own card */
-.md-body .doc-card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 22px 28px; margin: 0 0 16px; }
-.md-body .doc-card:first-child { margin-top: 0; }
-.md-body .doc-card .md-h2 { margin-top: 0; }
-.md-body .doc-card > :last-child { margin-bottom: 0; }
+/* ONE document sheet; sections divided inside it so it reads as one connected doc */
+.md-body .doc-sheet { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.md-body .doc-section { padding: 22px 30px; border-top: 1px solid var(--line); }
+.md-body .doc-section:first-child { border-top: none; }
+.md-body .doc-section > :last-child { margin-bottom: 0; }
+/* a section's H2 acts as a header band inside the sheet */
+.md-body .doc-section .md-h2 { margin: 0 0 14px; padding-bottom: 10px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 8px; }
+.md-body .doc-section .md-h2::before { content: ""; width: 3px; height: 16px; background: var(--accent); border-radius: 2px; }
+/* the At-a-Glance section reads as a summary panel */
+.md-body .doc-section.is-glance { background: color-mix(in srgb, var(--accent) 6%, var(--panel)); }
+.md-body .doc-section.is-glance .md-h3 { margin-top: 0; color: var(--accent); text-transform: uppercase; letter-spacing: .5px; font-size: 12px; }
+
+/* label/value definition grid — scannable instead of dense prose */
+.md-body .kv-grid { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; margin: 10px 0; }
+.md-body .kv { display: contents; }
+.md-body .kv-k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .4px; padding-top: 1px; white-space: nowrap; }
+.md-body .kv-v { color: var(--text); font-size: 14px; line-height: 1.5; }
+.md-body .kv-v strong { font-weight: 650; }
 
 /* ── document layout: sticky TOC sidebar + body ───────────────────────── */
 .doc-layout { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 32px; align-items: start; }

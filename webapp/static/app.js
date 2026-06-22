@@ -728,6 +728,44 @@ function conciseLabel(text) {
   return (text || "").replace(/\s*\([^)]*\)\s*$/, "").replace(/\s*[—–-]\s.*$/, "").trim() || text;
 }
 
+// Convert "**Label:** value" lines into a scannable label/value grid (.kv).
+// Handles a paragraph of several "· "-separated pairs (the title key-lines) and
+// single-pair list items (At a Glance bullets). Anything that doesn't match the
+// label:value shape is left untouched.
+function upgradeKeyValues(root) {
+  const KV = /^\s*<strong>([^<:]{1,40}):<\/strong>\s*([\s\S]*)$/;
+
+  const toRow = (html) => {
+    const m = html.match(KV);
+    if (!m) return null;
+    return `<div class="kv"><span class="kv-k">${m[1].trim()}</span><span class="kv-v">${m[2].trim()}</span></div>`;
+  };
+
+  // Title key-lines: one <p> with multiple "**L:** v · **L:** v" pairs.
+  root.querySelectorAll("p.md-p").forEach((p) => {
+    const parts = p.innerHTML.split(/\s*·\s*/);
+    const rows = parts.map(toRow);
+    if (rows.length >= 2 && rows.every(Boolean)) {
+      const grid = document.createElement("div");
+      grid.className = "kv-grid";
+      grid.innerHTML = rows.join("");
+      p.replaceWith(grid);
+    }
+  });
+
+  // At-a-Glance style bullets: a <ul> where every <li> is "**Label:** value".
+  root.querySelectorAll("ul.md-list").forEach((ul) => {
+    const items = Array.from(ul.children);
+    const rows = items.map((li) => toRow(li.innerHTML));
+    if (items.length && rows.every(Boolean)) {
+      const grid = document.createElement("div");
+      grid.className = "kv-grid";
+      grid.innerHTML = rows.join("");
+      ul.replaceWith(grid);
+    }
+  });
+}
+
 // `ctx` = { account, slug, oppName } so Back returns to the exact opportunity.
 async function openOutput(path, title, ctx) {
   const text = await api("/api/output?path=" + encodeURIComponent(decodeURIComponent(path)));
@@ -750,21 +788,26 @@ async function openOutput(path, title, ctx) {
     if (/^\s*jump to:/i.test(p.textContent)) p.remove();
   });
 
-  // Group the flat node list into H2-delimited sections, each a bordered card.
-  // Content before the first H2 (the At-a-Glance block, key-lines) is its own card.
-  const cards = [];
+  // Turn dense key/value lines into a scannable definition layout. A paragraph
+  // or list item shaped like "**Label:** value" becomes a .kv row (label left,
+  // value right). De-bolds the label (CSS styles it), keeps ==key== emphasis.
+  upgradeKeyValues(tmp);
+
+  // Group the flat node list into H2-delimited SECTIONS inside ONE doc sheet.
+  // Content before the first H2 (title key-lines, At a Glance) is the lead section.
+  const sections = [];
   let cur = null;
-  const nodes = Array.from(tmp.childNodes);
-  for (const n of nodes) {
-    if (n.nodeType === 1 && n.tagName === "H2") {
-      cur = document.createElement("section");
-      cur.className = "doc-card";
-      cards.push(cur);
-    }
-    if (!cur) { cur = document.createElement("section"); cur.className = "doc-card"; cards.push(cur); }
+  const newSection = () => { cur = document.createElement("section"); cur.className = "doc-section"; sections.push(cur); };
+  for (const n of Array.from(tmp.childNodes)) {
+    if (n.nodeType === 1 && n.tagName === "H2") newSection();
+    if (!cur) newSection();
     cur.appendChild(n);
   }
-  const cardsHtml = cards.map((c) => c.outerHTML).join("");
+  // Tag the section containing "At a Glance" so it gets the summary panel.
+  for (const s of sections) {
+    if (/at a glance/i.test(s.querySelector("h2,h3")?.textContent || "")) s.classList.add("is-glance");
+  }
+  const sheetHtml = sections.map((s) => s.outerHTML).join("");
 
   // Sidebar index — H2/H3 only, concise labels.
   const tocHtml = toc
@@ -777,17 +820,24 @@ async function openOutput(path, title, ctx) {
     : null;
   view.innerHTML = `
     <div class="row"><h1>${esc(docTitle)}</h1>
-      <a class="ghost" id="doc-back" ${backHref ? `href="${backHref}"` : ""}>← Back</a></div>
+      <button class="ghost" id="doc-back">← Back</button></div>
     <div class="doc-layout">
       ${tocHtml ? `<aside class="doc-toc"><div class="doc-toc-head">On this page</div>${tocHtml}</aside>` : ""}
-      <article class="md-body">${cardsHtml}</article>
+      <article class="md-body"><div class="doc-sheet">${sheetHtml}</div></article>
     </div>`;
   if (ctx) setCrumbs([...(await accountCrumbs(ctx.account)),
                       { label: ctx.account, href: `#/account/${encodeURIComponent(ctx.account)}` },
                       { label: ctx.oppName, href: backHref },
                       { label: "output" }]);
   else setCrumbs([{ label: "Team", href: "#/" }, { label: "output" }]);
-  if (!backHref) document.getElementById("doc-back").onclick = () => history.back();
+  // Deterministic Back — go to the opp page in one step. Set the hash AND
+  // re-render directly: the output was opened without changing the hash, so it
+  // may already equal backHref (in which case setting it fires no hashchange).
+  document.getElementById("doc-back").onclick = () => {
+    const target = backHref || "#/";
+    if (location.hash === target) route();   // same hash → no event, render manually
+    else location.hash = target;             // different → hashchange fires route()
+  };
 
   // Sidebar links scroll-jump locally (no router involvement).
   view.querySelectorAll(".doc-toc-link").forEach((a) => {
