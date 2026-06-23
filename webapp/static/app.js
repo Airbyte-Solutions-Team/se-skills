@@ -788,6 +788,12 @@ async function openOutput(path, title, ctx) {
     if (/^\s*jump to:/i.test(p.textContent)) p.remove();
   });
 
+  // Shorten the in-doc section headers too (sidebar + headers stay consistent).
+  tmp.querySelectorAll("h2.md-h, h3.md-h").forEach((h) => {
+    const short = conciseLabel(h.textContent);
+    if (short && short !== h.textContent) h.textContent = short;
+  });
+
   // Turn dense key/value lines into a scannable definition layout. A paragraph
   // or list item shaped like "**Label:** value" becomes a .kv row (label left,
   // value right). De-bolds the label (CSS styles it), keeps ==key== emphasis.
