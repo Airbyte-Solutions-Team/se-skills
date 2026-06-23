@@ -206,12 +206,22 @@ def _is_archived(account_dir: Path) -> bool:
 
 
 def _account_meta(account_dir: Path) -> dict:
-    """Lightweight, filesystem-only card metadata: last-updated + output count."""
-    outputs_dir = account_dir / "outputs"
+    """Lightweight, filesystem-only card metadata: last-updated + output count.
+    Counts BOTH the legacy account-level outputs/ AND every per-opportunity
+    outputs/ folder, so the account total = the sum across its opportunities."""
     count = 0
     latest = 0.0
-    if outputs_dir.exists():
+    # candidate output roots: account-level + each opportunity's outputs/
+    roots = [account_dir / "outputs"]
+    opp_dir = account_dir / "opportunities"
+    if opp_dir.exists():
+        roots += [d / "outputs" for d in opp_dir.iterdir() if d.is_dir()]
+    for outputs_dir in roots:
+        if not outputs_dir.exists():
+            continue
         for f in outputs_dir.rglob("*.md"):
+            if any(part.startswith(".") for part in f.relative_to(outputs_dir).parts):
+                continue  # skip hidden dirs like .runs (job-result cache, not outputs)
             count += 1
             latest = max(latest, f.stat().st_mtime)
     return {
