@@ -1154,6 +1154,20 @@ async def api_transcribe_start(body: StartLive):
     return {"session_id": sid, "labeled": sess.labeled}
 
 
+@app.get("/api/transcribe/active")
+def api_transcribe_active(account: str, opp_slug: str | None = None):
+    """If a live session is still recording for this opportunity, return it so
+    the page can reconnect (segments replay over the stream). 204 if none."""
+    account = _safe(account)
+    opp_slug = _safe(opp_slug) if opp_slug else None
+    for sid, sess in SESSIONS.items():
+        if sess.account == account and sess.opp_slug == opp_slug:
+            return {"session_id": sid, "labeled": sess.labeled,
+                    "started_at": sess.started_at.timestamp(),
+                    "segments": list(sess.segments)}
+    return JSONResponse(status_code=204, content=None)
+
+
 @app.get("/api/transcribe/{session_id}/stream")
 async def api_transcribe_stream(session_id: str):
     from sse_starlette.sse import EventSourceResponse

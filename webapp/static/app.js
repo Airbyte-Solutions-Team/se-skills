@@ -929,6 +929,32 @@ async function pageLive(account, slug, oppName) {
     segsEl.scrollTop = segsEl.scrollHeight;
   };
 
+  // ── Recording mode (shared by Start and reconnect-on-return) ─────────
+  // Attaches the SSE stream (which replays existing segments), flips the UI to
+  // recording, and runs the timer from `startedAtMs` so a reconnected session
+  // shows correct elapsed time.
+  const enterRecording = (sessionId, startedAtMs) => {
+    // tear down any prior client-side handles (avoid leaking a 2nd SSE/timer)
+    if (_liveState) { try { _liveState.sse?.close(); } catch {} if (_liveState.timer) clearInterval(_liveState.timer); }
+    _liveState = { sessionId };
+    segsEl.innerHTML = ""; hasSegs = false;
+    const sse = new EventSource(`/api/transcribe/${sessionId}/stream`);
+    sse.addEventListener("segment", (e) => addSegment(JSON.parse(e.data)));
+    _liveState.sse = sse;
+    $("dev-mic").disabled = $("dev-call").disabled = true;
+    startBtn.classList.add("hidden");
+    stopBtn.classList.remove("hidden"); stopBtn.disabled = false;
+    timerEl.classList.remove("hidden"); timerEl.classList.add("rec");
+    askInput.disabled = sendBtn.disabled = false;
+    const t0 = startedAtMs || Date.now();
+    const tick = () => {
+      const s = Math.max(0, Math.floor((Date.now() - t0) / 1000));
+      timerEl.textContent = `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+    };
+    tick();
+    _liveState.timer = setInterval(tick, 1000);
+  };
+
   // ── Start / Stop ────────────────────────────────────────────────────
   startBtn.onclick = async () => {
     const mic = $("dev-mic").value;
@@ -940,23 +966,7 @@ async function pageLive(account, slug, oppName) {
         body: JSON.stringify({ account, opp_slug: slug, opportunity: oppName,
                                mic_device: Number(mic), call_device: call === null ? null : Number(call) }),
       });
-      _liveState = { sessionId: res.session_id };
-      segsEl.innerHTML = ""; hasSegs = false;
-      // SSE transcript stream
-      const sse = new EventSource(`/api/transcribe/${res.session_id}/stream`);
-      sse.addEventListener("segment", (e) => addSegment(JSON.parse(e.data)));
-      _liveState.sse = sse;
-      // UI → recording
-      $("dev-mic").disabled = $("dev-call").disabled = true;
-      startBtn.classList.add("hidden");
-      stopBtn.classList.remove("hidden"); timerEl.classList.remove("hidden");
-      askInput.disabled = sendBtn.disabled = false;
-      const t0 = Date.now();
-      _liveState.timer = setInterval(() => {
-        const s = Math.floor((Date.now() - t0) / 1000);
-        timerEl.textContent = `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
-      }, 1000);
-      timerEl.classList.add("rec");
+      enterRecording(res.session_id, Date.now());
     } catch (e) {
       alert("Could not start: " + e.message); startBtn.disabled = false;
     }
@@ -1039,6 +1049,15 @@ async function pageLive(account, slug, oppName) {
   };
   sendBtn.onclick = ask;
   askInput.onkeydown = (e) => { if (e.key === "Enter") ask(); };
+
+  // ── Reconnect if a session is still recording for this opp ───────────
+  // Leaving and returning re-renders this page, but the session lives on the
+  // server — pick it back up so the transcript isn't lost.
+  const active = await api(`/api/transcribe/active?account=${encodeURIComponent(account)}&opp_slug=${encodeURIComponent(slug)}`).catch(() => null);
+  if (active && active.session_id) {
+    // restore the device picker selections if we can infer them (best-effort)
+    enterRecording(active.session_id, (active.started_at || 0) * 1000);
+  }
 }
 
 // ---- Invoke modal ---------------------------------------------------------
