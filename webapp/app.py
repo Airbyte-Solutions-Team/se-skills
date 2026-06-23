@@ -643,6 +643,72 @@ def api_output_content(path: str):
     return target.read_text()
 
 
+class OutputAsk(BaseModel):
+    path: str                       # output file, relative to CUSTOMERS_DIR
+    question: str
+    account: str | None = None
+    opportunity: str | None = None
+
+
+@app.post("/api/output/ask")
+async def api_output_ask(body: OutputAsk):
+    """Follow-up Q&A against an opened output doc. Quick → Claude API (doc as
+    context); deep (codebase/connectors) → claude -p. Mirrors the live ask."""
+    target = (CUSTOMERS_DIR / body.path).resolve()
+    if not str(target).startswith(str(CUSTOMERS_DIR.resolve())) or not target.is_file():
+        raise HTTPException(404, "Not found")
+    q = (body.question or "").strip()
+    if not q:
+        raise HTTPException(400, "Empty question")
+    doc = target.read_text()[-16000:]   # tail if very long
+    acct = body.account or ""
+    deep = any(h in q.lower() for h in _DEEP_HINTS)
+
+    if deep:
+        prompt = (
+            f"A Solutions Engineer is reviewing this generated document"
+            f"{(' for the account ' + repr(acct)) if acct else ''}"
+            f"{(', opportunity ' + repr(body.opportunity)) if body.opportunity else ''} and has a follow-up question.\n\n"
+            f"=== DOCUMENT ===\n{doc}\n=== END DOCUMENT ===\n\n"
+            f"Follow-up question: {q}\n\n"
+            f"Answer concisely and practically. If it involves Airbyte connectors, deployment, or the "
+            f"codebase, use the relevant SE skills / inspect the repo as needed."
+        )
+        job_id = uuid.uuid4().hex[:12]
+        JOBS[job_id] = {"status": "running", "ok": None, "stdout": "", "stderr": "",
+                        "skill": "output-ask", "account": acct, "opportunity": body.opportunity,
+                        "opp_slug": None, "sig": ("output-ask", body.path, q[:60])}
+        meta = {"account": acct or "?", "opp_slug": None, "skill": "output-ask", "opportunity": body.opportunity}
+        asyncio.create_task(_run_job(job_id, prompt, meta))
+        return {"mode": "deep", "job_id": job_id}
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY") or _anthropic_key_from_mcp()
+    if not api_key:
+        return JSONResponse({"mode": "needs_deep",
+                             "reason": "No ANTHROPIC_API_KEY for the quick path — re-ask routes to claude -p."})
+
+    from sse_starlette.sse import EventSourceResponse
+
+    async def gen():
+        try:
+            from anthropic import AsyncAnthropic
+            client = AsyncAnthropic(api_key=api_key)
+            system = ("You are a Solutions Engineer's copilot. Answer the follow-up briefly and directly "
+                      "from the document provided. If the question needs the Airbyte codebase or a deep "
+                      "skill, say so in one line.")
+            async with client.messages.stream(
+                model="claude-sonnet-4-6", max_tokens=800, system=system,
+                messages=[{"role": "user", "content": f"Document:\n\n{doc}\n\nFollow-up question: {q}"}],
+            ) as stream:
+                async for text in stream.text_stream:
+                    yield {"event": "token", "data": json.dumps({"text": text})}
+            yield {"event": "done", "data": "{}"}
+        except Exception as e:  # noqa: BLE001
+            yield {"event": "error", "data": json.dumps({"error": str(e)})}
+
+    return EventSourceResponse(gen())
+
+
 @app.get("/api/skills")
 def api_skills():
     return SKILLS

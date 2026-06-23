@@ -560,15 +560,15 @@ async function pageOpportunity(account, slug, oppName) {
         <button class="primary" id="invoke-btn">⚡ Invoke Skill</button>
       </div>
     </div>
-    <div class="freebar">
+    <div class="freebar command-bar">
+      <span class="command-bar-icon">⚡</span>
       <div class="freebar-input-wrap">
-        <input id="opp-free" type="text" autocomplete="off" placeholder="Type an instruction, or a skill name to run it (e.g. “deal assessment focused on the security objection”)…" />
+        <input id="opp-free" type="text" autocomplete="off" placeholder="Run a skill or type an instruction (e.g. “deal assessment focused on the security objection”)…" />
         <div id="free-suggest" class="free-suggest hidden"></div>
       </div>
       <button class="primary small" id="opp-free-run">Run</button>
     </div>
     <div id="freebar-status" class="status hidden"></div>
-    <div id="freebar-output" class="output hidden"></div>
     <h2>Generated outputs</h2>
     <div class="outputs" id="outputs">
       ${outputs.length ? renderOutputGroups(outputs) : `<div class="empty">No outputs yet for this opportunity. Invoke a skill to generate one.</div>`}
@@ -582,20 +582,25 @@ async function pageOpportunity(account, slug, oppName) {
   const freeInput = document.getElementById("opp-free");
   const freeBtn = document.getElementById("opp-free-run");
   const fStatus = document.getElementById("freebar-status");
-  const fOutput = document.getElementById("freebar-output");
 
-  const dismissRun = () => {
-    fStatus.className = "status hidden"; fOutput.className = "output hidden"; fOutput.innerHTML = "";
-    document.getElementById("run-showmore")?.remove();
+  const dismissRun = () => { fStatus.className = "status hidden"; fStatus.innerHTML = ""; };
+
+  // Re-fetch the Generated Outputs list (after a run produces a new file).
+  const refreshOutputs = async () => {
+    const outs = await api(`/api/accounts/${encodeURIComponent(account)}/outputs?opp=${encodeURIComponent(slug)}`).catch(() => []);
+    const el = document.getElementById("outputs");
+    if (!el) return;
+    el.innerHTML = outs.length ? renderOutputGroups(outs) : `<div class="empty">No outputs yet for this opportunity. Invoke a skill to generate one.</div>`;
+    el.querySelectorAll(".out-item").forEach((it) => {
+      it.onclick = () => openOutput(it.dataset.path, it.dataset.title, { account, slug, oppName });
+    });
   };
 
-  // Reflect a job snapshot into the status/output area. Safe to call after
-  // navigating away (the elements just won't exist — guarded by callers).
-  // `finishedAt` (epoch seconds) drives the "ran N min ago" label on recovery.
+  // Status-only line — the result goes to Generated Outputs (no inline preview).
   const renderJob = (job, finishedAt) => {
     if (job.status === "running") {
       fStatus.className = "status running";
-      fStatus.innerHTML = `<span class="run-head"><span class="spinner"></span>Running ${esc(job.skill || "instruction")} on ${esc(account)} · ${esc(oppName)} … (keeps running even if you leave this page)</span>`;
+      fStatus.innerHTML = `<span class="run-head"><span class="spinner"></span>Running ${esc(job.skill || "instruction")} … (keeps running even if you leave this page)</span>`;
       freeBtn.disabled = true;
       return;
     }
@@ -604,48 +609,26 @@ async function pageOpportunity(account, slug, oppName) {
     fStatus.className = ok ? "status ok" : "status err";
     const ago = finishedAt ? ` · ran ${relTime(finishedAt)}` : "";
     const head = ok
-      ? `✓ ${esc(job.skill || "run")}${ago} — result below`
+      ? `✓ ${esc(job.skill || "run")}${ago} — saved to Generated Outputs below`
       : `✕ ${esc(job.skill || "run")}${ago} — finished with an error`;
     fStatus.innerHTML = `<span class="run-head">${head}</span><button class="run-dismiss" id="run-dismiss" title="Dismiss">✕</button>`;
-    if (job.stdout || job.stderr) {
-      // Collapsed preview, full page width, with a Show more / Show less toggle.
-      fOutput.className = "output md-body collapsed";
-      fOutput.innerHTML = mdToHtml(job.stdout || "") + (job.stderr ? `<hr/><pre class="md-pre"><code>[stderr]\n${esc(job.stderr)}</code></pre>` : "");
-      let toggle = document.getElementById("run-showmore");
-      if (!toggle) {
-        toggle = document.createElement("button");
-        toggle.id = "run-showmore";
-        toggle.className = "linklike show-more";
-        toggle.onclick = () => {
-          const c = fOutput.classList.toggle("collapsed");
-          toggle.textContent = c ? "Show more ▾" : "Show less ▴";
-        };
-        fOutput.after(toggle);
-      }
-      toggle.textContent = fOutput.classList.contains("collapsed") ? "Show more ▾" : "Show less ▴";
-    }
-    const dz = document.getElementById("run-dismiss");
-    if (dz) dz.onclick = dismissRun;
+    document.getElementById("run-dismiss").onclick = dismissRun;
   };
 
+  let _lastStatus = null;
   const watch = (jobId) => pollJob(jobId, (job) => {
-    // Only update if we're still on this opportunity's page.
-    if (document.getElementById("freebar-status")) renderJob(job);
+    if (!document.getElementById("freebar-status")) return;  // left the page
+    renderJob(job);
+    if (job.status !== "running" && _lastStatus === "running") refreshOutputs();  // new file landed
+    _lastStatus = job.status;
   });
 
-  // Recover a run started earlier (e.g. you backed out and came back).
-  // 1) If one is still running in memory, re-attach and poll it.
-  // 2) Otherwise read the last finished run from disk — survives a server
-  //    restart, and chat-only results (e.g. next-move, which writes no file)
-  //    aren't lost. One record per skill, overwritten on re-run.
+  // Recover a run started earlier (still-running job re-attaches). We no longer
+  // surface the last finished run inline — finished results live in Generated
+  // Outputs (and chat-only skills like next-move show their text when opened).
   const existing = await api(`/api/jobs?account=${encodeURIComponent(account)}&opp_slug=${encodeURIComponent(slug)}`).catch(() => []);
   const running = existing.find((j) => j.status === "running");
-  if (running) {
-    renderJob(running); watch(running.job_id);
-  } else {
-    const last = await api(`/api/accounts/${encodeURIComponent(account)}/last-run?opp_slug=${encodeURIComponent(slug)}`).catch(() => null);
-    if (last && last.skill) renderJob({ status: "done", ok: last.ok, skill: last.skill, stdout: last.stdout, stderr: last.stderr }, last.finished_at);
-  }
+  if (running) { _lastStatus = "running"; renderJob(running); watch(running.job_id); }
 
   // Start a run. `skill` = run that named skill (typed text becomes context);
   // otherwise run the typed text as a freeform instruction.
@@ -829,7 +812,14 @@ async function openOutput(path, title, ctx) {
       <button class="ghost" id="doc-back">← Back</button></div>
     <div class="doc-layout">
       ${tocHtml ? `<aside class="doc-toc"><div class="doc-toc-head">On this page</div>${tocHtml}</aside>` : ""}
-      <article class="md-body"><div class="doc-sheet">${sheetHtml}</div></article>
+      <article class="md-body">
+        <div class="doc-sheet">${sheetHtml}</div>
+        <div class="doc-qa" id="doc-qa"></div>
+        <div class="doc-askbar">
+          <input id="doc-ask" type="text" autocomplete="off" placeholder="Ask a follow-up about this document…" />
+          <button class="primary small" id="doc-ask-send">Ask</button>
+        </div>
+      </article>
     </div>`;
   if (ctx) setCrumbs([...(await accountCrumbs(ctx.account)),
                       { label: ctx.account, href: `#/account/${encodeURIComponent(ctx.account)}` },
@@ -853,6 +843,68 @@ async function openOutput(path, title, ctx) {
       if (el) { el.scrollIntoView({ behavior: "smooth", block: "start" }); flashEl(el); }
     };
   });
+
+  // Follow-up chat against this document (quick → Claude API; deep → claude -p).
+  const askInput = document.getElementById("doc-ask");
+  const askSend = document.getElementById("doc-ask-send");
+  const thread = document.getElementById("doc-qa");
+  const docAsk = () => {
+    const q = askInput.value.trim();
+    if (!q) return;
+    askInput.value = "";
+    askThread(thread, q, "/api/output/ask", {
+      path: decodeURIComponent(path), question: q,
+      account: ctx?.account || null, opportunity: ctx?.oppName || null,
+    });
+  };
+  askSend.onclick = docAsk;
+  askInput.onkeydown = (e) => { if (e.key === "Enter") docAsk(); };
+}
+
+// Shared follow-up-chat renderer: append a Q card + answer to `threadEl`, POST
+// `payload` to `endpoint`, and stream/poll the answer (⚡ quick / 🔧 deep).
+// Used by the output reader (and shaped like the Live Transcribe ask).
+async function askThread(threadEl, q, endpoint, payload) {
+  const item = document.createElement("div");
+  item.className = "qa-item";
+  item.innerHTML = `<div class="qa-q">${esc(q)}</div><div class="qa-a"><span class="qa-tag">…</span><span class="qa-body"></span></div>`;
+  threadEl.appendChild(item);
+  item.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  const tag = item.querySelector(".qa-tag"), bodyEl = item.querySelector(".qa-body");
+
+  const res = await fetch(endpoint, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload),
+  });
+  const ctype = res.headers.get("content-type") || "";
+
+  if (ctype.includes("application/json")) {
+    const data = await res.json();
+    if (data.mode === "deep") {
+      tag.textContent = "🔧"; bodyEl.innerHTML = `<span class="muted">searching codebase &amp; skills…</span>`;
+      await pollJob(data.job_id, (job) => {
+        if (job.status !== "running") { bodyEl.innerHTML = mdToHtml(job.stdout || job.stderr || "(no output)"); }
+      });
+    } else {
+      tag.textContent = "⚠️"; bodyEl.textContent = data.reason || data.error || "Unavailable.";
+    }
+    return;
+  }
+  // SSE token stream (quick path)
+  tag.textContent = "⚡";
+  const reader = res.body.getReader(); const dec = new TextDecoder();
+  let buf = "", acc = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const events = buf.split("\n\n"); buf = events.pop();
+    for (const ev of events) {
+      const m = ev.match(/^event: (\w+)\ndata: (.*)$/ms);
+      if (!m) continue;
+      if (m[1] === "token") { acc += JSON.parse(m[2]).text; bodyEl.innerHTML = mdToHtml(acc); }
+      else if (m[1] === "error") { bodyEl.innerHTML = `<span class="muted">Error: ${esc(JSON.parse(m[2]).error)}</span>`; }
+    }
+  }
 }
 
 // Brief highlight on an anchored element (reuses the help-flash animation).
