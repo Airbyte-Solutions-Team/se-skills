@@ -28,13 +28,15 @@ Plus the shared reference (not a skill): **`_se-playbook.md`** — the SE-craft 
 
 ### Local web app (optional)
 
-`webapp/` is a **local** UI over the suite — browse team member → their accounts → an account's generated outputs, and invoke any skill with a button. Runs on your machine using your existing Claude Code + MCPs + local files:
+`webapp/` is a **local** UI over the suite — browse team member → their accounts → an account's opportunities → generated outputs, invoke any skill with a button, ask follow-up questions on an output, and **Live Transcribe** a Zoom call with an AI copilot. Runs on your machine using your existing Claude Code + MCPs + local files:
 
 ```bash
 cd webapp && uv run app.py   # → http://127.0.0.1:8787
 ```
 
-Local-only by design (invoking a skill needs compute + your auth + your data, which a static deploy can't provide). See `webapp/README.md`.
+Local-only by design (invoking a skill needs compute + your auth + your data, which a static deploy can't provide).
+
+**Full setup — prerequisites (`uv`, `claude` CLI, portaudio/BlackHole for Live Transcribe, optional `ANTHROPIC_API_KEY`), a fresh-clone walkthrough, and the audio routing — is in [`webapp/README.md`](webapp/README.md).**
 
 ---
 

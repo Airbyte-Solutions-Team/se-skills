@@ -38,6 +38,7 @@ import re
 import subprocess
 import threading
 import uuid
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1138,6 +1139,25 @@ class _Channel:
             pass
 
 
+# Echo de-dupe: when capturing with open speakers, the mic ("You") also hears
+# the call's audio ("Call"), producing a near-duplicate line ~1s apart. We hold
+# each "You" segment briefly; if a near-identical "Call" segment shows up in the
+# window, the "You" line is an echo and is suppressed. "Call" emits immediately.
+ECHO_HOLD_SEC = 2.5
+ECHO_SIM = 0.5   # token-overlap to call two near-simultaneous lines an echo.
+                 # 0.5 catches garbled echoes (the two channels transcribe a bit
+                 # differently) while real back-and-forth dialogue scores ~0.1–0.3.
+
+
+def _text_similarity(a: str, b: str) -> float:
+    """Jaccard overlap of lowercased word sets — cheap, good enough for echoes."""
+    wa = set(re.findall(r"[a-z0-9]+", (a or "").lower()))
+    wb = set(re.findall(r"[a-z0-9]+", (b or "").lower()))
+    if not wa or not wb:
+        return 0.0
+    return len(wa & wb) / len(wa | wb)
+
+
 class LiveSession:
     def __init__(self, account, opp_slug, mic_device, call_device):
         self.account = account
@@ -1148,19 +1168,54 @@ class LiveSession:
         self.loop = asyncio.get_running_loop()
         self.labeled = call_device is not None
         self.channels: list[_Channel] = []
+        self._lock = threading.Lock()
+        self._recent_call = deque(maxlen=12)   # (monotonic_ts, text) for echo matching
+        self._pending_you = []                  # held You segs awaiting echo check
+        self.__post_channels(mic_device, call_device)
 
-        def on_segment(label, text):             # called from a worker thread
-            seg = {"t": datetime.now(timezone.utc).strftime("%H:%M:%S"),
-                   "speaker": label, "text": text}
-            self.segments.append(seg)
-            # hop back onto the event loop to feed the SSE queue
-            self.loop.call_soon_threadsafe(self.queue.put_nowait, seg)
+    def _emit(self, seg):
+        self.segments.append(seg)
+        self.loop.call_soon_threadsafe(self.queue.put_nowait, seg)
 
+    def _flush_pending_you(self, now):
+        """Emit any held 'You' segments older than the hold window that were not
+        matched by a 'Call' echo."""
+        still = []
+        for ts, seg in self._pending_you:
+            if now - ts >= ECHO_HOLD_SEC:
+                self._emit(seg)
+            else:
+                still.append((ts, seg))
+        self._pending_you = still
+
+    def _on_segment(self, label, text):          # called from worker threads
+        import time
+        now = time.monotonic()
+        seg = {"t": datetime.now(timezone.utc).strftime("%H:%M:%S"), "speaker": label, "text": text}
+        with self._lock:
+            self._flush_pending_you(now)
+            if not self.labeled:
+                self._emit(seg); return
+            if label == "Call":
+                # drop any held 'You' that this 'Call' line echoes
+                self._pending_you = [
+                    (ts, s) for (ts, s) in self._pending_you
+                    if _text_similarity(s["text"], text) < ECHO_SIM
+                ]
+                self._recent_call.append((now, text))
+                self._emit(seg)
+            else:  # "You" — suppress if it echoes a recent 'Call'; else hold briefly
+                if any(now - cts <= ECHO_HOLD_SEC and _text_similarity(text, ctext) >= ECHO_SIM
+                       for cts, ctext in self._recent_call):
+                    return  # echo of the call audio — drop
+                self._pending_you.append((now, seg))
+
+    def __post_channels(self, mic_device, call_device):
         if self.labeled:
-            self.channels.append(_Channel(mic_device, "You", on_segment))
-            self.channels.append(_Channel(call_device, "Call", on_segment))
+            self.channels.append(_Channel(mic_device, "You", self._on_segment))
+            self.channels.append(_Channel(call_device, "Call", self._on_segment))
         else:
-            self.channels.append(_Channel(mic_device, "", on_segment))
+            self.channels.append(_Channel(mic_device, "", self._on_segment))
 
     def start(self):
         for c in self.channels:
@@ -1169,6 +1224,11 @@ class LiveSession:
     def stop(self):
         for c in self.channels:
             c.stop()
+        # flush any held 'You' segments that never got an echo match
+        with self._lock:
+            for _ts, seg in self._pending_you:
+                self._emit(seg)
+            self._pending_you = []
 
     def transcript_text(self) -> str:
         lines = []

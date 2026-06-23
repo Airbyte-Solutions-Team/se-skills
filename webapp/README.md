@@ -7,6 +7,44 @@ an account's generated outputs, and invoke any skill with a button.
 > Claude Code + MCPs (Gong/Salesforce) + local `~/airbyte-work` files. It is NOT
 > a hosted multi-tenant app — see "Why local" below.
 
+## Prerequisites
+
+The app runs on your machine, as you, using your own auth + local files. You need:
+
+| Requirement | Why | Install |
+|---|---|---|
+| **`uv`** | runs the app + its inline Python deps | `brew install uv` (or astral.sh/uv) |
+| **Claude Code CLI** (`claude`) | the app invokes skills via `claude -p` | already have it if you use Claude Code; `claude --version` to check |
+| **The skills installed** | the app drives the SE skills suite | from the repo root: `./install.sh` (symlinks skills into `~/.claude/skills/`) |
+| **`~/airbyte-work/` workspace** | the app reads/writes `01-customers/` here | the standard SE workspace layout (see the repo root `README.md`) |
+| **`portaudio`** | only for **Live Transcribe** (audio device access) | `brew install portaudio` |
+| **BlackHole 2ch** | only for **Live Transcribe** capturing call audio | `brew install blackhole-2ch` (see Live Transcribe section) |
+| **`ANTHROPIC_API_KEY`** | only for the **fast ⚡ ask-bar path**; optional | see "AI ask-bar key" below — without it, questions route through `claude -p` |
+
+Salesforce / Gong MCPs are optional — the app degrades gracefully without them (no SFDC stage/amount enrichment, no Gong pulls), everything else works. See the repo root `README.md` for those.
+
+## First-time setup (from a fresh clone)
+
+```bash
+# 1. clone + install the skills
+git clone <repo-url> ~/airbyte-work/02-repos/se-skills
+cd ~/airbyte-work/02-repos/se-skills
+./install.sh                       # symlinks skills/ → ~/.claude/skills/
+
+# 2. create your SE identity config (used for attribution, signatures, SFDC alias)
+#    see the repo root README "Setup" → .se-config.yaml
+
+# 3. (Live Transcribe only) audio deps
+brew install portaudio blackhole-2ch
+
+# 4. (fast ask-bar only) set your Anthropic key — see "AI ask-bar key" below
+
+# 5. run it
+cd webapp && uv run app.py         # → http://127.0.0.1:8787
+```
+
+The **first** `uv run` downloads the Python deps (FastAPI, faster-whisper, torch, etc.) into an isolated env — this takes a few minutes once, then boots instantly after. No manual `pip install`.
+
 ## Run it
 
 ```bash
@@ -16,6 +54,21 @@ uv run app.py
 ```
 
 (`uv run` reads the inline script deps in `app.py` — no separate install needed.)
+
+## AI ask-bar key (optional — for fast streaming answers)
+
+The ask-bars (follow-up chat in an output, and the Live Transcribe copilot) route each question two ways:
+- **⚡ Quick** (simple questions) → the **Anthropic Claude API**, fast + streaming — needs `ANTHROPIC_API_KEY`.
+- **🔧 Deep** (codebase / connector / troubleshoot questions) → `claude -p` with full repo + skill access — **no key needed**.
+
+**Without a key, nothing breaks** — quick questions just fall back to the (slower) `claude -p` path. To enable the fast path:
+
+1. Create a key at **https://console.anthropic.com** → API Keys → Create Key (requires billing enabled). It's pay-as-you-go; these calls are tiny.
+2. Save it where the app looks (env var, or a `~/.mcp/*.env` file — outside the repo so it's never committed):
+   ```bash
+   echo 'ANTHROPIC_API_KEY=sk-ant-…' >> ~/.mcp/anthropic.env && chmod 600 ~/.mcp/anthropic.env
+   ```
+3. Restart the app. (Treat the key like a password; rotate it in the Console if it leaks.)
 
 ## Live Transcribe — one-time audio setup
 
@@ -40,6 +93,7 @@ Notes:
 - Transcription is **local** (faster-whisper, CPU). Set `SE_WHISPER_MODEL` (tiny/base/small/medium, default `small`) to trade speed for accuracy.
 - The **quick** Q&A path uses the Claude API — set `ANTHROPIC_API_KEY` (or it falls back to the `claude -p` deep path). Customer **audio never leaves your Mac**; only typed quick-questions + transcript text hit the Claude API.
 - Speaker labels are **You** (your mic) vs **Call** (everyone on Zoom) — it can't separate your AE from the customer (they share the Zoom audio pipe).
+- **Echo de-dupe:** if you run on **speakers** (not headphones), your mic also hears the call, which would double every line. The app suppresses these — a near-identical "You" line within ~2.5s of a "Call" line is dropped as an echo. **Headphones avoid it entirely** (your mic never hears the call) and give the cleanest transcript.
 
 ## What it does
 
