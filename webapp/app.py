@@ -44,7 +44,7 @@ from pathlib import Path
 
 import yaml
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -1033,7 +1033,7 @@ def api_last_run(account: str, opp_slug: str | None = None):
     opp_slug = _safe(opp_slug) if opp_slug else None
     rec = _latest_run(account, opp_slug)
     if not rec:
-        return JSONResponse(status_code=204, content=None)
+        return Response(status_code=204)  # empty body — see note in /active
     return rec
 
 
@@ -1301,7 +1301,75 @@ def api_transcribe_active(account: str, opp_slug: str | None = None):
             return {"session_id": sid, "labeled": sess.labeled,
                     "started_at": sess.started_at.timestamp(),
                     "segments": list(sess.segments)}
-    return JSONResponse(status_code=204, content=None)
+    # 204 No Content must have an EMPTY body — a serialized `null` (4 bytes)
+    # trips Starlette's "content longer than Content-Length" check.
+    return Response(status_code=204)
+
+
+def _parse_saved_transcript(text: str) -> list[dict]:
+    """Parse a saved transcript file back into {t, speaker, text} segments.
+
+    Saved format (one per line): `[HH:MM:SS] Speaker: text`. A leading `#`
+    header line and blanks are skipped. Lines that don't match the pattern are
+    appended to the previous segment (whisper sometimes wraps long utterances).
+    """
+    segs: list[dict] = []
+    line_re = re.compile(r"^\[(\d{2}:\d{2}:\d{2})\]\s*(?:(You|Call):\s*)?(.*)$")
+    for line in text.splitlines():
+        if not line.strip() or line.startswith("#"):
+            continue
+        m = line_re.match(line)
+        if m:
+            segs.append({"t": m.group(1), "speaker": m.group(2) or "", "text": m.group(3)})
+        elif segs:
+            segs[-1]["text"] += " " + line.strip()
+    return segs
+
+
+def _transcript_path(account: str, name: str) -> Path:
+    """Resolve a saved-transcript filename safely under _transcripts/, scoped to
+    the account so one opp can't load another's files."""
+    name = _safe(name)
+    if not name.endswith(".txt"):
+        raise HTTPException(400, "Not a transcript file")
+    cust = _titlecase_folder(account)
+    if not name.startswith(cust + "-"):
+        raise HTTPException(403, "Transcript does not belong to this account")
+    path = (CUSTOMERS_DIR / "_transcripts" / name).resolve()
+    if path.parent != (CUSTOMERS_DIR / "_transcripts").resolve():
+        raise HTTPException(400, "Invalid path")
+    return path
+
+
+@app.get("/api/transcripts")
+def api_list_transcripts(account: str):
+    """List saved transcripts for this account, newest first (by filename date
+    then mtime). Powers the 'Past transcripts' list on the transcribe page."""
+    account = _safe(account)
+    cust = _titlecase_folder(account)
+    tdir = CUSTOMERS_DIR / "_transcripts"
+    if not tdir.exists():
+        return {"transcripts": []}
+    items = []
+    for p in tdir.glob(f"{cust}-*.txt"):
+        try:
+            items.append({"name": p.name, "mtime": p.stat().st_mtime,
+                          "size": p.stat().st_size})
+        except OSError:
+            pass
+    items.sort(key=lambda x: (x["name"], x["mtime"]), reverse=True)
+    return {"transcripts": items}
+
+
+@app.get("/api/transcripts/{name}")
+def api_load_transcript(name: str, account: str):
+    """Load one saved transcript as segments + raw text so the page can render
+    it read-only and the copilot can answer questions about it."""
+    path = _transcript_path(account, name)
+    if not path.exists():
+        raise HTTPException(404, "Transcript not found")
+    text = path.read_text()
+    return {"name": name, "segments": _parse_saved_transcript(text), "transcript": text}
 
 
 @app.get("/api/transcribe/{session_id}/stream")
@@ -1333,36 +1401,64 @@ _DEEP_HINTS = ("codebase", "connector", "feasib", "troubleshoot", "schema", "api
 
 class AskLive(BaseModel):
     question: str
+    # File-backed ask: when the session_id is the "file" sentinel, the page is
+    # querying a SAVED transcript (reopened), not a live recording. The client
+    # passes the transcript name + account so the server loads it from disk.
+    transcript_name: str | None = None
+    account: str | None = None
+    opportunity: str | None = None
 
 
 @app.post("/api/transcribe/{session_id}/ask")
 async def api_transcribe_ask(session_id: str, body: AskLive):
-    sess = SESSIONS.get(session_id)
-    if not sess:
-        raise HTTPException(404, "Unknown session")
     q = (body.question or "").strip()
     if not q:
         raise HTTPException(400, "Empty question")
-    transcript = sess.transcript_text()[-12000:]  # rolling window (tail)
+
+    # Resolve the transcript + context from either a LIVE session or a SAVED
+    # file. session_id == "file" means the page reopened a saved transcript.
+    if session_id == "file":
+        if not body.transcript_name or not body.account:
+            raise HTTPException(400, "File ask requires transcript_name + account")
+        path = _transcript_path(_safe(body.account), body.transcript_name)
+        if not path.exists():
+            raise HTTPException(404, "Transcript not found")
+        full = path.read_text()
+        account, opportunity, opp_slug = body.account, body.opportunity, None
+        live = False
+    else:
+        sess = SESSIONS.get(session_id)
+        if not sess:
+            raise HTTPException(404, "Unknown session")
+        full = sess.transcript_text()
+        account, opportunity, opp_slug = sess.account, getattr(sess, "opportunity", None), sess.opp_slug
+        live = True
+
+    # Live: tail window (recent context matters most, transcript still growing).
+    # Saved: send the whole thing — the SE is reviewing a finished call and
+    # questions may target anything in it. Cap generously to bound token cost.
+    transcript = full[-12000:] if live else full[-60000:]
     deep = any(h in q.lower() for h in _DEEP_HINTS)
 
     if deep:
         # Route to claude -p (full repo + skill access) via the job system.
+        when = "LIVE during a customer call" if live else "reviewing a saved call transcript"
+        tlabel = "live call transcript so far" if live else "full saved call transcript"
         prompt = (
-            f"You are assisting a Solutions Engineer LIVE during a customer call for the account "
-            f"'{sess.account}'{(', opportunity ' + repr(sess.opportunity)) if getattr(sess, 'opportunity', None) else ''}. "
-            f"Here is the live call transcript so far:\n\n{transcript}\n\n"
+            f"You are assisting a Solutions Engineer {when} for the account "
+            f"'{account}'{(', opportunity ' + repr(opportunity)) if opportunity else ''}. "
+            f"Here is the {tlabel}:\n\n{transcript}\n\n"
             f"The SE asks: {q}\n\n"
-            f"Answer concisely and practically for use mid-call. If it involves Airbyte connectors, "
+            f"Answer concisely and practically. If it involves Airbyte connectors, "
             f"deployment, or the codebase, use the relevant SE skills / inspect the repo as needed."
         )
         job_id = uuid.uuid4().hex[:12]
         JOBS[job_id] = {"status": "running", "ok": None, "stdout": "", "stderr": "",
-                        "skill": "live-ask", "account": sess.account,
-                        "opportunity": getattr(sess, "opportunity", None),
-                        "opp_slug": sess.opp_slug, "sig": ("live", session_id, q[:60])}
-        meta = {"account": sess.account, "opp_slug": None, "skill": "live-ask",
-                "opportunity": getattr(sess, "opportunity", None)}
+                        "skill": "live-ask", "account": account,
+                        "opportunity": opportunity,
+                        "opp_slug": opp_slug, "sig": ("live", session_id, q[:60])}
+        meta = {"account": account, "opp_slug": None, "skill": "live-ask",
+                "opportunity": opportunity}
         asyncio.create_task(_run_job(job_id, prompt, meta))
         return {"mode": "deep", "job_id": job_id}
 
@@ -1373,7 +1469,16 @@ async def api_transcribe_ask(session_id: str, body: AskLive):
         return JSONResponse({"mode": "needs_deep",
                              "reason": "No ANTHROPIC_API_KEY for the quick path — re-ask routes to claude -p."})
 
-    from sse_starlette.sse import EventSourceResponse
+    from fastapi.responses import StreamingResponse
+
+    # Emit raw SSE frames via a plain StreamingResponse rather than
+    # EventSourceResponse: sse_starlette's disconnect-polling can race a
+    # fetch()+getReader() client and close the stream before any token is
+    # delivered (curl is unaffected, the browser sees an empty body). A plain
+    # streaming response just writes chunks — the wire format is identical, so
+    # the existing front-end parser (event:/data: split on \n\n) is unchanged.
+    def _frame(event: str, data: dict) -> bytes:
+        return f"event: {event}\ndata: {json.dumps(data)}\n\n".encode()
 
     async def gen():
         try:
@@ -1387,15 +1492,16 @@ async def api_transcribe_ask(session_id: str, body: AskLive):
                 max_tokens=700,
                 system=system,
                 messages=[{"role": "user", "content":
-                           f"Live transcript so far:\n\n{transcript}\n\nQuestion: {q}"}],
+                           f"Transcript:\n\n{transcript}\n\nQuestion: {q}"}],
             ) as stream:
                 async for text in stream.text_stream:
-                    yield {"event": "token", "data": json.dumps({"text": text})}
-            yield {"event": "done", "data": "{}"}
+                    yield _frame("token", {"text": text})
+            yield _frame("done", {})
         except Exception as e:  # noqa: BLE001
-            yield {"event": "error", "data": json.dumps({"error": str(e)})}
+            yield _frame("error", {"error": str(e)})
 
-    return EventSourceResponse(gen())
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"cache-control": "no-store", "x-accel-buffering": "no"})
 
 
 def _anthropic_key_from_mcp() -> str | None:
@@ -1411,6 +1517,18 @@ def _anthropic_key_from_mcp() -> str | None:
         except Exception:
             pass
     return None
+
+
+@app.get("/api/ai-status")
+def api_ai_status():
+    """Report whether the fast ⚡ ask-bar path is available.
+
+    The Anthropic key is optional — without it, questions fall back to the
+    slower claude -p deep path. The front-end uses this to show a badge so the
+    SE knows which mode they're in instead of wondering why answers are slow.
+    """
+    has_key = bool(os.environ.get("ANTHROPIC_API_KEY") or _anthropic_key_from_mcp())
+    return {"quick_path": has_key}
 
 
 @app.post("/api/transcribe/{session_id}/stop")

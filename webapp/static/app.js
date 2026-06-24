@@ -937,6 +937,7 @@ async function pageLive(account, slug, oppName) {
     <div class="row">
       <div><h1>🎙 Live Transcribe</h1><p class="sub">${esc(account)} · ${esc(oppName)} · model <code>${esc(devs.model)}</code></p></div>
     </div>
+    <div class="live-past" id="live-past"></div>
     <div class="live-setup" id="live-setup">
       <label>Your mic (You)
         <select id="dev-mic">${opts()}</select>
@@ -955,12 +956,12 @@ async function pageLive(account, slug, oppName) {
         <div class="live-segs" id="live-segs"><div class="empty">Press Start to begin transcribing.</div></div>
       </section>
       <section class="live-qa" id="live-qa">
-        <div class="live-col-head">Copilot Q&amp;A</div>
+        <div class="live-col-head">Copilot Q&amp;A <span class="ai-badge" id="live-ai-badge"></span></div>
         <div class="live-thread" id="live-thread"><div class="empty">Ask anything about the call below — e.g. “what do they actually need?”, “is a Snowflake connector feasible?”, “edge cases here?”</div></div>
       </section>
     </div>
     <div class="live-askbar">
-      <input id="live-ask" type="text" autocomplete="off" placeholder="Ask the copilot about the live call…" disabled />
+      <textarea id="live-ask" rows="1" autocomplete="off" placeholder="Ask the copilot about the live call… (Shift+Enter for newline)" disabled></textarea>
       <button class="primary" id="live-send" disabled>Send</button>
     </div>`;
 
@@ -968,6 +969,27 @@ async function pageLive(account, slug, oppName) {
   const segsEl = $("live-segs"), threadEl = $("live-thread");
   const askInput = $("live-ask"), sendBtn = $("live-send");
   const startBtn = $("live-start"), stopBtn = $("live-stop"), timerEl = $("live-timer");
+
+  // ── AI path badge: tell the SE whether the fast ⚡ path is available ──
+  // Without an Anthropic key the copilot still works via the slower deep
+  // path — but silently, so the SE wonders why answers lag. Surface it.
+  (async () => {
+    const badge = $("live-ai-badge");
+    if (!badge) return;
+    try {
+      const s = await api("/api/ai-status");
+      if (s.quick_path) {
+        badge.className = "ai-badge ok";
+        badge.textContent = "⚡ fast path ready";
+        badge.title = "Anthropic key found — simple questions stream instantly.";
+      } else {
+        badge.className = "ai-badge warn";
+        badge.textContent = "⚠️ deep path only — add a key for ⚡";
+        badge.title = "No ANTHROPIC_API_KEY found. Questions route through the slower claude -p path. "
+          + "Add a key (see README → “AI ask-bar key”) for fast streaming answers.";
+      }
+    } catch { /* status is best-effort; leave the badge empty on failure */ }
+  })();
 
   // ── Transcript rendering ────────────────────────────────────────────
   let hasSegs = false;
@@ -979,6 +1001,46 @@ async function pageLive(account, slug, oppName) {
     div.innerHTML = `<span class="seg-t">${esc(seg.t)}</span>${who}<span class="seg-text">${esc(seg.text)}</span>`;
     segsEl.appendChild(div);
     segsEl.scrollTop = segsEl.scrollHeight;
+  };
+
+  // ── Past transcripts: list saved files for this opp, reopen read-only ─
+  const pastEl = $("live-past");
+  const fmtSize = (n) => n > 1024 ? `${(n / 1024).toFixed(0)} KB` : `${n} B`;
+  const loadPast = async () => {
+    try {
+      const { transcripts } = await api(`/api/transcripts?account=${encodeURIComponent(account)}`);
+      if (!transcripts.length) { pastEl.innerHTML = ""; return; }
+      pastEl.innerHTML = `<div class="live-past-head">Past transcripts</div>
+        <div class="live-past-list">${transcripts.map((t) =>
+          `<button class="past-item" data-name="${esc(t.name)}">
+             <span class="past-name">${esc(t.name)}</span>
+             <span class="past-meta">${fmtSize(t.size)}</span>
+           </button>`).join("")}</div>`;
+      pastEl.querySelectorAll(".past-item").forEach((b) =>
+        b.onclick = () => openSaved(b.dataset.name));
+    } catch { pastEl.innerHTML = ""; }  // best-effort; never block the page
+  };
+
+  // Open a saved transcript: render segments read-only and enable the copilot
+  // in FILE mode so the SE can ask questions about a past call.
+  const openSaved = async (name) => {
+    if (_liveState && _liveState.sessionId !== "file") {
+      if (!confirm("A recording is in progress. Open the saved transcript anyway?")) return;
+    }
+    try {
+      const data = await api(`/api/transcripts/${encodeURIComponent(name)}?account=${encodeURIComponent(account)}`);
+      segsEl.innerHTML = ""; hasSegs = false;
+      data.segments.forEach(addSegment);
+      segsEl.insertAdjacentHTML("afterbegin",
+        `<div class="callout callout-note"><div class="callout-title">Reviewing saved transcript</div>
+         <div class="callout-body"><code>${esc(name)}</code> — read-only. Ask the copilot about it below.</div></div>`);
+      // File mode: ask-bar talks to the saved file, not a live session.
+      _liveState = { sessionId: "file", transcriptName: name };
+      askInput.disabled = sendBtn.disabled = false;
+      askInput.placeholder = "Ask the copilot about this saved transcript… (Shift+Enter for newline)";
+      threadEl.innerHTML = `<div class="empty">Ask anything about <code>${esc(name)}</code>.</div>`;
+      threadHasItems = false;
+    } catch (e) { alert("Could not open transcript: " + e.message); }
   };
 
   // ── Recording mode (shared by Start and reconnect-on-return) ─────────
@@ -1032,17 +1094,21 @@ async function pageLive(account, slug, oppName) {
       if (_liveState.sse) _liveState.sse.close();
       if (_liveState.timer) clearInterval(_liveState.timer);
       timerEl.classList.remove("rec");
+      const savedName = res.saved_to.split("/").slice(-1)[0];
       segsEl.insertAdjacentHTML("beforeend",
         `<div class="callout callout-verdict"><div class="callout-title">Saved (${res.segments} segments)</div>
-         <div class="callout-body">Transcript written to <code>${esc(res.saved_to.split("/").slice(-1)[0])}</code>.
+         <div class="callout-body">Transcript written to <code>${esc(savedName)}</code>. The copilot stays available below — keep asking about this call.
          <button class="linklike" id="run-postcall">Run post-call summary →</button></div></div>`);
       segsEl.scrollTop = segsEl.scrollHeight;
       const rp = document.getElementById("run-postcall");
       if (rp) rp.onclick = () => openInvoke(account, { slug, name: oppName });
-      _liveState = null;
+      // Keep the copilot alive: switch the ask-bar to FILE mode against the
+      // just-saved transcript so the SE can keep querying the call.
+      _liveState = { sessionId: "file", transcriptName: savedName };
+      askInput.placeholder = "Ask the copilot about this saved transcript… (Shift+Enter for newline)";
       stopBtn.classList.add("hidden"); startBtn.classList.remove("hidden"); startBtn.disabled = false;
       $("dev-mic").disabled = $("dev-call").disabled = false;
-      askInput.disabled = sendBtn.disabled = true;
+      loadPast();  // refresh the past-transcripts list to include this one
     } catch (e) { alert("Stop failed: " + e.message); stopBtn.disabled = false; }
   };
 
@@ -1052,17 +1118,25 @@ async function pageLive(account, slug, oppName) {
     const q = askInput.value.trim();
     if (!q || !_liveState) return;
     askInput.value = "";
+    askInput.style.height = "";  // reset autogrow
     if (!threadHasItems) { threadEl.innerHTML = ""; threadHasItems = true; }
+    const ts = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
     const item = document.createElement("div");
     item.className = "qa-item";
-    item.innerHTML = `<div class="qa-q">${esc(q)}</div><div class="qa-a"><span class="qa-tag">…</span><span class="qa-body"></span></div>`;
+    item.innerHTML = `<div class="qa-q"><span class="qa-time">${ts}</span>${esc(q)}</div><div class="qa-a"><span class="qa-tag">…</span><span class="qa-body"></span></div>`;
     threadEl.appendChild(item);
     threadEl.scrollTop = threadEl.scrollHeight;
     const tag = item.querySelector(".qa-tag"), bodyEl = item.querySelector(".qa-body");
 
+    const payload = { question: q };
+    if (_liveState.sessionId === "file") {           // saved-transcript ask
+      payload.transcript_name = _liveState.transcriptName;
+      payload.account = account;
+      payload.opportunity = oppName;
+    }
     const res = await fetch(`/api/transcribe/${_liveState.sessionId}/ask`, {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ question: q }),
+      body: JSON.stringify(payload),
     });
     const ctype = res.headers.get("content-type") || "";
 
@@ -1084,23 +1158,45 @@ async function pageLive(account, slug, oppName) {
 
     // SSE token stream (quick path)
     tag.textContent = "⚡";
+    bodyEl.innerHTML = `<span class="muted">thinking…</span>`;
     const reader = res.body.getReader(); const dec = new TextDecoder();
-    let buf = "", acc = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      const events = buf.split("\n\n"); buf = events.pop();
-      for (const ev of events) {
-        const m = ev.match(/^event: (\w+)\ndata: (.*)$/ms);
-        if (!m) continue;
-        if (m[1] === "token") { acc += JSON.parse(m[2]).text; bodyEl.innerHTML = mdToHtml(acc); threadEl.scrollTop = threadEl.scrollHeight; }
-        else if (m[1] === "error") { bodyEl.innerHTML = `<span class="muted">Error: ${esc(JSON.parse(m[2]).error)}</span>`; }
+    let buf = "", acc = "", gotError = false;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const events = buf.split("\n\n"); buf = events.pop();
+        for (const ev of events) {
+          const m = ev.match(/^event: (\w+)\ndata: (.*)$/ms);
+          if (!m) continue;
+          if (m[1] === "token") { acc += JSON.parse(m[2]).text; bodyEl.innerHTML = mdToHtml(acc); threadEl.scrollTop = threadEl.scrollHeight; }
+          else if (m[1] === "error") { gotError = true; tag.textContent = "⚠️"; bodyEl.innerHTML = `<span class="muted">Error: ${esc(JSON.parse(m[2]).error)}</span>`; }
+        }
       }
+    } catch (e) {
+      gotError = true; tag.textContent = "⚠️";
+      bodyEl.innerHTML = `<span class="muted">Connection dropped: ${esc(e.message)}</span>`;
+    }
+    // Guard against a silent empty stream (no tokens, no error) — never leave a blank answer.
+    if (!acc && !gotError) {
+      tag.textContent = "⚠️";
+      bodyEl.innerHTML = `<span class="muted">No response — the copilot returned nothing. Try re-asking, or include a word like “connector”/“codebase” to route to the deep path.</span>`;
     }
   };
   sendBtn.onclick = ask;
-  askInput.onkeydown = (e) => { if (e.key === "Enter") ask(); };
+  askInput.onkeydown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); }
+    // Shift+Enter falls through → textarea inserts a newline.
+  };
+  // Autogrow the textarea up to a few lines as the SE types.
+  askInput.oninput = () => {
+    askInput.style.height = "auto";
+    askInput.style.height = Math.min(askInput.scrollHeight, 120) + "px";
+  };
+
+  // Populate the past-transcripts list on load.
+  loadPast();
 
   // ── Reconnect if a session is still recording for this opp ───────────
   // Leaving and returning re-renders this page, but the session lives on the
