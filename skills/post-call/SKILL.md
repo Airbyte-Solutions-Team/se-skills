@@ -30,7 +30,7 @@ The user will typically say something like "post-call for Acme" or "summarize th
 - If you didn't read the full file, say so explicitly and re-read
 
 Sample line:
-> **Source Coverage:** Read `Acme-05.06.26.txt` in full (612 / 612 lines). Cross-referenced SE config to determine attribution.
+> **Source Coverage:** Read `Max-Retail-05.06.26.txt` in full (612 / 612 lines). Cross-referenced SE config to determine attribution.
 
 If the transcript is over ~2000 lines (rare but possible for long workshops), read in batches and confirm full coverage explicitly: "Read in 2 batches: lines 1-2000 + lines 2001-3247."
 
@@ -58,16 +58,17 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 
 ---
 
-# Call Summary: Acme — [call date in long form, e.g. June 11, 2026]
-**Call type:** [Discovery / Technical / Exec / POC review / etc. — infer from transcript]
-**Duration:** [if discernible]
+# Call Summary: [Customer Name] — [Call Date in long form, e.g. June 11, 2026]
+**Date:** [today's date, long form]
 
 ### At a Glance
+- **Call type:** [Discovery / Technical / Exec / POC review / etc. — infer from transcript] · **Duration:** [if discernible]
 - **Call date:** [long-form date] · **Attendees:** ==[N]==
 - **Action items:** ==[N]== · **Next step:** [one line]
 - **Deal-assessment update needed?** [yes/no — if yes, one line on what changed]
 
-**Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [Attendees](#attendees) · [Key Takeaways](#key-takeaways) · [Action Items](#action-items) · [Open Questions / Follow-ups](#open-questions--follow-ups) · [New Objections / Concerns Surfaced](#new-objections--concerns-surfaced) · [Deal Health Signals](#deal-health-signals) · [Next Step](#next-step)
+**Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [Attendees](#attendees) · [Key Takeaways](#key-takeaways) · [Technical Notes](#technical-notes) · [Action Items](#action-items) · [Open Questions / Follow-ups](#open-questions--follow-ups) · [New Objections / Concerns Surfaced](#new-objections--concerns-surfaced) · [Deal Health Signals](#deal-health-signals) · [Next Step](#next-step)
+*(omit the Technical Notes anchor if the call had no technical content)*
 *(Append [MEDDPICC Quick Pass](#meddpicc-quick-pass) and [Coaching Observations](#coaching-observations) to the Jump-to line only when those conditional sections are present — see SE Best Practices below.)*
 
 ## Source Coverage
@@ -79,6 +80,19 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 
 ## Key Takeaways
 3–6 bullets capturing the most important things learned. Lead with what changed in your understanding of the deal, not a chronological recap.
+
+## Technical Notes
+*Include this section ONLY if the call surfaced technical scope (sources, destinations, volume, latency, deployment, auth, sizing/pricing). Omit entirely for a purely business/exec call.*
+
+Capture the technical FACTS as stated on this call — raw, attributed, not synthesized. This is a record, not an analysis: don't build the full requirements matrix here (that's `tech-qual`'s job). Quote numbers and system names verbatim where load-bearing.
+- **Sources/destinations mentioned:** [systems named this call + any new ones]
+- **Volume / scale / frequency:** [figures stated — flag if they revise an earlier estimate]
+- **Deployment / infra / security:** [constraints raised — on-prem, residency, VPC, SSO, KMS]
+- **Sizing / pricing signals:** [data-worker count, enterprise connectors, capacity-vs-volume comments]
+- **New technical risks or open questions:** [anything unresolved]
+
+> [!info] Feeds tech-qual
+> This call added technical scope. Run or update `tech-qual` to consolidate these facts into the canonical **Technical Requirements & Scope** section — don't let scope live only in scattered call summaries. (Routed in "After Generating" below.)
 
 ## Action Items
 Markdown checklist. Each item: who owns it, what they're doing, by when (if stated).
@@ -115,7 +129,8 @@ Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save the output aut
 ```
 
 Filename example: `post-call-2026-05-28-Tech-Discovery.md`. If a file already exists with the same name, append `-v2`, `-v3`, etc.
-Filename rules (per `_se-playbook.md` "Filename format"): keep the numeric `YYYY-MM-DD` prefix, make the `<Descriptor>` **Title Case**, single-concept. Inside the document, write dates in long form (`June 11, 2026`) per "Date format inside documents".
+
+Filename rules (per `_se-playbook.md` "Filename format"): keep the numeric `YYYY-MM-DD` prefix (sorting), and make the `<Descriptor>` **Title Case**, single-concept (e.g. `Tech-Discovery`, `Pro-Upsell` — not `Intro-Expansion`). Inside the document, write dates in long form (`June 11, 2026`) per "Date format inside documents".
 
 Create the folder structure if it doesn't exist:
 ```bash
@@ -129,8 +144,9 @@ User can suppress with `--no-save`.
 1. **Update Notion** — create a new subpage under the customer's parent page named `<YYYY-MM-DD> — <Call Name>` with Attendees / Key Takeaways / Action Items / Follow-up Date sections. Also append new Q&A items to the customer's `Q&A` subpage.
 2. **Propose memory update** — if call surfaced a material change (new blocker, stakeholder change, decision). Per conditional rule in earlier section.
 3. **Suggest deal-assessment** — if call materially shifted deal health (not every call warrants this).
+4. **Suggest tech-qual** — if the call surfaced technical scope (the Technical Notes section is non-empty). Recommend running or updating `tech-qual` so the facts land in its canonical **Technical Requirements & Scope** section. If a `tech-qual-*.md` already exists, frame it as an update (revised volume, new source, new constraint), not a fresh run.
 
-Wait for explicit yes/no on Notion / memory / deal-assessment before doing those.
+Wait for explicit yes/no on Notion / memory / deal-assessment / tech-qual before doing those.
 
 ## Style (post-call skill guidance — not part of output template)
 
@@ -142,7 +158,7 @@ Wait for explicit yes/no on Notion / memory / deal-assessment before doing those
 
 ## Conventions to Respect
 
-- Customer folder names use Title Case (e.g., `Globex`)
+- Customer folder names use Title Case (e.g., `Build-Manufacturing`)
 - Notion parent: under `AE Calls > Charlie` unless the user says Graham
 - No emoji in Notion page titles
 - Customer parent page in Notion has no content directly — always create a subpage
@@ -155,7 +171,7 @@ Wait for explicit yes/no on Notion / memory / deal-assessment before doing those
 Read `~/.claude/skills/_se-playbook.md` for full framework details. Apply to post-call analysis:
 
 ### Memory Check
-Read `~/.claude/projects/<your-airbyte-work-project>/memory/MEMORY.md` and any customer-specific memory files before summarizing. Active blockers and prior context shape how to interpret what was said. Per `_se-playbook.md` ("Memory Check").
+Read `~/.claude/projects/-Users-gary-yang-airbyte-work/memory/MEMORY.md` and any customer-specific memory files before summarizing. Active blockers and prior context shape how to interpret what was said. Per `_se-playbook.md` ("Memory Check").
 
 **After the summary, propose memory updates only if warranted:**
 - ✅ Propose update if: new active blocker, stakeholder change, deal-status change (e.g., POC paused, deal at-risk), material commitment from either side

@@ -73,12 +73,15 @@ Document structure follows `_se-playbook.md` → Output Document Format (At-a-Gl
 ---
 
 # Connector Feasibility: [Customer Name]
-**Date:** [today's date in long form, e.g. June 11, 2026]
-**Sources read:** [transcripts (with dates) / SFDC / qual docs]
+**Date:** [today's date — long form per `_se-playbook.md`, e.g. June 11, 2026, NOT 2026-06-11] · **Sources read:** [transcripts (with dates) / SFDC / qual docs]
 
 ### At a Glance
+*Decision card — lead with the judgment (see `_se-playbook.md` → Decision-First Layout).*
+- **Feasibility:** 🟢 All needs covered / 🟡 Covered with gaps to build / 🔴 Hard gap blocks use case — [3–6 word headline]
 - **Coverage:** ==[N of M]== connectors validated · **Gaps:** [count build-needed] · **Open questions:** [count]
-- **Top risk:** [one line — the biggest unvalidated assumption or hard gap]
+- **Recommended motion:** [e.g. "Proceed to POC scoping" / "Confirm gaps before committing"]
+- **Primary risk:** [the biggest unvalidated assumption or hard gap — one line]
+- **Source confidence:** [one line — N transcripts + SFDC; "see Source Coverage"]
 
 **Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [Use Case Summary](#use-case-summary) · [Fit Verdict](#fit-verdict) · [Constraints & Edge Cases](#constraints-edge-cases-given-their-context) · [Missing / Gap Connectors](#missing-gap-connectors) · [Questions to Ask the Customer](#questions-to-ask-the-customer-to-fully-validate-fit) · [Recommended Next Steps](#recommended-next-steps)
 
@@ -166,9 +169,13 @@ For each missing connector, provide:
 ---
 
 ## Recommended Next Steps
-1. [Ask the open questions above — ideally before POC scoping]
-2. [Decide on custom build path for any gaps — internal eng vs. partner vs. customer-led]
-3. [Schedule POC scoping if coverage + validation are sufficient]
+*Action table — each action has a goal, a definition of "done," and a fallback. Render `TBD` for Owner when unstated — never invent.*
+
+| # | Next Action | Goal | Success criteria | Fallback | Owner |
+|---|-------------|------|------------------|----------|-------|
+| 1 | Ask the open questions above (before POC scoping) | Confirm each connector solves the use case | All Low/Med-confidence rows resolved | Stage unresolved items as POC risks | [name or **TBD**] |
+| 2 | Decide build path for any gaps | A committed plan per gap connector | internal eng / partner / customer-led chosen | Defer gap to phase 2 | [name or **TBD**] |
+| 3 | Schedule POC scoping if coverage sufficient | Move to a scoped POC | POC plan drafted | — | [name or **TBD**] |
 
 ---
 

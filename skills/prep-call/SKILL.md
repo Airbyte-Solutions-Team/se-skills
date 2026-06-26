@@ -61,14 +61,13 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 
 ---
 
-# Call Prep: Acme
-**Date:** [today's date in long form, e.g. June 11, 2026]
-**Meeting type:** [First call / Technical deep-dive / Exec / etc.]
-**Attendees (known):** [list if provided, otherwise leave blank]
+# Call Prep: [Company Name]
+**Date:** [prep date, long form, e.g. June 11, 2026] · **Call:** [day + date + time w/ tz, e.g. Mon, June 29, 2026 · 11:00am ET / 8:00am PT] · **SE:** [SE name]
 
 ### At a Glance
 - **Meeting type:** [tech discovery / exec / POC kickoff] · **Duration:** ==[e.g., 30 min]==
 - **Primary contact:** [name / title]
+- **Attendees:** [names + roles if known, else "TBC"]
 - **Reframe hypothesis (1 line):** [the counterintuitive point of view you'll lead with]
 - **Top goal for this call:** [the one thing this call must accomplish]
 
@@ -253,7 +252,7 @@ Why this reframe for this customer: [brief rationale based on their stack/indust
 Read `~/.claude/skills/_se-playbook.md` for full framework details. Apply specifically to call prep:
 
 ### Memory Check
-Read `~/.claude/projects/<your-airbyte-work-project>/memory/MEMORY.md` and any customer-specific memory files before generating prep. Active blockers, pending Airbyte-side actions, and stakeholder dynamics often live here and don't appear in transcripts. Per `_se-playbook.md` ("Memory Check").
+Read `~/.claude/projects/-Users-gary-yang-airbyte-work/memory/MEMORY.md` and any customer-specific memory files before generating prep. Active blockers, pending Airbyte-side actions, and stakeholder dynamics often live here and don't appear in transcripts. Per `_se-playbook.md` ("Memory Check").
 
 ### Source Freshness Check — Always Check Gong First
 **Always check Gong for the most recent call on this account before generating prep.** Per `_se-playbook.md` ("Source Freshness Check"):
@@ -309,7 +308,8 @@ Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save the prep doc a
 ```
 
 Filename example: `call-prep-2026-05-28-Tech-Discovery.md`. Create folders if missing. Append `-v2` etc. if same-day duplicate.
-Filename rules (per `_se-playbook.md` "Filename format"): keep the numeric `YYYY-MM-DD` prefix, make the `<Descriptor>` **Title Case**, single-concept. Inside the document, write dates in long form (`June 11, 2026`) per "Date format inside documents".
+
+Filename rules (per `_se-playbook.md` "Filename format"): keep the numeric `YYYY-MM-DD` prefix (sorting), and make the `<Descriptor>` **Title Case**, single-concept. Inside the document, write dates in long form (`June 11, 2026`) per "Date format inside documents".
 
 User can suppress with `--no-save`.
 

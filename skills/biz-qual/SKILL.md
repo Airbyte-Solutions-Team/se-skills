@@ -44,13 +44,16 @@ Document structure follows `_se-playbook.md` → Output Document Format (At-a-Gl
 ---
 
 # Business Qualification: [Company Name]
-**Date:** [today's date in long form, e.g. June 11, 2026] · **Deal stage:** [Discovery / Technical Eval / POC / Negotiation] · **SE owner:** [SE name]
+**Date:** [today's date] · **Deal stage:** [Discovery / Technical Eval / POC / Negotiation] · **SE owner:** [SE name]
 
 ### At a Glance
+*Decision card — lead with the judgment (see `_se-playbook.md` → Decision-First Layout).*
+- **Overall:** 🟢 Strong / 🟡 Moderate / 🔴 Weak — [3–6 word headline]
 - **MEDDPICC:** [one-line scorecard, e.g. `M🟢 E🔴 D🟡 D🟡 P🔴 I🟢 C🟡 C🟢`]
 - **Economic Buyer:** [name/title or "not identified"] · **Champion:** [name/title or "untested"]
-- **Biggest gap:** [the weakest/blocking letter — one line]
-- **Overall:** [Strong / Moderate / Weak]
+- **Biggest gap:** [the weakest/blocking letter — one line — what it blocks]
+- **Recommended motion:** [the one next move to close the biggest gap]
+- **Source confidence:** [one line — N transcripts + SFDC; "see Source Coverage"]
 
 **Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [MEDDPICC Scorecard](#meddpicc-scorecard) · [Metrics](#metrics) · [Economic Buyer](#economic-buyer) · [Decision Criteria](#decision-criteria) · [Decision Process](#decision-process) · [Paper Process](#paper-process) · [Identify Pain](#identify-pain) · [Champion](#champion) · [Competition](#competition) · [Movement Since Last Qualification](#movement-since-last-qualification) · [Deal Risks](#deal-risks) · [Recommended Next Actions](#recommended-next-actions)
 
@@ -58,9 +61,11 @@ Document structure follows `_se-playbook.md` → Output Document Format (At-a-Gl
 
 ## MEDDPICC Scorecard
 
-| Element | Status | Source (transcript date + speaker) | Notes |
-|---------|--------|-------------------------------------|-------|
-| Metrics | 🟢 Confirmed / 🟡 Partial / 🔴 Unknown | | |
+*The Source column is your facts column (cite transcript date + speaker, or mark Unknown); Why it matters states the deal consequence.*
+
+| Element | Status | Source (transcript date + speaker) | Why it matters |
+|---------|--------|-------------------------------------|----------------|
+| Metrics | 🟢 Confirmed / 🟡 Partial / 🔴 Unknown | | [consequence for the deal] |
 | Economic Buyer | 🟢 / 🟡 / 🔴 | | |
 | Decision Criteria | 🟢 / 🟡 / 🔴 | | |
 | Decision Process | 🟢 / 🟡 / 🔴 | | |
@@ -223,9 +228,13 @@ Flag any letter that regressed (especially Champion, EB, Pain) — that's a *wal
 ---
 
 ## Recommended Next Actions
-1. [Most critical gap to close — assign owner and date]
-2. [Second priority]
-3. [Third priority]
+*Action table — render `TBD` for Owner when the source doesn't state one; never invent a name.*
+
+| # | Next Action | Goal | Success criteria | Owner |
+|---|-------------|------|------------------|-------|
+| 1 | [Most critical gap to close] | [the MEDDPICC letter it advances] | [what "done" looks like] | [name or **TBD**] |
+| 2 | [Second priority] | | | |
+| 3 | [Third priority] | | | |
 
 ---
 
@@ -248,7 +257,7 @@ Per `_se-playbook.md` "Salesforce Enrichment." Pull the **active opp** MEDDPICC 
 - `Economic_Buyer__c`, `Decision_Maker__c` (→ E), `Champion__c` (→ Champion), `Identify_Pain__c` (→ I), `Decision_Process__c` (→ Decision Process), `Primary_Competitor__c` + `Gong__MainCompetitors__c` + `Fivetran_competitive__c` (→ Competition), `Required_features_functionality__c` (→ Decision Criteria), `Amount`/`ARR__c` (→ Metrics anchor), `CloseDate` (→ forcing function), `Why_buy_*__c` (→ Driver/Urgency context)
 - Account arc: existing ARR (expansion vs net-new), prior losses
 
-**How to use it:** Pre-populate the MEDDPICC scorecard with the AE's SFDC entries, **marked "(AE-entered, unverified)"**. Then score against the transcripts as a separate column. The output should show **two views side by side: AE (from SFDC) | SE (from transcripts)**. The disagreements are the qualification gaps — flag them assertively. Example: SFDC `Champion__c` = "the champion" but transcripts show the champion hasn't engaged in weeks → Champion is 🟡 Coach in the SE column even though AE marked him Champion.
+**How to use it:** Pre-populate the MEDDPICC scorecard with the AE's SFDC entries, **marked "(AE-entered, unverified)"**. Then score against the transcripts as a separate column. The output should show **two views side by side: AE (from SFDC) | SE (from transcripts)**. The disagreements are the qualification gaps — flag them assertively. Example: SFDC `Champion__c` = "Michel" but transcripts show Michel hasn't engaged in weeks → Champion is 🟡 Coach in the SE column even though AE marked him Champion.
 
 If SFDC unavailable, skip per graceful-degradation and score from transcripts only.
 
@@ -307,7 +316,8 @@ Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save to:
 ```
 
 Filename example: `biz-qual-2026-05-28-Post-Tech-Call.md`. Create folders if missing. Append `-v2` etc. for same-day duplicates. User can suppress with `--no-save`.
-Filename rules (per `_se-playbook.md` "Filename format"): keep the numeric `YYYY-MM-DD` prefix, make the `<Descriptor>` **Title Case**, single-concept. Inside the document, write dates in long form (`June 11, 2026`) per "Date format inside documents".
+
+Per `_se-playbook.md` "Date format inside documents", write dates in the document body — the H1/title line especially, plus headers and prose — in long form (`June 11, 2026`), not the numeric `2026-06-11`. The numeric `YYYY-MM-DD` stays only in the filename.
 
 ### Source Coverage
 

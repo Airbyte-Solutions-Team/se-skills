@@ -31,7 +31,7 @@ This skill requires customer source material for any customer being discussed. F
 
 - `~/airbyte-work/01-customers/<Customer>/` — qual docs, deal assessments, call summaries
 - `~/airbyte-work/01-customers/_transcripts/<Customer>-*.txt` — recent transcripts
-- `~/.claude/projects/<your-airbyte-work-project>/memory/` — customer-specific memory
+- `~/.claude/projects/-Users-gary-yang-airbyte-work/memory/` — customer-specific memory
 - Apply Source Freshness Check per `_se-playbook.md` — pull from Gong if local is stale (14-day rule), respecting session-dedupe
 
 **If a customer has zero artifacts and zero transcripts: flag it explicitly in the prep doc — Gary shouldn't enter an internal meeting unable to speak about a deal.**
@@ -65,17 +65,17 @@ If user signals brief mode (`--brief`, `quick prep`, `bullet points only`): prod
 
 ## Output Format — Varies by Meeting Type
 
-Document structure follows `_se-playbook.md` → Output Document Format (H1 title → At a Glance → Jump-to index → H2 body sections, callouts, `==key==` emphasis) — applied per mode template below. Inside the document, write dates in long form (`June 11, 2026`) per `_se-playbook.md` "Date format inside documents" — this applies to every `[Date]` placeholder below.
+Document structure follows `_se-playbook.md` → Output Document Format (H1 title → At a Glance → Jump-to index → H2 body sections, callouts, `==key==` emphasis) — applied per mode template below. In every template, write the `[Date]` in the title/headers and any prose dates in long form per `_se-playbook.md`, e.g. June 11, 2026 — not 2026-06-11. (Filenames keep the numeric `YYYY-MM-DD` prefix.)
 
 ### Type: `ae-sync`
 
 ```
 # AE Sync Prep — [AE Name] × [SE Gary] — [Date]
-**Meeting purpose:** [What does Gary want to walk away with?]
-**Duration:** [if known]
+**Date:** [today's date, long form] · **Duration:** [if known]
 
 ### At a Glance
 - **Meeting type:** AE sync (1:1 with [AE Name])
+- **Meeting purpose:** [What does Gary want to walk away with?]
 - **Deals in scope:** [Customer A, Customer B, … — count]
 - **Headline ask:** [the single most important thing Gary needs from the AE]
 
@@ -110,8 +110,7 @@ For each customer in scope:
 
 ```
 # Forecast Prep — [Date / Forecast Period]
-**Total deals in scope:** [count]
-**My total forecast committed:** $[amount]
+**Date:** [today's date, long form] · **Forecast period:** [period]
 
 ### At a Glance
 - **Meeting type:** Forecast review ([forecast period])
@@ -150,13 +149,12 @@ Apply Sandler honesty — which "Best Case" deals are actually pipeline padding?
 
 ```
 # Exec Readout — [Customer] for [Exec Name] — [Date]
-**Audience:** [VP/CRO/exec name and role]
-**Time slot:** [duration — typically 15-30 min]
-**Exec's likely question:** [what are they really going to ask? — often "is this going to close" or "do you need help"]
+**Date:** [today's date, long form] · **Audience:** [exec name + role] · **Time slot:** [duration — typically 15-30 min]
 
 ### At a Glance
 - **Meeting type:** Exec readout for [Exec Name] ([role])
 - **Deal in scope:** [Customer] · **Size:** ==$[amount]== · **Expected close:** ==[date]==
+- **Exec's likely question:** [what are they really going to ask? — often "is this going to close" or "do you need help"]
 - **Headline ask:** [the one thing you need from this exec — or "situational awareness, no asks"]
 
 **Jump to:** [At a Glance](#at-a-glance) · [30-second deal summary](#30-second-deal-summary) · [Why this deal matters](#why-this-deal-matters-strategic-frame) · [Where we are](#where-we-are) · [What I need from this exec](#what-i-need-from-this-exec) · [What could surprise the exec](#what-could-surprise-the-exec)
@@ -189,11 +187,11 @@ Be concrete:
 
 ```
 # Deal Review — [Customer] — [Date]
-**Attendees:** [AE, SE, AM, others]
-**Purpose:** [alignment / unblock / strategic decision]
+**Date:** [today's date, long form] · **Attendees:** [AE, SE, AM, others]
 
 ### At a Glance
 - **Meeting type:** Cross-functional deal review
+- **Purpose:** [alignment / unblock / strategic decision]
 - **Deal in scope:** [Customer] · **Stage:** [stage] · **Size:** ==$[amount]==
 - **Headline status:** [aligned / misaligned on probability — the fault line to resolve]
 

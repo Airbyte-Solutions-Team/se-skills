@@ -43,21 +43,20 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 
 ---
 
-# Technical Qualification: Acme
-**Date:** [today's date in long form, e.g. June 11, 2026]
-**SE owner:** [SE name]
-**Technical contact(s):** [name / title if known]
-**Prerequisite — deployment model:** [Reference deployment-qual-*.md verdict, or "Not yet qualified — recommend running `deployment-model-qual` first"]
-**Prerequisite — connector feasibility:** [Reference connector-feasibility-*.md, or "High-level scan only — recommend running `connector-feasibility` for detailed coverage"]
+# Technical Qualification: [Company Name]
+**Date:** [today's date, long form] · **SE owner:** [SE name]
 
 ### At a Glance
-- **Overall fit:** 🟢 Strong / 🟡 Moderate / 🔴 Weak / ⬜ Insufficient info
-- **Sources → destination:** [e.g., Salesforce + Postgres CDC → Snowflake] · **# connectors:** ==[N]==
-- **Volume:** ==[e.g., 50M rows/day]== · **Latency required:** ==[e.g., 15 min]==
-- **Deployment model:** [deferred to deployment-qual — verdict or "not yet qualified"]
-- **Top technical risk:** [one line]
+*Decision card — lead with the judgment (see `_se-playbook.md` → Decision-First Layout).*
+- **Technical fit:** 🟢 Strong / 🟡 Moderate / 🔴 Weak / ⬜ Insufficient info — [3–6 word headline]
+- **Recommended motion:** [the one next move — e.g. "Proceed to POC scoping" / "Validate destination first"]
+- **Primary risk:** [the single biggest technical thing that could blow it up — one line]
+- **Confidence:** [low / medium / medium-high / high — and what it's pending on]
+- **Next gate:** [the concrete checkpoint that resolves the primary risk — e.g. "live Postgres connection in workshop"]
+- **Scope:** [sources → destination] · **# connectors:** ==[N]== · **Volume:** ==[e.g., 50M rows/day]== · **Latency:** [e.g., 15 min]
+- **Source confidence:** [one line — N transcripts + SFDC + qual docs; "see Source Coverage"]
 
-**Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [Technical Fit Summary](#technical-fit-summary) · [Data Sources & Destinations](#data-sources--destinations) · [Data Volume & Scale](#data-volume--scale) · [Deployment Model](#deployment-model) · [Security & Compliance](#security--compliance) · [Current Stack & Integration Context](#current-stack--integration-context) · [Team & Implementation Readiness](#team--implementation-readiness) · [Technical Risks & Open Items](#technical-risks--open-items) · [Questions Still Needed](#questions-still-needed) · [Recommended Next Actions](#recommended-next-actions)
+**Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [Technical Fit Summary](#technical-fit-summary) · [Technical Requirements & Scope](#technical-requirements--scope) · [Data Sources & Destinations](#data-sources--destinations) · [Data Volume & Scale](#data-volume--scale) · [Deployment Model](#deployment-model) · [Security & Compliance](#security--compliance) · [Current Stack & Integration Context](#current-stack--integration-context) · [Team & Implementation Readiness](#team--implementation-readiness) · [Technical Risks & Open Items](#technical-risks--open-items) · [Questions Still Needed](#questions-still-needed) · [Recommended Next Actions](#recommended-next-actions)
 
 ## Source Coverage
 [Transcripts read with line counts, prior qual docs consulted, MCP queries run, certification claims marked "needs verification" — see After Generating.]
@@ -65,15 +64,36 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 ## Technical Fit Summary
 **Overall fit:** 🟢 Strong / 🟡 Moderate / 🔴 Weak / ⬜ Insufficient info
 
-| Area | Status | Notes |
-|------|--------|-------|
-| Data sources | 🟢 / 🟡 / 🔴 / ⬜ | |
-| Destinations | 🟢 / 🟡 / 🔴 / ⬜ | |
-| Volume & scale | 🟢 / 🟡 / 🔴 / ⬜ | |
-| Deployment model | 🟢 / 🟡 / 🔴 / ⬜ | |
-| Security & compliance | 🟢 / 🟡 / 🔴 / ⬜ | |
-| Integration complexity | 🟢 / 🟡 / 🔴 / ⬜ | |
-| Team capability | 🟢 / 🟡 / 🔴 / ⬜ | |
+*Scorecard — the "Why it matters" column states the consequence, not a restatement of the area.*
+
+| Area | Status | Why it matters |
+|------|--------|----------------|
+| Data sources | 🟢 / 🟡 / 🔴 / ⬜ | [consequence — e.g. "all standard connectors; no build risk"] |
+| Destinations | 🟢 / 🟡 / 🔴 / ⬜ | [e.g. "Postgres supported but live path unproven — gating"] |
+| Volume & scale | 🟢 / 🟡 / 🔴 / ⬜ | [e.g. "well within range; ~1 data worker"] |
+| Deployment model | 🟢 / 🟡 / 🔴 / ⬜ | [e.g. "Cloud accepted; on-prem reachability open"] |
+| Security & compliance | 🟢 / 🟡 / 🔴 / ⬜ | [e.g. "no regulated PII; trust-center sufficient"] |
+| Integration complexity | 🟢 / 🟡 / 🔴 / ⬜ | [e.g. "1 custom CDK connector needed"] |
+| Team capability | 🟢 / 🟡 / 🔴 / ⬜ | [e.g. "capable integration owners; can self-serve"] |
+
+## Technical Requirements & Scope
+*The one-place scope snapshot — consolidates the key technical asks across all calls/docs so the SE doesn't have to reassemble them from per-call summaries. The detailed sections below expand each line. This is the canonical scope; if a later call revises a number, update it HERE.*
+
+| Dimension | Requirement |
+|-----------|-------------|
+| **Sources** | [systems they're moving data FROM — e.g., Salesforce, SAP Hana, Coupa CLM] |
+| **Destinations** | [where it lands — e.g., Postgres CDR, Snowflake] |
+| **Scale / volume** | ==[rows-or-events/day, # connections]== |
+| **Sync frequency / latency** | [real-time / daily / monthly · latency tolerance] |
+| **Deployment method** | [Cloud Pro / SME / hybrid — verdict from deployment-qual; note any on-prem/residency/VPC constraint] |
+| **Auth pattern(s)** | [e.g., OAuth2, API key, Entra/Okta SSO — the pattern repeated across sources] |
+| **Pricing & sizing** | [data workers needed (e.g., ==1 + burst==), enterprise-connector add-ons (Hana/Oracle/NetSuite @ +$/yr), capacity-vs-volume preference] |
+
+**Pricing & sizing detail:**
+- **Estimated data workers:** [N — note if customer/SE believes <1 or needs burst capacity]
+- **Enterprise connectors in scope:** [list — each is a separate add-on cost]
+- **Pricing-model fit signal:** [e.g., "strongly prefers capacity-based/fixed-cost — easier board story" — quote if stated]
+- **Note:** Commercial ownership stays with `biz-qual` (economic buyer, budget, paper process). This line is the *technical sizing* that informs the quote — record what was stated, don't negotiate it here.
 
 ## Data Sources & Destinations
 
@@ -145,9 +165,9 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 - **Need for professional services:** [Yes / No / Possibly]
 
 ## Technical Risks & Open Items
-| Risk | Severity | Notes |
-|------|----------|-------|
-| [e.g., Custom connector needed for key source] | High | |
+| Risk | Severity | Why it matters / mitigation |
+|------|----------|------------------------------|
+| [e.g., Custom connector needed for key source] | High | [consequence + how to de-risk] |
 | [e.g., Sub-minute latency requirement] | Medium | |
 | [e.g., Air-gapped deployment not yet validated] | High | |
 
@@ -155,14 +175,19 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 > [State the hard blocker and what must be true to clear it. Omit this callout if no High-severity blocker.]
 
 ## Questions Still Needed
-- [ ] [Unanswered technical question 1]
-- [ ] [Unanswered technical question 2]
-- [ ] [Unanswered technical question 3]
+*Decision table (per `_se-playbook.md`). Render `TBD` for Owner/Needed-By when the source doesn't state them — never invent a name or date.*
+
+| Open Question | Owner | Needed By | Why it matters | Status |
+|---------------|-------|-----------|----------------|--------|
+| [unanswered technical question] | [name or **TBD**] | [gate/date or **TBD**] | [decision it unblocks] | Open |
 
 ## Recommended Next Actions
-1. [e.g., Validate connector coverage for [source X] — check catalog or open ticket]
-2. [e.g., Schedule technical deep-dive to walk through deployment architecture]
-3. [e.g., Share security questionnaire / SOC 2 report]
+*Action table — each action has a goal, a definition of "done," and a fallback.*
+
+| # | Next Action | Goal | Success criteria | Fallback | Owner |
+|---|-------------|------|------------------|----------|-------|
+| 1 | [e.g., Validate connector coverage for source X] | [what it proves] | [what "done" looks like] | [plan B] | [name or **TBD**] |
+| 2 | [e.g., Walk through deployment architecture] | | | | |
 
 ---
 
@@ -242,7 +267,8 @@ Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save to:
 ```
 
 Create folders if missing. Append `-v2` etc. for same-day duplicates. User can suppress with `--no-save`.
-Filename rules (per `_se-playbook.md` "Filename format"): keep the numeric `YYYY-MM-DD` prefix, make the `<Descriptor>` **Title Case**, single-concept. Inside the document, write dates in long form (`June 11, 2026`) per "Date format inside documents".
+
+Per `_se-playbook.md` "Date format inside documents", write dates in the document body — the H1/title line especially, plus headers and prose — in long form (`June 11, 2026`), not the numeric `2026-06-11`. The numeric `YYYY-MM-DD` stays only in the filename.
 
 ### Source Coverage
 

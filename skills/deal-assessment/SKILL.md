@@ -19,7 +19,7 @@ The user will name a customer (e.g., "deal assessment for Acme"). You should:
    - `deployment-qual-*.md` (deployment-model verdict — if 🔴, that's often the deal)
    - `connector-feasibility-*.md` (gap analysis)
    - `call-summary-*.md` files (pre-digested call content)
-3. **Read memory** — `~/.claude/projects/<your-airbyte-work-project>/memory/MEMORY.md` and any customer-specific memory files (active blockers, pending Airbyte-side actions)
+3. **Read memory** — `~/.claude/projects/-Users-gary-yang-airbyte-work/memory/MEMORY.md` and any customer-specific memory files (active blockers, pending Airbyte-side actions)
 4. **Optionally pull Notion context** if the user references it (use Notion:search to find the customer's parent page, then read Overview and Q&A subpages)
 5. Read full source material before synthesizing — do not skim
 6. Cite source documents inline (filename + date) when pulling in prior conclusions
@@ -75,14 +75,16 @@ The punchy verdict should be honest, e.g.:
 ---
 
 # <Customer> — Deal Assessment: <punchy verdict>
-**Date:** [today's date in long form, e.g. June 11, 2026] · **Stage:** [Discovery / POC / Negotiation / Closed Won / Closed Lost / Stalled]
-**Sources:** [list transcripts and notes used, with dates]
+**Date:** [today's date — long form per `_se-playbook.md`, e.g. June 11, 2026, NOT 2026-06-11 or MM.DD.YY] · **Stage:** [Discovery / POC / Negotiation / Closed Won / Closed Lost / Stalled]
 
 ### At a Glance
+*Decision card — lead with the call (see `_se-playbook.md` → Decision-First Layout).*
 - **Probability:** ==[band, e.g. 40–60%]== ([dead/dying / at risk / likely / very likely / committed])
 - **Stage:** [stage] · **Trajectory:** [🟢 Accelerating / 🟡 Steady / 🔴 Decelerating / 🔴 Silent]
 - **#1 Blocker:** [one line — name the person/process/alternative]
+- **Recommended motion:** [the single highest-leverage next move]
 - **Driver:** [one line — what's pushing them now]
+- **Source confidence:** [one line — N transcripts + notes, dates; "see Source Coverage"]
 
 **Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [Activity Trajectory](#activity-trajectory) · [Driver](#driver) · [Need](#need) · [Urgency](#urgency) · [What Would Close It](#what-would-close-it) · [Deal Blocker](#deal-blocker) · [What Would Lose It](#what-would-lose-it) · [Bottom Line](#bottom-line) · [Coaching Observations](#coaching-observations)
 
@@ -166,9 +168,10 @@ Keep candid. This is the part of the assessment Gary can act on personally.
 ## Style
 
 - **Brutally honest** — internal use, not customer-facing. Sugarcoating wastes Gary's time.
-- **Specific over generic** — "the technical lead mentioned competitor X by name on 04.01" beats "they're considering alternatives"
+- **Specific over generic** — "Jordan mentioned competitor X by name on 04.01" beats "they're considering alternatives"
 - **Cite sources** — every material claim references a transcript date + speaker, a memory file, or a prior qual doc
 - **Flag what you don't know** — "Urgency: unknown — not asked in available transcripts" beats a guess
+- **Separate fact from read** — when you state something the customer did NOT say, label it *"(inferred — not stated)"* (per `_se-playbook.md` → Decision-First, facts vs. judgment). The narrative sections are judgment; keep the evidence behind them visible.
 - **Compare to prior assessments** when they exist; flag movement in the Movement section
 - **Bias toward pessimism over optimism** — happy-ears assessments are worse than no assessment
 
@@ -182,8 +185,6 @@ Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save to:
 ```
 
 Append `-v2` etc. if running multiple times same day. User can suppress with `--no-save`.
-
-Inside the document, write dates in long form (`June 11, 2026`) per `_se-playbook.md` "Date format inside documents".
 
 ### Source Coverage
 
@@ -225,7 +226,7 @@ Per `_se-playbook.md` "Salesforce Enrichment." This skill reads the **full accou
 - **Account arc:** all opps on the account — prior wins, prior losses (`Closed_Reason__c`, `Closed_Lost_Detail__c`, `Stage_Before_Closed_Lost__c`), existing ARR
 
 **How to use it (assertive mismatch flagging):**
-- Cross-reference every SFDC MEDDPICC field against the transcripts. AE filled "Champion: the champion" but the champion hasn't been on a call in 6 weeks → flag it.
+- Cross-reference every SFDC MEDDPICC field against the transcripts. AE filled "Champion: Michel" but Michel hasn't been on a call in 6 weeks → flag it.
 - SFDC `Probability__c` vs. your honest probability band → surface the delta explicitly (this is the forecasting-honesty check).
 - Map the three whys to your Driver / Urgency / What-Would-Close sections — and flag where SFDC claims a driver/urgency the transcripts don't support.
 - Use prior-loss reasons to inform "What Would Lose It" (we've lost here before on X — is X still a risk?).

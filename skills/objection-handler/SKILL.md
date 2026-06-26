@@ -121,7 +121,7 @@ If a customer was named, save the talk track to:
 ~/airbyte-work/01-customers/<Customer>/outputs/objection-handler/objection-<YYYY-MM-DD>-<category>.md
 ```
 
-Filename example: `objection-2026-05-28-Data-Residency.md`. User can suppress with `--no-save`.
+Filename example: `objection-2026-05-28-Data-Residency.md` (category descriptor in Title Case per `_se-playbook.md`). User can suppress with `--no-save`. Any date written in the doc body (headers/prose) should be long form, e.g. June 11, 2026 — not 2026-06-11.
 
 For abstract objections (no customer named), don't auto-save — output to chat only.
 
@@ -148,7 +148,7 @@ If the user names a specific customer (not just an abstract objection), pull cus
 - Read `~/airbyte-work/01-customers/<Customer>/` for prior notes and prior objection handling
 - Read recent transcripts in `_transcripts/` matching that customer
 - Apply Source Freshness Check per `_se-playbook.md`: if most-recent local transcript is **>14 days old**, check Gong for newer calls
-- Read `~/.claude/projects/<your-airbyte-work-project>/memory/` for any active project context (blockers, prior commitments)
+- Read `~/.claude/projects/-Users-gary-yang-airbyte-work/memory/` for any active project context (blockers, prior commitments)
 - Check `~/airbyte-work/04-notes/objection-playbook.md` (if exists) for prior entries on this customer — has this objection been raised before? Did the prior talk track work?
 
 **Recurring objection signal:** If the same objection has been raised more than once by the same customer/stakeholder, that's a different problem than a first-time objection. Either:

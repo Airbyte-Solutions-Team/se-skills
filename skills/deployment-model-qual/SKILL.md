@@ -56,12 +56,15 @@ Document structure follows `_se-playbook.md` → Output Document Format (At-a-Gl
 ---
 
 # Deployment Model Qualification: [Customer]
-**Date:** [today's date in long form, e.g. June 11, 2026]
-**Sources:** [transcripts, notes, Notion pages used]
+**Date:** [today — long form per `_se-playbook.md`, e.g. June 11, 2026, NOT 2026-06-11 or MM.DD.YY] · **Sources:** [transcripts, notes, Notion pages used]
 
 ### At a Glance
-- **Verdict:** [one-liner — 🟢 Cloud Pro viable / 🟡 viable with caveats / 🔴 not viable, requalify]
+*Decision card — lead with the verdict (see `_se-playbook.md` → Decision-First Layout).*
+- **Verdict:** 🟢 Cloud Pro viable / 🟡 viable with caveats / 🔴 not viable, requalify — [3–6 word headline]
 - **Hard constraint:** [the single requirement that drives the verdict, or "none — no hard blockers surfaced"]
+- **Recommended motion:** [Proceed with Cloud Pro / Proceed with caveats / Pause & clarify / Requalify to SME / Park]
+- **Next gate:** [what resolves the open constraint — e.g. "confirm KMS requirement with CISO"]
+- **Source confidence:** [one line — N transcripts; which of the 5 questions are actually answered vs. assumed]
 
 **Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [Verdict](#verdict) · [The Five Questions](#the-five-questions) · [Implications by Answer](#implications-by-answer) · [Recommended Next Action](#recommended-next-action) · [Discovery Questions for Next Call](#discovery-questions-for-next-call)
 
@@ -76,8 +79,8 @@ Render the verdict as a callout, picking the type by status: `[!verdict]` if �
 > Customer requires customer-managed KMS (hard requirement, confirmed by CISO 06.10). Cloud Pro does not support BYOK. Hand to AE for SME motion.
 ```
 
-**Status:** 🟢 Cloud Pro is viable / 🟡 Cloud Pro is viable with caveats / 🔴 Cloud Pro NOT viable — requalify or park
-**One-sentence rationale:** [punchy verdict]
+- **Status:** 🟢 Cloud Pro is viable / 🟡 Cloud Pro is viable with caveats / 🔴 Cloud Pro NOT viable — requalify or park
+- **One-sentence rationale:** [punchy verdict]
 
 ---
 
@@ -178,8 +181,6 @@ Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save to:
 ```
 
 Append `-v2` etc. for same-day duplicates. User can suppress with `--no-save`.
-
-Inside the document, write dates in long form (`June 11, 2026`) per `_se-playbook.md` "Date format inside documents".
 
 ### Source Coverage
 

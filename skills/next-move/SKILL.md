@@ -11,7 +11,7 @@ This skill **does not generate customer-facing content.** It routes Gary to the 
 
 ## Input
 
-The user will name a customer (e.g., "where am I on Acme", "next move for Globex"). Required input is just the customer name — everything else is inferred.
+The user will name a customer (e.g., "where am I on Acme", "next move for Build-Manufacturing"). Required input is just the customer name — everything else is inferred.
 
 If no customer is named, ask before proceeding.
 
@@ -147,9 +147,7 @@ Any stage + objection raised on most recent call
 ---
 
 ## SE Workflow: [Customer] — [Inferred Stage]
-**Date:** [today]
-**Days since most recent activity:** [N days]
-**Source map:** [count of transcripts] transcripts, [count of qual docs] qualification docs, [memory records: yes/no]
+**Date:** [today, long form] · **Days since most recent activity:** [N days] · **Source map:** [N] transcripts, [N] qual docs, memory [yes/no]
 
 ---
 
@@ -169,8 +167,8 @@ Any stage + objection raised on most recent call
 ---
 
 ### Inferred Stage
-**Stage:** [from decision tree]
-**Reasoning:** [1-2 sentences citing the specific artifacts/transcripts that put them here]
+- **Stage:** [from decision tree]
+- **Reasoning:** [1-2 sentences citing the specific artifacts/transcripts that put them here]
 
 **Overrides active (if any):**
 

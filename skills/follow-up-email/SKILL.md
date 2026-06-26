@@ -206,7 +206,7 @@ Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save drafted emails
 ~/airbyte-work/01-customers/<Customer>/outputs/emails/email-<YYYY-MM-DD>-<purpose>.md
 ```
 
-Filename examples: `email-2026-05-28-Recap.md`, `email-2026-05-28-Nudge.md`, `email-2026-05-28-Issue-403-Secret.md`. User can suppress with `--no-save`.
+Filename examples: `email-2026-05-28-Recap.md`, `email-2026-05-28-Nudge.md`, `email-2026-05-28-Issue-403-Secret.md` (purpose descriptor in Title Case per `_se-playbook.md`). User can suppress with `--no-save`. Any date written in the email body (e.g. an action-item due date in prose) should be long form, e.g. June 11, 2026 — not 2026-06-11.
 
 ### Source Coverage
 

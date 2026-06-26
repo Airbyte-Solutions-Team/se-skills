@@ -48,20 +48,18 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 
 ---
 
-# POC Plan: Acme × Airbyte
-**Date:** [today's date]
-**SE owner:** [SE name]
-**AE:** [AE name]
-**Prospect technical lead:** [name / title if known]
-**Target POC duration:** [2 / 4 / 6 / 8 weeks — pick based on scope complexity, default 4 weeks]
-**POC start date:** [date or TBD]
-**POC end date:** [date or TBD]
+# POC Plan: [Company Name] × Airbyte
+**Date:** [today's date, long form] · **SE owner:** [SE name] · **AE:** [AE name]
 
 ### At a Glance
+*Decision card — lead with what this POC proves and the call after (see `_se-playbook.md` → Decision-First Layout).*
+- **POC proves:** [the one thing — e.g. "Airbyte reliably lands SAP + Coupa data in their Postgres CDR at scale"]
 - **Timeline:** ==[N] weeks== ([start] → [end]) · **Mid-POC checkpoint:** ==[date]==
 - **Success criteria:** ==[N]== ([M] must-have) · **Mutual commitments:** [N]
-- **Scope:** [sources → destination, POC data volume] · **Volume:** ==[e.g., 50M rows]==
-- **Top risk:** [one line]
+- **Scope:** [sources → destination] · **Volume:** ==[e.g., 50M rows]==
+- **Primary risk:** [the one thing most likely to derail the POC — one line]
+- **Prospect technical lead:** [name / title if known]
+- **Source confidence:** [one line — prior qual docs + transcripts; "see Source Coverage"]
 
 **Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [POC Objective](#poc-objective) · [Mutual Commitments](#mutual-commitments-upfront-contract--sandler) · [Success Criteria](#success-criteria) · [Scope](#scope) · [POC Architecture](#poc-architecture) · [Timeline & Milestones](#timeline--milestones) · [Roles & Responsibilities](#roles--responsibilities) · [Access & Prerequisites Checklist](#access--prerequisites-checklist) · [Risks & Mitigations](#risks--mitigations) · [POC Exit Criteria](#poc-exit-criteria) · [Story for Results Review](#story-for-results-review-pre-staged) · [Notes / Open Items](#notes--open-items)
 
@@ -78,14 +76,16 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 > [!info] Mutual Commitments — Sandler upfront contract
 > This is the foundation of the POC; it gets signed off by champion + EB before kickoff. Without it, a "passed POC" can still stall — customers pass technically and disappear commercially.
 
-| Party | Commits to |
-|-------|------------|
-| **Airbyte** | Deliver all must-have success criteria within [POC duration] |
-| **Airbyte** | Provide named SE support with [response SLA] |
-| **[Customer]** | Provide source/destination credentials and test data by [date] |
-| **[Customer]** | Have technical resource available for [X hours/week] during POC |
-| **[Customer]** | If all must-have criteria are met, commit to a commercial conversation within 2 weeks of POC end |
-| **Both** | If criteria are not met, mutually agree the deal doesn't move forward (or explicitly extend scope with a renegotiated commitment) |
+*Owner = the named person accountable; render `TBD` when not yet assigned (never invent a name).*
+
+| Party | Commits to | Owner | By when |
+|-------|------------|-------|---------|
+| **Airbyte** | Deliver all must-have success criteria within [POC duration] | [SE name] | [POC end] |
+| **Airbyte** | Provide named SE support with [response SLA] | [SE name] | ongoing |
+| **[Customer]** | Provide source/destination credentials and test data | [name or **TBD**] | [date or **TBD**] |
+| **[Customer]** | Have technical resource available for [X hours/week] during POC | [name or **TBD**] | [date or **TBD**] |
+| **[Customer]** | If all must-have criteria are met, commit to a commercial conversation within 2 weeks of POC end | [EB/champion or **TBD**] | [POC end + 2wk] |
+| **Both** | If criteria are not met, mutually agree the deal doesn't move forward (or explicitly extend scope with a renegotiated commitment) | — | [POC end] |
 
 ## Success Criteria
 These are the specific, measurable outcomes that define a successful POC. Both parties should agree on these before the POC begins.
@@ -115,11 +115,11 @@ These are the specific, measurable outcomes that define a successful POC. Both p
 - [e.g., BI tool integration]
 
 ## POC Architecture
-**Deployment:** [Airbyte Cloud / Self-Managed on [cloud provider]]
-**Environment:** [Dedicated POC workspace / sandbox / their existing infra]
-**Data sources:** 
-**Destinations:** 
-**Approximate data volume for POC:** 
+- **Deployment:** [Airbyte Cloud / Self-Managed on [cloud provider]]
+- **Environment:** [Dedicated POC workspace / sandbox / their existing infra]
+- **Data sources:** [list]
+- **Destinations:** [list]
+- **Approximate data volume for POC:** [estimate]
 
 ## Timeline & Milestones
 *Adjust based on POC duration. Default below is a 4-week template — for 2-week POCs, compress; for 6-8 week enterprise POCs, expand the validation phase.*
@@ -151,14 +151,16 @@ These are the specific, measurable outcomes that define a successful POC. Both p
 - [ ] Complete success criteria scoring at end of POC
 
 ## Access & Prerequisites Checklist
-Before the POC can begin, the following must be in place:
+Before the POC can begin, the following must be in place. *Access delays are the #1 POC killer — name an owner and a date for each. Render `TBD` when unassigned; never invent.*
 
-- [ ] Airbyte Cloud workspace provisioned (or self-managed environment set up)
-- [ ] Source credentials provided: [list sources]
-- [ ] Destination credentials provided: [list destinations]
-- [ ] Network access confirmed (firewall rules, IP allowlisting if needed)
-- [ ] SSO/IdP details shared (if testing SSO)
-- [ ] Internal stakeholders aligned on POC scope and timeline
+| Prerequisite | Owner | By when | Status |
+|--------------|-------|---------|--------|
+| Airbyte Cloud workspace provisioned (or self-managed env set up) | [name or **TBD**] | [date or **TBD**] | ☐ |
+| Source credentials provided: [list sources] | [name or **TBD**] | [date or **TBD**] | ☐ |
+| Destination credentials provided: [list destinations] | [name or **TBD**] | [date or **TBD**] | ☐ |
+| Network access confirmed (firewall, IP allowlist if needed) | [name or **TBD**] | [date or **TBD**] | ☐ |
+| SSO/IdP details shared (if testing SSO) | [name or **TBD**] | [date or **TBD**] | ☐ |
+| Internal stakeholders aligned on POC scope and timeline | [name or **TBD**] | [date or **TBD**] | ☐ |
 
 ## Risks & Mitigations
 
@@ -255,7 +257,7 @@ Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save to:
 
 Create folders if missing. Append `-v2` etc. for same-day duplicates. User can suppress with `--no-save`.
 
-Filename rules (per `_se-playbook.md` "Filename format"): keep the numeric `YYYY-MM-DD` prefix, make the `<Descriptor>` **Title Case**, single-concept. Inside the document, write dates in long form (`June 11, 2026`) per "Date format inside documents".
+Per `_se-playbook.md` "Date format inside documents", write dates in the document body — the H1/title line especially, plus headers and prose — in long form (`June 11, 2026`), not the numeric `2026-06-11`. The numeric `YYYY-MM-DD` stays only in the filename.
 
 ### Source Coverage
 

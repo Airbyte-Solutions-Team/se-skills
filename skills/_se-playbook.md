@@ -324,7 +324,7 @@ Every saving skill produces a markdown document that is read both in the raw `.m
 
 ```markdown
 # <Customer> — <Skill Title>: <one-line verdict/descriptor>
-**Date:** June 18, 2026 · **Stage:** <stage> · **<key>:** <value>   ← bold key-lines, long-form date
+**Date:** June 18, 2026 · **Stage:** <stage> · **<key>:** <value>   ← ONE line, `·`-separated, long-form date
 
 ### At a Glance
 - **Verdict:** <one line — wrap the headline figure in ==…==>
@@ -341,8 +341,53 @@ Every saving skill produces a markdown document that is read both in the raw `.m
 …
 ```
 
-- **At a Glance** is a short labeled key/value list (3–6 lines) — the single most decision-relevant facts. It is NOT a table or a card; just bold `**Label:**` pairs.
+- **The meta line under the H1 is ONE line.** Put the 2–4 most-scannable facts (date, stage, deal size, SE) on a single line joined by ` · `. **Never stack multiple `**Label:**` lines as separate paragraphs** — in markdown, adjacent lines with no blank line between them collapse into one flowing paragraph, and the web app renders that as an unreadable run-on blob. Everything else (attendees, contacts, meeting type, prerequisites, durations) belongs in the **At a Glance** list below, NOT in the header. If a fact needs its own row, make it an At-a-Glance bullet — a list item, not a loose paragraph.
+- **At a Glance** is a short labeled key/value list (3–6 lines) — the single most decision-relevant facts. It is NOT a table or a card; just bold `**Label:**` pairs, each as its own `- ` bullet (list items render as discrete rows; loose lines do not). Don't repeat the header's facts here — the meta line and At-a-Glance are complementary, not duplicative.
 - **Jump to** is a one-line list of links to the document's `##` sections. The web app also auto-builds a sidebar from the headings, but the inline Jump-to keeps the raw `.md` navigable. Anchor slugs are lowercase, non-alphanumeric → `-` (e.g. `## Fit Verdict` → `#fit-verdict`).
+
+### Decision-First Layout (analytical skills)
+
+The **analytical skills** — `tech-qual`, `biz-qual`, `deal-assessment`, `deployment-model-qual`, `connector-feasibility`, `poc-plan` — produce reports a busy SE or leader reads to make a call. Structure them so the doc answers, **in this order**: *(1) Should we proceed? (2) Why? (3) What could block us? (4) What do we do next? (5) What's the evidence?* The reader should get the answer in ~10 seconds and only descend for detail. This is a layer ON TOP of the top-of-document structure above — it does not replace each skill's signature sections, it standardizes the **head** and the **high-value tables**.
+
+**1. Decision Card.** The `At a Glance` block for an analytical skill IS the decision card — lead with the judgment, not metadata. Use these labels (adapt wording per skill; omit lines that don't apply):
+```markdown
+### At a Glance
+- **Verdict / Fit:** <🟢/🟡/🔴 pill + 3–6 word headline>
+- **Recommended motion:** <the one next move — e.g. "Proceed to CDK workshop">
+- **Primary risk:** <the single biggest thing that could blow itup — one line>
+- **Confidence:** <low / medium / medium-high / high — and what it's pending on>
+- **Next gate:** <the concrete checkpoint that resolves the risk>
+- **Source confidence:** <one line — N transcripts + SFDC + docs; "see Source Coverage">
+```
+Keep it 4–6 lines. The headline figure still gets `==…==` (one, maybe two — the verdict band or coverage count, not every line).
+
+**2. Scorecard.** Each analytical skill has a status table (tech-qual Fit Summary, biz-qual MEDDPICC, connector-feasibility Fit Verdict, deployment-qual Five Questions). Standardize it to a scannable shape with a **"Why it matters"** column so the reader sees significance, not just a color:
+```markdown
+| Area | Status | Why it matters |
+|------|--------|----------------|
+| <dimension> | 🟢 / 🟡 / 🔴 / ⬜ | <one short line — the consequence, not a restatement> |
+```
+Status legend stays 🟢 strong/viable · 🟡 needs validation/caveat · 🔴 weak/blocker · ⬜ unknown.
+
+**3. Facts vs. judgment vs. recommendation.** Make clear what is **proven** (stated in a source — cite it), what is **inferred** (your read — say so), and what is **recommended** (your advice). Don't blend them in one undifferentiated paragraph. This is a principle, not a rigid 3-section split — most skills already separate evidence (Source Coverage, scorecard) from judgment (verdict, risks) from action (next steps). When you state something the customer did NOT say, label it: *"(inferred — not stated)"*. Ties to the anti-hallucination rules below.
+
+**4. Open Questions / Next Actions as decision tables.** These high-value sections are tables, not loose checklists, so the reader sees ownership and impact at a glance:
+```markdown
+## Open Questions / Questions Still Needed
+| Open Question | Owner | Needed By | Why it matters | Status |
+|---------------|-------|-----------|----------------|--------|
+| <question> | <name or **TBD**> | <date/gate or **TBD**> | <decision it unblocks> | Open |
+
+## Recommended Next Actions
+| # | Next Action | Goal | Success criteria | Fallback | Owner |
+|---|-------------|------|------------------|----------|-------|
+| 1 | <action> | <what it proves> | <what "done" looks like> | <plan B> | <name or **TBD**> |
+```
+**Owner / Needed-By guardrail:** if the source does not state an owner or a due date, render **`TBD`** (or `—`) — **never invent a name or a date.** Where the data exists, use it and cite the source. A fabricated owner is worse than a blank one. This is a hard rule (see anti-hallucination below).
+
+**5. Progressive disclosure.** `Source Coverage` is audit material — keep the one-line "Source confidence" summary up in the Decision Card and leave the detailed file list in the `## Source Coverage` section lower in the doc. (The web app has no collapse widget yet; lower placement is the disclosure.) Don't open the report with a wall of file paths.
+
+**6. Translate jargon in user-facing prose.** In the narrative/decision sections, write skill and artifact names as prose — "no prior deployment qualification exists" not "no `deployment-qual` exists". Reserve raw tokens (`connector-feasibility`, filenames, IDs) for `Source Coverage` and audit lines. Inline `code` formatting in the main narrative makes the doc read developer-heavy.
 
 ### Heading rule (required for the index to work)
 
@@ -371,15 +416,18 @@ Use GitHub-style admonition syntax on a blockquote. The web app renders each as 
 Wrap genuinely decision-relevant figures in `==…==` — the web app renders them bold + highlighted.
 
 ```markdown
-Probability **==40–60%==**, deal size ==$<amount>==, latency ==13h → 15min==, ==31 days silent==.
+Probability **==40–60%==**, deal size ==$88K==, latency ==13h → 15min==, ==31 days silent==.
 ```
 
 - **Cap: 3–6 highlights per document.** Highlight the deal amount, the before→after figure, the probability band, days-silent, close date, coverage count — the numbers a reader scans for. **If everything is highlighted, nothing stands out.** Do not highlight every number, label, or date.
+- **Highlight numbers and short tokens, NOT sentences.** `==…==` is for a figure or a 1–4 word token (`==$45K==`, `==40–60%==`, `==1 data worker==`). Never wrap a whole clause or sentence — a highlighted phrase reads as a loud marker swipe, not emphasis. If a sentence is important, lead with it or use a callout; don't paint it.
 
 ### Exemptions
 
-- **`follow-up-email` is fully exempt** — it's a customer-facing email, not a report. No At-a-Glance, no Jump-to, no TOC headings, no callouts. Keep its existing email structure.
-- **`next-move` and `objection-handler` are light-touch** — already short and scannable. They may use a callout for the recommended next move / severity, but At-a-Glance and Jump-to are optional.
+- **`follow-up-email` is fully exempt** — it's a customer-facing email, not a report. No At-a-Glance, no Jump-to, no TOC headings, no callouts, no Decision-First layout. Keep its existing email structure.
+- **`next-move`, `objection-handler`, and `account-refresher` are light-touch** — already short and scannable. They may use a callout for the recommended next move / severity, and account-refresher's "10-Second Version" already serves as a decision card, but the full Decision-First layout (scorecard, decision tables) is optional, not required.
+- **`internal-prep` adopts the Decision Card concept lightly** — its four sub-templates (ae-sync, forecast, exec-readout, deal-review) already have tight At-a-Glance blocks; align their labels to the decision-card spirit (lead with the judgment/ask) but they keep their own per-type section structure.
+- **The six analytical skills** (`tech-qual`, `biz-qual`, `deal-assessment`, `deployment-model-qual`, `connector-feasibility`, `poc-plan`) **fully adopt** the Decision-First Layout above.
 
 ### Backward compatibility
 
@@ -409,11 +457,11 @@ The model can produce plausible-looking summaries from partial reads, and the us
 ### Example
 
 > **Source Coverage:**
-> - Read in full: `Invesco-04.01.26.txt` (566 lines), `Invesco-03.31.26.txt` (1247 lines)
-> - Skimmed for key topics: `Invesco-03.25.26.txt` (489 lines)
-> - Inventoried but not read: `Invesco 03.24.26.rtf` (RTF — content extracted as plaintext)
+> - Read in full: `Acme-04.01.26.txt` (566 lines), `Acme-03.31.26.txt` (1247 lines)
+> - Skimmed for key topics: `Acme-03.25.26.txt` (489 lines)
+> - Inventoried but not read: `Acme 03.24.26.rtf` (RTF — content extracted as plaintext)
 > - Local notes read: `2026-03-11_ssl_certificate_error_diagnostic.md`
-> - Memory: `project_invesco_flex_ca_cert.md` (last updated 04.09.26)
+> - Memory: `project_acme_flex_ca_cert.md` (last updated 04.09.26)
 
 If a skill claims to do thorough work but reads only part of a source, this section will reveal it.
 
@@ -422,7 +470,7 @@ If a skill claims to do thorough work but reads only part of a source, this sect
 ## Memory Check (Active Project Context)
 
 Before synthesizing for a customer, check the persistent memory directory at `~/.claude/projects/-Users-gary-yang-airbyte-work/memory/` for any project memories matching this customer. These often hold critical context not in transcripts:
-- Active blockers (e.g., the Invesco 403 secret storage issue)
+- Active blockers (e.g., the Acme 403 secret storage issue)
 - Stakeholder dynamics
 - Decisions made between calls
 - Status of pending Airbyte-side actions
@@ -470,7 +518,7 @@ find ~/airbyte-work/01-customers/_transcripts/ -iname "<Customer>*" -mmin -30
 
 Every skill that hits Gong must include this line in its output (in the Source Coverage section):
 
-> **Session dedupe check:** Ran `find _transcripts/ -iname "Lumitec*" -mmin -30` → [found `Lumitec-2026-05-28.txt` saved 4 min ago, using it / no recent files, proceeding with Gong query]
+> **Session dedupe check:** Ran `find _transcripts/ -iname "Contoso*" -mmin -30` → [found `Contoso-2026-05-28.txt` saved 4 min ago, using it / no recent files, proceeding with Gong query]
 
 This makes the dedupe visible and lets the user verify it's working.
 
@@ -534,7 +582,7 @@ Don't read SFDC field-by-field. Read it for three kinds of signal:
 
 ### Mismatch-flagging posture: ASSERTIVE
 
-When SFDC and reality (transcripts, local artifacts, your read) disagree, **call it out as an explicit finding every time** — don't bury it or soften it. Treat the CRM as a hypothesis to test, not as truth. A dedicated "⚠️ SFDC vs. Reality" callout in the output is the right pattern. This is the single highest-value thing SFDC enrichment provides — the Invesco Flex deal showed exactly why (SFDC said Closed/Lost; local artifacts hadn't caught up).
+When SFDC and reality (transcripts, local artifacts, your read) disagree, **call it out as an explicit finding every time** — don't bury it or soften it. Treat the CRM as a hypothesis to test, not as truth. A dedicated "⚠️ SFDC vs. Reality" callout in the output is the right pattern. This is the single highest-value thing SFDC enrichment provides — the Acme Flex deal showed exactly why (SFDC said Closed/Lost; local artifacts hadn't caught up).
 
 ### Field Reference (Airbyte SFDC Opportunity custom fields)
 
@@ -604,7 +652,7 @@ When synthesizing across multiple transcripts, notes, or memory records for a cu
 
 6. **When in doubt, trust the most recent statement from the most senior stakeholder on that topic.** Recency and authority compound — they're not independent axes.
 
-7. **Cite sources inline.** When making a claim, reference the transcript date and speaker. Not "the customer is concerned about X" but "Raghu raised X on 04.01, having mentioned it in passing 03.25 — the concern is sharpening, not fading."
+7. **Cite sources inline.** When making a claim, reference the transcript date and speaker. Not "the customer is concerned about X" but "Jordan raised X on 04.01, having mentioned it in passing 03.25 — the concern is sharpening, not fading."
 
 ---
 
@@ -616,7 +664,7 @@ For known accounts, quick refreshes, or back-to-back use, a tight version is mor
 
 ### How brief mode triggers
 - User says `--brief`, `quick`, `short version`, `1-pager`, `summary mode`, or similar
-- User explicitly references a prior full version: "give me the short version of last week's Invesco assessment"
+- User explicitly references a prior full version: "give me the short version of last week's Acme assessment"
 
 ### Unified brief-mode rule (applies to all SE skills)
 
@@ -661,6 +709,8 @@ If/when built, this should be a separate skill (not a mode flag on biz-qual/deal
 ---
 
 ## Changelog
+
+- **2026-06-25** — Added the **Decision-First Layout** sub-contract to Output Document Format: analytical skills (tech-qual, biz-qual, deal-assessment, deployment-model-qual, connector-feasibility, poc-plan) lead with a **Decision Card** (verdict/motion/primary-risk/confidence/next-gate), a standardized **Scorecard** with a "Why it matters" column, **facts-vs-judgment-vs-recommendation** labeling, and **Open-Questions / Next-Actions decision tables** (Owner / Needed-By / Why / Status — render `TBD` where unstated, never invent). Plus progressive disclosure (Source Coverage stays low) and jargon-translation in user-facing prose. Reinforced `==…==` = numbers/short-tokens-only (no sentence highlighting). Extended exemptions (account-refresher light-touch; internal-prep light adoption). Pairs with web-app render fixes (softer highlight, wider tables, checkbox bullets).
 
 - **2026-06-18** — Added the Output Document Format contract: standard top-of-doc structure (H1 title → At a Glance → Jump-to index → Source Coverage → H2 body sections), H2-per-section rule for the auto-index, GitHub-style callouts (`[!verdict]`/`[!risk]`/`[!blocker]`/`[!info]`), `==key==` number emphasis (3–6 cap), and exemptions (follow-up-email full; next-move + objection-handler light-touch). Pairs with the web app's TOC sidebar + callout/highlight rendering.
 
