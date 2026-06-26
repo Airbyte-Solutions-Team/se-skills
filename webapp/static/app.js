@@ -12,6 +12,77 @@ const esc = (s) => (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&l
 // "prep-call" → "PREP CALL", "deal-assessment" → "DEAL ASSESSMENT"
 const prettySkill = (id) => (id || "").replace(/[-_]/g, " ").toUpperCase();
 
+// ---- Output download (PDF via browser print, MD as raw file) -------------
+// `path` is URI-encoded relative-to-CUSTOMERS_DIR (as stored on .out-item).
+async function fetchOutputText(path) {
+  return api("/api/output?path=" + encodeURIComponent(decodeURIComponent(path)));
+}
+function baseName(path) {
+  const p = decodeURIComponent(path);
+  return p.slice(p.lastIndexOf("/") + 1) || "output.md";
+}
+// Direct download of the raw .md source file.
+async function downloadMd(path) {
+  const text = await fetchOutputText(path);
+  const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = baseName(path);
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+// Clean print view → browser "Save as PDF". Renders the same markdown the reader
+// uses (callouts, ==highlights==, tables) but without app chrome or the TOC.
+async function downloadPdf(path) {
+  const text = await fetchOutputText(path);
+  const bodyHtml = mdToHtml(text, null);
+  const title = baseName(path).replace(/\.md$/i, "");
+  const w = window.open("", "_blank");
+  if (!w) { alert("Allow pop-ups to export PDF, or use Cmd+P on the document."); return; }
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8">
+    <title>${esc(title)}</title>
+    <link rel="stylesheet" href="/style.css?v=print">
+    <style>
+      html,body{background:#fff;color:#1a1d24;}
+      body{max-width:7.5in;margin:0 auto;padding:0.5in;}
+      .md-key{background:#eef1fb;color:#3b5bdb;font-weight:600;padding:0 3px;border-radius:3px;}
+      @media print{body{padding:0;max-width:none;} a[href]:after{content:"";}}
+    </style></head>
+    <body class="print-doc"><article class="md-body print-md">${bodyHtml}</article>
+    <script>window.onload=function(){setTimeout(function(){window.print();},250);};<\/script>
+    </body></html>`);
+  w.document.close();
+}
+// Build a ⬇ download control with a PDF/MD popup menu. `cls` lets callers add
+// position modifiers. Wire it up afterward with wireDownloadMenus(root).
+function downloadMenuHtml(path, cls = "") {
+  return `<span class="dl-menu ${cls}" data-path="${path}">
+    <button class="dl-btn" title="Download" aria-label="Download">⬇</button>
+    <div class="dropdown-menu hidden">
+      <button class="menu-item dl-pdf">Download PDF</button>
+      <button class="menu-item dl-md">Download Markdown (.md)</button>
+    </div></span>`;
+}
+function wireDownloadMenus(root) {
+  const closeAll = () => root.querySelectorAll(".dl-menu .dropdown-menu").forEach((m) => m.classList.add("hidden"));
+  root.querySelectorAll(".dl-menu").forEach((wrap) => {
+    const path = wrap.dataset.path;
+    const btn = wrap.querySelector(".dl-btn");
+    const menu = wrap.querySelector(".dropdown-menu");
+    btn.onclick = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const open = !menu.classList.contains("hidden");
+      closeAll(); if (!open) menu.classList.remove("hidden");
+    };
+    wrap.querySelector(".dl-pdf").onclick = (e) => { e.preventDefault(); e.stopPropagation(); closeAll(); downloadPdf(path); };
+    wrap.querySelector(".dl-md").onclick = (e) => { e.preventDefault(); e.stopPropagation(); closeAll(); downloadMd(path); };
+  });
+}
+// Close any open download menu on outside click (registered once).
+document.addEventListener("click", () => {
+  document.querySelectorAll(".dl-menu .dropdown-menu:not(.hidden)").forEach((m) => m.classList.add("hidden"));
+});
+
 // "2026-06-22 21:20" → "June 22, 2026"
 function longDate(ymd) {
   const m = (ymd || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -141,8 +212,11 @@ function mdToHtml(md, toc) {
       let buf = [];
       while (i < lines.length && /^\s*([-*]|\d+\.)\s+/.test(lines[i])) {
         let item = lines[i].replace(/^\s*([-*]|\d+\.)\s+/, "");
+        // Checkbox items render their own ☐/☑ glyph, so suppress the CSS list
+        // marker (via .md-check) to avoid a double bullet (disc + box).
+        const isCheck = /^\[(?: |[xX])\]\s*/.test(item);
         item = item.replace(/^\[ \]\s*/, "☐ ").replace(/^\[[xX]\]\s*/, "☑ ");
-        buf.push(`<li>${inline(item)}</li>`); i++;
+        buf.push(`<li${isCheck ? ' class="md-check"' : ""}>${inline(item)}</li>`); i++;
       }
       html += ordered ? `<ol class="md-list">${buf.join("")}</ol>` : `<ul class="md-list">${buf.join("")}</ul>`;
       continue;
@@ -161,6 +235,33 @@ function mdToHtml(md, toc) {
 
 let SKILLS = [];
 let SKILLS_HELP = {}; // id -> rich help entry (description, triggers, prerequisites, output)
+
+// Does this chat message read as a command to RUN a skill (vs. a question about
+// the doc)? Returns the resolved skill {id,label} if so, else null. Gated on a
+// leading invoke-verb so "does a connector exist for X?" stays a question while
+// "run connector feasibility" invokes. Resolves the name against SKILLS so the
+// _DEEP_HINTS keywords (connector/feasib/…) can't hijack a genuine invoke.
+const _INVOKE_RE = /^\s*(?:please\s+)?(run|generate|create|invoke|kick\s*off|start|do)\s+(?:a|an|the)?\s*(.+?)(?:\s+skill)?\s*$/i;
+function detectSkillInvocation(q) {
+  const m = (q || "").match(_INVOKE_RE);
+  if (!m || !SKILLS.length) return null;
+  const phrase = m[2].toLowerCase().replace(/[^a-z0-9\s-]/g, " ").trim();
+  if (!phrase) return null;
+  const words = phrase.split(/\s+/).filter((w) => w.length >= 3);
+  if (!words.length) return null;
+  let best = null, bestScore = 0;
+  for (const s of SKILLS) {
+    const help = SKILLS_HELP[s.id] || {};
+    const idWords = s.id.replace(/[-_]/g, " ");
+    const hay = [s.id, idWords, s.label, help.description, ...(help.triggers || [])].join(" ").toLowerCase();
+    let score = 0;
+    for (const w of words) if (hay.includes(w)) score += (s.label.toLowerCase().includes(w) || idWords.includes(w)) ? 2 : 1;
+    if (score > bestScore) { bestScore = score; best = s; }
+  }
+  // Require a real match (≥2 = at least one strong id/label hit) to avoid
+  // misfiring on "run the numbers" etc. — falls through to Q&A otherwise.
+  return bestScore >= 2 ? best : null;
+}
 
 function setCrumbs(parts) {
   crumbs.innerHTML = parts
@@ -542,7 +643,10 @@ function renderOutputGroups(outputs) {
         ${groups[day].map((o) => `
           <div class="out-item" data-path="${encodeURIComponent(o.path)}" data-title="${esc(prettySkill(o.skill))} — ${esc(o.filename)}">
             <div><div class="skill">${esc(prettySkill(o.skill))}</div><div class="when">${esc(o.filename)}</div></div>
-            <div class="when">${esc((o.modified || "").slice(11))} UTC</div>
+            <div class="out-item-right">
+              <span class="when">${esc((o.modified || "").slice(11))} UTC</span>
+              ${downloadMenuHtml(encodeURIComponent(o.path), "dl-menu-row")}
+            </div>
           </div>`).join("")}
       </div>
     </div>`).join("");
@@ -576,6 +680,7 @@ async function pageOpportunity(account, slug, oppName) {
   document.querySelectorAll(".out-item").forEach((el) => {
     el.onclick = () => openOutput(el.dataset.path, el.dataset.title, { account, slug, oppName });
   });
+  wireDownloadMenus(view);
   document.getElementById("invoke-btn").onclick = () => openInvoke(account, { slug, name: oppName });
 
   // Free-text instruction bar — runs the agent without picking a named skill
@@ -594,6 +699,7 @@ async function pageOpportunity(account, slug, oppName) {
     el.querySelectorAll(".out-item").forEach((it) => {
       it.onclick = () => openOutput(it.dataset.path, it.dataset.title, { account, slug, oppName });
     });
+    wireDownloadMenus(el);
   };
 
   // Status-only line — the result goes to Generated Outputs (no inline preview).
@@ -809,7 +915,10 @@ async function openOutput(path, title, ctx) {
     : null;
   view.innerHTML = `
     <div class="row"><h1>${esc(docTitle)}</h1>
-      <button class="ghost" id="doc-back">← Back</button></div>
+      <div class="row-actions">
+        ${downloadMenuHtml(encodeURIComponent(decodeURIComponent(path)), "dl-menu-doc")}
+        <button class="ghost" id="doc-back">← Back</button>
+      </div></div>
     <div class="doc-layout">
       ${tocHtml ? `<aside class="doc-toc"><div class="doc-toc-head">On this page</div>${tocHtml}</aside>` : ""}
       <article class="md-body">
@@ -834,6 +943,7 @@ async function openOutput(path, title, ctx) {
     if (location.hash === target) route();   // same hash → no event, render manually
     else location.hash = target;             // different → hashchange fires route()
   };
+  wireDownloadMenus(view);
 
   // Sidebar links scroll-jump locally (no router involvement).
   view.querySelectorAll(".doc-toc-link").forEach((a) => {
@@ -852,6 +962,10 @@ async function openOutput(path, title, ctx) {
     const q = askInput.value.trim();
     if (!q) return;
     askInput.value = "";
+    // "run connector feasibility" → invoke that skill (generates a saved output
+    // on the opp page), instead of answering as a doc question. Needs opp context.
+    const skill = ctx?.account && ctx?.slug ? detectSkillInvocation(q) : null;
+    if (skill) { invokeFromChat(thread, q, skill, ctx); return; }
     askThread(thread, q, "/api/output/ask", {
       path: decodeURIComponent(path), question: q,
       account: ctx?.account || null, opportunity: ctx?.oppName || null,
@@ -904,6 +1018,44 @@ async function askThread(threadEl, q, endpoint, payload) {
       if (m[1] === "token") { acc += JSON.parse(m[2]).text; bodyEl.innerHTML = mdToHtml(acc); }
       else if (m[1] === "error") { bodyEl.innerHTML = `<span class="muted">Error: ${esc(JSON.parse(m[2]).error)}</span>`; }
     }
+  }
+}
+
+// Run a skill from the output chat bar. Mirrors the opp-page invoke flow:
+// POST /api/invoke (scoped to this opp), poll the job, and report that the
+// result lands in the opp's Generated Outputs. `ctx` = { account, slug, oppName }.
+async function invokeFromChat(threadEl, q, skill, ctx) {
+  const item = document.createElement("div");
+  item.className = "qa-item";
+  item.innerHTML = `<div class="qa-q">${esc(q)}</div>`
+    + `<div class="qa-a"><span class="qa-tag">⚙️</span><span class="qa-body">`
+    + `<span class="muted">Running <strong>${esc(prettySkill(skill.id))}</strong> for ${esc(ctx.oppName)}… `
+    + `(keeps running even if you leave this page; result lands in Generated Outputs)</span></span></div>`;
+  threadEl.appendChild(item);
+  item.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  const bodyEl = item.querySelector(".qa-body"), tag = item.querySelector(".qa-tag");
+
+  try {
+    const res = await api("/api/invoke", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ account: ctx.account, opportunity: ctx.oppName, opp_slug: ctx.slug, skill: skill.id }),
+    });
+    await pollJob(res.job_id, (job) => {
+      if (job.status === "running") return;
+      if (job.ok) {
+        tag.textContent = "✓";
+        const oppHref = `#/opp/${encodeURIComponent(ctx.account)}/${encodeURIComponent(ctx.slug)}/${encodeURIComponent(ctx.oppName)}`;
+        bodyEl.innerHTML = `<strong>${esc(prettySkill(skill.id))}</strong> finished — saved to `
+          + `<a href="${oppHref}">Generated Outputs</a> for ${esc(ctx.oppName)}.`;
+      } else {
+        tag.textContent = "✕";
+        bodyEl.innerHTML = `<span class="muted">${esc(prettySkill(skill.id))} finished with an error. `
+          + `Check the opportunity page, or try the Invoke Skill button there.</span>`;
+      }
+    });
+  } catch (e) {
+    tag.textContent = "⚠️";
+    bodyEl.innerHTML = `<span class="muted">Couldn't start ${esc(prettySkill(skill.id))}: ${esc(e.message)}</span>`;
   }
 }
 
