@@ -654,6 +654,27 @@ def api_output_content(path: str):
     return target.read_text()
 
 
+@app.delete("/api/output")
+def api_delete_output(path: str):
+    """Delete is RECOVERABLE: move the output .md into 01-customers/_trash/
+    rather than hard-deleting. The relative path is flattened into the trash
+    filename (slashes → __) and timestamped so it stays traceable."""
+    target = (CUSTOMERS_DIR / path).resolve()
+    root = CUSTOMERS_DIR.resolve()
+    if not str(target).startswith(str(root)) or not target.is_file():
+        raise HTTPException(404, "Not found")
+    if target.suffix != ".md":
+        raise HTTPException(400, "Only generated .md outputs can be deleted here")
+    trash = CUSTOMERS_DIR / "_trash"
+    trash.mkdir(exist_ok=True)
+    stamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d-%H%M%S")
+    rel = target.relative_to(root)
+    flat = str(rel).replace("/", "__")
+    dest = trash / f"{stamp}__{flat}"
+    shutil.move(str(target), str(dest))
+    return {"path": path, "deleted": True, "trash_id": dest.name}
+
+
 class OutputAsk(BaseModel):
     path: str                       # output file, relative to CUSTOMERS_DIR
     question: str

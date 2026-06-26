@@ -260,6 +260,10 @@ button:disabled { opacity: .5; cursor: default; }
 .dl-menu .dropdown-menu.hidden { display: none; }
 .dl-menu .menu-item { display: block; width: 100%; text-align: left; background: transparent; border: none; color: #e6e8ee; border-radius: 6px; padding: 9px 12px; font-size: 13px; cursor: pointer; white-space: nowrap; }
 .dl-menu .menu-item:hover { background: #3a4255; }
+.dl-menu .menu-item.danger { color: #ff8585; }
+.dl-menu .menu-item.danger:hover { background: var(--danger); color: #fff; }
+.dl-menu .menu-item.danger.armed { background: var(--danger); color: #fff; font-weight: 600; }
+.dl-menu .menu-item:disabled { opacity: .6; cursor: default; }
 .empty { color: var(--muted); padding: 24px; text-align: center; border: 1px dashed var(--line); border-radius: 12px; }
 
 input[type=text] { font: inherit; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; min-width: 240px; }

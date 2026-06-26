@@ -61,9 +61,17 @@ function downloadMenuHtml(path, cls = "") {
     <div class="dropdown-menu hidden">
       <button class="menu-item dl-pdf">Download PDF</button>
       <button class="menu-item dl-md">Download Markdown (.md)</button>
+      <button class="menu-item danger dl-del">Delete output</button>
     </div></span>`;
 }
-function wireDownloadMenus(root) {
+// Move an output to _trash/ (recoverable). Resolves true on success.
+async function deleteOutput(path) {
+  await api("/api/output?path=" + encodeURIComponent(decodeURIComponent(path)), { method: "DELETE" });
+  return true;
+}
+// `onDeleted(path)` (optional) lets the caller react after a delete — opp row
+// refreshes the list; the reader navigates back to the opp.
+function wireDownloadMenus(root, onDeleted) {
   const closeAll = () => root.querySelectorAll(".dl-menu .dropdown-menu").forEach((m) => m.classList.add("hidden"));
   root.querySelectorAll(".dl-menu").forEach((wrap) => {
     const path = wrap.dataset.path;
@@ -72,15 +80,41 @@ function wireDownloadMenus(root) {
     btn.onclick = (e) => {
       e.preventDefault(); e.stopPropagation();
       const open = !menu.classList.contains("hidden");
-      closeAll(); if (!open) menu.classList.remove("hidden");
+      closeAll();
+      // reset a previously-armed Delete each time the menu opens
+      const d = wrap.querySelector(".dl-del");
+      if (d) { d.classList.remove("armed"); d.disabled = false; d.textContent = "Delete output"; }
+      if (!open) menu.classList.remove("hidden");
     };
     wrap.querySelector(".dl-pdf").onclick = (e) => { e.preventDefault(); e.stopPropagation(); closeAll(); downloadPdf(path); };
     wrap.querySelector(".dl-md").onclick = (e) => { e.preventDefault(); e.stopPropagation(); closeAll(); downloadMd(path); };
+    // Delete is two-click: first click arms ("Delete — confirm?"), second deletes.
+    const del = wrap.querySelector(".dl-del");
+    del.onclick = async (e) => {
+      e.preventDefault(); e.stopPropagation();
+      if (!del.classList.contains("armed")) {
+        del.classList.add("armed"); del.textContent = "Delete — click to confirm";
+        return;
+      }
+      del.textContent = "Deleting…"; del.disabled = true;
+      try {
+        await deleteOutput(path);
+        closeAll();
+        if (onDeleted) onDeleted(path);
+      } catch (err) {
+        del.disabled = false; del.classList.remove("armed");
+        del.textContent = "Delete failed — retry";
+      }
+    };
   });
 }
 // Close any open download menu on outside click (registered once).
 document.addEventListener("click", () => {
-  document.querySelectorAll(".dl-menu .dropdown-menu:not(.hidden)").forEach((m) => m.classList.add("hidden"));
+  document.querySelectorAll(".dl-menu .dropdown-menu:not(.hidden)").forEach((m) => {
+    m.classList.add("hidden");
+    const d = m.querySelector(".dl-del");  // disarm a primed Delete on close
+    if (d) { d.classList.remove("armed"); d.disabled = false; d.textContent = "Delete output"; }
+  });
 });
 
 // "2026-06-22 21:20" → "June 22, 2026"
@@ -680,7 +714,8 @@ async function pageOpportunity(account, slug, oppName) {
   document.querySelectorAll(".out-item").forEach((el) => {
     el.onclick = () => openOutput(el.dataset.path, el.dataset.title, { account, slug, oppName });
   });
-  wireDownloadMenus(view);
+  // onDeleted runs on user click (after refreshOutputs is defined below) → safe.
+  wireDownloadMenus(view, () => refreshOutputs());
   document.getElementById("invoke-btn").onclick = () => openInvoke(account, { slug, name: oppName });
 
   // Free-text instruction bar — runs the agent without picking a named skill
@@ -699,7 +734,7 @@ async function pageOpportunity(account, slug, oppName) {
     el.querySelectorAll(".out-item").forEach((it) => {
       it.onclick = () => openOutput(it.dataset.path, it.dataset.title, { account, slug, oppName });
     });
-    wireDownloadMenus(el);
+    wireDownloadMenus(el, () => refreshOutputs());
   };
 
   // Status-only line — the result goes to Generated Outputs (no inline preview).
@@ -938,12 +973,14 @@ async function openOutput(path, title, ctx) {
   // Deterministic Back — go to the opp page in one step. Set the hash AND
   // re-render directly: the output was opened without changing the hash, so it
   // may already equal backHref (in which case setting it fires no hashchange).
-  document.getElementById("doc-back").onclick = () => {
+  const goBack = () => {
     const target = backHref || "#/";
     if (location.hash === target) route();   // same hash → no event, render manually
     else location.hash = target;             // different → hashchange fires route()
   };
-  wireDownloadMenus(view);
+  document.getElementById("doc-back").onclick = goBack;
+  // After deleting the open output, leave the now-gone doc → back to the opp.
+  wireDownloadMenus(view, goBack);
 
   // Sidebar links scroll-jump locally (no router involvement).
   view.querySelectorAll(".doc-toc-link").forEach((a) => {
