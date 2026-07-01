@@ -331,15 +331,17 @@ Every saving skill produces a markdown document that is read both in the raw `.m
 - **<Label>:** <value> · **<Label>:** ==<key number>== · **<Label>:** <value>
 - **Top <blocker/risk/gap>:** <one line>
 
-**Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [<Section>](#slug) · …
+**Jump to:** [At a Glance](#at-a-glance) · [<Section>](#slug) · … · [Source Coverage](#source-coverage)   ← Source Coverage is LAST
 
-## Source Coverage
-…(anti-hallucination block — see Source Coverage Transparency)…
-
-## <First body section>
+## <First body section>   ← lead with the decision content, not the audit trail
 ### <subsection>
 …
+
+## Source Coverage   ← the LAST content section (audit trail; progressive disclosure)
+…(anti-hallucination block — see Source Coverage Transparency)…
 ```
+
+**Source Coverage goes at the BOTTOM.** It is audit/evidence, not the lead — the reader wants the answer first, the trail last. Put the one-line "Source confidence" summary in the At-a-Glance decision card; place the full file list as the final content section (the web app also collapses audit sections, so low placement + collapse both defer it). This applies to **all** saving skills. (Older docs that still put it near the top render fine — no need to retrofit.)
 
 - **The meta line under the H1 is ONE line.** Put the 2–4 most-scannable facts (date, stage, deal size, SE) on a single line joined by ` · `. **Never stack multiple `**Label:**` lines as separate paragraphs** — in markdown, adjacent lines with no blank line between them collapse into one flowing paragraph, and the web app renders that as an unreadable run-on blob. Everything else (attendees, contacts, meeting type, prerequisites, durations) belongs in the **At a Glance** list below, NOT in the header. If a fact needs its own row, make it an At-a-Glance bullet — a list item, not a loose paragraph.
 - **At a Glance** is a short labeled key/value list (3–6 lines) — the single most decision-relevant facts. It is NOT a table or a card; just bold `**Label:**` pairs, each as its own `- ` bullet (list items render as discrete rows; loose lines do not). Don't repeat the header's facts here — the meta line and At-a-Glance are complementary, not duplicative.
@@ -385,7 +387,7 @@ Status legend stays 🟢 strong/viable · 🟡 needs validation/caveat · 🔴 w
 ```
 **Owner / Needed-By guardrail:** if the source does not state an owner or a due date, render **`TBD`** (or `—`) — **never invent a name or a date.** Where the data exists, use it and cite the source. A fabricated owner is worse than a blank one. This is a hard rule (see anti-hallucination below).
 
-**5. Progressive disclosure.** `Source Coverage` is audit material — keep the one-line "Source confidence" summary up in the Decision Card and leave the detailed file list in the `## Source Coverage` section lower in the doc. (The web app has no collapse widget yet; lower placement is the disclosure.) Don't open the report with a wall of file paths.
+**5. Progressive disclosure.** `Source Coverage` is audit material — keep the one-line "Source confidence" summary up in the Decision Card and put the detailed file list in a `## Source Coverage` section that is the **last content section** of the doc (see the top-of-document structure above). The web app collapses audit sections (Source Coverage, Activity, MEDDPICC, Coaching) by default AND bottom placement keeps them out of the way — both defer the trail. Don't open the report with a wall of file paths.
 
 **6. Translate jargon in user-facing prose.** In the narrative/decision sections, write skill and artifact names as prose — "no prior deployment qualification exists" not "no `deployment-qual` exists". Reserve raw tokens (`connector-feasibility`, filenames, IDs) for `Source Coverage` and audit lines. Inline `code` formatting in the main narrative makes the doc read developer-heavy.
 
@@ -710,6 +712,7 @@ If/when built, this should be a separate skill (not a mode flag on biz-qual/deal
 
 ## Changelog
 
+- **2026-07-01** — **Source Coverage moved to the BOTTOM** of the doc (was right after At-a-Glance) — it's the audit trail, not the lead. Top-of-document structure + progressive-disclosure note updated; applied to all four decision-first-ordered skills (connector-feasibility, prep-call, post-call, tech-qual). Also **per-skill decision-first section reordering**: connector-feasibility (Fit Verdict before Use Case); prep-call (Company Snapshot + Why Airbyte to the top, before AE-learned/where-we-left-off); post-call (Key Takeaways → Deal Health → New Objections → Action Items up top, Attendees + Source Coverage at bottom); tech-qual (verdict-then-architecture already good, only Source Coverage moved down). Pairs with web-app renderer: checkbox affordance (no more square-bullet ☐), constraint/info cards, calmer bold, Inter + slate palette.
 - **2026-06-25** — Added the **Decision-First Layout** sub-contract to Output Document Format: analytical skills (tech-qual, biz-qual, deal-assessment, deployment-model-qual, connector-feasibility, poc-plan) lead with a **Decision Card** (verdict/motion/primary-risk/confidence/next-gate), a standardized **Scorecard** with a "Why it matters" column, **facts-vs-judgment-vs-recommendation** labeling, and **Open-Questions / Next-Actions decision tables** (Owner / Needed-By / Why / Status — render `TBD` where unstated, never invent). Plus progressive disclosure (Source Coverage stays low) and jargon-translation in user-facing prose. Reinforced `==…==` = numbers/short-tokens-only (no sentence highlighting). Extended exemptions (account-refresher light-touch; internal-prep light adoption). Pairs with web-app render fixes (softer highlight, wider tables, checkbox bullets).
 
 - **2026-06-18** — Added the Output Document Format contract: standard top-of-doc structure (H1 title → At a Glance → Jump-to index → Source Coverage → H2 body sections), H2-per-section rule for the auto-index, GitHub-style callouts (`[!verdict]`/`[!risk]`/`[!blocker]`/`[!info]`), `==key==` number emphasis (3–6 cap), and exemptions (follow-up-email full; next-move + objection-handler light-touch). Pairs with the web app's TOC sidebar + callout/highlight rendering.

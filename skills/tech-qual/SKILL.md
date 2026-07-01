@@ -56,10 +56,9 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 - **Scope:** [sources → destination] · **# connectors:** ==[N]== · **Volume:** ==[e.g., 50M rows/day]== · **Latency:** [e.g., 15 min]
 - **Source confidence:** [one line — N transcripts + SFDC + qual docs; "see Source Coverage"]
 
-**Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [Technical Fit Summary](#technical-fit-summary) · [Technical Requirements & Scope](#technical-requirements--scope) · [Data Sources & Destinations](#data-sources--destinations) · [Data Volume & Scale](#data-volume--scale) · [Deployment Model](#deployment-model) · [Security & Compliance](#security--compliance) · [Current Stack & Integration Context](#current-stack--integration-context) · [Team & Implementation Readiness](#team--implementation-readiness) · [Technical Risks & Open Items](#technical-risks--open-items) · [Questions Still Needed](#questions-still-needed) · [Recommended Next Actions](#recommended-next-actions)
+**Jump to:** [At a Glance](#at-a-glance) · [Technical Fit Summary](#technical-fit-summary) · [Technical Requirements & Scope](#technical-requirements--scope) · [Data Sources & Destinations](#data-sources--destinations) · [Data Volume & Scale](#data-volume--scale) · [Deployment Model](#deployment-model) · [Security & Compliance](#security--compliance) · [Current Stack & Integration Context](#current-stack--integration-context) · [Team & Implementation Readiness](#team--implementation-readiness) · [Technical Risks & Open Items](#technical-risks--open-items) · [Questions Still Needed](#questions-still-needed) · [Recommended Next Actions](#recommended-next-actions) · [Source Coverage](#source-coverage)
 
-## Source Coverage
-[Transcripts read with line counts, prior qual docs consulted, MCP queries run, certification claims marked "needs verification" — see After Generating.]
+*(Section order is verdict-first, then architecture (sources → volume → deployment → security), then risks and actions. Source Coverage is the last content section — see `_se-playbook.md`.)*
 
 ## Technical Fit Summary
 **Overall fit:** 🟢 Strong / 🟡 Moderate / 🔴 Weak / ⬜ Insufficient info
@@ -188,6 +187,9 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 |---|-------------|------|------------------|----------|-------|
 | 1 | [e.g., Validate connector coverage for source X] | [what it proves] | [what "done" looks like] | [plan B] | [name or **TBD**] |
 | 2 | [e.g., Walk through deployment architecture] | | | | |
+
+## Source Coverage
+*Audit trail — last content section (progressive disclosure per `_se-playbook.md`).* [Transcripts read with line counts, prior qual docs consulted, MCP queries run, certification claims marked "needs verification" — see After Generating.]
 
 ---
 

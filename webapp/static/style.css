@@ -1,20 +1,26 @@
+/* Layered dark palette (slate-based) — a clearer hierarchy than the old near-
+   uniform grays. --panel2 doubles as the subtle nested surface + hover.  */
 :root, :root[data-theme="dark"] {
-  --bg: #0f1117; --panel: #181b24; --panel2: #1f2330; --line: #2a2f3d;
-  --text: #e6e8ee; --muted: #8b91a3; --accent: #6c8cff; --accent2: #4ade80;
-  --warn: #f5a623; --danger: #ff6b6b;
+  --bg: #0b0f17; --panel: #111827; --panel2: #0f1623; --panel-hover: #172033; --line: #202a3a; --line-strong: #334155;
+  --text: #f8fafc; --muted: #94a3b8; --faint: #64748b; --accent: #60a5fa; --accent2: #22c55e;
+  --warn: #f59e0b; --danger: #ef4444;
 }
 :root[data-theme="light"] {
-  --bg: #f6f7f9; --panel: #ffffff; --panel2: #f0f2f6; --line: #d9dde6;
-  --text: #1a1d26; --muted: #6b7280; --accent: #3b5bdb; --accent2: #2f9e44;
+  --bg: #f6f7f9; --panel: #ffffff; --panel2: #f0f2f6; --panel-hover: #e8ebf2; --line: #d9dde6; --line-strong: #c2c8d4;
+  --text: #1a1d26; --muted: #5b6472; --faint: #8b93a3; --accent: #2563eb; --accent2: #2f9e44;
   --warn: #b8860b; --danger: #e03131;
 }
 * { box-sizing: border-box; }
 body {
   margin: 0; background: var(--bg); color: var(--text);
-  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font: 15px/1.55 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 header { border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 5; }
-.bar { max-width: 1100px; margin: 0 auto; padding: 14px 20px; display: flex; align-items: center; gap: 16px; }
+.bar { max-width: 1100px; margin: 0 auto; padding: 13px 20px; display: flex; align-items: center; gap: 16px; }
+/* On the document reader the body widens to 1500px — keep the header edges aligned
+   with it so the top bar doesn't look pinched over a wider canvas. Mirrors the
+   main:has(.doc-layout) rule below. */
+body:has(.doc-layout) .bar { max-width: 1500px; }
 .brand { color: var(--text); text-decoration: none; font-weight: 700; letter-spacing: .2px; }
 .crumbs { color: var(--muted); font-size: 14px; }
 .crumbs a { color: var(--accent); text-decoration: none; }
@@ -29,7 +35,7 @@ header { border-bottom: 1px solid var(--line); background: var(--panel); positio
 .acct-list { border: 1px solid var(--line); border-radius: 12px; overflow: visible; background: var(--panel); }
 .acct-row { display: flex; align-items: center; border-bottom: 1px solid var(--line); position: relative; }
 .acct-row:last-child { border-bottom: none; }
-.acct-row:not(.acct-head):hover { background: var(--panel2); }
+.acct-row:not(.acct-head):hover { background: var(--panel-hover); }
 
 /* the clickable main area = a 9-column grid so everything lines up:
    Account | Stage | Amount | Close Date | Type | AE | Updated | Outputs | Owner */
@@ -44,7 +50,7 @@ header { border-bottom: 1px solid var(--line); background: var(--panel); positio
 
 /* expand chevron on the far right — reveals the opportunity drawer */
 .acct-expand { flex: 0 0 40px; background: transparent; border: none; color: var(--muted); font-size: 15px; cursor: pointer; padding: 8px; border-radius: 6px; transition: transform .15s ease, color .15s ease; }
-.acct-expand:hover { color: var(--text); background: var(--panel2); }
+.acct-expand:hover { color: var(--text); background: var(--panel-hover); }
 .acct-expand.open { transform: rotate(90deg); color: var(--accent); }
 .acct-expand-spacer { flex: 0 0 40px; }
 .opp-drawer { background: var(--bg); border-bottom: 1px solid var(--line); padding: 6px 18px 12px 60px; }
@@ -59,8 +65,8 @@ header { border-bottom: 1px solid var(--line); background: var(--panel); positio
 .col-outputs { text-align: center; }
 .col-owner { text-align: right; }
 /* closed opportunities (won or lost) show their stage in red */
-.stage-closed { color: #ff6b6b; font-weight: 600; }
-.badge.badge-closed { color: #ff6b6b; border-color: #ff6b6b; }
+.stage-closed { color: var(--danger); font-weight: 600; }
+.badge.badge-closed { color: var(--danger); border-color: var(--danger); }
 
 /* checkbox cell (left of the kebab) */
 .acct-check { flex: 0 0 36px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
@@ -94,16 +100,16 @@ header { border-bottom: 1px solid var(--line); background: var(--panel); positio
 .acct-row-menu .dropdown-menu {
   position: absolute; left: 8px; top: calc(100% - 2px);
   /* Explicit solid off-color — same in both themes, fully opaque, clearly a menu */
-  background-color: #2b3242 !important;
-  border: 1px solid #4a5268; border-radius: 10px; padding: 6px;
+  background-color: #1c2433 !important;
+  border: 1px solid #334155; border-radius: 10px; padding: 6px;
   min-width: 200px; z-index: 100;
   box-shadow: 0 16px 40px rgba(0,0,0,.6);
 }
 .acct-row-menu .dropdown-menu.hidden { display: none; }
 
-.menu-item { display: block; width: 100%; text-align: left; background: transparent; border: none; color: #e6e8ee; border-radius: 6px; padding: 9px 12px; font-size: 13px; cursor: pointer; white-space: nowrap; }
-.menu-item:hover { background: #3a4255; }
-.menu-item.danger { color: #ff8585; }
+.menu-item { display: block; width: 100%; text-align: left; background: transparent; border: none; color: #f1f5f9; border-radius: 6px; padding: 9px 12px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.menu-item:hover { background: #273245; }
+.menu-item.danger { color: #f87171; }
 .menu-item.danger:hover { background: var(--danger); color: #fff; }
 .menu-item.danger.armed { background: var(--danger); color: #fff; font-weight: 600; }
 
@@ -125,7 +131,7 @@ header { border-bottom: 1px solid var(--line); background: var(--panel); positio
   border-bottom: 1px solid var(--line);
 }
 .opp-row:last-child { border-bottom: none; }
-.opp-row:not(.opp-row-head):hover { background: var(--panel2); }
+.opp-row:not(.opp-row-head):hover { background: var(--panel-hover); }
 .opp-row.no-link { cursor: default; }
 .opp-row-name { font-weight: 600; font-size: 14px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .opp-row-col { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -156,14 +162,14 @@ header { border-bottom: 1px solid var(--line); background: var(--panel); positio
 /* suggestive skill dropdown under the free-text input */
 .free-suggest {
   position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 50;
-  background-color: #2b3242; border: 1px solid #4a5268; border-radius: 10px; padding: 5px;
+  background-color: #1c2433; border: 1px solid #334155; border-radius: 10px; padding: 5px;
   box-shadow: 0 16px 40px rgba(0,0,0,.5);
 }
 .free-suggest.hidden { display: none; }
 .sug-item { display: flex; flex-direction: column; gap: 2px; padding: 9px 12px; border-radius: 7px; cursor: pointer; }
-.sug-item:hover, .sug-item.active { background: #3a4255; }
-.sug-label { font-size: 13px; font-weight: 600; color: #e6e8ee; }
-.sug-blurb { font-size: 12px; color: #aeb4c2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sug-item:hover, .sug-item.active { background: #273245; }
+.sug-label { font-size: 13px; font-weight: 600; color: #f1f5f9; }
+.sug-blurb { font-size: 12px; color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .linklike { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; padding: 0; text-decoration: underline; }
 
 /* ── help page (clean, structured) ────────────────────────────────────── */
@@ -194,6 +200,13 @@ header { border-bottom: 1px solid var(--line); background: var(--panel); positio
 .help-card.help-flash { animation: helpflash 1.2s ease-out; }
 @keyframes helpflash { 0% { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); } 100% { border-color: var(--line); box-shadow: none; } }
 main { max-width: 1100px; margin: 0 auto; padding: 28px 20px 80px; }
+/* the document reader needs room for TOC + a wide doc (+ optional chat column),
+   so it gets a wider canvas than the rest of the app's 1100px pages. */
+main:has(.doc-layout) { max-width: 1500px; padding-top: 40px; }
+/* the reader's title + actions row needs clear separation from the sticky header
+   above and the doc layout below — the actions (Chat/Export/Back) were butting
+   against the top edge. */
+main:has(.doc-layout) > .row { margin-bottom: 22px; align-items: flex-start; }
 h1 { font-size: 24px; margin: 0 0 4px; }
 h2 { font-size: 18px; margin: 28px 0 12px; }
 .muted { color: var(--muted); }
@@ -252,15 +265,23 @@ button:disabled { opacity: .5; cursor: default; }
   border-radius: 8px; padding: 4px 9px; font-size: 14px; line-height: 1; cursor: pointer;
 }
 .dl-btn:hover { color: var(--text); border-color: var(--accent); background: var(--panel); }
+/* labeled "Export ▾" trigger (doc reader) — sized to match the sibling ghost
+   buttons (Chat / Back) so the header action row aligns. */
+.dl-btn-labeled {
+  padding: 9px 16px; font-size: 15px; color: var(--text);
+  display: inline-flex; align-items: center; gap: 6px; line-height: 1.5;
+}
+.dl-btn-labeled .dl-caret { font-size: 11px; color: var(--muted); }
+.dl-menu-doc { vertical-align: middle; }
 .dl-menu .dropdown-menu {
   position: absolute; right: 0; top: calc(100% + 4px);
-  background-color: #2b3242; border: 1px solid #4a5268; border-radius: 10px; padding: 6px;
+  background-color: #1c2433; border: 1px solid #334155; border-radius: 10px; padding: 6px;
   min-width: 210px; z-index: 200; box-shadow: 0 16px 40px rgba(0,0,0,.6);
 }
 .dl-menu .dropdown-menu.hidden { display: none; }
-.dl-menu .menu-item { display: block; width: 100%; text-align: left; background: transparent; border: none; color: #e6e8ee; border-radius: 6px; padding: 9px 12px; font-size: 13px; cursor: pointer; white-space: nowrap; }
-.dl-menu .menu-item:hover { background: #3a4255; }
-.dl-menu .menu-item.danger { color: #ff8585; }
+.dl-menu .menu-item { display: block; width: 100%; text-align: left; background: transparent; border: none; color: #f1f5f9; border-radius: 6px; padding: 9px 12px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.dl-menu .menu-item:hover { background: #273245; }
+.dl-menu .menu-item.danger { color: #f87171; }
 .dl-menu .menu-item.danger:hover { background: var(--danger); color: #fff; }
 .dl-menu .menu-item.danger.armed { background: var(--danger); color: #fff; font-weight: 600; }
 .dl-menu .menu-item:disabled { opacity: .6; cursor: default; }
@@ -300,15 +321,57 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 /* ONE document sheet; sections divided inside it so it reads as one connected doc */
 .md-body .doc-sheet { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
 
-/* follow-up chat under an opened output — thread + integrated ask bar */
-.doc-qa { margin-top: 18px; display: flex; flex-direction: column; gap: 4px; }
-.doc-qa:empty { margin-top: 0; }
-.doc-askbar { display: flex; gap: 8px; margin-top: 14px; position: sticky; bottom: 14px;
-  background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 8px 8px 8px 14px; align-items: center; }
-.doc-askbar::before { content: "💬"; font-size: 14px; opacity: .8; }
-.doc-askbar input { flex: 1; font: inherit; font-size: 14px; background: transparent; color: var(--text); border: none; padding: 8px 4px; }
-.doc-askbar input:focus { outline: none; }
-.md-body .doc-section { padding: 22px 30px; border-top: 1px solid var(--line); }
+/* follow-up chat in a docked right-side panel — thread (scrolls) + ask bar (pinned bottom).
+   Hidden by default so the document uses the full width; shown only when .doc-layout
+   has .has-chat (toggled open via the 💬 Chat button / on send / on job recovery). */
+.doc-chat {
+  display: none;
+  position: sticky; top: 84px; align-self: start;
+  max-height: calc(100vh - 110px);
+  flex-direction: column; min-height: 0;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  overflow: hidden;
+}
+.doc-layout.has-chat .doc-chat { display: flex; }
+.doc-chat-head { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .7px;
+  color: var(--muted); padding: 12px 14px 10px; border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; justify-content: space-between; }
+.doc-chat-close { background: transparent; border: none; color: var(--muted); cursor: pointer;
+  font-size: 13px; line-height: 1; padding: 2px 4px; border-radius: 6px; }
+.doc-chat-close:hover { color: var(--text); background: var(--panel-hover); }
+.doc-qa { flex: 1; min-height: 0; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 4px; }
+.doc-qa:empty::before { content: "Ask a follow-up, or “run <skill>” to invoke another skill on this doc.";
+  color: var(--muted); font-size: 13px; line-height: 1.5; display: block; }
+.doc-askbar { display: flex; gap: 8px; margin: 10px; padding: 8px 8px 8px 14px;
+  background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; align-items: flex-end; }
+.doc-askbar::before { content: "💬"; font-size: 14px; opacity: .8; align-self: flex-end; line-height: 2.4; }
+.doc-askbar textarea { flex: 1; font: inherit; font-family: inherit; font-size: 14px; line-height: 1.5;
+  background: transparent; color: var(--text); border: none; padding: 8px 4px; resize: none; max-height: 160px; }
+.doc-askbar textarea:focus { outline: none; }
+/* action-oriented assistant: suggested-question chips + workflow actions above
+   the thread, so the panel reads as a command surface, not a bare chatbox */
+.doc-assist { padding: 12px 14px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 12px; }
+.doc-assist-group-head {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px;
+  color: var(--muted); margin-bottom: 7px;
+}
+.doc-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.doc-chip {
+  font: inherit; font-size: 12px; line-height: 1.2; cursor: pointer;
+  background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+  border-radius: 999px; padding: 6px 11px; text-align: left;
+  transition: border-color .12s, color .12s;
+}
+.doc-chip:hover { border-color: var(--accent); color: var(--accent); }
+.doc-action {
+  font: inherit; font-size: 12px; line-height: 1.2; cursor: pointer;
+  background: transparent; color: var(--text); border: 1px solid var(--line);
+  border-radius: 8px; padding: 7px 11px; display: inline-flex; align-items: center; gap: 6px;
+  transition: border-color .12s, background .12s;
+}
+.doc-action:hover { border-color: var(--accent); background: var(--panel-hover); }
+.doc-action.copied { border-color: var(--accent2); color: var(--accent2); }
+.md-body .doc-section { padding: 30px 32px; border-top: 1px solid var(--line); }
 .md-body .doc-section:first-child { border-top: none; }
 .md-body .doc-section > :last-child { margin-bottom: 0; }
 /* a section's H2 acts as a header band inside the sheet */
@@ -325,8 +388,119 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 .md-body .kv-v { color: var(--text); font-size: 14px; line-height: 1.5; }
 .md-body .kv-v strong { font-weight: 650; }
 
+/* ── executive decision card (promoted At-a-Glance) ───────────────────── */
+/* The analytical skills lead with a decision card (At a Glance). The reader
+   promotes it OUT of the document sheet into a prominent hero above the body so
+   the verdict/probability/blocker/next-move read in ~10 seconds. */
+.md-body .exec-card {
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  border-radius: 14px; padding: 20px 24px; margin: 0 0 18px;
+}
+.md-body .exec-card-eyebrow {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .7px;
+  color: var(--accent); margin: 0 0 14px;
+}
+/* "Current read" — the narrative summary (account-refresher 10-Second Version),
+   shown larger above the tiles as the human one-liner. */
+.md-body .exec-read { font-size: 15.5px; line-height: 1.6; color: var(--text); margin: 0 0 16px; }
+.md-body .exec-read p { margin: 0 0 8px; }
+.md-body .exec-read > :last-child { margin-bottom: 0; }
+/* decision tiles — the highest-signal glance rows, scannable side by side */
+.md-body .tile-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px; margin: 0 0 4px;
+}
+.md-body .tile {
+  background: var(--panel); border: 1px solid var(--line);
+  border-left: 3px solid var(--muted); border-radius: 10px; padding: 11px 14px; min-width: 0;
+}
+.md-body .tile-label {
+  font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--muted); margin-bottom: 5px;
+}
+.md-body .tile-value { font-size: 14px; line-height: 1.45; color: var(--text); }
+.md-body .tile-value .md-key { font-size: 15px; }
+/* semantic accents by sentiment (detected from status dot / band in the value) */
+.md-body .tile.sev-danger { border-left-color: var(--danger); }
+.md-body .tile.sev-warn   { border-left-color: var(--warn); }
+.md-body .tile.sev-good   { border-left-color: var(--accent2); }
+.md-body .tile.sev-accent { border-left-color: var(--accent); }
+/* leftover (non-tiled) glance rows render as a compact kv list under the tiles */
+.md-body .exec-rest { margin-top: 14px; padding-top: 14px; border-top: 1px solid color-mix(in srgb, var(--accent) 22%, var(--line)); }
+.md-body .exec-rest .kv-grid { margin: 0; }
+
+/* ── top-risk strip — navigational summary of risk/blocker callouts ───── */
+.md-body .risk-strip { display: flex; flex-direction: column; gap: 8px; margin: 0 0 20px; }
+.md-body .risk-strip-head {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px;
+  color: var(--muted); margin-bottom: 2px;
+}
+.md-body .risk-item {
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px 14px; cursor: pointer; color: var(--text); font: inherit;
+  transition: border-color .12s, background .12s;
+}
+.md-body .risk-item:hover { border-color: var(--accent); background: var(--panel-hover); }
+.md-body .risk-sev {
+  flex: 0 0 auto; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px;
+  padding: 3px 9px; border-radius: 999px; white-space: nowrap;
+}
+.md-body .risk-sev.blocker { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.md-body .risk-sev.risk    { color: var(--warn);   background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.md-body .risk-title { font-size: 13.5px; line-height: 1.4; overflow-wrap: anywhere; }
+.md-body .risk-arrow { margin-left: auto; color: var(--muted); flex: 0 0 auto; }
+
+/* in-section risk cards (Watch-outs / What Would Lose It bullets → severity cards):
+   left-accent by severity, bold lead as the title + a tinted severity pill. */
+.md-body .risk-cards { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
+.md-body .risk-card {
+  background: var(--panel2); border: 1px solid var(--line); border-left: 3px solid var(--muted);
+  border-radius: 0 10px 10px 0; padding: 12px 16px;
+}
+.md-body .risk-card.blocker { border-left-color: var(--danger); background: color-mix(in srgb, var(--danger) 7%, var(--panel)); }
+.md-body .risk-card.risk    { border-left-color: var(--warn);   background: color-mix(in srgb, var(--warn) 7%, var(--panel)); }
+/* neutral info cards (Constraints / Edge Cases) — calm, no severity pill */
+.md-body .risk-card.info { border-left-color: var(--accent); background: var(--panel2); }
+.md-body .risk-card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 5px; }
+.md-body .risk-card-title { font-weight: 650; font-size: 14px; line-height: 1.35; }
+.md-body .risk-card-body { color: var(--text); font-size: 13.5px; line-height: 1.6; }
+.md-body .risk-card-body > :last-child { margin-bottom: 0; }
+
+/* ── collapsible sections (progressive disclosure) ────────────────────── */
+/* Audit/detail sections (Source Coverage, Activity, MEDDPICC, Coaching) collapse
+   by default so evidence doesn't compete with the recommendation. The H2 band is
+   the toggle; a one-line summary previews the section when closed. */
+.md-body .doc-section.collapsible > .sec-body { display: block; }
+.md-body .doc-section.collapsible.collapsed > .sec-body { display: none; }
+.md-body .doc-section.collapsible > .md-h2 { cursor: pointer; user-select: none; margin-bottom: 0; }
+.md-body .doc-section.collapsible:not(.collapsed) > .md-h2 { margin-bottom: 14px; }
+.md-body .doc-section.collapsible > .md-h2 .sec-toggle {
+  margin-left: auto; color: var(--muted); font-size: 12px; transition: transform .15s ease; flex: 0 0 auto;
+}
+.md-body .doc-section.collapsible.collapsed > .md-h2 .sec-toggle { transform: rotate(-90deg); }
+.md-body .doc-section.collapsible > .md-h2:hover .sec-toggle { color: var(--text); }
+.md-body .sec-summary {
+  color: var(--muted); font-size: 13px; line-height: 1.5; padding: 12px 0 2px;
+  overflow: hidden; text-overflow: ellipsis; display: none;
+}
+.md-body .doc-section.collapsible.collapsed > .sec-summary { display: block; }
+
 /* ── document layout: sticky TOC sidebar + body ───────────────────────── */
+/* Default: TOC + document only (chat hidden) → the doc gets the full width.
+   When chat is open AND the window is wide enough (≥1280px), it takes a third
+   column; otherwise it drops below the document (see responsive blocks). */
 .doc-layout { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 32px; align-items: start; }
+@media (min-width: 1280px) {
+  .doc-layout.has-chat { grid-template-columns: 210px minmax(0, 1fr) 360px; }
+}
+/* chat open but not enough room for 3 columns → chat below the document, in the
+   doc's own column (NOT spanning under the sticky TOC, which would overlap it). */
+@media (max-width: 1279px) {
+  .doc-layout.has-chat .doc-chat { grid-column: 2; position: static; max-height: none; }
+  .doc-layout.has-chat .doc-qa { max-height: 420px; }
+}
 .doc-toc {
   position: sticky; top: 84px; align-self: start;
   max-height: calc(100vh - 110px); overflow: auto;
@@ -334,21 +508,34 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
   padding-right: 4px; border-right: 1px solid var(--line);
 }
 .doc-toc-head { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .7px; color: var(--muted); margin-bottom: 10px; padding-left: 11px; }
+/* intent groups (Decision / Deal Intelligence / Execution) */
+.doc-toc-group {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px;
+  color: var(--accent); opacity: .85; margin: 14px 0 4px; padding-left: 11px;
+}
+.doc-toc-group:first-of-type { margin-top: 0; }
 .doc-toc-link {
   color: var(--muted); text-decoration: none; font-size: 13px; line-height: 1.35;
   padding: 5px 11px; border-radius: 7px; border-left: 2px solid transparent;
   transition: color .12s, background .12s, border-color .12s;
 }
-.doc-toc-link:hover { color: var(--text); background: var(--panel2); }
+.doc-toc-link:hover { color: var(--text); background: var(--panel-hover); }
 .doc-toc-link.lvl3 { padding-left: 22px; font-size: 12.5px; color: var(--muted); }
+/* scroll-spy active state — accent bar + pill + higher contrast */
+.doc-toc-link.active {
+  color: var(--text); font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-left-color: var(--accent);
+}
 
 /* ── rendered markdown (skill output reports) ─────────────────────────── */
 .md-body {
-  font: 15px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font: 15px/1.7 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: var(--text); overflow-wrap: anywhere; min-width: 0;
 }
-/* readable measure only in the full doc reader — not the inline run preview */
-.doc-layout .md-body { max-width: 820px; }
+/* readable measure: fill the column but cap so lines don't get too long on wide
+   monitors when the chat is closed. When chat is open the column already constrains it. */
+.doc-layout .md-body { max-width: 960px; }
 .md-body .md-h { line-height: 1.3; font-weight: 700; scroll-margin-top: 84px; letter-spacing: -0.01em; }
 .md-body .md-h1 { font-size: 26px; margin: 0 0 18px; padding-bottom: 12px; border-bottom: 2px solid var(--line); letter-spacing: -0.02em; }
 .md-body .md-h2 {
@@ -358,23 +545,37 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 .md-body .md-h:first-child { margin-top: 0; }
 .md-body .md-p { margin: 12px 0; }
 .md-body .md-list { margin: 10px 0 14px; padding-left: 24px; }
-.md-body .md-list li { margin: 5px 0; padding-left: 2px; }
+.md-body .md-list li { margin: 8px 0; padding-left: 2px; }
 .md-body .md-list li::marker { color: var(--muted); }
-/* checkbox items show their own ☐/☑ glyph — drop the CSS disc, align to list edge */
-.md-body .md-list li.md-check { list-style: none; margin-left: -22px; }
+/* GFM checkbox items: a real checkbox affordance (rounded accent-bordered box),
+   not a raw ☐ glyph that reads as a broken square bullet. No CSS disc. */
+.md-body .md-list li.md-check { list-style: none; margin-left: -22px; display: flex; align-items: flex-start; gap: 9px; }
+.md-body .md-cbox {
+  flex: 0 0 auto; width: 15px; height: 15px; margin-top: 3px;
+  border: 1.5px solid var(--line-strong); border-radius: 4px; background: var(--panel2);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; line-height: 1; color: transparent;
+}
+.md-body .md-cbox.done { background: color-mix(in srgb, var(--accent2) 22%, transparent); border-color: var(--accent2); color: var(--accent2); }
+.md-body .md-check-text { flex: 1; min-width: 0; }
 .md-body .md-hr { border: none; border-top: 1px solid var(--line); margin: 28px 0; }
 .md-body code { background: var(--panel2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .md-body .md-pre { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; overflow: auto; margin: 14px 0; }
 .md-body .md-pre code { background: none; border: none; padding: 0; }
 .md-body .md-table { border-collapse: separate; border-spacing: 0; width: 100%; margin: 16px 0; font-size: 14px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-.md-body .md-table th, .md-body .md-table td { border-bottom: 1px solid var(--line); padding: 10px 16px; text-align: left; vertical-align: top; overflow-wrap: break-word; }
+.md-body .md-table th, .md-body .md-table td { border-bottom: 1px solid color-mix(in srgb, var(--line) 55%, transparent); padding: 13px 16px; text-align: left; vertical-align: top; overflow-wrap: break-word; }
 .md-body .md-table tr:last-child td { border-bottom: none; }
 /* Short header labels (Source, Connector Exists?, Severity, Confidence) stay on one
    line so the column sizes to its header instead of collapsing to a sliver and
    wrapping mid-word. Body cells (esp. the wide Notes column) wrap normally. */
 .md-body .md-table th { background: var(--panel2); font-weight: 600; font-size: 12.5px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); white-space: nowrap; }
 .md-body .md-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
-.md-body strong { font-weight: 650; }
+/* Calmer bold — the skills bold heavily; 600 keeps emphasis without the page
+   feeling shouty (guidance: reserve bold for the real signal). */
+.md-body strong { font-weight: 600; }
+/* Status dots (🟢🟡🔴 etc.) sit inline in cells/prose — keep them a consistent
+   size and slightly raised so a bare dot reads as a status, not a typo. */
+.md-body .md-table td:first-child, .md-body .md-table th:first-child { white-space: nowrap; }
 .md-body a { color: var(--accent); text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
 .md-body a:hover { border-bottom-color: var(--accent); }
 
@@ -417,7 +618,7 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
   100% { background: transparent; }
 }
 
-/* responsive: drop the sidebar on narrow screens */
+/* narrow: drop the TOC sidebar */
 @media (max-width: 860px) {
   .doc-layout { grid-template-columns: 1fr; }
   .doc-toc { display: none; }

@@ -35,12 +35,13 @@ If user signals brief mode (`--brief`, `quick coverage check`, `coverage summary
 For each system the customer needs, go through this chain. "The connector exists" is step 2a, not the answer.
 
 1. **Exists?** — `mcp__airbyte-mcp__list_connectors` to find matches. For "Postgres"-type names, confirm the flavor (Postgres CDC vs. standard source).
-2. **Capability fit** — `mcp__airbyte-mcp__get_connector_info` to pull the connector's actual auth methods, supported streams/objects, and sync modes. Then **compare against what the customer needs:**
+2. **Capability fit** — `mcp__airbyte-mcp__get_connector_info` to pull the connector's actual auth methods, supported streams/objects, and sync modes. **This is the live source of truth for existence, version, support level, and the published spec** — always trust it over the local checkout for "does it exist / what version / which streams." Then **compare against what the customer needs:**
    - **Objects/streams:** do they need a specific object/table the connector doesn't expose? (e.g., a custom Salesforce object, a NetSuite saved search)
    - **Sync mode:** do they need incremental/CDC on a stream that only supports full refresh? This is a frequent silent dealbreaker.
    - **Auth model:** does the connector's auth match what the customer can provide? (OAuth app approval, IP allowlisting, service account, etc.)
    - **Latency:** their `Refresh_Frequency__c` / stated cadence vs. what the connector + tier supports (sub-hourly is Pro-only).
    - **Volume:** their `Monthly_Data_Volume__c` vs. realistic throughput; flag rate-limit risk on API sources.
+   - **Read the connector source for the details the registry spec doesn't expose** — see "Reading connector source locally" below. The on-disk `manifest.yaml` (declarative) or stream classes (Python) reveal the *actual* pagination, cursor fields, incremental behaviour, sub-stream relationships, and known quirks (`BEHAVIOR.md`). Use this when the spec alone can't confirm a stream supports the sync mode / object the customer needs.
 3. **Constraints & edge cases given THEIR context** — surface the gotchas that bite *this* use case specifically, e.g.:
    - API rate limits at their volume / number of instances (multi-tenant Shopify, per-account API quotas)
    - CDC prerequisites not yet enabled (Oracle LogMiner, MySQL binlog, Postgres WAL)
@@ -48,8 +49,25 @@ For each system the customer needs, go through this chain. "The connector exists
    - Historical backfill limits (API only returns N months; they need 3 years)
    - Network reachability (on-prem DB, NAS, PrivateLink requirement)
    - PII / compliance on specific streams that affects deployment model
-4. **Health** — `mcp__airbyte-ops-mcp__query_prod_failed_sync_attempts_for_connector` or `shared-airbyte-skills:connector-health-check` for reliability/rollout issues on the connectors they need.
-5. **If missing** — assess buildability via `shared-airbyte-skills:connector-type-identification` (build path) + public API docs + `discovering-connectors`.
+   - For documented limitations & config gotchas, search the docs: `shared-airbyte-skills:query-airbyte-docs` (Kapa Docs MCP — internal/Devin env; may be absent on a local machine, skip silently if so) and, for *upstream* API/library behaviour the connector depends on, the **deepwiki MCP** (see below).
+4. **Health** — `mcp__airbyte-ops-mcp__query_prod_failed_sync_attempts_for_connector` or `shared-airbyte-skills:connector-health-check` for reliability/rollout issues on the connectors they need. **If runtime-observability MCPs are connected** (Sentry, Datadog), use them for error stack traces / error-rate / latency on the specific connector — these are richer than prod failed-sync counts for diagnosing *why* a connector is unhealthy. They are not configured on every machine; check availability and skip silently if absent (don't claim health you couldn't verify).
+5. **If missing** — assess buildability via `shared-airbyte-skills:connector-type-identification` (build path) + the **upstream vendor API docs** (browse, or query the **deepwiki MCP** for the vendor's repo to assess endpoints/auth/pagination/rate-limits) + `discovering-connectors`. Also check whether a **similar connector already exists that could be extended** — read its local source as the template (see below). State the build approach (declarative YAML vs. low-code-with-Python vs. Java) and an effort range with a "needs SE judgment" flag where unknown.
+
+### Reading connector source locally
+
+The connector **source code** is not in any MCP — the MCPs serve registry metadata, specs, and runtime data *about* connectors, not their implementation. The code lives in the local monorepo checkout:
+
+- **Connector:** `02-repos/airbyte/airbyte-integrations/connectors/<connector-name>/` — `manifest.yaml` (declarative connectors), `metadata.yaml` (version, support level, breaking-change history), `BEHAVIOR.md` (known quirks, certified low-code connectors), `CLAUDE.md`, `README.md`, Python `source_<name>/` stream classes, and `integration_tests/` / `unit_tests/`.
+- **Python CDK:** `02-repos/airbyte-python-cdk/` — base classes, HTTP stream behaviour, error handling, pagination, incremental/cursor logic that declarative + Python connectors build on.
+- **Java CDK:** `02-repos/airbyte/airbyte-cdk/java/` — for Java/Kotlin connectors.
+- **User-facing docs + changelogs:** `02-repos/airbyte/docs/integrations/sources/<name>.md` and `.../destinations/<name>.md`.
+
+Use `shared-airbyte-skills:connector-type-identification` to determine the connector type first (manifest-only / low-code / Python CDK / Java) — it dictates which files matter.
+
+**Freshness guard (do this BEFORE relying on local source).** The checkout can be stale, which matters for build-path/CDK reasoning (it does *not* matter for existence/version — that comes from the live registry in step 2). Before reading source for a feasibility verdict:
+1. Check the checkout's age: `git -C 02-repos/airbyte log -1 --format=%cd --date=short` (and same for `airbyte-python-cdk`).
+2. If it's more than ~14 days old, refresh before reading: `git -C 02-repos/airbyte fetch --depth=1 origin master && git -C 02-repos/airbyte pull --ff-only` (and `airbyte-python-cdk` on `main`). If the pull fails (local changes / network), fall back to reading as-is and **report the checkout date in Source Coverage** so the SE knows how fresh the build-path reasoning is.
+3. Never let a stale local checkout override the live registry. If the registry says a connector exists but the local checkout doesn't have it (or vice-versa), trust the registry and note the discrepancy — the local copy is just behind.
 
 ## Step 3 — Surface what the SE still needs to ask
 
@@ -83,24 +101,21 @@ Document structure follows `_se-playbook.md` → Output Document Format (At-a-Gl
 - **Primary risk:** [the biggest unvalidated assumption or hard gap — one line]
 - **Source confidence:** [one line — N transcripts + SFDC; "see Source Coverage"]
 
-**Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [Use Case Summary](#use-case-summary) · [Fit Verdict](#fit-verdict) · [Constraints & Edge Cases](#constraints-edge-cases-given-their-context) · [Missing / Gap Connectors](#missing-gap-connectors) · [Questions to Ask the Customer](#questions-to-ask-the-customer-to-fully-validate-fit) · [Recommended Next Steps](#recommended-next-steps)
+**Jump to:** [At a Glance](#at-a-glance) · [Fit Verdict](#fit-verdict) · [Use Case Summary](#use-case-summary) · [Missing / Gap Connectors](#missing-gap-connectors) · [Constraints & Edge Cases](#constraints-edge-cases-given-their-context) · [Questions to Ask the Customer](#questions-to-ask-the-customer-to-fully-validate-fit) · [Recommended Next Steps](#recommended-next-steps) · [Source Coverage](#source-coverage)
+
+*(Section order is decision-first: the verdict and gaps come before the use-case recap and the audit trail. Source Coverage is the last content section — see `_se-playbook.md` → Progressive disclosure.)*
 
 ---
 
-## Use Case Summary
-[2-4 sentences reconstructed from Step 1: what data, from where to where, why, at what volume/cadence, with what history. State explicitly if the use case is thin.]
+## Fit Verdict
+*Lead with the answer — this is the first section after the decision card.* For each needed connector, the verdict is not just exists/missing — it's **does it solve their use case**:
 
-If every needed connector is fully validated, lead with a verdict callout:
+If every needed connector is fully validated, open with a verdict callout:
 
 ```markdown
 > [!verdict] All ==N of N== connectors validated for the use case
 > source-salesforce, source-oracle (CDC), and destination-snowflake all support the required objects, sync modes, and volume. No open questions block POC scoping.
 ```
-
----
-
-## Fit Verdict
-For each needed connector, the verdict is not just exists/missing — it's **does it solve their use case**:
 
 | System | Connector | Exists? | Use-case fit | Confidence | Top risk / gap |
 |--------|-----------|---------|--------------|------------|----------------|
@@ -121,11 +136,8 @@ Any missing/gap connector that **blocks the use case** (no connector and no viab
 
 ---
 
-## Constraints & Edge Cases (given their context)
-*The gotchas that matter for THIS use case — not generic.*
-- [e.g., "14 Shopify instances → per-store API rate limits; parallelism + scheduling matter for the 15-min target"]
-- [e.g., "Oracle CDC requires LogMiner enabled — not confirmed; without it, only full refresh / cursor available"]
-- [e.g., "NetSuite historical backfill: SuiteTalk REST returns limited history; confirm how far back they need"]
+## Use Case Summary
+*Context recap — placed after the verdict so the reader gets the answer first, then the framing.* [2-4 sentences reconstructed from Step 1: what data, from where to where, why, at what volume/cadence, with what history. State explicitly if the use case is thin.]
 
 ---
 
@@ -149,6 +161,14 @@ For each missing connector, provide:
   - Java/Kotlin CDK: typically only for DB sources/destinations — 4+ weeks
   - **Flag estimate as "needs SE judgment" if any factor is undocumented or unknown — don't guess narrow ranges**
 - **Alternative:** [is there a workaround, e.g., export to CSV and use file source?]
+
+---
+
+## Constraints & Edge Cases (given their context)
+*The gotchas that matter for THIS use case — not generic. Placed after coverage + gaps: it qualifies HOW the connectors behave in their environment.*
+- [e.g., "14 Shopify instances → per-store API rate limits; parallelism + scheduling matter for the 15-min target"]
+- [e.g., "Oracle CDC requires LogMiner enabled — not confirmed; without it, only full refresh / cursor available"]
+- [e.g., "NetSuite historical backfill: SuiteTalk REST returns limited history; confirm how far back they need"]
 
 ---
 
@@ -199,7 +219,7 @@ Append `-v2` etc. for same-day duplicates. User can suppress with `--no-save`.
 
 ### Source Coverage
 
-Include a Source Coverage section at the top reporting: MCP queries run (`list_connectors`, `get_connector_info`, etc.), transcripts referenced for source/dest list, and connectors verified for known issues.
+Include a Source Coverage section at the top reporting: MCP queries run (`list_connectors`, `get_connector_info`, etc.), transcripts referenced for source/dest list, and connectors verified for known issues. **Also report, when used:** which connectors' local source was read (and the `02-repos/airbyte` checkout date — so the SE can gauge build-path freshness), any docs queries run (Kapa / deepwiki), and any runtime-observability checks (Sentry / Datadog). If a tool was unavailable on this machine (e.g. Kapa MCP, Sentry, Datadog not configured), don't list it as consulted — note "not available" rather than implying coverage you didn't have.
 
 ### SE Identity
 
@@ -262,6 +282,8 @@ If a connector is only available on Cloud (or only on Self-Managed), flag it. Th
 ---
 
 ## Changelog
+
+- **2026-06-26** — Richer troubleshooting/feasibility kit wired in. Step 2 now reads **local connector source** (`02-repos/airbyte/airbyte-integrations/connectors/<name>/` manifest/metadata/BEHAVIOR + Python/Java CDK) for implementation details the registry spec doesn't expose (pagination, cursors, sub-streams, quirks) — the MCPs serve metadata, not code. Added a **freshness guard**: check the checkout's age and `git pull --ff-only` if >~14 days stale before relying on it; live registry (`get_connector_info`) stays the source of truth for existence/version/streams, never overridden by a stale checkout. Added **deepwiki MCP** for upstream vendor-API/library docs (public, no auth) and referenced **Kapa Docs MCP** (internal/Devin) + **Sentry/Datadog** for runtime observability — all guarded as "skip silently / note 'not available' if not configured on this machine." Source Coverage now reports local-source-read + checkout date + which docs/observability tools were (un)available.
 
 - **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.
 

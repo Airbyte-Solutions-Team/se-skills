@@ -4,6 +4,7 @@
 # dependencies = [
 #   "fastapi", "uvicorn[standard]", "pyyaml",
 #   "faster-whisper", "sounddevice", "numpy", "sse-starlette", "anthropic",
+#   "markdown",
 # ]
 # ///
 # NOTE: live-transcribe needs the PortAudio system lib for sounddevice:
@@ -652,6 +653,60 @@ def api_output_content(path: str):
     if not str(target).startswith(str(CUSTOMERS_DIR.resolve())) or not target.is_file():
         raise HTTPException(404, "Not found")
     return target.read_text()
+
+
+@app.get("/api/output/pdf")
+def api_output_pdf(path: str):
+    """Render a generated output .md to a clean PDF (server-side, via headless
+    Chrome — page breaks per section, no browser print chrome). Returns the PDF
+    bytes as an attachment."""
+    target = (CUSTOMERS_DIR / path).resolve()
+    if not str(target).startswith(str(CUSTOMERS_DIR.resolve())) or not target.is_file():
+        raise HTTPException(404, "Not found")
+    if target.suffix != ".md":
+        raise HTTPException(400, "Only .md outputs can be exported to PDF")
+    import pdf_render
+    try:
+        data = pdf_render.render_pdf(target.read_text())
+    except RuntimeError as e:        # Chrome missing
+        raise HTTPException(503, str(e))
+    except subprocess.SubprocessError as e:
+        raise HTTPException(500, f"PDF render failed: {e}")
+    fname = target.stem + ".pdf"
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+class OutputPdf(BaseModel):
+    path: str               # output file, relative to CUSTOMERS_DIR
+    append_md: str = ""     # extra markdown appended below the doc (follow-up Q&A)
+
+
+@app.post("/api/output/pdf")
+def api_output_pdf_post(body: OutputPdf):
+    """Same as the GET, but renders the doc PLUS client-supplied markdown
+    (the follow-up Q&A thread) — "Download with Q&A". Nothing is written to disk."""
+    target = (CUSTOMERS_DIR / body.path).resolve()
+    if not str(target).startswith(str(CUSTOMERS_DIR.resolve())) or not target.is_file():
+        raise HTTPException(404, "Not found")
+    if target.suffix != ".md":
+        raise HTTPException(400, "Only .md outputs can be exported to PDF")
+    import pdf_render
+    md = target.read_text() + (body.append_md or "")
+    try:
+        data = pdf_render.render_pdf(md)
+    except RuntimeError as e:        # Chrome missing
+        raise HTTPException(503, str(e))
+    except subprocess.SubprocessError as e:
+        raise HTTPException(500, f"PDF render failed: {e}")
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{target.stem}.pdf"'},
+    )
 
 
 @app.delete("/api/output")

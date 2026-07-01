@@ -71,13 +71,26 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 - **Reframe hypothesis (1 line):** [the counterintuitive point of view you'll lead with]
 - **Top goal for this call:** [the one thing this call must accomplish]
 
-**Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [What the AE Already Learned](#what-the-ae-already-learned-from-prior-gong-call) · [Company Snapshot](#company-snapshot) · [Why Airbyte (Hypothesis)](#why-airbyte-hypothesis) · [Reframe Hypothesis](#reframe-hypothesis-challenger) · [Upfront Contract](#upfront-contract-sandler) · [Where We Left Off](#where-we-left-off-if-follow-up-call) · [Discovery Questions](#discovery-questions) · [SPIN Implication Ladders](#spin-implication-ladders) · [Per-Persona Questions](#per-persona-questions) · [Suggested Agenda](#suggested-agenda-30-min) · [Watch-outs / Landmines](#watch-outs--landmines) · [Suggested Next Step](#suggested-next-step-concrete--date--attendees--agenda)
+**Jump to:** [At a Glance](#at-a-glance) · [Company Snapshot](#company-snapshot) · [Why Airbyte (Hypothesis)](#why-airbyte-hypothesis) · [What the AE Already Learned](#what-the-ae-already-learned-from-prior-gong-call) · [Where We Left Off](#where-we-left-off-if-follow-up-call) · [Reframe Hypothesis](#reframe-hypothesis-challenger) · [Upfront Contract](#upfront-contract-sandler) · [Discovery Questions](#discovery-questions) · [SPIN Implication Ladders](#spin-implication-ladders) · [Per-Persona Questions](#per-persona-questions) · [Suggested Agenda](#suggested-agenda-30-min) · [Watch-outs / Landmines](#watch-outs--landmines) · [Suggested Next Step](#suggested-next-step-concrete--date--attendees--agenda) · [Source Coverage](#source-coverage)
 
-## Source Coverage
-[AE Gong transcript path + line count, local notes, memory files, web queries — see After Generating. In cold-prep mode, state that explicitly here.]
+*(Section order is context-first: who they are and why we matter, then the AE's inheritance, then the call plan. Source Coverage is the last content section — see `_se-playbook.md`.)*
+
+## Company Snapshot
+*Context first — the SE needs to know who they are before the AE's notes mean anything.*
+- **What they do:** [1-2 sentence business description]
+- **Industry:** 
+- **Size:** [employees / ARR if known]
+- **Tech signals:** [any known tech stack, tools, or integrations — look for job postings, G2 reviews, BuiltWith signals]
+- **Recent news:** [funding, launches, acquisitions, leadership changes]
+
+## Why Airbyte (Hypothesis)
+*Positioning anchor — comes before talk tracks/agenda because it frames how the SE leads the call.* Based on their profile, the most likely reasons they're evaluating Airbyte:
+- [Hypothesis 1 — e.g., scaling data pipelines beyond a manual solution]
+- [Hypothesis 2 — e.g., replacing a brittle custom ETL or legacy tool]
+- [Hypothesis 3 — e.g., need for connector breadth or self-hosted deployment]
 
 ## What the AE Already Learned (from prior Gong call)
-*Only present if a prior AE call exists. This is the most important section — Gary inherits the AE's discovery and goes deeper from there. In cold-prep mode, skip the bullets below and emit the cold-prep risk callout instead.*
+*Only present if a prior AE call exists. The SE inherits the AE's discovery and goes deeper from there. In cold-prep mode, skip the bullets below and emit the cold-prep risk callout instead.*
 
 > [!risk] Cold-prep mode — no AE call found
 > *(Include this callout ONLY in cold-prep mode.)* Checked Gong for 14 days, no AE business-discovery call found — proceeding with cold prep on pure research. The AE→SE handoff hasn't happened; treat all customer context below as hypothesis, not confirmed.
@@ -92,18 +105,12 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 - **Open questions the AE flagged for the SE:** [things the AE said "we'll have our SE answer that"]
 - **AE's read on the deal:** [if AE shared a temperature check on the call or in notes]
 
-## Company Snapshot
-- **What they do:** [1-2 sentence business description]
-- **Industry:** 
-- **Size:** [employees / ARR if known]
-- **Tech signals:** [any known tech stack, tools, or integrations — look for job postings, G2 reviews, BuiltWith signals]
-- **Recent news:** [funding, launches, acquisitions, leadership changes]
-
-## Why Airbyte (Hypothesis)
-Based on their profile, the most likely reasons they're evaluating Airbyte:
-- [Hypothesis 1 — e.g., scaling data pipelines beyond a manual solution]
-- [Hypothesis 2 — e.g., replacing a brittle custom ETL or legacy tool]
-- [Hypothesis 3 — e.g., need for connector breadth or self-hosted deployment]
+## Where We Left Off (if follow-up call)
+*Skip this section if first call. Otherwise: ground the call in the most recent transcript — continuity belongs right after the AE inheritance.*
+- Most recent call: [date]
+- Last stated next-step: [what was committed]
+- Topics that went quiet since: [anything from earlier calls that stopped being discussed]
+- Walking-it-back signals to address: [if any stakeholder has been softening commitment]
 
 ## Reframe Hypothesis (Challenger)
 **ONE counterintuitive, data-backed reframe you'll lead with.** Not generic discovery — a point of view that reframes what they thought they were buying.
@@ -117,13 +124,6 @@ Why this reframe for this customer: [brief rationale based on their stack/indust
 
 > [!info] Upfront Contract opener
 > "We've got [duration]. I want to understand your current data integration pain and your evaluation criteria. You'll probably want to see how we handle [their likely use case]. By the end we should know whether a POC makes sense — or whether this isn't a fit. Sound good?"
-
-## Where We Left Off (if follow-up call)
-*Skip this section if first call. Otherwise: ground the call in the most recent transcript.*
-- Most recent call: [date]
-- Last stated next-step: [what was committed]
-- Topics that went quiet since: [anything from earlier calls that stopped being discussed]
-- Walking-it-back signals to address: [if any stakeholder has been softening commitment]
 
 ## Discovery Questions
 
@@ -234,6 +234,9 @@ Why this reframe for this customer: [brief rationale based on their stack/indust
 - **Proposed date:** [specific date or "within 1 week of this call"]
 - **Agenda:** [3-4 bullets]
 - **Pre-work:** [anything Gary or customer needs to do beforehand]
+
+## Source Coverage
+*Audit trail — last content section (progressive disclosure per `_se-playbook.md`).* [AE Gong transcript path + line count, local notes, memory files, web queries — see After Generating. In cold-prep mode, state that explicitly here.]
 
 ---
 

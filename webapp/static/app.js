@@ -21,9 +21,27 @@ function baseName(path) {
   const p = decodeURIComponent(path);
   return p.slice(p.lastIndexOf("/") + 1) || "output.md";
 }
-// Direct download of the raw .md source file.
-async function downloadMd(path) {
-  const text = await fetchOutputText(path);
+// Reconstruct the live follow-up thread as appendable markdown. Only real
+// answers (⚡ quick / 🔧 deep) — skill-invocation status cards (⚙️/✓/✕/⚠️) are
+// status, not content, so they're skipped. Empty string when there's nothing.
+function qaThreadMarkdown() {
+  const items = document.querySelectorAll("#doc-qa .qa-item");
+  const blocks = [];
+  items.forEach((it) => {
+    const tag = (it.querySelector(".qa-tag")?.textContent || "").trim();
+    if (tag === "⚙️" || tag === "✓" || tag === "✕" || tag === "⚠️") return;
+    const q = it.querySelector(".qa-q")?.textContent?.trim();
+    // Raw markdown stashed by askThread; fall back to rendered text.
+    const a = (it.dataset.answerMd || it.querySelector(".qa-body")?.innerText || "").trim();
+    if (q && a) blocks.push(`### Q: ${q}\n\n${a}`);
+  });
+  if (!blocks.length) return "";
+  return `\n\n---\n\n## Follow-up Q&A\n\n${blocks.join("\n\n")}\n`;
+}
+// Direct download of the raw .md source file. `extraMd` (optional) appends the
+// follow-up Q&A thread beneath the document — "Download with Q&A".
+async function downloadMd(path, extraMd = "") {
+  const text = (await fetchOutputText(path)) + (extraMd || "");
   const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -31,36 +49,57 @@ async function downloadMd(path) {
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-// Clean print view → browser "Save as PDF". Renders the same markdown the reader
-// uses (callouts, ==highlights==, tables) but without app chrome or the TOC.
-async function downloadPdf(path) {
-  const text = await fetchOutputText(path);
-  const bodyHtml = mdToHtml(text, null);
-  const title = baseName(path).replace(/\.md$/i, "");
-  const w = window.open("", "_blank");
-  if (!w) { alert("Allow pop-ups to export PDF, or use Cmd+P on the document."); return; }
-  w.document.write(`<!doctype html><html><head><meta charset="utf-8">
-    <title>${esc(title)}</title>
-    <link rel="stylesheet" href="/style.css?v=print">
-    <style>
-      html,body{background:#fff;color:#1a1d24;}
-      body{max-width:7.5in;margin:0 auto;padding:0.5in;}
-      .md-key{background:#eef1fb;color:#3b5bdb;font-weight:600;padding:0 3px;border-radius:3px;}
-      @media print{body{padding:0;max-width:none;} a[href]:after{content:"";}}
-    </style></head>
-    <body class="print-doc"><article class="md-body print-md">${bodyHtml}</article>
-    <script>window.onload=function(){setTimeout(function(){window.print();},250);};<\/script>
-    </body></html>`);
-  w.document.close();
+// Clean PDF export — server-side render (headless Chrome) so page breaks and
+// table rows behave and there's no browser print chrome (about:blank/timestamp).
+// The browser's window.print() path had none of that control. `path` is already
+// encodeURIComponent'd (from data-path). `extraMd` (optional) appends the
+// follow-up Q&A thread; when present we POST the markdown rather than GET-by-path.
+async function downloadPdf(path, extraMd = "") {
+  let res;
+  if (extraMd) {
+    res = await fetch("/api/output/pdf", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: decodeURIComponent(path), append_md: extraMd }),
+    });
+  } else {
+    res = await fetch("/api/output/pdf?path=" + path);
+  }
+  if (!res.ok) {
+    let msg = "PDF export failed.";
+    try { msg = (await res.json()).detail || msg; } catch {}
+    alert(msg);
+    return;
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = baseName(path).replace(/\.md$/i, "") + ".pdf";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 // Build a ⬇ download control with a PDF/MD popup menu. `cls` lets callers add
 // position modifiers. Wire it up afterward with wireDownloadMenus(root).
-function downloadMenuHtml(path, cls = "") {
+// `label` (optional) renders a labeled "Export ▾" trigger instead of the icon-only
+// ⬇ — used in the doc-reader header so export reads as a document-level action
+// (per UI/UX guidance: don't use icon-only for a primary document action). The
+// compact opp-row menus keep the icon-only ⬇ to stay dense.
+function downloadMenuHtml(path, cls = "", label = "") {
+  // The doc reader (dl-menu-doc) also offers "with Q&A" exports that append the
+  // follow-up thread. Other menus (opp list rows) have no thread, so they don't.
+  const withQa = cls.includes("dl-menu-doc")
+    ? `<button class="menu-item dl-pdf-qa">Download PDF with Q&amp;A</button>
+       <button class="menu-item dl-md-qa">Download Markdown with Q&amp;A</button>`
+    : "";
+  const trigger = label
+    ? `<button class="dl-btn dl-btn-labeled" title="Export this document" aria-label="Export this document">${esc(label)} <span class="dl-caret">▾</span></button>`
+    : `<button class="dl-btn" title="Download" aria-label="Download">⬇</button>`;
   return `<span class="dl-menu ${cls}" data-path="${path}">
-    <button class="dl-btn" title="Download" aria-label="Download">⬇</button>
+    ${trigger}
     <div class="dropdown-menu hidden">
       <button class="menu-item dl-pdf">Download PDF</button>
       <button class="menu-item dl-md">Download Markdown (.md)</button>
+      ${withQa}
       <button class="menu-item danger dl-del">Delete output</button>
     </div></span>`;
 }
@@ -88,6 +127,14 @@ function wireDownloadMenus(root, onDeleted) {
     };
     wrap.querySelector(".dl-pdf").onclick = (e) => { e.preventDefault(); e.stopPropagation(); closeAll(); downloadPdf(path); };
     wrap.querySelector(".dl-md").onclick = (e) => { e.preventDefault(); e.stopPropagation(); closeAll(); downloadMd(path); };
+    // "with Q&A" exports (doc reader only) — append the live thread. If the
+    // thread is empty, fall back to the plain export so the file is never broken.
+    wrap.querySelector(".dl-pdf-qa")?.addEventListener("click", (e) => {
+      e.preventDefault(); e.stopPropagation(); closeAll(); downloadPdf(path, qaThreadMarkdown());
+    });
+    wrap.querySelector(".dl-md-qa")?.addEventListener("click", (e) => {
+      e.preventDefault(); e.stopPropagation(); closeAll(); downloadMd(path, qaThreadMarkdown());
+    });
     // Delete is two-click: first click arms ("Delete — confirm?"), second deletes.
     const del = wrap.querySelector(".dl-del");
     del.onclick = async (e) => {
@@ -182,7 +229,10 @@ function mdToHtml(md, toc) {
   const inline = (t) => esc(t)
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/==([^=]+)==/g, '<mark class="md-key">$1</mark>')
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    // Bold first, non-greedy over ANY inner chars so a nested *italic* inside
+    // **bold** doesn't break the match (was `[^*]+`, which stopped at the inner
+    // `*`). The italic pass then runs on the inner text (incl. inside the strong).
+    .replace(/\*\*([\s\S]+?)\*\*/g, "<strong>$1</strong>")
     .replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>")
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
 
@@ -246,11 +296,19 @@ function mdToHtml(md, toc) {
       let buf = [];
       while (i < lines.length && /^\s*([-*]|\d+\.)\s+/.test(lines[i])) {
         let item = lines[i].replace(/^\s*([-*]|\d+\.)\s+/, "");
-        // Checkbox items render their own ☐/☑ glyph, so suppress the CSS list
-        // marker (via .md-check) to avoid a double bullet (disc + box).
-        const isCheck = /^\[(?: |[xX])\]\s*/.test(item);
-        item = item.replace(/^\[ \]\s*/, "☐ ").replace(/^\[[xX]\]\s*/, "☑ ");
-        buf.push(`<li${isCheck ? ' class="md-check"' : ""}>${inline(item)}</li>`); i++;
+        // GFM checkbox items render a styled checkbox affordance (not a raw ☐/☑
+        // glyph, which reads as a broken square bullet). The list marker is
+        // suppressed via .md-check so there's no disc + box double bullet. The
+        // checkbox is built OUTSIDE inline() so its markup isn't escaped.
+        const checkM = item.match(/^\[( |[xX])\]\s*/);
+        if (checkM) {
+          const done = checkM[1].toLowerCase() === "x";
+          const rest = inline(item.replace(/^\[( |[xX])\]\s*/, ""));
+          buf.push(`<li class="md-check"><span class="md-cbox${done ? " done" : ""}" aria-hidden="true">${done ? "✓" : ""}</span><span class="md-check-text">${rest}</span></li>`);
+        } else {
+          buf.push(`<li>${inline(item)}</li>`);
+        }
+        i++;
       }
       html += ordered ? `<ol class="md-list">${buf.join("")}</ol>` : `<ul class="md-list">${buf.join("")}</ul>`;
       continue;
@@ -712,7 +770,7 @@ async function pageOpportunity(account, slug, oppName) {
       ${outputs.length ? renderOutputGroups(outputs) : `<div class="empty">No outputs yet for this opportunity. Invoke a skill to generate one.</div>`}
     </div>`;
   document.querySelectorAll(".out-item").forEach((el) => {
-    el.onclick = () => openOutput(el.dataset.path, el.dataset.title, { account, slug, oppName });
+    el.onclick = () => navOpenOutput(el.dataset.path, el.dataset.title, { account, slug, oppName });
   });
   // onDeleted runs on user click (after refreshOutputs is defined below) → safe.
   wireDownloadMenus(view, () => refreshOutputs());
@@ -732,7 +790,7 @@ async function pageOpportunity(account, slug, oppName) {
     if (!el) return;
     el.innerHTML = outs.length ? renderOutputGroups(outs) : `<div class="empty">No outputs yet for this opportunity. Invoke a skill to generate one.</div>`;
     el.querySelectorAll(".out-item").forEach((it) => {
-      it.onclick = () => openOutput(it.dataset.path, it.dataset.title, { account, slug, oppName });
+      it.onclick = () => navOpenOutput(it.dataset.path, it.dataset.title, { account, slug, oppName });
     });
     wireDownloadMenus(el, () => refreshOutputs());
   };
@@ -890,7 +948,101 @@ function upgradeKeyValues(root) {
   });
 }
 
+// ── Decision-First reader helpers ─────────────────────────────────────────
+// These re-present structure the analytical skills ALREADY emit (the At-a-Glance
+// decision card, risk/blocker callouts) as a scannable hero + risk strip. All are
+// defensive: a doc without these blocks (call-prep, account-refresher, old docs)
+// simply skips them and renders as before.
+
+// Which At-a-Glance labels become prominent decision tiles, and in what order.
+// Matched by case-insensitive substring against the row label. Covers both the
+// analytical skills (Probability/Stage/Blocker/Motion/Confidence) and the
+// account-refresher / prep vocabulary (Current state, Key players, Last touch,
+// Open items). Each `key` de-dupes so a synonym match doesn't double a tile.
+const TILE_LABELS = [
+  { match: ["probability", "verdict", "fit", "current state", "status", "current read"], key: "verdict" },
+  { match: ["stage", "trajectory", "momentum"], key: "stage" },
+  { match: ["#1 blocker", "primary risk", "top blocker", "top risk", "main blocker", "main open", "key risk", "blocker"], key: "blocker" },
+  { match: ["recommended motion", "recommended next", "next gate", "next step", "next move", "next best", "motion"], key: "motion" },
+  { match: ["key players", "stakeholders", "owner", "champion", "economic buyer"], key: "players" },
+  { match: ["last touch", "last activity", "last contact"], key: "lasttouch" },
+  { match: ["open items", "open item", "open questions"], key: "open" },
+  { match: ["confidence", "source confidence"], key: "confidence" },
+];
+
+// Infer a sentiment class for a tile from its value text (status dots, band words,
+// probability ranges). Drives the tile's left-accent color.
+function tileSentiment(label, valueText) {
+  const t = (valueText || "").toLowerCase();
+  if (/🔴/.test(valueText) || /\bat risk\b|\bblocker\b|\bsilent\b|\bdead\b|\bdying\b|\bweak\b|<\s*20/.test(t)) return "sev-danger";
+  if (/🟡/.test(valueText) || /\bneeds\b|\bcaution\b|\bsteady\b|\bmedium\b|20[–-]40|20[–-]60|40[–-]60/.test(t)) return "sev-warn";
+  if (/🟢/.test(valueText) || /\blikely\b|\bvery likely\b|\bcommitted\b|\bstrong\b|\bviable\b|\bgo\b|60[–-]80|>\s*80/.test(t)) return "sev-good";
+  // motion/next-step tiles read as the primary action — accent them.
+  if (/motion|next/.test((label || "").toLowerCase())) return "sev-accent";
+  return "";
+}
+
+// Map a (concise) section title to a sidebar intent group. Order of groups is
+// fixed; anything unmatched falls into "Context" so nothing is dropped. Covers
+// both the analytical skills (deal-assessment, tech-qual, …) and account-refresher
+// ("Who's Who", "The Story So Far", "Watch-outs", …).
+function tocGroup(title) {
+  const t = (title || "").toLowerCase();
+  if (/at a glance|10-second|bottom line|current read|what would close|what would lose|deal blocker|where things stand|what changed|recommendation|fit verdict|verdict/.test(t)) return "Decision";
+  if (/next action|next step|next move|coaching|recommended|what'?s open|open question|watch-?out|risk|action|email|poc|plan|workshop|agenda/.test(t)) return "Execution";
+  return "Context";
+}
+const TOC_GROUP_ORDER = ["Decision", "Context", "Execution"];
+
+// Sections collapsed by default (audit / supporting detail). Matched on the H2.
+const COLLAPSE_DEFAULT = /source coverage|activity trajectory|meddpicc|coaching|appendix|raw|evidence reviewed/i;
+
+// Sections whose bullets read as risks/watch-outs — their `**Lead.** detail`
+// list items become severity cards and feed the Top-Risks strip. (account-refresher
+// "Watch-outs", deal-assessment "What Would Lose It", post-call "New Objections".)
+const RISK_SECTION = /watch-?outs?|what would lose|new objections|concerns|risks?(?!\w)|red flags/i;
+
+// Sections whose `**Lead.** detail` bullets read as neutral structured items —
+// rendered as calm info cards (no severity pill) for scannability. (Constraints &
+// Edge Cases, Decision Criteria, etc.) Distinct from RISK_SECTION (severity cards).
+const INFO_SECTION = /constraints?|edge cases?|considerations?|assumptions?/i;
+
+// Infer a severity for a risk bullet from its wording (no explicit dot in prose).
+function riskSeverity(text) {
+  const t = (text || "").toLowerCase();
+  if (/🔴|\bhigh\b|\bblocker\b|\bcan'?t close|cannot close|deal-?killer|center of gravity|fiction|dead\b/.test(t)) return "blocker";
+  return "risk";
+}
+
+// One-line preview shown when a section is collapsed. For Source Coverage, count
+// the top-level evidence bullets; otherwise use the section's first sentence.
+function sectionSummary(sectionEl, titleText) {
+  if (/source coverage/i.test(titleText)) {
+    const items = sectionEl.querySelectorAll(".sec-body > ul.md-list > li, .sec-body > .md-list > li");
+    const n = items.length;
+    if (n) return `${n} source${n === 1 ? "" : "s"} reviewed — click to expand the full audit trail.`;
+  }
+  const p = sectionEl.querySelector(".sec-body p.md-p, .sec-body li");
+  if (p) {
+    const txt = (p.textContent || "").trim().replace(/\s+/g, " ");
+    const sentence = txt.split(/(?<=[.!?])\s/)[0];
+    return sentence.length > 180 ? sentence.slice(0, 177) + "…" : sentence;
+  }
+  return "Click to expand.";
+}
+
 // `ctx` = { account, slug, oppName } so Back returns to the exact opportunity.
+// Navigate to an output by changing the hash, so the reader becomes a real
+// browser-history entry. This makes the hardware Back button pop the reader →
+// the opp page (one level), instead of skipping the reader (which left the hash
+// at #/opp/… so Back jumped up to the account page). `path` is already
+// encodeURIComponent'd (from data-path); encode once more so its slashes don't
+// split the route — the router decodes the segment once before calling openOutput.
+function navOpenOutput(path, title, ctx) {
+  const seg = encodeURIComponent(path);
+  location.hash = `#/output/${encodeURIComponent(ctx.account)}/${encodeURIComponent(ctx.slug)}/${encodeURIComponent(ctx.oppName)}/${seg}`;
+}
+
 async function openOutput(path, title, ctx) {
   const text = await api("/api/output?path=" + encodeURIComponent(decodeURIComponent(path)));
   const toc = [];
@@ -933,16 +1085,205 @@ async function openOutput(path, title, ctx) {
     if (!cur) newSection();
     cur.appendChild(n);
   }
-  // Tag the section containing "At a Glance" so it gets the summary panel.
+  // ── Promote the At-a-Glance lead into a standalone executive decision card.
+  // The lead section (content before the first H2) carries the title meta line +
+  // the At-a-Glance decision card. Pull its glance .kv rows out as decision tiles.
+  // Defensive: if there's no recognizable glance block, leave everything in the
+  // sheet (non-analytical / old docs render exactly as before).
+  let execCardHtml = "";
+  const leadSection = sections[0];
+  // The lead is the pre-first-H2 block (title meta + At-a-Glance). Promote it only
+  // when it actually holds an At-a-Glance card and isn't itself an H2 section.
+  const leadIsGlance = leadSection && /at a glance/i.test(leadSection.textContent || "")
+    && !leadSection.querySelector(":scope > h2.md-h2");
+  let glancePromoted = false;
+  if (leadIsGlance) {
+    // "Current read" narrative — the account-refresher's "10-Second Version" (or a
+    // "Current read" H3) is the human summary; surface it at the top of the card.
+    // Collect the paragraphs following that H3 until the next heading, and mark
+    // those nodes so they're not also re-injected into the sheet below.
+    let readHtml = "";
+    const readNodes = new Set();
+    const heads = Array.from(leadSection.querySelectorAll(":scope > h3.md-h3"));
+    const readHead = heads.find((h) => /\d+-second|current read|the .*version|in (a )?nutshell/i.test(h.textContent || ""));
+    if (readHead) {
+      readNodes.add(readHead);
+      let n = readHead.nextElementSibling, parts = [];
+      while (n && !/^h[1-6]$/i.test(n.tagName)) {
+        if (!n.classList?.contains("kv-grid") && (n.textContent || "").trim()) parts.push(n.innerHTML);
+        readNodes.add(n); n = n.nextElementSibling;
+      }
+      if (parts.length) readHtml = `<div class="exec-read">${parts.join(" ")}</div>`;
+    }
+    const kvs = Array.from(leadSection.querySelectorAll(".kv-grid .kv"));
+    const tiles = [], rest = [], tiledLabels = new Set();
+    for (const kv of kvs) {
+      const label = (kv.querySelector(".kv-k")?.textContent || "").trim();
+      const valHtml = kv.querySelector(".kv-v")?.innerHTML || "";
+      const valText = kv.querySelector(".kv-v")?.textContent || "";
+      const spec = TILE_LABELS.find((s) => s.match.some((m) => label.toLowerCase().includes(m)));
+      if (spec && !tiles.some((t) => t.key === spec.key)) {
+        tiles.push({ key: spec.key, label, valHtml, sev: tileSentiment(label, valText) });
+        tiledLabels.add(label.toLowerCase());
+      } else if (!tiledLabels.has(label.toLowerCase())) {
+        // skip a remainder row whose label already became a tile (meta-line dupes)
+        rest.push(`<div class="kv"><span class="kv-k">${esc(label)}</span><span class="kv-v">${valHtml}</span></div>`);
+      }
+    }
+    if (tiles.length) {
+      // order tiles by TILE_LABELS sequence
+      tiles.sort((a, b) => TILE_LABELS.findIndex((s) => s.key === a.key) - TILE_LABELS.findIndex((s) => s.key === b.key));
+      const tileHtml = tiles.map((t) =>
+        `<div class="tile ${t.sev}"><div class="tile-label">${esc(t.label)}</div><div class="tile-value">${t.valHtml}</div></div>`
+      ).join("");
+      const restHtml = rest.length ? `<div class="exec-rest"><div class="kv-grid">${rest.join("")}</div></div>` : "";
+      execCardHtml = `<div class="exec-card"><div class="exec-card-eyebrow">Executive Assessment</div>`
+        + `${readHtml}<div class="tile-grid">${tileHtml}</div>${restHtml}</div>`;
+      glancePromoted = true;
+      // The lead section's content (meta line + At-a-Glance) is now fully
+      // represented by the tiles + rest, so drop it from the sheet. Any stray
+      // CONTENT prose (rare) is re-injected; drop headings, kv-grids, and the
+      // italic "*Decision card — lead with the call.*" caption (meta, not content).
+      sections.shift();
+      const stray = Array.from(leadSection.childNodes).filter((n) => {
+        if (n.nodeType !== 1) return false;
+        if (readNodes.has(n)) return false;  // already surfaced as the exec "Current read"
+        if (n.classList?.contains("kv-grid") || /^h[1-6]$/i.test(n.tagName)) return false;
+        const txt = (n.textContent || "").trim();
+        if (!txt) return false;
+        // a wholly-italic caption line (the glance descriptor) is meta — skip it
+        if (n.tagName === "P" && n.children.length === 1 && n.firstElementChild?.tagName === "EM"
+            && n.firstElementChild.textContent.trim() === txt) return false;
+        return true;
+      });
+      if (stray.length) {
+        const lead = document.createElement("section");
+        lead.className = "doc-section";
+        stray.forEach((n) => lead.appendChild(n));
+        sections.unshift(lead);
+      }
+    }
+  }
+
+  // Tag the section containing "At a Glance" so it gets the summary panel (only
+  // reached if the glance wasn't promoted above — keeps backward behavior).
   for (const s of sections) {
     if (/at a glance/i.test(s.querySelector("h2,h3")?.textContent || "")) s.classList.add("is-glance");
   }
+
+  // ── "**Lead.** detail" bullet sections → cards. RISK_SECTION (Watch-outs / What
+  // Would Lose It / …) become SEVERITY cards (left-accent + pill, fed into the
+  // Top-Risks strip). INFO_SECTION (Constraints / Edge Cases / …) become calm
+  // NEUTRAL cards (no pill) just for scannability. Both only fire when every
+  // bullet is lead-bolded (the card shape); otherwise the list renders as-is.
+  // [!risk]-callout docs are unaffected (this is the bullet path).
+  let riskCardSeq = 0;
+  for (const s of sections) {
+    const title = s.querySelector(":scope > h2.md-h2")?.textContent || "";
+    const isRisk = RISK_SECTION.test(title);
+    const isInfo = !isRisk && INFO_SECTION.test(title);
+    if (!isRisk && !isInfo) continue;
+    const ul = s.querySelector(":scope > ul.md-list");
+    if (!ul) continue;
+    const items = Array.from(ul.children).filter((li) => li.tagName === "LI");
+    // only transform when the bullets are lead-bolded (the card shape)
+    if (!items.length || !items.every((li) => li.querySelector(":scope > strong"))) continue;
+    const wrap = document.createElement("div");
+    wrap.className = "risk-cards";
+    items.forEach((li) => {
+      const lead = li.querySelector(":scope > strong");
+      const leadText = (lead?.textContent || "").replace(/[.:]\s*$/, "").trim();
+      const sev = isRisk ? riskSeverity(li.textContent || "") : "info";
+      // body = the li's html minus the lead <strong>
+      const clone = li.cloneNode(true);
+      clone.querySelector(":scope > strong")?.remove();
+      const bodyHtml = clone.innerHTML.replace(/^[\s.:—-]+/, "");
+      const card = document.createElement("div");
+      card.className = `risk-card ${sev}`;
+      if (isRisk) card.id = `risk-card-${riskCardSeq++}`;  // only risk cards anchor the strip
+      const pill = isRisk ? `<span class="risk-sev ${sev}">${sev}</span>` : "";
+      card.innerHTML = `<div class="risk-card-head">${pill}`
+        + `<span class="risk-card-title">${esc(leadText)}</span></div>`
+        + (bodyHtml.trim() ? `<div class="risk-card-body">${bodyHtml}</div>` : "");
+      wrap.appendChild(card);
+    });
+    ul.replaceWith(wrap);
+  }
+
+  // ── Mark audit/detail sections collapsible (progressive disclosure). Wrap each
+  // H2 section's post-heading content in a .sec-body, add a toggle + a one-line
+  // summary preview. Decision sections stay open; supporting detail collapses.
+  for (const s of sections) {
+    const h2 = s.querySelector(":scope > h2.md-h2");
+    if (!h2) continue;
+    const titleText = h2.textContent || "";
+    const body = document.createElement("div");
+    body.className = "sec-body";
+    Array.from(s.childNodes).forEach((n) => { if (n !== h2) body.appendChild(n); });
+    const summary = document.createElement("div");
+    summary.className = "sec-summary";
+    s.appendChild(body);
+    summary.textContent = sectionSummary(s, titleText);
+    // toggle affordance inside the H2 band
+    const tog = document.createElement("span");
+    tog.className = "sec-toggle"; tog.textContent = "▾";
+    h2.appendChild(tog);
+    s.classList.add("collapsible");
+    s.insertBefore(summary, body);
+    if (COLLAPSE_DEFAULT.test(titleText)) s.classList.add("collapsed");
+  }
+
+  // ── Top-risk strip: a navigational summary of the doc's risk/blocker callouts
+  // AND risk-section cards (above), surfaced high on the page. Anchors back to each
+  // in place (not a copy). Scanned in document order across both shapes.
+  const riskItems = [];
+  sections.forEach((s) => {
+    s.querySelectorAll(".callout-risk, .callout-blocker, .risk-card").forEach((c) => {
+      let sev, title;
+      if (c.classList.contains("risk-card")) {
+        sev = c.classList.contains("blocker") ? "blocker" : "risk";
+        title = (c.querySelector(".risk-card-title")?.textContent || "").trim().replace(/\s+/g, " ");
+      } else {
+        sev = c.classList.contains("callout-blocker") ? "blocker" : "risk";
+        title = (c.querySelector(".callout-title")?.textContent
+          || c.querySelector(".callout-body")?.textContent || "").trim().replace(/\s+/g, " ");
+        if (!c.id) c.id = `risk-anchor-${riskItems.length}`;
+      }
+      if (!title) return;
+      riskItems.push({ sev, title: title.length > 160 ? title.slice(0, 157) + "…" : title, id: c.id });
+    });
+  });
+  // blockers first, then risks; cap to keep it a summary not a second wall
+  riskItems.sort((a, b) => (a.sev === "blocker" ? 0 : 1) - (b.sev === "blocker" ? 0 : 1));
+  const topRisks = riskItems.slice(0, 4);
+  const riskStripHtml = topRisks.length
+    ? `<div class="risk-strip"><div class="risk-strip-head">Top Risks</div>`
+      + topRisks.map((r) =>
+        `<button class="risk-item" data-risk-target="${r.id}">`
+        + `<span class="risk-sev ${r.sev}">${r.sev}</span>`
+        + `<span class="risk-title">${esc(r.title)}</span><span class="risk-arrow">→</span></button>`
+      ).join("") + `</div>`
+    : "";
+
   const sheetHtml = sections.map((s) => s.outerHTML).join("");
 
-  // Sidebar index — H2/H3 only, concise labels.
-  const tocHtml = toc
-    .filter((t) => t.level === 2 || t.level === 3)
-    .map((t) => `<a href="#toc-${t.id}" class="doc-toc-link lvl${t.level}">${esc(conciseLabel(t.text))}</a>`)
+  // Sidebar index — H2/H3 only, concise labels, grouped by intent. H3s stay with
+  // their preceding H2's group. Empty groups are omitted; order is fixed.
+  // Drop the At-a-Glance entry from the index once it's promoted to the exec card
+  // (its in-sheet anchor no longer exists). Keep it otherwise (backward compat).
+  const tocEntries = toc.filter((t) => (t.level === 2 || t.level === 3)
+    && !(glancePromoted && /at a glance|\d+-second|current read|in (a )?nutshell/i.test(t.text)));
+  let lastH2Group = "Context";
+  const grouped = { Decision: [], Context: [], Execution: [] };
+  tocEntries.forEach((t) => {
+    const label = conciseLabel(t.text);
+    if (t.level === 2) lastH2Group = tocGroup(label);
+    const g = grouped[lastH2Group] || grouped["Context"];
+    g.push(`<a href="#toc-${t.id}" class="doc-toc-link lvl${t.level}">${esc(label)}</a>`);
+  });
+  const tocHtml = TOC_GROUP_ORDER
+    .filter((g) => grouped[g].length)
+    .map((g) => `<div class="doc-toc-group">${g}</div>${grouped[g].join("")}`)
     .join("");
 
   const backHref = ctx
@@ -951,54 +1292,149 @@ async function openOutput(path, title, ctx) {
   view.innerHTML = `
     <div class="row"><h1>${esc(docTitle)}</h1>
       <div class="row-actions">
-        ${downloadMenuHtml(encodeURIComponent(decodeURIComponent(path)), "dl-menu-doc")}
+        <button class="ghost" id="doc-chat-toggle" title="Ask a follow-up or run a skill on this doc">💬 Chat</button>
+        ${downloadMenuHtml(encodeURIComponent(decodeURIComponent(path)), "dl-menu-doc", "Export")}
         <button class="ghost" id="doc-back">← Back</button>
       </div></div>
-    <div class="doc-layout">
+    <div class="doc-layout" id="doc-layout">
       ${tocHtml ? `<aside class="doc-toc"><div class="doc-toc-head">On this page</div>${tocHtml}</aside>` : ""}
       <article class="md-body">
+        ${execCardHtml}
+        ${riskStripHtml}
         <div class="doc-sheet">${sheetHtml}</div>
+      </article>
+      <aside class="doc-chat">
+        <div class="doc-chat-head">Ask about this deal
+          <button class="doc-chat-close" id="doc-chat-close" title="Hide chat" aria-label="Hide chat">✕</button>
+        </div>
+        <div class="doc-assist">
+          <div>
+            <div class="doc-assist-group-head">Suggested questions</div>
+            <div class="doc-chips" id="doc-chips"></div>
+          </div>
+          <div>
+            <div class="doc-assist-group-head">Actions</div>
+            <div class="doc-chips" id="doc-actions"></div>
+          </div>
+        </div>
         <div class="doc-qa" id="doc-qa"></div>
         <div class="doc-askbar">
-          <input id="doc-ask" type="text" autocomplete="off" placeholder="Ask a follow-up about this document…" />
+          <textarea id="doc-ask" rows="1" autocomplete="off" placeholder="Ask a follow-up about this document…"></textarea>
           <button class="primary small" id="doc-ask-send">Ask</button>
         </div>
-      </article>
+      </aside>
     </div>`;
   if (ctx) setCrumbs([...(await accountCrumbs(ctx.account)),
                       { label: ctx.account, href: `#/account/${encodeURIComponent(ctx.account)}` },
                       { label: ctx.oppName, href: backHref },
                       { label: "output" }]);
   else setCrumbs([{ label: "Team", href: "#/" }, { label: "output" }]);
-  // Deterministic Back — go to the opp page in one step. Set the hash AND
-  // re-render directly: the output was opened without changing the hash, so it
-  // may already equal backHref (in which case setting it fires no hashchange).
+  // Deterministic Back — go to the opp page in one step. The reader is now its
+  // own route (#/output/…), so the hardware Back button already pops here to the
+  // opp page. This in-app button mirrors that: setting the hash fires a normal
+  // hashchange → route(). (Guard the equal-hash case for safety.)
   const goBack = () => {
     const target = backHref || "#/";
-    if (location.hash === target) route();   // same hash → no event, render manually
-    else location.hash = target;             // different → hashchange fires route()
+    if (location.hash === target) route();
+    else location.hash = target;
   };
   document.getElementById("doc-back").onclick = goBack;
   // After deleting the open output, leave the now-gone doc → back to the opp.
   wireDownloadMenus(view, goBack);
 
+  // Collapsible sections — clicking the H2 band toggles its body. Ignore clicks
+  // on links inside the heading (there are none today, but stay safe).
+  view.querySelectorAll(".doc-section.collapsible > .md-h2").forEach((h2) => {
+    h2.onclick = (e) => {
+      if (e.target.closest("a")) return;
+      h2.closest(".doc-section").classList.toggle("collapsed");
+    };
+  });
+
+  // Scroll an element into view, opening any collapsed section that contains it
+  // first (so jumping from the TOC or a risk chip into a folded section works).
+  const revealTarget = (el) => {
+    if (!el) return;
+    const sec = el.closest(".doc-section.collapsible");
+    if (sec) sec.classList.remove("collapsed");
+    // wait a frame so layout settles after expand, then scroll + flash
+    requestAnimationFrame(() => { el.scrollIntoView({ behavior: "smooth", block: "start" }); flashEl(el); });
+  };
+
   // Sidebar links scroll-jump locally (no router involvement).
   view.querySelectorAll(".doc-toc-link").forEach((a) => {
     a.onclick = (e) => {
       e.preventDefault();
-      const el = document.getElementById(a.getAttribute("href").slice(5)); // strip "#toc-"
-      if (el) { el.scrollIntoView({ behavior: "smooth", block: "start" }); flashEl(el); }
+      revealTarget(document.getElementById(a.getAttribute("href").slice(5))); // strip "#toc-"
     };
   });
 
+  // Top-risk strip → jump to the source callout in place (open it if collapsed).
+  view.querySelectorAll(".risk-item").forEach((b) => {
+    b.onclick = () => revealTarget(document.getElementById(b.dataset.riskTarget));
+  });
+
+  // In-doc anchor links (e.g. the exec card's "see Source Coverage") should also
+  // open a collapsed target section before scrolling — route them via revealTarget.
+  view.querySelectorAll('.md-body a[href^="#"]:not(.doc-toc-link)').forEach((a) => {
+    const id = a.getAttribute("href").slice(1);
+    if (!id) return;
+    a.addEventListener("click", (e) => {
+      const el = document.getElementById(id);
+      if (el) { e.preventDefault(); revealTarget(el); }
+    });
+  });
+
+  // Scroll-spy: highlight the TOC link for the section currently in view.
+  const tocLinks = Array.from(view.querySelectorAll(".doc-toc-link"));
+  const headings = Array.from(view.querySelectorAll(".md-body .md-h2, .md-body .md-h3"));
+  if (tocLinks.length && headings.length && "IntersectionObserver" in window) {
+    const linkFor = (id) => tocLinks.find((a) => a.getAttribute("href") === `#toc-${id}`);
+    let activeId = null;
+    const setActive = (id) => {
+      if (id === activeId) return;
+      activeId = id;
+      tocLinks.forEach((a) => a.classList.remove("active"));
+      const link = id && linkFor(id);
+      if (link) link.classList.add("active");
+    };
+    const visible = new Map();
+    const obs = new IntersectionObserver((entries) => {
+      entries.forEach((en) => {
+        if (en.isIntersecting) visible.set(en.target.id, en.boundingClientRect.top);
+        else visible.delete(en.target.id);
+      });
+      if (visible.size) {
+        // topmost visible heading wins
+        const top = [...visible.entries()].sort((a, b) => a[1] - b[1])[0][0];
+        setActive(top);
+      }
+    }, { rootMargin: "-80px 0px -65% 0px", threshold: 0 });
+    headings.forEach((h) => obs.observe(h));
+  }
+
   // Follow-up chat against this document (quick → Claude API; deep → claude -p).
+  // The chat panel is HIDDEN by default so the document uses the full width — it
+  // only takes a column once you open it (toggle button, or auto on send/recover).
+  const layout = document.getElementById("doc-layout");
   const askInput = document.getElementById("doc-ask");
   const askSend = document.getElementById("doc-ask-send");
   const thread = document.getElementById("doc-qa");
+  const openChat = (focus = true) => {
+    layout.classList.add("has-chat");
+    if (focus) askInput.focus();
+  };
+  const closeChat = () => layout.classList.remove("has-chat");
+  document.getElementById("doc-chat-toggle").onclick = () =>
+    layout.classList.contains("has-chat") ? closeChat() : openChat();
+  document.getElementById("doc-chat-close").onclick = closeChat;
+
   const docAsk = () => {
     const q = askInput.value.trim();
     if (!q) return;
     askInput.value = "";
+    autosizeTextarea(askInput);  // collapse back to one line after sending
+    openChat(false);             // make sure the thread is visible
     // "run connector feasibility" → invoke that skill (generates a saved output
     // on the opp page), instead of answering as a doc question. Needs opp context.
     const skill = ctx?.account && ctx?.slug ? detectSkillInvocation(q) : null;
@@ -1009,7 +1445,71 @@ async function openOutput(path, title, ctx) {
     });
   };
   askSend.onclick = docAsk;
-  askInput.onkeydown = (e) => { if (e.key === "Enter") docAsk(); };
+  askInput.addEventListener("input", () => autosizeTextarea(askInput));
+  // Enter sends; Shift+Enter inserts a newline (the box grows to fit).
+  askInput.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); docAsk(); } };
+
+  // ── Action-oriented assistant panel: suggested-question chips + workflow
+  // actions, all wired to capabilities that already exist (docAsk / invoke / DL).
+  const chipsEl = document.getElementById("doc-chips");
+  const actionsEl = document.getElementById("doc-actions");
+  if (chipsEl) {
+    const lc = (docTitle || "").toLowerCase();
+    const suggestions = ["What's the single biggest risk here?", "What should the AE do next?"];
+    if (/deal assessment|probability|deal/.test(lc)) suggestions.unshift("Why is the probability in this band?");
+    else if (/tech qual|technical/.test(lc)) suggestions.unshift("What's the biggest technical risk?");
+    else if (/connector|feasib/.test(lc)) suggestions.unshift("Which connectors are the riskiest?");
+    else if (/poc|proof of concept/.test(lc)) suggestions.unshift("What are the exit criteria?");
+    else suggestions.unshift("Summarize this in three bullets.");
+    chipsEl.innerHTML = suggestions.slice(0, 4)
+      .map((q) => `<button class="doc-chip">${esc(q)}</button>`).join("");
+    chipsEl.querySelectorAll(".doc-chip").forEach((c) => {
+      c.onclick = () => { askInput.value = c.textContent; autosizeTextarea(askInput); docAsk(); };
+    });
+  }
+  if (actionsEl) {
+    const acts = [
+      { label: "📋 Copy summary", id: "copy" },
+      { label: "✉️ Draft follow-up email", id: "email" },
+      { label: "⬇ Export brief", id: "export" },
+    ];
+    actionsEl.innerHTML = acts.map((a) => `<button class="doc-action" data-act="${a.id}">${a.label}</button>`).join("");
+    actionsEl.querySelectorAll(".doc-action").forEach((b) => {
+      b.onclick = () => {
+        const act = b.dataset.act;
+        if (act === "copy") {
+          const txt = (view.querySelector(".exec-card")?.innerText
+            || view.querySelector(".md-body")?.innerText || "").trim();
+          navigator.clipboard?.writeText(txt).then(() => {
+            b.classList.add("copied"); const o = b.textContent; b.textContent = "✓ Copied";
+            setTimeout(() => { b.classList.remove("copied"); b.textContent = o; }, 1500);
+          });
+        } else if (act === "email") {
+          askInput.value = "draft a follow-up email"; autosizeTextarea(askInput); docAsk();  // routes via detectSkillInvocation
+        } else if (act === "export") {
+          view.querySelector(".dl-menu-doc .dl-btn")?.click();
+        }
+      };
+    });
+  }
+
+  // Recover an in-flight skill run started earlier from this chat (e.g. next-move).
+  // The job keeps running server-side even after leaving; re-attach so re-opening
+  // the output shows its live status again (mirrors the opp page's recovery).
+  if (ctx?.account && ctx?.slug) {
+    const jobs = await api(`/api/jobs?account=${encodeURIComponent(ctx.account)}&opp_slug=${encodeURIComponent(ctx.slug)}`).catch(() => []);
+    const running = (jobs || []).find((j) => j.status === "running" && j.skill && j.skill !== "output-ask");
+    if (running) { openChat(false); reattachInvoke(thread, running, ctx); }
+  }
+}
+
+// Grow a chat textarea to fit its content, up to `maxPx` then scroll. Used by
+// the output reader's follow-up box so a long question wraps instead of
+// scrolling horizontally inside one line.
+function autosizeTextarea(el, maxPx = 160) {
+  el.style.height = "auto";
+  el.style.height = Math.min(el.scrollHeight, maxPx) + "px";
+  el.style.overflowY = el.scrollHeight > maxPx ? "auto" : "hidden";
 }
 
 // Shared follow-up-chat renderer: append a Q card + answer to `threadEl`, POST
@@ -1033,7 +1533,11 @@ async function askThread(threadEl, q, endpoint, payload) {
     if (data.mode === "deep") {
       tag.textContent = "🔧"; bodyEl.innerHTML = `<span class="muted">searching codebase &amp; skills…</span>`;
       await pollJob(data.job_id, (job) => {
-        if (job.status !== "running") { bodyEl.innerHTML = mdToHtml(job.stdout || job.stderr || "(no output)"); }
+        if (job.status !== "running") {
+          const md = job.stdout || job.stderr || "(no output)";
+          item.dataset.answerMd = md;   // raw md for "Download with Q&A"
+          bodyEl.innerHTML = mdToHtml(md);
+        }
       });
     } else {
       tag.textContent = "⚠️"; bodyEl.textContent = data.reason || data.error || "Unavailable.";
@@ -1047,53 +1551,73 @@ async function askThread(threadEl, q, endpoint, payload) {
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    buf += dec.decode(value, { stream: true });
+    // Normalize CRLF → LF: sse-starlette emits "event: …\r\ndata: …\r\n\r\n",
+    // so split-on-blank-line and the regex must not assume bare \n.
+    buf += dec.decode(value, { stream: true }).replace(/\r\n/g, "\n");
     const events = buf.split("\n\n"); buf = events.pop();
     for (const ev of events) {
       const m = ev.match(/^event: (\w+)\ndata: (.*)$/ms);
       if (!m) continue;
-      if (m[1] === "token") { acc += JSON.parse(m[2]).text; bodyEl.innerHTML = mdToHtml(acc); }
+      if (m[1] === "token") { acc += JSON.parse(m[2]).text; item.dataset.answerMd = acc; bodyEl.innerHTML = mdToHtml(acc); }
       else if (m[1] === "error") { bodyEl.innerHTML = `<span class="muted">Error: ${esc(JSON.parse(m[2]).error)}</span>`; }
     }
   }
+}
+
+// Append a ⚙️-running skill card to the thread (shared by fresh invokes and the
+// re-attach recovery). Returns { item, tag, bodyEl } for the caller to poll.
+function appendInvokeCard(threadEl, q, skillId, oppName) {
+  const item = document.createElement("div");
+  item.className = "qa-item";
+  item.innerHTML = `<div class="qa-q">${esc(q)}</div>`
+    + `<div class="qa-a"><span class="qa-tag">⚙️</span><span class="qa-body">`
+    + `<span class="muted">Running <strong>${esc(prettySkill(skillId))}</strong> for ${esc(oppName)}… `
+    + `(keeps running even if you leave this page; result lands in Generated Outputs)</span></span></div>`;
+  threadEl.appendChild(item);
+  item.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  return { item, tag: item.querySelector(".qa-tag"), bodyEl: item.querySelector(".qa-body") };
+}
+
+// Poll an invoke job to completion and render the ✓ / ✕ end-state onto an
+// already-appended card. Shared by invokeFromChat and reattachInvoke.
+async function pollInvokeJob(card, jobId, skillId, ctx) {
+  await pollJob(jobId, (job) => {
+    if (job.status === "running") return;
+    if (job.ok) {
+      card.tag.textContent = "✓";
+      const oppHref = `#/opp/${encodeURIComponent(ctx.account)}/${encodeURIComponent(ctx.slug)}/${encodeURIComponent(ctx.oppName)}`;
+      card.bodyEl.innerHTML = `<strong>${esc(prettySkill(skillId))}</strong> finished — saved to `
+        + `<a href="${oppHref}">Generated Outputs</a> for ${esc(ctx.oppName)}.`;
+    } else {
+      card.tag.textContent = "✕";
+      card.bodyEl.innerHTML = `<span class="muted">${esc(prettySkill(skillId))} finished with an error. `
+        + `Check the opportunity page, or try the Invoke Skill button there.</span>`;
+    }
+  });
 }
 
 // Run a skill from the output chat bar. Mirrors the opp-page invoke flow:
 // POST /api/invoke (scoped to this opp), poll the job, and report that the
 // result lands in the opp's Generated Outputs. `ctx` = { account, slug, oppName }.
 async function invokeFromChat(threadEl, q, skill, ctx) {
-  const item = document.createElement("div");
-  item.className = "qa-item";
-  item.innerHTML = `<div class="qa-q">${esc(q)}</div>`
-    + `<div class="qa-a"><span class="qa-tag">⚙️</span><span class="qa-body">`
-    + `<span class="muted">Running <strong>${esc(prettySkill(skill.id))}</strong> for ${esc(ctx.oppName)}… `
-    + `(keeps running even if you leave this page; result lands in Generated Outputs)</span></span></div>`;
-  threadEl.appendChild(item);
-  item.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  const bodyEl = item.querySelector(".qa-body"), tag = item.querySelector(".qa-tag");
-
+  const card = appendInvokeCard(threadEl, q, skill.id, ctx.oppName);
   try {
     const res = await api("/api/invoke", {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ account: ctx.account, opportunity: ctx.oppName, opp_slug: ctx.slug, skill: skill.id }),
     });
-    await pollJob(res.job_id, (job) => {
-      if (job.status === "running") return;
-      if (job.ok) {
-        tag.textContent = "✓";
-        const oppHref = `#/opp/${encodeURIComponent(ctx.account)}/${encodeURIComponent(ctx.slug)}/${encodeURIComponent(ctx.oppName)}`;
-        bodyEl.innerHTML = `<strong>${esc(prettySkill(skill.id))}</strong> finished — saved to `
-          + `<a href="${oppHref}">Generated Outputs</a> for ${esc(ctx.oppName)}.`;
-      } else {
-        tag.textContent = "✕";
-        bodyEl.innerHTML = `<span class="muted">${esc(prettySkill(skill.id))} finished with an error. `
-          + `Check the opportunity page, or try the Invoke Skill button there.</span>`;
-      }
-    });
+    await pollInvokeJob(card, res.job_id, skill.id, ctx);
   } catch (e) {
-    tag.textContent = "⚠️";
-    bodyEl.innerHTML = `<span class="muted">Couldn't start ${esc(prettySkill(skill.id))}: ${esc(e.message)}</span>`;
+    card.tag.textContent = "⚠️";
+    card.bodyEl.innerHTML = `<span class="muted">Couldn't start ${esc(prettySkill(skill.id))}: ${esc(e.message)}</span>`;
   }
+}
+
+// Re-attach to a skill run that's still executing (started earlier from this
+// chat, survived a leave/return). Renders the same ⚙️→✓/✕ card and polls it.
+function reattachInvoke(threadEl, job, ctx) {
+  const card = appendInvokeCard(threadEl, `Resumed: ${prettySkill(job.skill)}`, job.skill, ctx.oppName);
+  pollInvokeJob(card, job.job_id, job.skill, ctx);
 }
 
 // Brief highlight on an anchored element (reuses the help-flash animation).
@@ -1354,7 +1878,7 @@ async function pageLive(account, slug, oppName) {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        buf += dec.decode(value, { stream: true });
+        buf += dec.decode(value, { stream: true }).replace(/\r\n/g, "\n");  // CRLF → LF (sse-starlette)
         const events = buf.split("\n\n"); buf = events.pop();
         for (const ev of events) {
           const m = ev.match(/^event: (\w+)\ndata: (.*)$/ms);
@@ -1549,6 +2073,15 @@ async function route() {
     if (kind === "account") return pageAccount(decodeURIComponent(parts[2]));
     if (kind === "opp") return pageOpportunity(
       decodeURIComponent(parts[2]), decodeURIComponent(parts[3]), decodeURIComponent(parts[4] || parts[3]));
+    if (kind === "output") {
+      const account = decodeURIComponent(parts[2]);
+      const slug = decodeURIComponent(parts[3]);
+      const oppName = decodeURIComponent(parts[4] || parts[3]);
+      // parts[5] is the double-encoded path; decode once → the single-encoded
+      // form openOutput expects (it decodeURIComponent's internally).
+      const path = decodeURIComponent(parts.slice(5).join("/"));
+      return openOutput(path, "", { account, slug, oppName });
+    }
     if (kind === "live") return pageLive(
       decodeURIComponent(parts[2]), decodeURIComponent(parts[3]), decodeURIComponent(parts[4] || parts[3]));
     pageMembers();

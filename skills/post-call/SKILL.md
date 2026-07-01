@@ -67,19 +67,32 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 - **Action items:** ==[N]== · **Next step:** [one line]
 - **Deal-assessment update needed?** [yes/no — if yes, one line on what changed]
 
-**Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [Attendees](#attendees) · [Key Takeaways](#key-takeaways) · [Technical Notes](#technical-notes) · [Action Items](#action-items) · [Open Questions / Follow-ups](#open-questions--follow-ups) · [New Objections / Concerns Surfaced](#new-objections--concerns-surfaced) · [Deal Health Signals](#deal-health-signals) · [Next Step](#next-step)
+**Jump to:** [At a Glance](#at-a-glance) · [Key Takeaways](#key-takeaways) · [Deal Health Signals](#deal-health-signals) · [New Objections / Concerns Surfaced](#new-objections--concerns-surfaced) · [Action Items](#action-items) · [Technical Notes](#technical-notes) · [Open Questions / Follow-ups](#open-questions--follow-ups) · [Attendees](#attendees) · [Next Step](#next-step) · [Source Coverage](#source-coverage)
 *(omit the Technical Notes anchor if the call had no technical content)*
 *(Append [MEDDPICC Quick Pass](#meddpicc-quick-pass) and [Coaching Observations](#coaching-observations) to the Jump-to line only when those conditional sections are present — see SE Best Practices below.)*
-
-## Source Coverage
-[Transcript read in full (lines read / total), attribution determination, prior transcripts/summaries cross-referenced, memory files — see Source Coverage section above.]
-
-## Attendees
-- **Airbyte:** [names + roles]
-- **Customer:** [names + roles]
+*(Section order is "what changed → what to do": takeaways, health, and new objections lead; the attendee roster and source audit sit at the bottom — see `_se-playbook.md`.)*
 
 ## Key Takeaways
 3–6 bullets capturing the most important things learned. Lead with what changed in your understanding of the deal, not a chronological recap.
+
+## Deal Health Signals
+Quick read on what this call moved (or didn't):
+- **Positive signals:** [what they said/did that's good]
+- **Negative signals:** [hesitation, delays, scope shrinkage, etc.]
+- **Recommended Deal Assessment update?** [yes/no — if yes, briefly say what changed]
+
+> [!verdict] [Title the strongest positive signal — only if the call produced a genuinely strong positive]
+> [The signal and why it moves the deal forward — e.g., EB confirmed budget, champion pushed timeline up. Omit if the call was neutral or negative.]
+
+## New Objections / Concerns Surfaced
+Anything the customer raised that wasn't on your radar before the call — pricing, security, deployment model, competitor mentions, internal politics. *(Placed high: a newly-surfaced objection is often the most important thing that changed, and it usually drives an action item below.)*
+
+> [!risk] [Title the new objection — only if a genuinely new concern surfaced]
+> [What they raised, who raised it, and the severity. Omit this callout if no new objection surfaced; if multiple, use one callout each for the material ones.]
+
+## Action Items
+Markdown checklist. Each item: who owns it, what they're doing, by when (if stated).
+- [ ] **[Owner]** — [action] *(by [date if mentioned])*
 
 ## Technical Notes
 *Include this section ONLY if the call surfaced technical scope (sources, destinations, volume, latency, deployment, auth, sizing/pricing). Omit entirely for a purely business/exec call.*
@@ -94,30 +107,18 @@ Capture the technical FACTS as stated on this call — raw, attributed, not synt
 > [!info] Feeds tech-qual
 > This call added technical scope. Run or update `tech-qual` to consolidate these facts into the canonical **Technical Requirements & Scope** section — don't let scope live only in scattered call summaries. (Routed in "After Generating" below.)
 
-## Action Items
-Markdown checklist. Each item: who owns it, what they're doing, by when (if stated).
-- [ ] **[Owner]** — [action] *(by [date if mentioned])*
-
 ## Open Questions / Follow-ups
 Questions the customer asked that weren't fully answered, or that you committed to follow up on. These should feed the customer's Notion `Q&A` page.
 
-## New Objections / Concerns Surfaced
-Anything the customer raised that wasn't on your radar before the call — pricing, security, deployment model, competitor mentions, internal politics.
-
-> [!risk] [Title the new objection — only if a genuinely new concern surfaced]
-> [What they raised, who raised it, and the severity. Omit this callout if no new objection surfaced; if multiple, use one callout each for the material ones.]
-
-## Deal Health Signals
-Quick read on what this call moved (or didn't):
-- **Positive signals:** [what they said/did that's good]
-- **Negative signals:** [hesitation, delays, scope shrinkage, etc.]
-- **Recommended Deal Assessment update?** [yes/no — if yes, briefly say what changed]
-
-> [!verdict] [Title the strongest positive signal — only if the call produced a genuinely strong positive]
-> [The signal and why it moves the deal forward — e.g., EB confirmed budget, champion pushed timeline up. Omit if the call was neutral or negative.]
+## Attendees
+- **Airbyte:** [names + roles]
+- **Customer:** [names + roles]
 
 ## Next Step
 The single most important next action. Be specific — "send POC proposal by Friday" not "follow up".
+
+## Source Coverage
+*Audit trail — last content section (progressive disclosure per `_se-playbook.md`).* [Transcript read in full (lines read / total), attribution determination, prior transcripts/summaries cross-referenced, memory files — see Source Coverage section above.]
 
 ## After Generating the Summary
 
