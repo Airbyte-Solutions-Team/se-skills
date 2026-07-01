@@ -218,6 +218,69 @@ async function pollJob(jobId, onTick) {
   }
 }
 
+// ── Global skill-completion toasts ─────────────────────────────────────────
+// A skill run keeps executing server-side even after you leave the opp/chat
+// page. `trackJob` owns a page-independent poller: register a running job once
+// (from any invoke entry point), and when it finishes a toast slides in top-right
+// — "✓ <skill> for <opp> is ready" with an Open button + an X. Session-only
+// (in-memory `_tracked` set dedupes; a hard reload forgets in-flight jobs — the
+// output still lands on the opp page).
+const _tracked = new Set();
+
+// `ctx` = { account, slug, oppName, skill } — everything the toast + deep-link need.
+function trackJob(jobId, ctx) {
+  if (!jobId || _tracked.has(jobId)) return;
+  _tracked.add(jobId);
+  pollJob(jobId).then((job) => {
+    _tracked.delete(jobId);
+    if (!job) return;  // job vanished (server restart) — nothing to notify
+    showSkillToast(job, ctx);
+  }).catch(() => _tracked.delete(jobId));
+}
+
+// Find the newest output file for a finished skill and open it in the reader.
+// The job object has no output path, so re-list the opp's outputs and pick the
+// most recent one for that skill (falls back to the newest of any skill).
+async function openSkillOutput(ctx) {
+  const outs = await api(`/api/accounts/${encodeURIComponent(ctx.account)}/outputs?opp=${encodeURIComponent(ctx.slug)}`).catch(() => []);
+  if (!outs || !outs.length) { location.hash = `#/opp/${encodeURIComponent(ctx.account)}/${encodeURIComponent(ctx.slug)}/${encodeURIComponent(ctx.oppName)}`; return; }
+  const bySkill = outs.filter((o) => !ctx.skill || o.skill === ctx.skill);
+  const pick = (bySkill.length ? bySkill : outs).sort((a, b) => (b.mtime || 0) - (a.mtime || 0))[0];
+  navOpenOutput(pick.path, `${prettySkill(pick.skill)} — ${pick.filename}`, ctx);
+}
+
+// Render one completion toast. Auto-dismisses after ~10s; X dismisses now; Open
+// deep-links to the freshly-generated output. Errors get a red toast, no Open.
+function showSkillToast(job, ctx) {
+  const wrap = document.getElementById("toast-container");
+  if (!wrap) return;
+  const ok = job.ok;
+  const skill = prettySkill(job.skill || ctx.skill || "run");
+  const opp = ctx.oppName || job.opportunity || ctx.account || "";
+  const el = document.createElement("div");
+  el.className = `toast ${ok ? "ok" : "err"}`;
+  el.innerHTML =
+    `<span class="toast-icon">${ok ? "✓" : "✕"}</span>`
+    + `<div class="toast-body">`
+    + `<div class="toast-title">${esc(skill)} ${ok ? "is ready" : "failed"}</div>`
+    + `<div class="toast-sub">${esc(opp)}</div></div>`
+    + (ok ? `<button class="toast-open">Open</button>` : "")
+    + `<button class="toast-x" aria-label="Dismiss">✕</button>`;
+  wrap.appendChild(el);
+  requestAnimationFrame(() => el.classList.add("show"));
+
+  let timer = null;
+  const close = () => {
+    if (timer) clearTimeout(timer);
+    el.classList.remove("show");
+    setTimeout(() => el.remove(), 250);
+  };
+  el.querySelector(".toast-x").onclick = close;
+  const openBtn = el.querySelector(".toast-open");
+  if (openBtn) openBtn.onclick = () => { close(); openSkillOutput(ctx); };
+  timer = setTimeout(close, 10000);
+}
+
 // Minimal, dependency-free Markdown → HTML for rendering skill outputs nicely.
 // Handles: headings, bold/italic, inline code, code fences, tables, blockquotes,
 // hr, ordered/unordered lists (incl. [ ] checkboxes), paragraphs.
@@ -827,7 +890,8 @@ async function pageOpportunity(account, slug, oppName) {
   // Outputs (and chat-only skills like next-move show their text when opened).
   const existing = await api(`/api/jobs?account=${encodeURIComponent(account)}&opp_slug=${encodeURIComponent(slug)}`).catch(() => []);
   const running = existing.find((j) => j.status === "running");
-  if (running) { _lastStatus = "running"; renderJob(running); watch(running.job_id); }
+  if (running) { _lastStatus = "running"; renderJob(running); watch(running.job_id);
+    trackJob(running.job_id, { account, slug, oppName, skill: running.skill || null }); }
 
   // Start a run. `skill` = run that named skill (typed text becomes context);
   // otherwise run the typed text as a freeform instruction.
@@ -846,6 +910,9 @@ async function pageOpportunity(account, slug, oppName) {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify(payload),
       });
+      // Global toast when it finishes (fires even if you navigate away); the
+      // inline `watch` handles the on-page status while you stay here.
+      trackJob(res.job_id, { account, slug, oppName, skill: skill || null });
       await watch(res.job_id);
     } catch (e) {
       fStatus.className = "status err"; fStatus.textContent = "Error: " + e.message;
@@ -1606,6 +1673,7 @@ async function invokeFromChat(threadEl, q, skill, ctx) {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ account: ctx.account, opportunity: ctx.oppName, opp_slug: ctx.slug, skill: skill.id }),
     });
+    trackJob(res.job_id, { ...ctx, skill: skill.id });  // global toast when it finishes
     await pollInvokeJob(card, res.job_id, skill.id, ctx);
   } catch (e) {
     card.tag.textContent = "⚠️";
@@ -1617,6 +1685,7 @@ async function invokeFromChat(threadEl, q, skill, ctx) {
 // chat, survived a leave/return). Renders the same ⚙️→✓/✕ card and polls it.
 function reattachInvoke(threadEl, job, ctx) {
   const card = appendInvokeCard(threadEl, `Resumed: ${prettySkill(job.skill)}`, job.skill, ctx.oppName);
+  trackJob(job.job_id, { ...ctx, skill: job.skill || null });  // global toast when it finishes
   pollInvokeJob(card, job.job_id, job.skill, ctx);
 }
 
