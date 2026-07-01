@@ -27,7 +27,7 @@ The router operates at a **deliberately shallow read depth**:
 
 - ✅ **Reads in full:** prior qualification docs (`biz-qual`, `tech-qual`, `deployment-qual`, `connector-feasibility`, `poc-plan`, prior Deal Assessment), customer-specific memory files, the most recent transcript only
 - ✅ **Reads metadata:** filenames, dates, and line counts of older transcripts and other files
-- ❌ **Does NOT read in full:** older transcripts (older than the most recent), large raw notes, prior workflow-status outputs
+- ❌ **Does NOT read in full:** older transcripts (older than the most recent), large raw notes, prior next-move outputs
 
 **Why this design:**
 - The router's job is to decide *which skill to invoke next*, not to do the deep synthesis itself
@@ -144,9 +144,11 @@ Any stage + objection raised on most recent call
 
 ## Output Format
 
+*Lead with an H1 title (the web app reader uses the H1 as the page title). Keep the rest light-touch — no At-a-Glance/Jump-to needed.*
+
 ---
 
-## SE Workflow: [Customer] — [Inferred Stage]
+# SE Workflow: [Customer] — [Inferred Stage]
 **Date:** [today, long form] · **Days since most recent activity:** [N days] · **Source map:** [N] transcripts, [N] qual docs, memory [yes/no]
 
 ---
@@ -247,17 +249,19 @@ Only include this section if external actions actually apply — don't fabricate
 
 ## After Generating
 
-### Do NOT auto-save (router is exempt from the auto-save rule)
+### Auto-save (default)
 
-Router output is **ephemeral by design**. By the time the user acts on the recommendations, the state has changed — saved router docs become stale within hours and add noise to `outputs/workflow-status/` with no future reader value.
-
-Default: chat output only. Don't write to disk.
-
-**Save only on explicit request.** If the user says "save this" or "save the routing doc," then write to:
+Save the routing recommendation as an output file so it shows up in the web app's Generated Outputs (and the completion toast can deep-link to it). Per `_se-playbook.md` "Output Persistence (Auto-Save)", write to:
 ```
-~/airbyte-work/01-customers/<Customer>/outputs/workflow-status/workflow-status-<YYYY-MM-DD>.md
+~/airbyte-work/01-customers/<Customer>/outputs/next-move/next-move-<YYYY-MM-DD>.md
 ```
-(Append `-v2` etc. for same-day duplicates.)
+When invoked for a specific opportunity, save under that opp's folder instead:
+```
+~/airbyte-work/01-customers/<Customer>/opportunities/<opp-slug>/outputs/next-move/next-move-<YYYY-MM-DD>.md
+```
+Append `-v2` etc. for same-day re-runs. User can suppress with `--no-save`.
+
+> **Why this changed (2026-07-01):** next-move was previously chat-only/ephemeral. In the web app that meant an invoke finished but produced **no file** — the recommendation "disappeared" with nothing in Generated Outputs to open. Saving a dated file fixes that; the doc is still a point-in-time read (it's a snapshot of the workflow state when generated, not a living artifact — the dated filename makes its staleness obvious).
 
 ### Source Coverage
 
@@ -304,7 +308,9 @@ Avoid "run follow-up-email because it's been a while" without a substantive trig
 
 ## Changelog
 
-- **2026-06-18** — Callouts per `_se-playbook.md` → Output Document Format (next-move is light-touch: no At-a-Glance/Jump-to; output is ephemeral/chat-only by default). Wrapped the top Recommended Next Move in an `[!info]` callout; the Inferred-Stage overrides (🔴 Stalled/Blocked → `[!blocker]`, 🟡 Active objection → `[!risk]`) now render as callouts. Artifacts Inventory table and Recommended-Next-Moves structure unchanged.
+- **2026-07-01** — **Now auto-saves** (reversing the 2026-05-28 exemption). Chat-only output meant a web-app invoke finished with no file, so the recommendation vanished with nothing in Generated Outputs to open. Saves a dated snapshot to `outputs/next-move/next-move-<YYYY-MM-DD>.md` (opp-scoped when invoked for an opportunity); `--no-save` suppresses. Still a point-in-time read — the dated filename signals staleness. Playbook exemption + CLAUDE.md folder structure updated to match.
+
+- **2026-06-18** — Callouts per `_se-playbook.md` → Output Document Format (next-move is light-touch: no At-a-Glance/Jump-to). Wrapped the top Recommended Next Move in an `[!info]` callout; the Inferred-Stage overrides (🔴 Stalled/Blocked → `[!blocker]`, 🟡 Active objection → `[!risk]`) now render as callouts. Artifacts Inventory table and Recommended-Next-Moves structure unchanged.
 
 - **2026-05-28** — Salesforce enrichment added (reads from sf-mcp via mcp__salesforce__run_soql_query). Pulls AE-view MEDDPICC / technical / forecast fields per the playbook field map; assertive SFDC-vs-reality mismatch flagging; graceful degradation if SFDC disabled. Org alias + query dir from .se-config.yaml.
 

@@ -257,7 +257,7 @@ Skills that produce working artifacts (call prep, qualification docs, deal asses
 
 ### Exemptions
 
-**`next-move` is exempt.** Router output is ephemeral — it's a "what to do right now" diagnostic that goes stale within hours of being acted on. Saving it just creates noise in `outputs/workflow-status/` with no future reader. Router default = chat output only; saves only on explicit user request.
+**`next-move` auto-saves** (changed 2026-07-01 — was exempt/chat-only). It saves a dated snapshot to `outputs/next-move/next-move-<YYYY-MM-DD>.md` like other skills. Rationale: in the web app a chat-only invoke finished with **no file**, so the recommendation vanished with nothing in Generated Outputs to open. It's still a point-in-time read (a "what to do right now" diagnostic that goes stale within hours) — the dated filename signals that; it just needs to persist so the UI can surface it. `--no-save` still suppresses.
 
 All other SE skills follow the auto-save rule.
 
