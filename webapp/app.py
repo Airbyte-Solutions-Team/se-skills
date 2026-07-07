@@ -58,6 +58,11 @@ SE_CONFIG = WORKSPACE / ".se-config.yaml"
 WEBAPP_DIR = Path(__file__).resolve().parent
 TEAM_FILE = WEBAPP_DIR / "team-members.yaml"
 
+# internal.airbyte.ai clone — target for the "Push to repo" coverage-handoff
+# action. Overridable via .se-config.yaml (`internal_repo_path`); see
+# _internal_repo(). Default matches the standard workspace clone location.
+INTERNAL_REPO_DEFAULT = WORKSPACE / "02-repos" / "internal.airbyte.ai"
+
 # Where the skills live. Prefer the installed location; fall back to the repo
 # copy next to this webapp (skills/ is a sibling of webapp/).
 SKILLS_DIRS = [
@@ -69,20 +74,35 @@ SKILLS_DIRS = [
 # blurbs than raw frontmatter. NOT the source of truth for WHICH skills exist —
 # that's derived from the skill folders on disk (see discover_skills). A new
 # skill appears automatically; add an entry here only to tune how it's shown.
+# `tier` groups skills by their real dependency stage (see _se-playbook.md "Skill
+# Sequencing Rules"). `step` is the suggested run-order WITHIN the linear workflow
+# tiers — shown as a numbered prefix in the picker. Anytime/router/standalone
+# skills have step=None (no number; they don't sit at a fixed point in the chain).
+# `order` drives the overall sort. This is presentation only — folder names and the
+# `name:` frontmatter are untouched, so skill discovery/triggering never changes.
+TIER_WORKFLOW = "Workflow — run in order"
+TIER_ANYTIME  = "Anytime — as needed"
+TIER_META     = "When you're not sure"
+
 SKILL_PRESENTATION = {
-    "account-refresher":     {"label": "Account Refresher",     "blurb": "Fast catch-me-up briefing", "order": 1},
-    "prep-call":             {"label": "Prep Call",             "blurb": "Tech-discovery call prep", "order": 2},
-    "post-call":             {"label": "Post-Call Summary",     "blurb": "Summarize latest call", "order": 3},
-    "biz-qual":              {"label": "Biz Qual (MEDDPICC)",   "blurb": "Business qualification", "order": 4},
-    "tech-qual":             {"label": "Tech Qual",             "blurb": "Technical fit assessment", "order": 5},
-    "deployment-model-qual": {"label": "Deployment Qual",       "blurb": "Cloud vs Self-Managed", "order": 6},
-    "connector-feasibility": {"label": "Connector Feasibility", "blurb": "Source/dest coverage", "order": 7},
-    "poc-plan":              {"label": "POC Plan",              "blurb": "Scope a proof of concept", "order": 8},
-    "deal-assessment":       {"label": "Deal Assessment",       "blurb": "Honest deal-health read", "order": 9},
-    "follow-up-email":       {"label": "Follow-up Email",       "blurb": "Draft an email", "order": 10},
-    "objection-handler":     {"label": "Objection Handler",     "blurb": "Talk track for a concern", "order": 11},
-    "internal-prep":         {"label": "Internal Prep",         "blurb": "AE sync / forecast / exec readout prep", "order": 12},
-    "next-move":             {"label": "Next Move",             "blurb": "What to do next on this deal", "order": 13},
+    # ── Workflow chain (numbered) ──────────────────────────────────────────
+    "prep-call":             {"label": "Prep Call",             "blurb": "Tech-discovery call prep — the only skill that needs no prior data", "tier": TIER_WORKFLOW, "step": 1, "order": 1},
+    "post-call":             {"label": "Post-Call Summary",     "blurb": "Summarize the latest call (run after each call)",                    "tier": TIER_WORKFLOW, "step": 2, "order": 2},
+    "deployment-model-qual": {"label": "Deployment Qual",       "blurb": "Cloud vs Self-Managed — the gate before technical scoping",          "tier": TIER_WORKFLOW, "step": 3, "order": 3},
+    "biz-qual":              {"label": "Biz Qual (MEDDPICC)",   "blurb": "Business qualification (needs a transcript)",                        "tier": TIER_WORKFLOW, "step": 4, "order": 4},
+    "tech-qual":             {"label": "Tech Qual",             "blurb": "Technical fit assessment (needs a transcript)",                      "tier": TIER_WORKFLOW, "step": 5, "order": 5},
+    "full-qual":             {"label": "Full Qual (biz + tech)","blurb": "Shortcut: runs biz-qual + tech-qual back-to-back (two separate docs)","tier": TIER_WORKFLOW, "step": None, "order": 5.5},
+    "connector-feasibility": {"label": "Connector Feasibility", "blurb": "Source/dest coverage check",                                         "tier": TIER_WORKFLOW, "step": 6, "order": 6},
+    "poc-plan":              {"label": "POC Plan",              "blurb": "Scope a POC (needs biz-qual + tech-qual — will offer to run them)",  "tier": TIER_WORKFLOW, "step": 7, "order": 7},
+    # ── Anytime / as-needed (unnumbered) ───────────────────────────────────
+    "deal-assessment":       {"label": "Deal Assessment",       "blurb": "Honest deal-health read (run every ~2 weeks)",     "tier": TIER_ANYTIME, "step": None, "order": 20},
+    "account-refresher":     {"label": "Account Refresher",     "blurb": "Fast catch-me-up briefing before a touchpoint",    "tier": TIER_ANYTIME, "step": None, "order": 21},
+    "follow-up-email":       {"label": "Follow-up Email",       "blurb": "Draft a customer email in your voice",             "tier": TIER_ANYTIME, "step": None, "order": 22},
+    "objection-handler":     {"label": "Objection Handler",     "blurb": "Talk track for a specific customer concern",       "tier": TIER_ANYTIME, "step": None, "order": 23},
+    "internal-prep":         {"label": "Internal Prep",         "blurb": "AE sync / forecast / exec-readout prep (internal)","tier": TIER_ANYTIME, "step": None, "order": 24},
+    "coverage-handoff":      {"label": "Coverage Handoff",      "blurb": "PTO handoff for a covering SE",                    "tier": TIER_ANYTIME, "step": None, "order": 25},
+    # ── Router (unnumbered) ────────────────────────────────────────────────
+    "next-move":             {"label": "Next Move",             "blurb": "Not sure what to run? This inspects the deal and tells you", "tier": TIER_META, "step": None, "order": 30},
 }
 
 # Source of truth for WHICH skills belong to this suite: the repo's own
@@ -111,13 +131,16 @@ def discover_skills() -> list[dict]:
                 "id": sid,
                 "label": pres.get("label") or sid.replace("-", " ").title(),
                 "blurb": pres.get("blurb") or "",
+                "tier": pres.get("tier") or "Other",
+                "step": pres.get("step"),
                 "order": pres.get("order", 999),
             })
     # Fallback: if the repo skills/ dir isn't found, use the presentation list
     if not found:
         found = [{"id": k, **v} for k, v in SKILL_PRESENTATION.items()]
     found.sort(key=lambda s: (s.get("order", 999), s["label"]))
-    return [{"id": s["id"], "label": s["label"], "blurb": s["blurb"]} for s in found]
+    return [{"id": s["id"], "label": s["label"], "blurb": s["blurb"],
+             "tier": s.get("tier", "Other"), "step": s.get("step")} for s in found]
 
 
 SKILLS = discover_skills()
@@ -206,6 +229,30 @@ def _is_archived(account_dir: Path) -> bool:
     return _archived_file(account_dir).exists()
 
 
+# ---------------------------------------------------------------------------
+# Per-member preferences (e.g. which AEs to pull accounts for). Small JSON file
+# per member, mirroring the .owner/.archived single-purpose-file pattern.
+# ---------------------------------------------------------------------------
+def _member_prefs_file(member_id: str) -> Path:
+    return WEBAPP_DIR / ".member-prefs" / f"{_safe(member_id)}.json"
+
+
+def _read_member_prefs(member_id: str) -> dict:
+    f = _member_prefs_file(member_id)
+    if not f.exists():
+        return {}
+    try:
+        return json.loads(f.read_text()) or {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _write_member_prefs(member_id: str, prefs: dict) -> None:
+    f = _member_prefs_file(member_id)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(prefs, indent=2))
+
+
 def _account_meta(account_dir: Path) -> dict:
     """Lightweight, filesystem-only card metadata: last-updated + output count.
     Counts BOTH the legacy account-level outputs/ AND every per-opportunity
@@ -267,12 +314,13 @@ def list_outputs(account: str, opp: str | None = None) -> list[dict]:
     for skill_dir in sorted(base.iterdir()):
         if not skill_dir.is_dir() or skill_dir.name.startswith("."):
             continue  # skip hidden dirs like .runs (internal run-result cache)
-        for f in sorted(skill_dir.glob("*.md")):
+        for f in sorted([*skill_dir.glob("*.md"), *skill_dir.glob("*.html")]):
             st = f.stat()
             items.append({
                 "skill": skill_dir.name,
                 "filename": f.name,
                 "path": str(f.relative_to(CUSTOMERS_DIR)),
+                "ext": f.suffix.lstrip("."),  # "md" or "html" — UI uses this for the View action
                 "mtime": st.st_mtime,
                 "modified": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).strftime("%Y-%m-%d %H:%M"),
                 "size": st.st_size,
@@ -337,6 +385,38 @@ def _sf_config() -> dict:
     return {}
 
 
+def _internal_repo() -> Path:
+    """Path to the internal.airbyte.ai clone. Overridable via .se-config.yaml
+    (`internal_repo_path`); defaults to the standard workspace location."""
+    if SE_CONFIG.exists():
+        cfg = yaml.safe_load(SE_CONFIG.read_text()) or {}
+        p = cfg.get("internal_repo_path")
+        if p:
+            return Path(os.path.expanduser(p))
+    return INTERNAL_REPO_DEFAULT
+
+
+async def _run_cmd(args: list[str], cwd: Path, timeout: int = 120) -> tuple[int, str, str]:
+    """Run a subprocess (git/gh) and return (returncode, stdout, stderr). Raises
+    HTTPException(500) with stderr on a nonzero exit — callers that want to handle
+    failures themselves should check the returncode instead."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args, cwd=str(cwd),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except FileNotFoundError:
+        raise HTTPException(500, f"`{args[0]}` not found on PATH")
+    except asyncio.TimeoutError:
+        raise HTTPException(504, f"`{' '.join(args[:2])}` timed out after {timeout}s")
+    rc = proc.returncode or 0
+    so, se = out.decode(errors="replace"), err.decode(errors="replace")
+    if rc != 0:
+        raise HTTPException(500, f"`{' '.join(args[:2])}` failed: {se.strip() or so.strip()}")
+    return rc, so, se
+
+
 async def sfdc_stage_amount(account_names: list[str]) -> dict:
     """Return {account_name: {stage, stage_num, amount, ae}} for the most relevant
     open (else latest) opportunity per account. One query for all names. Best-effort.
@@ -394,6 +474,121 @@ async def sfdc_stage_amount(account_names: list[str]) -> dict:
             "ae": v["ae"], "type": v["type"], "close_date": v["close_date"], "is_closed": v["is_closed"]}
         for k, v in by_acct.items()
     }
+
+
+# ---------------------------------------------------------------------------
+# Auto-populate accounts from Salesforce.
+#
+# Airbyte SFDC model: the AE owns the Opportunity (Owner.Name); the SE is tagged
+# separately via the custom SE_Name__c field. So "my accounts" for an SE means
+# opps where SE_Name__c = me OR Owner.Name is one of my AEs — restricted to open
+# opps with a future close date. The AE list is derived live from SFDC (not a
+# static config), so it can never go stale.
+# ---------------------------------------------------------------------------
+async def _sf_query(soql: str) -> list[dict] | None:
+    """Run a SOQL query via the `sf` CLI. Returns records, or None on any
+    failure (not-authed, disabled, timeout). Mirrors the inline pattern used by
+    sfdc_opportunities/sfdc_stage_amount so all SFDC access goes through `sf`."""
+    sf = _sf_config()
+    if not sf.get("enabled", True):
+        return None
+    alias = sf.get("org_alias", "airbyte-prod")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "sf", "data", "query", "--query", soql, "--target-org", alias, "--json",
+            cwd=str(WORKSPACE),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=25)
+        if proc.returncode != 0:
+            return None
+        return json.loads(out).get("result", {}).get("records", [])
+    except Exception:
+        return None
+
+
+def _sf_quote(value: str) -> str:
+    """Strip single quotes to keep values safe inside a SOQL literal, matching
+    the existing .replace(chr(39), '') convention."""
+    return (value or "").replace("'", "")
+
+
+async def sfdc_list_aes(member_id: str) -> list[str]:
+    """All distinct AE names (Opportunity.Owner.Name) on open, future-dated opps
+    org-wide, so the SE can pick any AE to pull accounts for. `member_id` is kept
+    for the endpoint's 404 guard. Best-effort []."""
+    if not member_by_id(member_id):
+        return []
+    today = datetime.now().strftime("%Y-%m-%d")
+    soql = (
+        "SELECT Owner.Name FROM Opportunity "
+        f"WHERE IsClosed = false AND CloseDate >= {today} "
+        "ORDER BY Owner.Name"
+    )
+    records = await _sf_query(soql)
+    if not records:
+        return []
+    aes = {((r.get("Owner") or {}).get("Name") or "").strip() for r in records}
+    return sorted(a for a in aes if a)
+
+
+async def sfdc_accounts_for_member(member_id: str, ae_names: list[str]) -> dict:
+    """Open, future-dated opportunities where SE_Name__c = this member OR
+    Owner.Name is one of `ae_names`. Deduped to the best opp per account and
+    split into new_business / renewals. Best-effort: {} buckets on failure."""
+    member = member_by_id(member_id)
+    if not member:
+        return {"new_business": [], "renewals": []}
+    name = _sf_quote(member.get("name", ""))
+    today = datetime.now().strftime("%Y-%m-%d")
+    clauses = [f"SE_Name__c = '{name}'"]
+    quoted_aes = [f"'{_sf_quote(a)}'" for a in ae_names if a]
+    if quoted_aes:
+        clauses.append(f"Owner.Name IN ({', '.join(quoted_aes)})")
+    where_owner = " OR ".join(clauses)
+    soql = (
+        "SELECT Account.Name, Amount, StageName, Stage_Number__c, CloseDate, "
+        "Type, Owner.Name, SE_Name__c FROM Opportunity "
+        f"WHERE IsClosed = false AND CloseDate >= {today} "
+        f"AND ({where_owner}) ORDER BY Account.Name"
+    )
+    records = await _sf_query(soql)
+    if not records:
+        return {"new_business": [], "renewals": []}
+
+    # dedupe to the best opp per account (prefer open non-renewal, same score()
+    # idea as sfdc_stage_amount).
+    def score(rec: dict) -> int:
+        return 1 if rec.get("Type") != "Renewal" else 0
+
+    by_acct: dict[str, dict] = {}
+    for r in records:
+        acct = ((r.get("Account") or {}).get("Name") or "").strip()
+        if not acct:
+            continue
+        cur = by_acct.get(acct)
+        if cur is None or score(r) > score(cur):
+            by_acct[acct] = r
+
+    new_business, renewals = [], []
+    for acct, r in sorted(by_acct.items()):
+        folder = _titlecase_folder(acct)
+        renewal = (r.get("Type") == "Renewal")
+        item = {
+            "name": folder,
+            "account_name": acct,
+            "amount": r.get("Amount"),
+            "stage": r.get("StageName"),
+            "stage_num": r.get("Stage_Number__c"),
+            "close_date": r.get("CloseDate"),
+            "type": r.get("Type"),
+            "ae": ((r.get("Owner") or {}).get("Name")),
+            "se": r.get("SE_Name__c"),
+            "renewal": renewal,
+            "exists": (CUSTOMERS_DIR / folder).exists(),
+        }
+        (renewals if renewal else new_business).append(item)
+    return {"new_business": new_business, "renewals": renewals}
 
 
 # ---------------------------------------------------------------------------
@@ -462,6 +657,66 @@ def api_create_account(body: CreateAccount):
     if body.owner:
         _owner_file(acc_dir).write_text(_safe(body.owner))
     return {"name": folder, "created": created, "owner": body.owner}
+
+
+# ---------------------------------------------------------------------------
+# Auto-populate accounts from Salesforce — endpoints
+# ---------------------------------------------------------------------------
+@app.get("/api/members/{member_id}/sfdc-aes")
+async def api_sfdc_aes(member_id: str):
+    """AE names (from live SFDC) selectable for this member's account pull,
+    plus the member's previously-saved selection."""
+    if not member_by_id(member_id):
+        raise HTTPException(404, "Unknown member")
+    aes = await sfdc_list_aes(member_id)
+    selected = _read_member_prefs(member_id).get("selected_aes", [])
+    return {"aes": aes, "selected": selected}
+
+
+class SelectedAes(BaseModel):
+    selected: list[str] = []
+
+
+@app.post("/api/members/{member_id}/sfdc-aes")
+def api_save_sfdc_aes(member_id: str, body: SelectedAes):
+    """Persist which AEs this member wants to pull accounts for."""
+    if not member_by_id(member_id):
+        raise HTTPException(404, "Unknown member")
+    prefs = _read_member_prefs(member_id)
+    prefs["selected_aes"] = [a for a in body.selected if isinstance(a, str) and a.strip()]
+    _write_member_prefs(member_id, prefs)
+    return {"ok": True, "selected": prefs["selected_aes"]}
+
+
+class PullAccounts(BaseModel):
+    aes: list[str] = []
+
+
+@app.post("/api/members/{member_id}/sfdc-accounts")
+async def api_sfdc_accounts(member_id: str, body: PullAccounts):
+    """Open, future-dated opps for this member, split new_business / renewals."""
+    if not member_by_id(member_id):
+        raise HTTPException(404, "Unknown member")
+    aes = [a for a in body.aes if isinstance(a, str) and a.strip()]
+    return await sfdc_accounts_for_member(member_id, aes)
+
+
+class BulkCreateAccounts(BaseModel):
+    accounts: list[CreateAccount]
+
+
+@app.post("/api/bulk-create-accounts")
+def api_bulk_create_accounts(body: BulkCreateAccounts):
+    """Create several account folders at once (from the SFDC pull), reusing the
+    same folder/.owner creation as the single-create endpoint."""
+    results = []
+    for acc in body.accounts:
+        try:
+            r = api_create_account(acc)
+            results.append({**r, "ok": True})
+        except HTTPException as e:
+            results.append({"name": acc.name, "ok": False, "error": e.detail})
+    return {"created": sum(1 for r in results if r.get("ok") and r.get("created")), "results": results}
 
 
 @app.get("/api/accounts/{account}")
@@ -655,6 +910,227 @@ def api_output_content(path: str):
     return target.read_text()
 
 
+@app.get("/api/output/html", response_class=HTMLResponse)
+def api_output_html(path: str):
+    """Serve a generated .html output with text/html so it renders in the
+    browser (e.g. a coverage-handoff page opened in a new tab)."""
+    target = (CUSTOMERS_DIR / path).resolve()
+    if not str(target).startswith(str(CUSTOMERS_DIR.resolve())) or not target.is_file():
+        raise HTTPException(404, "Not found")
+    if target.suffix != ".html":
+        raise HTTPException(400, "Not an HTML output")
+    return HTMLResponse(target.read_text())
+
+
+@app.get("/api/output/repo-path")
+def api_output_repo_path(account: str, member: str = ""):
+    """Suggested internal.airbyte.ai target path for a handoff HTML page:
+    src/solutions-team/members/<member-slug>/accounts/<account-slug>/index.html"""
+    account = _safe(account)
+    member_slug = _slug(member).lower() if member else "<your-member-slug>"
+    account_slug = _slug(account.replace("-", " ")).lower()
+    rel = f"accounts/{account_slug}/index.html"
+    full = f"src/solutions-team/members/{member_slug}/{rel}"
+    return {"relative": rel, "full": full, "account_slug": account_slug, "member_slug": member_slug}
+
+
+# ---------------------------------------------------------------------------
+# Push a coverage-handoff HTML to internal.airbyte.ai as a one-click PR.
+# Branches off origin/main (never touches local main), writes the account page,
+# inserts/replaces the member's handover.html card, commits, pushes, opens a PR.
+# ---------------------------------------------------------------------------
+class PushToRepo(BaseModel):
+    path: str               # output .html, relative to CUSTOMERS_DIR (from the row)
+    account: str            # account name (for slug + card text)
+    member: str = ""        # owner member display name (for the member-slug folder)
+    description: str = ""   # card description (optional; server derives if blank)
+    meta: str = ""          # card meta line (optional; server derives if blank)
+
+
+def _html_escape(s: str) -> str:
+    """Escape text destined for HTML card markup."""
+    return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _parse_handoff_stats(html: str) -> dict:
+    """Best-effort extraction of card facts from a coverage-handoff page:
+    deal size + stage from the header `.stat .num`/`.label` blocks, coverage
+    window from the `.coverage-banner` `.cv` block. All optional."""
+    stats: dict[str, str] = {}
+    # <div class="stat"><div class="num">$45K</div><div class="label">Deal Size</div></div>
+    for num, label in re.findall(
+        r'<div class="stat">\s*<div class="num">(.*?)</div>\s*<div class="label">(.*?)</div>',
+        html, re.DOTALL,
+    ):
+        stats[label.strip().lower()] = num.strip()
+    # <div class="cv"><span class="label">Coverage Window</span><span class="value">...</span></div>
+    for label, value in re.findall(
+        r'<div class="cv">\s*<span class="label">(.*?)</span>\s*<span class="value">(.*?)</span>',
+        html, re.DOTALL,
+    ):
+        stats["cv:" + label.strip().lower()] = value.strip()
+    return stats
+
+
+def _build_card_meta(stats: dict) -> str:
+    """Assemble the card meta line from parsed stats. Mirrors the manual PR:
+    `<Deal Size> · Stage <N> · Coverage <window>`. Omits parts we couldn't find."""
+    parts = []
+    if stats.get("deal size"):
+        parts.append(stats["deal size"])
+    if stats.get("stage"):
+        parts.append(f"Stage {stats['stage']}")
+    cv = stats.get("cv:coverage window")
+    if cv:
+        parts.append(f"Coverage {cv}")
+    return " &middot; ".join(parts)
+
+
+def _upsert_handover_card(handover_html: str, account: str, account_slug: str,
+                          description: str, meta: str) -> str:
+    """Insert (or replace) the account's nav-card in a member's handover.html.
+    Replaces an existing `<a href="accounts/<slug>/" ...>...</a>` block if present;
+    otherwise inserts a new card as the first child of `<div class="nav-grid">`."""
+    acct_e = _html_escape(account)
+    desc_e = _html_escape(description) or f"Coverage handoff for {acct_e}."
+    meta_inner = f'<span class="badge">Active</span>' + (f" &nbsp; {meta}" if meta else "")
+    card = (
+        f'    <a href="accounts/{account_slug}/" class="nav-card">\n'
+        f'      <div class="accent-bar"></div>\n'
+        f'      <span class="arrow">&rarr;</span>\n'
+        f'      <h2>{acct_e}</h2>\n'
+        f'      <p>{desc_e}</p>\n'
+        f'      <div class="meta">{meta_inner}</div>\n'
+        f'    </a>'
+    )
+    # Replace an existing card for this account, if present.
+    existing = re.compile(
+        r'[ \t]*<a href="accounts/' + re.escape(account_slug) + r'/"[^>]*>.*?</a>',
+        re.DOTALL,
+    )
+    if existing.search(handover_html):
+        return existing.sub(card, handover_html, count=1)
+    # Otherwise insert as the first child of the nav-grid.
+    grid = re.compile(r'(<div class="nav-grid">[^\n]*\n)')
+    if not grid.search(handover_html):
+        raise HTTPException(500, 'Could not find `<div class="nav-grid">` in handover.html')
+    return grid.sub(lambda m: m.group(1) + card + "\n", handover_html, count=1)
+
+
+@app.post("/api/output/push-to-repo")
+async def api_push_to_repo(body: PushToRepo):
+    # 1. Resolve + validate the source handoff HTML.
+    src = (CUSTOMERS_DIR / body.path).resolve()
+    if not str(src).startswith(str(CUSTOMERS_DIR.resolve())) or not src.is_file():
+        raise HTTPException(404, "Output not found")
+    if src.suffix != ".html":
+        raise HTTPException(400, "Only .html outputs can be pushed to the internal repo")
+    handoff_html = src.read_text()
+
+    # 2. Compute the target path inside the internal repo.
+    repo = _internal_repo()
+    if not (repo / ".git").exists():
+        raise HTTPException(400, f"internal repo not cloned at {repo}")
+    account = _safe(body.account)
+    member_slug = _slug(body.member).lower() if body.member else ""
+    if not member_slug:
+        raise HTTPException(400, "member (owner) is required to place the account page")
+    account_slug = _slug(account.replace("-", " ")).lower()
+    member_dir = repo / "src" / "solutions-team" / "members" / member_slug
+    handover_path = member_dir / "handover.html"
+    if not handover_path.is_file():
+        raise HTTPException(400, f"No handover.html for member '{member_slug}' — expected {handover_path}")
+    account_dir = member_dir / "accounts" / account_slug
+    index_path = account_dir / "index.html"
+
+    # 3. Sync clone: fetch origin/main and branch fresh off it (never touch local main).
+    await _run_cmd(["git", "fetch", "origin", "main"], repo)
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    branch = f"se/coverage-handoff-{account_slug}-{ts}"
+    await _run_cmd(["git", "checkout", "-B", branch, "origin/main"], repo)
+
+    # 4. Write the account page.
+    account_dir.mkdir(parents=True, exist_ok=True)
+    index_path.write_text(handoff_html)
+
+    # 5. Update the member's handover.html card (auto-fill from the handoff if blank).
+    stats = _parse_handoff_stats(handoff_html)
+    meta = body.meta.strip() or _build_card_meta(stats)
+    description = body.description.strip()
+    handover_path.write_text(
+        _upsert_handover_card(handover_path.read_text(), account, account_slug, description, meta)
+    )
+
+    # 6. Commit, push, open a PR.
+    rel_index = str(index_path.relative_to(repo))
+    rel_handover = str(handover_path.relative_to(repo))
+    await _run_cmd(["git", "add", rel_index, rel_handover], repo)
+    commit_msg = (
+        f"docs(solutions-team): add {account} coverage handoff ({account_slug})\n\n"
+        "Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+    )
+    await _run_cmd(["git", "commit", "-m", commit_msg], repo)
+    await _run_cmd(["git", "push", "-u", "origin", branch], repo)
+    pr_body = (
+        f"Auto-generated coverage handoff for **{account}**, added under "
+        f"`members/{member_slug}/accounts/{account_slug}/` with a card in "
+        f"`{member_slug}/handover.html`.\n\n"
+        "Generated from the SE-skills webapp coverage-handoff skill.\n\n"
+        "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+    )
+    _, pr_out, _ = await _run_cmd([
+        "gh", "pr", "create", "--repo", "airbytehq/internal.airbyte.ai",
+        "--head", branch, "--base", "main",
+        "--title", f"docs(solutions-team): add {account} coverage handoff",
+        "--body", pr_body,
+    ], repo)
+    pr_url = pr_out.strip().splitlines()[-1] if pr_out.strip() else ""
+    return {"pr_url": pr_url, "branch": branch, "target": rel_index}
+
+
+@app.get("/api/output/push-status")
+async def api_push_status(account: str):
+    """Is there already an OPEN PR for this account's handoff? Used by the UI to
+    warn before opening a duplicate. Matches our branch convention
+    `se/coverage-handoff-<account_slug>-*`. Merged/closed PRs don't count (they're
+    not open), so a re-push after merge/close proceeds cleanly. Best-effort: any
+    gh/repo failure returns {open_pr: null} so the push flow is never blocked."""
+    repo = _internal_repo()
+    if not (repo / ".git").exists():
+        return {"open_pr": None}
+    try:
+        account_slug = _slug(_safe(account).replace("-", " ")).lower()
+    except HTTPException:
+        return {"open_pr": None}
+    # Our branches are `se/coverage-handoff-<slug>-<ts>`; the one-off manual branch
+    # was `se/coverage-handoff-<slug>` (no suffix). Match both.
+    branch_base = f"se/coverage-handoff-{account_slug}"
+    try:
+        # `head:` search qualifier matches the branch name; --state open scopes it.
+        proc = await asyncio.create_subprocess_exec(
+            "gh", "pr", "list", "--repo", "airbytehq/internal.airbyte.ai",
+            "--state", "open", "--search", f"head:{branch_base}",
+            "--json", "number,url,headRefName", "--limit", "20",
+            cwd=str(repo),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=25)
+        if proc.returncode != 0:
+            return {"open_pr": None}
+        prs = json.loads(out or "[]")
+    except Exception:
+        return {"open_pr": None}
+    # `head:` is a substring-ish match; confirm the branch is exactly our base or a
+    # timestamped variant `…-<YYYYMMDD-HHMMSS>` — NOT a different account whose slug
+    # merely starts with this one (e.g. `rithm` vs `rithm-capital`).
+    ts_suffix = re.compile(re.escape(branch_base) + r"-\d{8}-\d{6}$")
+    for pr in prs:
+        ref = pr.get("headRefName") or ""
+        if ref == branch_base or ts_suffix.match(ref):
+            return {"open_pr": {"number": pr.get("number"), "url": pr.get("url")}}
+    return {"open_pr": None}
+
+
 @app.get("/api/output/pdf")
 def api_output_pdf(path: str):
     """Render a generated output .md to a clean PDF (server-side, via headless
@@ -663,11 +1139,12 @@ def api_output_pdf(path: str):
     target = (CUSTOMERS_DIR / path).resolve()
     if not str(target).startswith(str(CUSTOMERS_DIR.resolve())) or not target.is_file():
         raise HTTPException(404, "Not found")
-    if target.suffix != ".md":
-        raise HTTPException(400, "Only .md outputs can be exported to PDF")
+    if target.suffix not in (".md", ".html"):
+        raise HTTPException(400, "Only .md or .html outputs can be exported to PDF")
     import pdf_render
     try:
-        data = pdf_render.render_pdf(target.read_text())
+        text = target.read_text()
+        data = pdf_render.render_html_pdf(text) if target.suffix == ".html" else pdf_render.render_pdf(text)
     except RuntimeError as e:        # Chrome missing
         raise HTTPException(503, str(e))
     except subprocess.SubprocessError as e:

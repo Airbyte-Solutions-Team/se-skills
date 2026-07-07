@@ -14,6 +14,7 @@ Built by Gary Yang (Solutions Engineer, Airbyte). Designed to be team-shareable.
 | `post-call` | Summarizes a call transcript → takeaways, action items, next steps | "post-call for X", "summarize call" |
 | `biz-qual` | MEDDPICC business qualification scorecard | "biz qual", "qualify this deal" |
 | `tech-qual` | Technical fit assessment (sources, volume, security, integration) | "tech qual", "assess their stack" |
+| `full-qual` | Convenience wrapper — runs biz-qual + tech-qual back-to-back (two separate docs) | "full qual", "run both quals" |
 | `deployment-model-qual` | Cloud-vs-Self-Managed gate (the 5 deployment questions) | "deployment qual", "cloud or not" |
 | `connector-feasibility` | Checks customer source/dest list vs. Airbyte registry | "connector feasibility", "do we have X" |
 | `poc-plan` | Structured POC plan with mutual commitments + success criteria | "poc plan", "proof of concept" |
@@ -23,6 +24,7 @@ Built by Gary Yang (Solutions Engineer, Airbyte). Designed to be team-shareable.
 | `internal-prep` | Internal meeting prep (ae-sync / forecast / exec-readout / deal-review) | "internal prep", "forecast prep" |
 | `account-refresher` | Fast "catch me up" briefing on an account (players, history, state, open items) | "refresh me on X", "catch me up on X" |
 | `next-move` | Diagnoses where a customer sits + recommends the next skill | "where am I on X", "what's next for X" |
+| `coverage-handoff` | PTO coverage handoff — self-contained HTML page for a covering SE | "coverage handoff", "PTO handoff for X" |
 
 Plus the shared reference (not a skill): **`_se-playbook.md`** — the SE-craft canon all skills read from.
 

@@ -17,3 +17,6 @@ config/se-config.yaml
 webapp/__pycache__/
 **/__pycache__/
 *.pyc
+
+# Per-user local UI state (each person's own AE selection, etc.) — not shared
+webapp/.member-prefs/

@@ -204,15 +204,16 @@ def markdown_to_html(md_text: str) -> str:
     )
 
 
-def render_pdf(md_text: str) -> bytes:
-    """Render markdown to PDF bytes. Raises RuntimeError if Chrome isn't found."""
+def render_html_pdf(html_doc: str) -> bytes:
+    """Render a full HTML document to PDF bytes via headless Chrome. Use for
+    already-styled HTML (e.g. coverage-handoff pages). Raises RuntimeError if
+    Chrome isn't found."""
     chrome = find_chrome()
     if not chrome:
         raise RuntimeError(
             "No Chrome/Chromium found for PDF rendering. "
             "Install Google Chrome or set SE_CHROME_PATH."
         )
-    html_doc = markdown_to_html(md_text)
     with tempfile.TemporaryDirectory() as td:
         html_path = os.path.join(td, "doc.html")
         pdf_path = os.path.join(td, "doc.pdf")
@@ -229,3 +230,8 @@ def render_pdf(md_text: str) -> bytes:
         )
         with open(pdf_path, "rb") as f:
             return f.read()
+
+
+def render_pdf(md_text: str) -> bytes:
+    """Render markdown to PDF bytes. Raises RuntimeError if Chrome isn't found."""
+    return render_html_pdf(markdown_to_html(md_text))

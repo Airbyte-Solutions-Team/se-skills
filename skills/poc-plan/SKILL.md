@@ -19,11 +19,25 @@ The user will provide one or more of:
 
 **This skill requires at least one customer transcript AND at least one qualification doc (biz-qual or tech-qual).** A POC plan defines success criteria, scope, and mutual commitments — all of which depend on confirmed pain, metrics, and technical requirements from the customer.
 
-If zero transcripts exist: **REFUSE TO RUN.** Output:
-> "Cannot scope POC for [Customer] — no customer voice. Recommend: prep-call → first call → biz-qual + tech-qual → then poc-plan."
+### Prerequisite check (run this FIRST, before generating anything)
 
-If transcripts exist but no biz-qual or tech-qual: **WARN BUT PROCEED** with explicit flag:
-> "⚠️ Scoping POC without prior biz-qual or tech-qual. POCs without qualification usually drift. Strongly recommend running those first."
+1. **Check for transcripts** (local `_transcripts/` + Gong). If **zero transcripts exist: REFUSE TO RUN.** A POC can't be scoped from hypotheses, and biz-qual/tech-qual would themselves refuse without customer voice — so there's nothing to chain. Output:
+   > "Cannot scope a POC for [Customer] — no customer voice in any source. Run `prep-call` → hold the call → then `biz-qual` + `tech-qual` → then re-run `poc-plan`."
+
+2. **If a transcript exists, check for the qualification docs** in `~/airbyte-work/01-customers/<Customer>/outputs/` — `biz-qual-*.md` and `tech-qual-*.md`.
+
+   - **Both present** → proceed to generate the POC plan.
+   - **One or both missing** → **do NOT silently proceed, and do NOT silently auto-run.** List exactly what's missing and offer to run it first:
+     > "poc-plan builds on qualification, and some is missing for [Customer]:
+     > &nbsp;&nbsp;• Missing: **biz-qual**, **tech-qual** *(list only the ones actually missing)*
+     > &nbsp;&nbsp;• Transcript: ✓ found
+     >
+     > Want me to run the missing qualification skill(s) now, then continue to the POC plan? (Or reply 'skip' to scope the POC anyway — POCs without qualification tend to drift.)"
+
+   - **On approval:** invoke the missing skill(s) in dependency order — `biz-qual` first, then `tech-qual` — let each save its output, then read those outputs and continue to the POC plan. Cite them as sources.
+   - **If the user says 'skip':** proceed, but add a prominent ⚠️ flag in the output noting the POC was scoped without full qualification and is at higher risk of scope drift.
+
+**Never fabricate a qualification doc to satisfy this check.** If a chained biz-qual/tech-qual would refuse (e.g. the transcript has no technical discovery for tech-qual), report that honestly rather than producing a hollow doc.
 
 ## Before generating: read prior outputs
 
@@ -271,6 +285,7 @@ Read `~/airbyte-work/.se-config.yaml` for the `[SE name]` field in the SE owner 
 
 ## Changelog
 
+- **2026-07-07** — Prerequisite handling changed from warn-but-proceed to **detect & offer to run first**: if biz-qual/tech-qual are missing (but a transcript exists), poc-plan now lists what's missing and offers to run the missing qualification skill(s) in order, then continue. Still refuses on zero transcripts (nothing to chain); still allows 'skip' with a drift-risk flag; never fabricates a qual doc.
 - **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.
 
 - **2026-05-28** — Auto-save to outputs/<skill>/ folder (default; --no-save to suppress). Source Coverage section required (anti-hallucination). Reads SE identity from ~/airbyte-work/.se-config.yaml. Output filename: <skill>-YYYY-MM-DD-<descriptor>.md.

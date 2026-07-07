@@ -144,35 +144,25 @@ Any stage + objection raised on most recent call
 
 ## Output Format
 
-*Lead with an H1 title (the web app reader uses the H1 as the page title). Keep the rest light-touch — no At-a-Glance/Jump-to needed.*
+*Lead with an H1 title (the web app reader uses the H1 as the page title), then a lightweight **At-a-Glance decision card**. next-move is **decision-first**: the recommendation is the lead, the audit trail is the tail. The web-app reader promotes the At-a-Glance block into a prominent hero card above the body, so the labels below are chosen to render as decision tiles — keep the wording.*
 
 ---
 
 # SE Workflow: [Customer] — [Inferred Stage]
-**Date:** [today, long form] · **Days since most recent activity:** [N days] · **Source map:** [N] transcripts, [N] qual docs, memory [yes/no]
+**Date:** [today, long form] · **Stage:** [inferred stage] · **Days since activity:** [N] · **Sources:** [N] transcripts, [N] qual docs, memory [yes/no]
+
+### At a Glance
+- **Recommended Next Move:** [the ONE skill/action — e.g. "Run `deal-assessment`"]
+- **Confidence:** [High / Medium / Low] — [what it's pending on, one clause]
+- **Stage:** [🟢/🟡/🔴 + inferred stage]
+- **Top Blocker:** [🔴 the single biggest thing in the way, or "None — clear runway"]
+- **Effort:** [quick / moderate / depends on source coverage]
+- **Expected output:** [what artifact the top move produces]
+
+### Current read
+[The TL;DR as 1–2 sentences of PROSE (not bullets): "[Customer] is in [stage]; the highest-value move is [X] because [why]. [Do-not caveat if any]." This is the one-liner a user copies into Slack — keep it tight and self-contained.]
 
 ---
-
-### Artifacts Inventory
-
-| Artifact | Status | Date |
-|----------|--------|------|
-| deployment-qual | ✅ Present / ❌ Missing / ⚠️ Stale (>30d) | [date or n/a] |
-| biz-qual | ✅ / ❌ / ⚠️ | |
-| tech-qual | ✅ / ❌ / ⚠️ | |
-| connector-feasibility | ✅ / ❌ / ⚠️ | |
-| poc-plan | ✅ / ❌ / ⚠️ | |
-| Deal Assessment | ✅ / ❌ / ⚠️ | |
-| Most recent call summary | ✅ / ❌ | |
-| Most recent transcript | | [date] |
-
----
-
-### Inferred Stage
-- **Stage:** [from decision tree]
-- **Reasoning:** [1-2 sentences citing the specific artifacts/transcripts that put them here]
-
-**Overrides active (if any):**
 
 > [!blocker] 🔴 Stalled / Blocked     ← use `[!blocker]` for a hard stall/block
 > 🔴 Stalled — [X days since last activity]
@@ -181,59 +171,101 @@ Any stage + objection raised on most recent call
 > [!risk] 🟡 Active objection     ← use `[!risk]` for an open objection
 > 🟡 Active objection — [from transcript]
 
-*(Only render the override callouts that actually apply; omit this block if none.)*
+*(Only render the override callouts that actually apply; omit this block if none. These feed the reader's Top-Risks strip automatically.)*
 
 ---
 
-### Gaps in the SE Workflow
-*What's missing that should exist at this stage:*
-- [ ] [Specific missing artifact 1 — e.g., "No biz-qual exists; deal is in POC scoping without confirmed MEDDPICC"]
-- [ ] [Specific missing artifact 2]
+## Why This Move
+- **Rationale:** [1–2 sentences tying the top move to the specific gap or override it resolves]
+- **What it unblocks:** [the downstream work this enables]
 
 ---
 
-### Recommended Next Moves (Top 3)
+## Ranked Next Moves
 
-> [!info] Top move: [Skill name] — [headline reason]
-> The single highest-value next move. [1-line why-now.]
-
-**1. [Skill name] — [headline reason]**
-- **Why now:** [1-2 sentence rationale tied to the gap or override]
-- **Inputs needed from Gary:** [anything not already in the workspace]
+**1 · `[skill]` — [headline reason]**
+- **Priority:** High
+- **Why now:** [1–2 sentence rationale tied to the gap or override]
+- **Inputs needed from Gary:** [anything not already in the workspace, or "None"]
 - **Expected output:** [what artifact this produces]
-- **Estimated effort:** [quick / moderate / depends on source coverage]
+- **Effort:** [quick / moderate / depends on source coverage]
 
-**2. [Skill name] — [headline reason]**
-- [Same structure]
+**2 · `[skill]` — [headline reason]**
+- **Priority:** Medium
+- [same structure]
 
-**3. [Skill name] — [headline reason]**
-- [Same structure]
+**3 · `[skill]` — [headline reason]**
+- **Priority:** Medium
+- [same structure]
 
----
-
-### What NOT to do yet
-*Skills the user might be tempted to run but shouldn't, given current state:*
-- [Skill name] — [why not yet: e.g., "No deployment-qual yet — running tech-qual first risks scoping against an air-gap customer who can't use Cloud"]
+*(Each move is a lead-bolded bullet so the reader renders it as a scannable card. Keep 1–3 moves — don't pad to three if only one or two are real.)*
 
 ---
 
-### External Actions (not skill-invokable)
+## Don't Do Yet
+*Skills tempting but premature given current state (missing ≠ needed):*
+- **`[skill]`.** [Why not yet — e.g. "No deployment qualification yet; scoping `tech-qual` now risks an air-gap customer who can't use Cloud."]
 
-*Things to do that aren't a skill — but matter for moving the deal. Surface these alongside skill recommendations so they don't get lost.*
-
-Examples of external actions:
-- **Slack/email Airbyte engineering** — about a customer-facing blocker pending on our side (e.g., "Acme 403 secret storage error pending engineering action per memory — 7 weeks now")
-- **Loop in AE/AM** — schedule a sync to align on a deal direction
-- **Escalate to leadership** — for at-risk deals or deals needing exec sponsorship
-- **Customer outreach** — when silence has crossed a threshold and no skill captures the moment (e.g., "57 days silent — Slack/email customer directly to force a real answer")
-- **Update CRM** — record stage change, log activity, update forecast probability
-
-Only include this section if external actions actually apply — don't fabricate them. For a healthy mid-cycle deal, this section may be empty (state "No external actions needed — workflow is internally driven").
+*(Lead-bold the skill. Do NOT put the word "risk" in this section's heading or bullets' lead — that would wrongly feed the Top-Risks strip.)*
 
 ---
 
-### One-line summary
-**TL;DR:** [Customer] is in [stage]. Top move: invoke `<skill>` to [accomplish what].
+## Workflow State
+- **Inferred stage:** [from decision tree]
+- **Reasoning:** [1–2 sentences citing the specific artifacts/transcripts that put them here]
+- **SFDC vs. reality:** [the mismatch finding, if any — flag it assertively; omit the line if SFDC and local state agree or SFDC is unavailable]
+
+---
+
+## Context Inventory
+*What context exists to ground the recommendation. `Needed Now?` separates a true gap (**Yes**) from a not-yet artifact (**Later**) or an irrelevant one (**No**) — so missing ≠ todo.*
+
+| Artifact | Status | Date | Needed Now? |
+|----------|--------|------|-------------|
+| deployment-qual | ✅ Present / ❌ Missing / ⚠️ Stale (>30d) | [date or n/a] | Yes / Later / No |
+| biz-qual | ✅ / ❌ / ⚠️ | | |
+| tech-qual | ✅ / ❌ / ⚠️ | | |
+| connector-feasibility | ✅ / ❌ / ⚠️ | | |
+| poc-plan | ✅ / ❌ / ⚠️ | | |
+| Deal Assessment | ✅ / ❌ / ⚠️ | | |
+| Most recent call summary | ✅ / ❌ | | |
+| Most recent transcript | | [date] | |
+
+---
+
+## Gaps
+*What's missing that should exist at this stage, sorted by whether it blocks the next move:*
+
+**Critical (blocks the next move):**
+- [ ] [Missing artifact that gates progress — e.g., "No Deal Assessment; a stalled ~$110K deal has no honest health read"]
+
+**Non-critical (nice to have soon):**
+- [ ] [Missing artifact that doesn't block — e.g., "No tech-qual; technical scope scattered but not gating the close"]
+
+**Data hygiene:**
+- [ ] [Stale / duplicate / misfiled artifact or CRM field to clean up]
+
+*(Omit any subgroup that's empty.)*
+
+---
+
+## External Actions
+*Things to do that aren't a skill — but matter for moving the deal. Owner is a real person's name or **TBD** — never fabricate a name.*
+
+| Action | Owner | Why it matters | Definition of done |
+|--------|-------|----------------|--------------------|
+| [e.g. Slack Airbyte eng re: pending blocker] | [name or **TBD**] | [deal impact] | [what "resolved" looks like] |
+| [e.g. AE/RevOps — fix SFDC fields] | [name or **TBD**] | [forecasting accuracy] | [fields updated] |
+
+*(Only include this section if external actions actually apply — don't fabricate them. For a healthy mid-cycle deal, replace the table with: "No external actions needed — workflow is internally driven.")*
+
+---
+
+## Source Coverage
+*Per the Read-Depth Contract: report what was read in full vs. inventoried by metadata only.*
+- **Read in full:** [qual docs, memory files, most recent transcript — filenames + dates]
+- **Metadata only:** [older transcripts, large raw notes — filenames + line counts]
+- **Memory:** [records read, or "none matched"]
 
 ---
 
@@ -265,7 +297,7 @@ Append `-v2` etc. for same-day re-runs. User can suppress with `--no-save`.
 
 ### Source Coverage
 
-Include a Source Coverage section reporting: artifact inventory (filenames + dates), transcript line counts (with explicit "read in full" vs. "metadata only" per the Read-Depth Contract above), memory records read.
+Fill in the **Source Coverage** section at the bottom of the template: artifact inventory (filenames + dates), transcript line counts (with explicit "read in full" vs. "metadata only" per the Read-Depth Contract above), memory records read. It's the last section by design — the reader collapses it (audit trail, not the lead).
 
 ### Then ask the user
 
@@ -307,6 +339,8 @@ Avoid "run follow-up-email because it's been a while" without a substantive trig
 ---
 
 ## Changelog
+
+- **2026-07-02** — **Decision-first output rewrite.** For a "what do I do next?" skill, the recommendation was buried below an Artifacts Inventory + diagnostics — it read like an audit report. Reordered the template to lead with the answer: **At-a-Glance decision card → Current read → override callouts → Why This Move → Ranked Next Moves → Don't Do Yet → Workflow State → Context Inventory → Gaps → External Actions → Source Coverage.** The At-a-Glance labels (`Recommended Next Move`/`Confidence`/`Stage`/`Top Blocker`) are chosen to render as the web-app reader's hero decision tiles; `### Current read` becomes the hero's narrative one-liner (relocated from the old bottom TL;DR — no duplicate). Renamed "Artifacts Inventory" → **Context Inventory** with a `Needed Now?` column (missing ≠ todo); split "Gaps" into Critical / Non-critical / Data-hygiene; "Ranked Next Moves" render as cards; External Actions is now an Owner/Why/Definition-of-done table. next-move is no longer "light-touch" — it now leads with a Decision Card (reader change: `EXEC_SECTION` card routing + Low-confidence tile color in `webapp/static/app.js`). Playbook reclassification updated to match.
 
 - **2026-07-01** — **Now auto-saves** (reversing the 2026-05-28 exemption). Chat-only output meant a web-app invoke finished with no file, so the recommendation vanished with nothing in Generated Outputs to open. Saves a dated snapshot to `outputs/next-move/next-move-<YYYY-MM-DD>.md` (opp-scoped when invoked for an opportunity); `--no-save` suppresses. Still a point-in-time read — the dated filename signals staleness. Playbook exemption + CLAUDE.md folder structure updated to match.
 

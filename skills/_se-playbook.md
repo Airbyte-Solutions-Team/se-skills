@@ -1,6 +1,6 @@
 # SE Playbook — Frameworks & Tactics
 
-This is the canonical reference for SE craft. All SE skills in `~/.claude/skills/` (prep-call, post-call, biz-qual, tech-qual, poc-plan, deal-assessment, connector-feasibility, deployment-model-qual, follow-up-email, objection-handler, internal-prep, next-move, account-refresher) reference this document. When a skill fires, it should read the relevant section here and apply the tactics.
+This is the canonical reference for SE craft. All SE skills in `~/.claude/skills/` (prep-call, post-call, biz-qual, tech-qual, full-qual, poc-plan, deal-assessment, connector-feasibility, deployment-model-qual, follow-up-email, objection-handler, internal-prep, next-move, account-refresher, coverage-handoff) reference this document. When a skill fires, it should read the relevant section here and apply the tactics.
 
 **Not a skill itself** — the leading underscore prevents auto-trigger. Read it on demand from other skills.
 
@@ -161,23 +161,30 @@ NEW PROSPECT
   ↓
 [ AE does initial business discovery call — happens in Gong ]
   ↓
-prep-call (default mode: SE prepping for tech call,
-            inherits AE's discovery, goes deeper)
+1 · prep-call (default mode: SE prepping for tech call,
+                inherits AE's discovery, goes deeper)
   ↓
 [ SE tech call happens, transcript saved ]
   ↓
-post-call (summarize the call)
+2 · post-call (summarize the call; capture Sources & Destinations)
   ↓
-biz-qual (MEDDPICC scoring with real data)
+3 · deployment-model-qual (the gate — Cloud vs Self-Managed, before technical scoping)
   ↓
-deployment-model-qual (gate before tech)
+4 · biz-qual (MEDDPICC scoring with real data)
   ↓
-tech-qual + connector-feasibility
+5 · tech-qual
   ↓
-poc-plan
+6 · connector-feasibility
   ↓
-[ ongoing: deal-assessment every 2 weeks, follow-up-email and objection-handler as needed ]
+7 · poc-plan (needs biz-qual + tech-qual; if missing, offers to run them first)
+  ↓
+[ anytime: deal-assessment every ~2 weeks, account-refresher / follow-up-email /
+  objection-handler / coverage-handoff as needed; next-move when unsure ]
 ```
+
+**Shortcut:** `full-qual` runs steps 4 + 5 (biz-qual then tech-qual) in one invocation, producing two separate docs. It's a convenience wrapper, not a merged skill — the two remain independently runnable, with their own frameworks and refusal rules. (A hard merge was considered and rejected: biz-qual and tech-qual serve different readers/data needs, and merging would force half-empty output after a one-sided call.)
+
+The webapp's Invoke picker mirrors this: skills are grouped into **Workflow — run in order** (numbered 1–7, with full-qual as a 4+5 shortcut), **Anytime — as needed**, and **When you're not sure** (next-move). The numbers are a suggested sequence, not a hard gate — the refusal rules below are what actually enforce dependencies.
 
 **Cold prep mode (rare):** If no AE call exists yet, prep-call runs on pure web research. Output explicitly flags "cold-prep mode" so Gary knows the AE handoff hasn't happened.
 
@@ -200,7 +207,7 @@ The customer-facing chain above produces docs for or about the customer. Separat
 | `biz-qual` | 0 transcripts (local or Gong) |
 | `deal-assessment` | 0 transcripts AND 0 prior qualification docs |
 | `tech-qual` | 0 transcripts containing technical discovery |
-| `poc-plan` | 0 transcripts AND no biz-qual / tech-qual |
+| `poc-plan` | 0 transcripts (hard refuse). If a transcript exists but biz-qual/tech-qual are missing, it does NOT refuse — it offers to run the missing qualification skill(s) first, then continues (user may 'skip' with a drift-risk flag). |
 | `deployment-model-qual` | 0 transcripts (the 5 questions need customer answers) |
 
 In each case, the right output is: explain why the skill can't run, and recommend the upstream skill that should run first.
@@ -427,7 +434,8 @@ Probability **==40–60%==**, deal size ==$88K==, latency ==13h → 15min==, ==3
 ### Exemptions
 
 - **`follow-up-email` is fully exempt** — it's a customer-facing email, not a report. No At-a-Glance, no Jump-to, no TOC headings, no callouts, no Decision-First layout. Keep its existing email structure.
-- **`next-move`, `objection-handler`, and `account-refresher` are light-touch** — already short and scannable. They may use a callout for the recommended next move / severity, and account-refresher's "10-Second Version" already serves as a decision card, but the full Decision-First layout (scorecard, decision tables) is optional, not required.
+- **`next-move` leads with a lightweight Decision Card** — as the SE workflow router ("what do I do next?"), its recommendation IS the deliverable, so it now leads with an **At-a-Glance card** (`Recommended Next Move`/`Confidence`/`Stage`/`Top Blocker` → hero tiles) + a `### Current read` narrative + the `[!blocker]`/`[!risk]` override callouts, followed by decision-first sections (Why This Move → Ranked Next Moves → Don't Do Yet → Workflow State → Context Inventory → Gaps → External Actions → Source Coverage). It stays exempt from the *full* analytical apparatus (MEDDPICC scorecard, formal decision tables) — the card + ranked-move cards are enough for a router. (Reclassified 2026-07-02 from light-touch.)
+- **`objection-handler` and `account-refresher` are light-touch** — already short and scannable. They may use a callout for severity, and account-refresher's "10-Second Version" already serves as a decision card, but the full Decision-First layout (scorecard, decision tables) is optional, not required.
 - **`internal-prep` adopts the Decision Card concept lightly** — its four sub-templates (ae-sync, forecast, exec-readout, deal-review) already have tight At-a-Glance blocks; align their labels to the decision-card spirit (lead with the judgment/ask) but they keep their own per-type section structure.
 - **The six analytical skills** (`tech-qual`, `biz-qual`, `deal-assessment`, `deployment-model-qual`, `connector-feasibility`, `poc-plan`) **fully adopt** the Decision-First Layout above.
 
@@ -712,6 +720,7 @@ If/when built, this should be a separate skill (not a mode flag on biz-qual/deal
 
 ## Changelog
 
+- **2026-07-02** — **`next-move` reclassified from light-touch to lightweight Decision Card.** As the workflow router, its recommendation is the deliverable, so it now leads with an At-a-Glance hero card + `Current read` narrative + override callouts, then decision-first sections (Why This Move → Ranked Next Moves → Don't Do Yet → Workflow State → Context Inventory → Gaps → External Actions → Source Coverage). Stays exempt from the full analytical apparatus (MEDDPICC scorecard, formal decision tables). Exemptions list updated; `objection-handler` + `account-refresher` remain light-touch. Pairs with web-app renderer changes (`EXEC_SECTION` → ranked-move cards; Low-confidence tile colors red) in `webapp/static/app.js`.
 - **2026-07-01** — **Source Coverage moved to the BOTTOM** of the doc (was right after At-a-Glance) — it's the audit trail, not the lead. Top-of-document structure + progressive-disclosure note updated; applied to all four decision-first-ordered skills (connector-feasibility, prep-call, post-call, tech-qual). Also **per-skill decision-first section reordering**: connector-feasibility (Fit Verdict before Use Case); prep-call (Company Snapshot + Why Airbyte to the top, before AE-learned/where-we-left-off); post-call (Key Takeaways → Deal Health → New Objections → Action Items up top, Attendees + Source Coverage at bottom); tech-qual (verdict-then-architecture already good, only Source Coverage moved down). Pairs with web-app renderer: checkbox affordance (no more square-bullet ☐), constraint/info cards, calmer bold, Inter + slate palette.
 - **2026-06-25** — Added the **Decision-First Layout** sub-contract to Output Document Format: analytical skills (tech-qual, biz-qual, deal-assessment, deployment-model-qual, connector-feasibility, poc-plan) lead with a **Decision Card** (verdict/motion/primary-risk/confidence/next-gate), a standardized **Scorecard** with a "Why it matters" column, **facts-vs-judgment-vs-recommendation** labeling, and **Open-Questions / Next-Actions decision tables** (Owner / Needed-By / Why / Status — render `TBD` where unstated, never invent). Plus progressive disclosure (Source Coverage stays low) and jargon-translation in user-facing prose. Reinforced `==…==` = numbers/short-tokens-only (no sentence highlighting). Extended exemptions (account-refresher light-touch; internal-prep light adoption). Pairs with web-app render fixes (softer highlight, wider tables, checkbox bullets).
 

@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<!--
+  COVERAGE HANDOFF TEMPLATE — reference skeleton for the coverage-handoff skill.
+  Self-contained styled HTML in the internal.airbyte.ai "rs-group" design system,
+  so the generated file drops into:
+    src/solutions-team/members/<member-slug>/accounts/<account-slug>/index.html
+
+  HOW TO USE (skill instructions):
+  - Copy this file's <style> block VERBATIM into the generated page (do not link external CSS).
+  - Replace every {{PLACEHOLDER}} and the example rows with real content.
+  - Inject SFDC hard facts verbatim (stage, ARR, EB, champion, org/workspace IDs, dates).
+  - Fill the coverage banner from the form context (SE out, covering SE, coverage window).
+  - Infer past/upcoming meetings from transcripts + Salesforce (surface them in
+    "Where Things Stand" / "What's Open") — there is no dedicated form-fed section.
+  - Delete any section whose data is genuinely absent, OR mark it "None captured" — never invent.
+  - Keep the .airbyte-auth-marker and .footer as-is.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Coverage Handoff — {{CUSTOMER}}</title>
+<style>
+  :root {
+    --primary: #1a1a2e;
+    --accent: #6366f1;
+    --accent-light: #818cf8;
+    --bg: #f1f5f9;
+    --card: #ffffff;
+    --text: #1e293b;
+    --muted: #64748b;
+    --border: #e2e8f0;
+    --green: #10b981;
+    --amber: #f59e0b;
+    --red: #ef4444;
+    --blue: #3b82f6;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+
+  /* Header */
+  .header { background: linear-gradient(135deg, var(--primary) 0%, #312e81 100%); color: white; padding: 32px 40px; }
+  .header-inner { max-width: 1200px; margin: 0 auto; display: flex; justify-content: space-between; align-items: flex-start; }
+  .header h1 { font-size: 26px; font-weight: 700; margin-bottom: 4px; }
+  .header .subtitle { opacity: 0.85; font-size: 14px; }
+  .header .stats { display: flex; gap: 24px; }
+  .header .stat { text-align: center; }
+  .header .stat .num { font-size: 28px; font-weight: 700; }
+  .header .stat .label { font-size: 11px; opacity: 0.7; text-transform: uppercase; letter-spacing: 1px; }
+
+  /* Coverage banner — the PTO frame, top of the doc */
+  .coverage-banner { max-width: 1200px; margin: 20px auto 0; padding: 0 40px; }
+  .coverage-banner .inner { background: #eef2ff; border: 1px solid var(--accent-light); border-radius: 12px; padding: 14px 20px; display: flex; flex-wrap: wrap; gap: 24px; align-items: center; }
+  .coverage-banner .cv { font-size: 13px; }
+  .coverage-banner .cv .label { color: var(--muted); text-transform: uppercase; letter-spacing: .5px; font-size: 10px; display: block; }
+  .coverage-banner .cv .value { font-weight: 600; }
+
+  /* Main content */
+  .main { max-width: 1200px; margin: 0 auto; padding: 24px 40px; }
+
+  /* Section headings */
+  .section-title { font-size: 18px; font-weight: 700; color: var(--primary); margin: 28px 0 14px; padding-bottom: 8px; border-bottom: 2px solid var(--accent); display: inline-block; }
+
+  /* Grid */
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+
+  /* Cards */
+  .card { background: var(--card); border-radius: 12px; padding: 20px 24px; border: 1px solid var(--border); }
+  .card.full { grid-column: 1 / -1; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); margin-bottom: 12px; font-weight: 600; }
+  .card h3 { font-size: 15px; font-weight: 600; margin-bottom: 6px; color: var(--primary); }
+
+  /* Key-value rows */
+  .kv { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f3f4f6; font-size: 13px; }
+  .kv:last-child { border-bottom: none; }
+  .kv .label { color: var(--muted); }
+  .kv .value { font-weight: 500; text-align: right; max-width: 60%; }
+  .mono { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table th { text-align: left; padding: 8px; color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid var(--border); }
+  table td { padding: 8px; border-bottom: 1px solid #f3f4f6; vertical-align: top; }
+  table tr:last-child td { border-bottom: none; }
+
+  /* Badges */
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+  .badge.completed { background: #dcfce7; color: #166534; }
+  .badge.in-progress { background: #dbeafe; color: #1e40af; }
+  .badge.pending { background: #fef3c7; color: #92400e; }
+  .badge.planned { background: #f3e8ff; color: #6b21a8; }
+  .badge.future { background: #f1f5f9; color: #475569; }
+  .badge.high { background: #fee2e2; color: #991b1b; }
+  .badge.medium { background: #fef3c7; color: #92400e; }
+  .badge.green { background: #dcfce7; color: #166534; }
+  .badge.amber { background: #fef3c7; color: #92400e; }
+  .badge.red { background: #fee2e2; color: #991b1b; }
+
+  /* Status icons (text-based) */
+  .status-completed { color: var(--green); }
+  .status-in-progress { color: var(--blue); }
+  .status-pending { color: var(--amber); }
+
+  /* Callouts */
+  .callout { background: #eff6ff; border-left: 4px solid var(--blue); padding: 12px 16px; border-radius: 0 8px 8px 0; margin-top: 12px; font-size: 13px; }
+  .callout.risk { background: #fffbeb; border-left-color: var(--amber); }
+  .callout.blocker { background: #fef2f2; border-left-color: var(--red); }
+  .callout.ok { background: #f0fdf4; border-left-color: var(--green); }
+
+  /* Checkbox list (open items) */
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li { padding: 5px 0 5px 26px; position: relative; font-size: 13px; }
+  .checklist li:before { content: "\2610"; position: absolute; left: 0; font-size: 16px; color: var(--muted); }
+
+  /* Lists */
+  ul, ol { padding-left: 18px; font-size: 13px; }
+  ul li, ol li { margin-bottom: 4px; }
+
+  /* Footer */
+  .footer { text-align: center; color: var(--muted); font-size: 11px; margin-top: 32px; padding: 16px 0; }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    .header-inner { flex-direction: column; gap: 16px; align-items: flex-start; }
+    .main { padding: 16px 20px; }
+    .grid { grid-template-columns: 1fr; }
+  }
+
+  /* Auth marker */
+  .airbyte-auth-marker { position: fixed; top: 12px; right: 12px; z-index: 9999; background: rgba(255,255,255,0.96); border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; font-size: 14px; line-height: 1; box-shadow: 0 2px 8px rgba(0,0,0,0.08); cursor: help; user-select: none; }
+  .airbyte-auth-marker .lock { font-size: 13px; }
+  .airbyte-auth-marker .label { font-size: 11px; font-weight: 600; color: var(--muted); margin-left: 6px; letter-spacing: 0.5px; text-transform: uppercase; }
+  .airbyte-auth-marker .tooltip { display: none; position: absolute; top: calc(100% + 8px); right: 0; width: 280px; background: var(--primary); color: white; padding: 10px 12px; border-radius: 8px; font-size: 12px; line-height: 1.5; box-shadow: 0 4px 16px rgba(0,0,0,0.2); font-weight: 400; text-transform: none; letter-spacing: normal; }
+  .airbyte-auth-marker .tooltip strong { color: #a5b4fc; }
+  .airbyte-auth-marker:hover .tooltip, .airbyte-auth-marker:focus-within .tooltip { display: block; }
+</style>
+</head>
+<body>
+
+<div class="airbyte-auth-marker" tabindex="0" role="note" aria-label="Airbyte internal — SSO required">
+  <span class="lock">&#128274;</span><span class="label">Airbyte Internal</span>
+  <div class="tooltip">
+    This page is secured by Google authentication and is only available to users with a valid <strong>@airbyte.io</strong> login account.
+  </div>
+</div>
+
+<!-- ====== HEADER + AT A GLANCE ====== -->
+<div class="header">
+  <div class="header-inner">
+    <div>
+      <h1>Coverage Handoff &mdash; {{CUSTOMER}}</h1>
+      <div class="subtitle">{{OPPORTUNITY_NAME}} &middot; Generated {{DATE_LONG}}</div>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="num">{{DEAL_SIZE}}</div><div class="label">Deal Size</div></div>
+      <div class="stat"><div class="num">{{STAGE_NUM}}</div><div class="label">Stage</div></div>
+      <div class="stat"><div class="num">{{PROBABILITY_BAND}}</div><div class="label">Win Band</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ====== COVERAGE BANNER (PTO frame — from form) ====== -->
+<div class="coverage-banner">
+  <div class="inner">
+    <div class="cv"><span class="label">SE Out</span><span class="value">{{SE_OUT}}</span></div>
+    <div class="cv"><span class="label">Covering SE</span><span class="value">{{COVERING_SE}}</span></div>
+    <div class="cv"><span class="label">Coverage Window</span><span class="value">{{COVERAGE_START}} &ndash; {{COVERAGE_END}}</span></div>
+    <div class="cv"><span class="label">Trajectory</span><span class="value">{{TRAJECTORY}}</span></div>
+  </div>
+</div>
+
+<div class="main">
+
+  <!-- 10-SECOND VERSION -->
+  <div class="section-title">The 10-Second Version</div>
+  <div class="card full">
+    <p>{{TEN_SECOND_SUMMARY}}</p>
+  </div>
+
+  <!-- DEAL SNAPSHOT + DEAL HEALTH (two-up) -->
+  <div class="section-title">Deal Snapshot</div>
+  <div class="grid">
+    <div class="card">
+      <h2>Opportunity</h2>
+      <div class="kv"><span class="label">Stage</span><span class="value">{{STAGE_NAME}}</span></div>
+      <div class="kv"><span class="label">Amount (ARR)</span><span class="value">{{DEAL_SIZE}}</span></div>
+      <div class="kv"><span class="label">Close Date</span><span class="value">{{CLOSE_DATE}}</span></div>
+      <div class="kv"><span class="label">Type</span><span class="value">{{OPP_TYPE}}</span></div>
+      <div class="kv"><span class="label">AE (Owner)</span><span class="value">{{AE_NAME}}</span></div>
+      <div class="kv"><span class="label">Next Step Date</span><span class="value">{{NEXT_STEP_DATE}}</span></div>
+    </div>
+    <div class="card">
+      <h2>Deal Health</h2>
+      <div class="kv"><span class="label">Win Probability</span><span class="value">{{PROBABILITY_BAND}}</span></div>
+      <div class="kv"><span class="label">Trajectory</span><span class="value">{{TRAJECTORY}}</span></div>
+      <div class="kv"><span class="label">Days Since Last Activity</span><span class="value">{{DAYS_SINCE_ACTIVITY}}</span></div>
+      <div class="kv"><span class="label">Driver (why now)</span><span class="value">{{DRIVER}}</span></div>
+      <div class="kv"><span class="label">Top MEDDPICC Gap</span><span class="value">{{TOP_GAP}}</span></div>
+      <div class="kv"><span class="label">What Would Lose It</span><span class="value">{{WHAT_WOULD_LOSE_IT}}</span></div>
+    </div>
+  </div>
+
+  <!-- WHO'S WHO -->
+  <div class="section-title">Who's Who</div>
+  <div class="card full">
+    <table>
+      <thead><tr><th>Name</th><th>Title</th><th>Role</th><th>Notes</th></tr></thead>
+      <tbody>
+        <!-- REPEAT per person -->
+        <tr><td><strong>{{NAME}}</strong></td><td>{{TITLE}}</td><td>{{ROLE}}</td><td>{{NOTES}}</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- THE STORY SO FAR -->
+  <div class="section-title">The Story So Far</div>
+  <div class="card full">
+    <ul>
+      <!-- REPEAT: dated bullets, oldest to newest -->
+      <li><strong>{{DATE}}</strong> &mdash; {{WHAT_HAPPENED}}</li>
+    </ul>
+  </div>
+
+  <!-- WHERE THINGS STAND -->
+  <div class="section-title">Where Things Stand</div>
+  <div class="card full">
+    <p>{{CURRENT_STATE_NARRATIVE}}</p>
+    <div class="kv" style="margin-top:10px;"><span class="label">Last Contact</span><span class="value">{{LAST_CONTACT}}</span></div>
+    <div class="kv"><span class="label">Use Case</span><span class="value">{{USE_CASE}}</span></div>
+    <!-- If SFDC stage disagrees with reality, add a risk callout: -->
+    <div class="callout risk">{{SFDC_VS_REALITY}}</div>
+  </div>
+
+  <!-- WHAT'S OPEN -->
+  <div class="section-title">What's Open</div>
+  <div class="card full">
+    <ul class="checklist">
+      <!-- REPEAT: open item, unanswered question, pending action -->
+      <li>{{OPEN_ITEM}}</li>
+    </ul>
+  </div>
+
+  <!-- IN-FLIGHT COMMITMENTS -->
+  <div class="section-title">In-Flight Commitments</div>
+  <div class="card full">
+    <table>
+      <thead><tr><th>Promised To Customer</th><th>Owner</th><th>Due</th><th>Status</th></tr></thead>
+      <tbody>
+        <!-- REPEAT -->
+        <tr><td>{{COMMITMENT}}</td><td>{{OWNER}}</td><td>{{DUE}}</td><td><span class="badge in-progress">{{STATUS}}</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- LIVE TECHNICAL THREAD -->
+  <div class="section-title">Live Technical Thread</div>
+  <div class="card full">
+    <table>
+      <thead><tr><th>Question / Blocker</th><th>State</th><th>Waiting On</th></tr></thead>
+      <tbody>
+        <!-- REPEAT (or single row "None open") -->
+        <tr><td>{{TECH_ITEM}}</td><td>{{STATE}}</td><td>{{WAITING_ON}}</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ACCESS & LOGISTICS -->
+  <div class="section-title">Access &amp; Logistics</div>
+  <div class="card full">
+    <div class="kv"><span class="label">SFDC Opportunity</span><span class="value">{{SFDC_LINK}}</span></div>
+    <div class="kv"><span class="label">Airbyte Org ID</span><span class="value mono">{{ORG_ID}}</span></div>
+    <div class="kv"><span class="label">Workspace(s)</span><span class="value mono">{{WORKSPACE_IDS}}</span></div>
+    <div class="kv"><span class="label">Slack Channel</span><span class="value">{{SLACK_CHANNEL}}</span></div>
+    <div class="kv"><span class="label">Notion / Drive</span><span class="value">{{DOC_LINKS}}</span></div>
+    <div class="kv"><span class="label">Prior SE Docs</span><span class="value">{{PRIOR_DOC_FILENAMES}}</span></div>
+  </div>
+
+  <!-- SOURCE COVERAGE -->
+  <div class="section-title">Source Coverage</div>
+  <div class="card full">
+    <ul>
+      <!-- what was read, with dates -->
+      <li>{{SOURCE_LINE}}</li>
+    </ul>
+  </div>
+
+  <div class="footer">Coverage Handoff &middot; {{CUSTOMER}} &middot; {{OPPORTUNITY_NAME}} &middot; Generated {{DATE_LONG}} &middot; Airbyte Internal</div>
+</div>
+
+</body>
+</html>

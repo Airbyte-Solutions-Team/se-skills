@@ -12,6 +12,28 @@ const esc = (s) => (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&l
 // "prep-call" → "PREP CALL", "deal-assessment" → "DEAL ASSESSMENT"
 const prettySkill = (id) => (id || "").replace(/[-_]/g, " ").toUpperCase();
 
+// Concise output label from a filename. Filenames are
+// "<skill>-YYYY-MM-DD[-Descriptor][-vN].md" — strip the extension, the redundant
+// skill prefix (already shown as the bold line), and reformat the date, leaving
+// "<Descriptor> · Mon D (vN)". Falls back to just the date when there's no descriptor.
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function conciseOutputName(filename, skill) {
+  let s = (filename || "").replace(/\.[a-z0-9]+$/i, "");        // drop extension
+  if (skill && s.startsWith(skill + "-")) s = s.slice(skill.length + 1);  // drop skill prefix
+  // Drop any remaining leading tokens before the date (e.g. internal-prep files
+  // saved as "ae-sync-YYYY-MM-DD" — the sub-type prefix is redundant noise here).
+  const dm = s.match(/(\d{4})-(\d{2})-(\d{2})-?(.*)$/);          // find the date anywhere
+  if (!dm) return s.replace(/-/g, " ") || filename;             // no date → best effort
+  const [, y, mo, d, rest] = dm;
+  const date = `${MONTHS[+mo - 1] || mo} ${+d}`;
+  let ver = "";
+  let desc = rest;
+  const vm = desc.match(/-?v(\d+)$/i);                            // pull trailing -vN
+  if (vm) { ver = ` (v${vm[1]})`; desc = desc.slice(0, vm.index); }
+  desc = desc.replace(/-/g, " ").trim();
+  return desc ? `${desc} · ${date}${ver}` : `${date}${ver}`;
+}
+
 // ---- Output download (PDF via browser print, MD as raw file) -------------
 // `path` is URI-encoded relative-to-CUSTOMERS_DIR (as stored on .out-item).
 async function fetchOutputText(path) {
@@ -92,8 +114,8 @@ function downloadMenuHtml(path, cls = "", label = "") {
        <button class="menu-item dl-md-qa">Download Markdown with Q&amp;A</button>`
     : "";
   const trigger = label
-    ? `<button class="dl-btn dl-btn-labeled" title="Export this document" aria-label="Export this document">${esc(label)} <span class="dl-caret">▾</span></button>`
-    : `<button class="dl-btn" title="Download" aria-label="Download">⬇</button>`;
+    ? `<button class="dl-btn dl-btn-labeled" title="Options" aria-label="Options">${esc(label)} <span class="dl-caret">▾</span></button>`
+    : `<button class="dl-btn dl-btn-dots" title="Options" aria-label="Options">⋮</button>`;
   return `<span class="dl-menu ${cls}" data-path="${path}">
     ${trigger}
     <div class="dropdown-menu hidden">
@@ -546,7 +568,6 @@ async function pageMember(memberId, tab = "active") {
 
   const acctRow = (a, isArchived) => `
     <div class="acct-row${isArchived ? " is-archived" : ""}" data-acct="${esc(a.name)}">
-      <label class="acct-check"><input type="checkbox" class="row-check" data-acct="${esc(a.name)}" /></label>
       <div class="acct-row-menu">
         <button class="kebab" aria-label="Account actions">⋮</button>
         <div class="dropdown-menu hidden">
@@ -556,6 +577,7 @@ async function pageMember(memberId, tab = "active") {
           <button class="menu-item danger delete-btn" data-acct="${esc(a.name)}">Delete…</button>
         </div>
       </div>
+      <label class="acct-check"><input type="checkbox" class="row-check" data-acct="${esc(a.name)}" /></label>
       <a href="#/account/${encodeURIComponent(a.name)}" class="acct-row-main">
         <span class="acct-name">${esc(a.name)}</span>
         <span class="acct-col col-stage">${stageCell(a._sfdc)}</span>
@@ -586,8 +608,8 @@ async function pageMember(memberId, tab = "active") {
   const hCell = (key, label, cls) => `<span class="acct-col ${cls} sortable" data-sort="${key}">${label}${sortArrow(key)}</span>`;
   const listHeader = tab === "trash" ? "" : `
     <div class="acct-row acct-head">
-      <label class="acct-check"><input type="checkbox" id="check-all" /></label>
       <div class="acct-row-menu"></div>
+      <label class="acct-check"><input type="checkbox" id="check-all" /></label>
       <div class="acct-row-main no-link">
         <span class="acct-name sortable" data-sort="name">Account${sortArrow("name")}</span>
         ${hCell("stage", "SFDC Stage", "col-stage")}
@@ -605,9 +627,16 @@ async function pageMember(memberId, tab = "active") {
   view.innerHTML = `
     <div class="row">
       <div><h1>${esc(m.name)}</h1><p class="sub">Accounts</p></div>
-      <div class="create-box">
-        <input id="new-acct" type="text" placeholder="New account name…" />
-        <button class="primary small" id="create-acct">+ Create Account</button>
+      <div class="header-actions">
+        <div class="sfdc-sync">
+          <button class="primary small" id="sync-sfdc" title="Auto-create accounts from open Salesforce opportunities">⟳ Sync from SFDC ▾</button>
+          <div class="dropdown-menu sfdc-ae-menu hidden" id="sfdc-ae-menu"></div>
+        </div>
+        <button class="manual-create-toggle" id="manual-create-toggle">+ add account manually</button>
+        <div class="create-box hidden" id="create-box">
+          <input id="new-acct" type="text" placeholder="New account name…" />
+          <button class="primary small" id="create-acct">+ Create Account</button>
+        </div>
       </div>
     </div>
     <div class="tabs">
@@ -622,11 +651,13 @@ async function pageMember(memberId, tab = "active") {
           ? `<button class="ghost small bulk-unarchive">Unarchive</button>`
           : `<button class="ghost small bulk-archive">Archive</button>`}
         <button class="ghost small bulk-claim">Make me owner</button>
+        <button class="ghost small bulk-coverage-handoff">🤝 Coverage Handoff</button>
         <select class="bulk-transfer-sel"><option value="">Transfer to…</option>${
           members.filter((x) => x.id !== memberId).map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select>
         <button class="danger small bulk-delete">Delete…</button>
       </div>
     </div>
+    <div id="bulk-handoff-status" class="handoff-bulk-status hidden"></div>
     <div class="acct-list" id="acct-grid">
       ${showing.length ? listHeader + showing.map(renderRow).join("") : `<div class="empty">${emptyMsg}</div>`}
     </div>`;
@@ -641,6 +672,12 @@ async function pageMember(memberId, tab = "active") {
     pageMember(memberId, tab);
   });
 
+  document.getElementById("manual-create-toggle").onclick = () => {
+    const box = document.getElementById("create-box");
+    box.classList.toggle("hidden");
+    if (!box.classList.contains("hidden")) document.getElementById("new-acct").focus();
+  };
+
   document.getElementById("create-acct").onclick = async () => {
     const name = document.getElementById("new-acct").value.trim();
     if (!name) return;
@@ -650,6 +687,180 @@ async function pageMember(memberId, tab = "active") {
       pageMember(memberId, "active");
     } catch (e) { alert("Could not create account: " + e.message); }
   };
+
+  // ── Sync from SFDC: AE picker dropdown + preview/confirm modal ────────
+  const aeMenu = document.getElementById("sfdc-ae-menu");
+  const syncBtn = document.getElementById("sync-sfdc");
+  let _aesLoaded = false;
+
+  const saveSelectedAes = (sel) =>
+    api(`/api/members/${encodeURIComponent(memberId)}/sfdc-aes`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ selected: sel }),
+    }).catch(() => {});
+
+  const checkedAes = () =>
+    Array.from(aeMenu.querySelectorAll(".ae-check:checked")).map((c) => c.value);
+
+  const loadAeMenu = async () => {
+    aeMenu.innerHTML = `<div class="ae-menu-loading muted">Loading AEs…</div>`;
+    let data;
+    try { data = await api(`/api/members/${encodeURIComponent(memberId)}/sfdc-aes`); }
+    catch (e) { aeMenu.innerHTML = `<div class="ae-menu-loading muted">SFDC unavailable</div>`; return; }
+    const aes = data.aes || [], selected = new Set(data.selected || []);
+    const rows = aes.length
+      ? aes.map((ae) => `<label class="ae-item" data-ae="${esc(ae.toLowerCase())}"><input type="checkbox" class="ae-check" value="${esc(ae)}" ${selected.has(ae) ? "checked" : ""}/> ${esc(ae)}</label>`).join("")
+      : `<div class="ae-menu-loading muted">No AEs found on open opps</div>`;
+    aeMenu.innerHTML = `
+      <div class="ae-menu-head">Pull accounts for these AEs<br/><span class="muted">(plus opps where you're the SE)</span></div>
+      ${aes.length ? `<input type="text" class="ae-search" placeholder="Search AEs…" />` : ""}
+      <div class="ae-menu-list">${rows}</div>
+      <div class="ae-menu-foot"><button class="primary small" id="ae-pull-btn">Pull accounts</button></div>`;
+    aeMenu.querySelectorAll(".ae-check").forEach((c) => c.onchange = () => saveSelectedAes(checkedAes()));
+    const search = aeMenu.querySelector(".ae-search");
+    if (search) {
+      search.oninput = () => {
+        const q = search.value.trim().toLowerCase();
+        aeMenu.querySelectorAll(".ae-item").forEach((it) =>
+          it.classList.toggle("hidden", q && !it.dataset.ae.includes(q)));
+      };
+      setTimeout(() => search.focus(), 0);
+    }
+    const pull = document.getElementById("ae-pull-btn");
+    if (pull) pull.onclick = () => { aeMenu.classList.add("hidden"); openSfdcPreview(checkedAes()); };
+    _aesLoaded = true;
+  };
+
+  syncBtn.onclick = async (e) => {
+    e.stopPropagation();
+    if (aeMenu.classList.contains("hidden")) {
+      aeMenu.classList.remove("hidden");
+      if (!_aesLoaded) await loadAeMenu();
+    } else {
+      aeMenu.classList.add("hidden");
+    }
+  };
+  aeMenu.onclick = (e) => e.stopPropagation();
+
+  async function openSfdcPreview(aes) {
+    let data;
+    try {
+      data = await api(`/api/members/${encodeURIComponent(memberId)}/sfdc-accounts`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ aes }),
+      });
+    } catch (err) { alert("SFDC pull failed: " + err.message); return; }
+    const nb = data.new_business || [], rn = data.renewals || [];
+    if (!nb.length && !rn.length) { alert("No open opportunities with a future close date found."); return; }
+    const datasets = { nb, rn };
+    let _ptab = "nb";
+    let _psort = { key: "name", dir: 1 };
+    const _picked = new Set();  // account names checked, preserved across sort/tab re-renders
+
+    const pSortVal = (a, key) => {
+      switch (key) {
+        case "name": return (a.name || "").toLowerCase();
+        case "amount": return (a.amount ?? -Infinity);
+        case "stage": return (a.stage_num ? parseFloat(a.stage_num) : -1);
+        case "close": return (a.close_date || "");
+        case "ae": return (a.ae || "").toLowerCase();
+        default: return 0;
+      }
+    };
+    const sortItems = (items) => [...items].sort((x, y) => {
+      const vx = pSortVal(x, _psort.key), vy = pSortVal(y, _psort.key);
+      if (vx < vy) return -1 * _psort.dir;
+      if (vx > vy) return 1 * _psort.dir;
+      return 0;
+    });
+    const pArrow = (key) => _psort.key === key ? (_psort.dir === 1 ? " ▲" : " ▼") : "";
+
+    const rowsFor = (items) => items.length ? sortItems(items).map((a) => `
+      <label class="sfdc-prev-row ${a.exists ? "is-existing" : ""}">
+        <input type="checkbox" class="sfdc-prev-check" data-name="${esc(a.name)}" ${a.exists ? "disabled" : (_picked.has(a.name) ? "checked" : "")} />
+        <span class="sfdc-prev-name">${esc(a.name)}${a.exists ? ' <span class="badge">already added</span>' : ""}</span>
+        <span class="sfdc-prev-col">${fmtAmt(a.amount)}</span>
+        <span class="sfdc-prev-col">${stageCell(a)}</span>
+        <span class="sfdc-prev-col">${dateCell(a.close_date)}</span>
+        <span class="sfdc-prev-col">${aeCell(a)}</span>
+      </label>`).join("") : `<div class="empty">None.</div>`;
+
+    const headEl = (key, label) => `<span class="sfdc-prev-hcell sortable" data-psort="${key}">${label}${pArrow(key)}</span>`;
+    const prevHead = () => `
+      <div class="sfdc-prev-head">
+        <label class="sfdc-prev-hcell"><input type="checkbox" class="sfdc-prev-all" /></label>
+        <span class="sfdc-prev-hcell sortable" data-psort="name">Account${pArrow("name")}</span>
+        ${headEl("amount", "Amount")}
+        ${headEl("stage", "Stage")}
+        ${headEl("close", "Close Date")}
+        ${headEl("ae", "AE")}
+      </div>`;
+
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.innerHTML = `
+      <div class="modal sfdc-modal">
+        <div class="modal-head"><h2>Accounts from Salesforce</h2><button class="modal-close">✕</button></div>
+        <div class="tabs sfdc-prev-tabs">
+          <button class="tab active" data-ptab="nb">New Business (${nb.length})</button>
+          <button class="tab" data-ptab="rn">Renewals (${rn.length})</button>
+        </div>
+        <div class="sfdc-prev-head-wrap"></div>
+        <div class="sfdc-prev-list"></div>
+        <div class="modal-foot">
+          <span class="muted sfdc-prev-hint">Select the accounts to add.</span>
+          <button class="ghost small modal-cancel">Cancel</button>
+          <button class="primary small" id="sfdc-create-btn">Create selected</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    overlay.querySelector(".modal-close").onclick = close;
+    overlay.querySelector(".modal-cancel").onclick = close;
+    overlay.onclick = (e) => { if (e.target === overlay) close(); };
+
+    const headWrap = overlay.querySelector(".sfdc-prev-head-wrap");
+    const listEl = overlay.querySelector(".sfdc-prev-list");
+    const renderPanel = () => {
+      headWrap.innerHTML = prevHead();
+      listEl.innerHTML = rowsFor(datasets[_ptab]);
+      // track each checkbox into _picked so selection survives sort/tab re-render
+      overlay.querySelectorAll(".sfdc-prev-check:not(:disabled)").forEach((c) => c.onchange = () => {
+        if (c.checked) _picked.add(c.dataset.name); else _picked.delete(c.dataset.name);
+      });
+      // select-all toggles only enabled (non-existing) checkboxes on this tab
+      const all = overlay.querySelector(".sfdc-prev-all");
+      if (all) all.onchange = () =>
+        overlay.querySelectorAll(".sfdc-prev-check:not(:disabled)").forEach((c) => {
+          c.checked = all.checked;
+          if (all.checked) _picked.add(c.dataset.name); else _picked.delete(c.dataset.name);
+        });
+      overlay.querySelectorAll(".sfdc-prev-hcell.sortable").forEach((h) => h.onclick = () => {
+        const key = h.dataset.psort;
+        _psort = (_psort.key === key) ? { key, dir: -_psort.dir } : { key, dir: 1 };
+        renderPanel();
+      });
+    };
+    renderPanel();
+
+    overlay.querySelectorAll(".sfdc-prev-tabs .tab").forEach((t) => t.onclick = () => {
+      overlay.querySelectorAll(".sfdc-prev-tabs .tab").forEach((x) => x.classList.toggle("active", x === t));
+      _ptab = t.dataset.ptab;
+      renderPanel();
+    });
+    overlay.querySelector("#sfdc-create-btn").onclick = async () => {
+      const names = [..._picked];
+      if (!names.length) { alert("Select at least one account."); return; }
+      const btn = overlay.querySelector("#sfdc-create-btn");
+      btn.disabled = true; btn.textContent = "Creating…";
+      try {
+        await api("/api/bulk-create-accounts", { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ accounts: names.map((name) => ({ name, owner: memberId })) }) });
+        close();
+        pageMember(memberId, "active");
+      } catch (err) { btn.disabled = false; btn.textContent = "Create selected"; alert("Create failed: " + err.message); }
+    };
+  }
 
   // ── Multi-select + bulk bar ──────────────────────────────────────────
   const bulkBar = document.getElementById("bulk-bar");
@@ -679,6 +890,61 @@ async function pageMember(memberId, tab = "active") {
   bulkBar.querySelector(".bulk-transfer-sel")?.addEventListener("change", (e) => {
     if (e.target.value) runBulk("set-owner", e.target.value);
   });
+
+  // Bulk coverage handoff: one shared modal, then one HTML page per account —
+  // targeting each account's new-business opp (renewal-only accounts skipped).
+  bulkBar.querySelector(".bulk-coverage-handoff")?.addEventListener("click", () => {
+    const accounts = selected();
+    if (!accounts.length) return;
+    openHandoffModal(`${accounts.length} account${accounts.length > 1 ? "s" : ""}`, async (extraText) => {
+      const box = document.getElementById("bulk-handoff-status");
+      box.classList.remove("hidden");
+      box.innerHTML = `<div class="hb-head">Generating coverage handoffs…</div>`;
+      const skipped = [];
+      // Resolve each account's new-business opp first (sequential — light SFDC reads).
+      let started = 0;
+      for (const acct of accounts) {
+        const opp = await pickNewBusinessOpp(acct).catch(() => null);
+        if (!opp) { skipped.push(acct); continue; }
+        try {
+          const jobId = await invokeCoverageHandoff(acct, opp.name, opp.slug, extraText);
+          trackJob(jobId, { account: acct, slug: opp.slug, oppName: opp.name, skill: "coverage-handoff" });
+          renderHandoffRow(box, { acct, oppName: opp.name, oppSlug: opp.slug, jobId });
+          started++;
+        } catch (e) {
+          const rowEl = document.createElement("div");
+          rowEl.className = "status err";
+          rowEl.innerHTML = `<span class="run-head">✕ ${esc(acct)} — ${esc(e.message)}</span>`;
+          box.appendChild(rowEl);
+        }
+      }
+      if (skipped.length) {
+        const s = document.createElement("div");
+        s.className = "status";
+        s.innerHTML = `<span class="run-head">ⓘ Skipped (renewal-only / no open new-business opp): ${esc(skipped.join(", "))}</span>`;
+        box.appendChild(s);
+      }
+      box.querySelector(".hb-head").textContent = `Coverage handoffs: ${started} generating${skipped.length ? `, ${skipped.length} skipped` : ""}. Runs continue in the background if you leave.`;
+    });
+  });
+
+  // Re-attach to any coverage-handoff jobs still running for this member's
+  // accounts (fired earlier, then navigated away). The jobs never stopped
+  // server-side; this just rebuilds the status box so you see progress again.
+  (async () => {
+    const box = document.getElementById("bulk-handoff-status");
+    if (!box) return;
+    const visible = new Set([...(data.active || []), ...(data.archived || [])].map((a) => a.name));
+    const all = await api("/api/jobs").catch(() => []);
+    const running = (all || []).filter((j) =>
+      j.skill === "coverage-handoff" && j.status === "running" && visible.has(j.account));
+    if (!running.length) return;
+    box.classList.remove("hidden");
+    box.innerHTML = `<div class="hb-head">Coverage handoffs in progress (${running.length}) — resumed.</div>`;
+    running.forEach((j) => renderHandoffRow(box, {
+      acct: j.account, oppName: j.opportunity || j.account, oppSlug: j.opp_slug, jobId: j.job_id,
+    }));
+  })();
 
   // ⋮ kebab menus
   const closeMenus = () => view.querySelectorAll(".dropdown-menu").forEach((mn) => mn.classList.add("hidden"));
@@ -795,27 +1061,279 @@ function renderOutputGroups(outputs) {
     <div class="out-group">
       <div class="out-group-date">${esc(longDate(day))}</div>
       <div class="out-group-items">
-        ${groups[day].map((o) => `
-          <div class="out-item" data-path="${encodeURIComponent(o.path)}" data-title="${esc(prettySkill(o.skill))} — ${esc(o.filename)}">
-            <div><div class="skill">${esc(prettySkill(o.skill))}</div><div class="when">${esc(o.filename)}</div></div>
+        ${groups[day].map((o) => {
+          const isHtml = o.ext === "html";
+          return `
+          <div class="out-item${isHtml ? " is-html" : ""}" data-path="${encodeURIComponent(o.path)}" data-ext="${esc(o.ext || "md")}" data-title="${esc(prettySkill(o.skill))} — ${esc(o.filename)}">
+            <div><div class="skill">${esc(prettySkill(o.skill))}${isHtml ? ' <span class="badge">HTML</span>' : ""}</div><div class="when" title="${esc(o.filename)}">${esc(conciseOutputName(o.filename, o.skill))}</div></div>
             <div class="out-item-right">
               <span class="when">${esc((o.modified || "").slice(11))} UTC</span>
+              ${isHtml ? `<button class="ghost small out-view" data-path="${encodeURIComponent(o.path)}">View</button><button class="ghost small out-copy-path" data-path="${encodeURIComponent(o.path)}">Copy repo path</button><button class="ghost small out-push-repo" data-path="${encodeURIComponent(o.path)}">Push to repo</button>` : ""}
               ${downloadMenuHtml(encodeURIComponent(o.path), "dl-menu-row")}
             </div>
-          </div>`).join("")}
+          </div>`; }).join("")}
       </div>
     </div>`).join("");
+}
+
+// ---- Coverage Handoff modal (PTO) ----------------------------------------
+// Slim form: who's-out / covering SE (freeform) + coverage window. Everything
+// else (players, meetings, open items) the skill derives from transcripts+SFDC.
+// Serializes to a text block and hands it to `onGenerate(extraText)`.
+// `titleSuffix` labels the modal header (an opp name, or e.g. "3 accounts").
+async function openHandoffModal(titleSuffix, onGenerate) {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal handoff-modal">
+      <div class="modal-head"><h2>Coverage Handoff — ${esc(titleSuffix)}</h2><button class="modal-close">✕</button></div>
+      <div class="handoff-form">
+        <div class="hf-grid">
+          <label>SE out<input id="hf-out" type="text" placeholder="Owner SE" /></label>
+          <label>Covering SE<input id="hf-cover" type="text" placeholder="Covering SE" /></label>
+          <label>Coverage start<input id="hf-start" type="date" /></label>
+          <label>Coverage end<input id="hf-end" type="date" /></label>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <span class="muted" style="margin-right:auto;font-size:12px;">Players, meetings &amp; deal facts are pulled from transcripts + Salesforce automatically.</span>
+        <button class="ghost small modal-cancel">Cancel</button>
+        <button class="primary small" id="hf-generate">Generate handoff</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector(".modal-close").onclick = close;
+  overlay.querySelector(".modal-cancel").onclick = close;
+  overlay.onclick = (e) => { if (e.target === overlay) close(); };
+
+  // default SE out = the current member's name if we're under a member page
+  const memberSlug = (location.hash.match(/#\/member\/([^/]+)/) || [])[1];
+  if (memberSlug) {
+    api("/api/members").then((members) => {
+      const me = (members || []).find((m) => m.id === memberSlug);
+      const outEl = overlay.querySelector("#hf-out");
+      if (me && outEl && !outEl.value) outEl.value = me.name;
+    }).catch(() => {});
+  }
+  overlay.querySelector("#hf-out").focus();
+
+  overlay.querySelector("#hf-generate").onclick = () => {
+    const v = (sel) => (overlay.querySelector(sel)?.value || "").trim();
+    const extra = [
+      "PTO COVERAGE CONTEXT (use verbatim for the coverage banner):",
+      `- SE out: ${v("#hf-out") || "Not specified"}`,
+      `- Covering SE: ${v("#hf-cover") || "Not specified"}`,
+      `- Coverage window: ${v("#hf-start") || "?"} to ${v("#hf-end") || "?"}`,
+    ].join("\n");
+    close();
+    onGenerate(extra);
+  };
+}
+
+// Pick the opportunity to hand off for an account: the best OPEN, non-renewal
+// (new-business) opp. Returns {name, slug} or null (renewal-only / no open opp).
+async function pickNewBusinessOpp(account) {
+  const opps = await api(`/api/accounts/${encodeURIComponent(account)}/opportunities`).catch(() => []);
+  // Only OPEN, non-renewal opps qualify. No open new-business opp → skip (return null).
+  const newBiz = opps.filter((o) => (o.is_closed === false || o.is_closed === null) && (o.type || "") !== "Renewal");
+  const pick = newBiz[0];  // endpoint returns close_date DESC; first is the active one
+  return pick ? { name: pick.name, slug: pick.slug } : null;
+}
+
+// Fire a coverage-handoff run for one account+opp. Returns the job id (or throws).
+async function invokeCoverageHandoff(account, oppName, oppSlug, extraText) {
+  const res = await api("/api/invoke", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ account, opportunity: oppName, opp_slug: oppSlug, skill: "coverage-handoff", extra: extraText }),
+  });
+  return res.job_id;
+}
+
+// Append one bulk-handoff status row and attach a page-independent poller that
+// flips it to ✓ (with a View link) / ✕ when the job finishes. Used both when
+// firing fresh jobs and when re-attaching to still-running jobs after you
+// navigate back to the member page. The job keeps running server-side either way.
+function renderHandoffRow(box, { acct, oppName, oppSlug, jobId }) {
+  const rowEl = document.createElement("div");
+  rowEl.className = "status running";
+  rowEl.innerHTML = `<span class="run-head"><span class="spinner"></span>${esc(acct)} — ${esc(oppName)}…</span>`;
+  box.appendChild(rowEl);
+  pollJob(jobId, async (job) => {
+    if (job.status === "running") return;
+    if (job.ok) {
+      const outs = await api(`/api/accounts/${encodeURIComponent(acct)}/outputs?opp=${encodeURIComponent(oppSlug)}`).catch(() => []);
+      const html = outs.find((o) => o.skill === "coverage-handoff" && o.ext === "html");
+      rowEl.className = "status ok";
+      rowEl.innerHTML = `<span class="run-head">✓ ${esc(acct)} — ${esc(oppName)}</span>` +
+        (html ? ` <button class="ghost small" data-path="${encodeURIComponent(html.path)}">View</button>` : "");
+      const vb = rowEl.querySelector("button[data-path]");
+      if (vb) vb.onclick = () => window.open("/api/output/html?path=" + vb.dataset.path, "_blank");
+    } else {
+      rowEl.className = "status err";
+      rowEl.innerHTML = `<span class="run-head">✕ ${esc(acct)} — finished with an error</span>`;
+    }
+  });
+  return rowEl;
+}
+
+// Wire output rows: HTML outputs open in a new tab + expose View / Copy-repo-path;
+// markdown outputs open the in-app viewer (navOpenOutput). Shared by the initial
+// render and refreshOutputs so behavior stays consistent.
+function wireOutItems(container, ctx) {
+  container.querySelectorAll(".out-item").forEach((el) => {
+    const isHtml = el.dataset.ext === "html";
+    if (isHtml) {
+      el.onclick = (e) => {
+        if (e.target.closest("button, .dl-menu")) return;  // let buttons handle themselves
+        window.open("/api/output/html?path=" + el.dataset.path, "_blank");
+      };
+    } else {
+      el.onclick = () => navOpenOutput(el.dataset.path, el.dataset.title, ctx);
+    }
+  });
+  container.querySelectorAll(".out-view").forEach((b) => b.onclick = (e) => {
+    e.stopPropagation(); window.open("/api/output/html?path=" + b.dataset.path, "_blank");
+  });
+  container.querySelectorAll(".out-copy-path").forEach((b) => b.onclick = async (e) => {
+    e.stopPropagation();
+    try {
+      const rp = await api(`/api/output/repo-path?account=${encodeURIComponent(ctx.account)}&member=${encodeURIComponent(ctx.memberName || "")}`);
+      await navigator.clipboard.writeText(rp.full);
+      const old = b.textContent; b.textContent = "Copied ✓";
+      setTimeout(() => { b.textContent = old; }, 1500);
+    } catch (err) { alert("Repo path: could not copy — " + err.message); }
+  });
+  container.querySelectorAll(".out-push-repo").forEach((b) => b.onclick = async (e) => {
+    e.stopPropagation();
+    // First: is there already an OPEN PR for this account? (merged/closed don't count)
+    const old = b.textContent; b.disabled = true;
+    b.innerHTML = `<span class="spinner"></span> Checking…`;
+    let existing = null;
+    try {
+      const st = await api(`/api/output/push-status?account=${encodeURIComponent(ctx.account)}`);
+      existing = st.open_pr || null;
+    } catch { /* best-effort — fall through to a normal push */ }
+    b.disabled = false; b.textContent = old;
+
+    const ok = await confirmPush(ctx.account, existing);
+    if (!ok) return;
+    b.disabled = true;
+    b.innerHTML = `<span class="spinner"></span> Pushing…`;
+    try {
+      const res = await api("/api/output/push-to-repo", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          path: decodeURIComponent(b.dataset.path),
+          account: ctx.account,
+          member: ctx.memberName || "",
+        }),
+      });
+      showPushResult(ctx.account, res);
+    } catch (err) {
+      showPushError(ctx.account, err.message);
+    } finally {
+      b.disabled = false; b.textContent = old;
+    }
+  });
+}
+
+// Confirm modal before opening a PR against the internal repo. If `existing` is
+// an open PR ({number, url}) for this account, show the warning variant so the
+// user doesn't unknowingly open a duplicate — they can open the existing PR,
+// push anyway (a new PR), or cancel. (Merged/closed PRs aren't passed here, so
+// re-pushing after merge/close falls through to the normal confirm.)
+function confirmPush(account, existing) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    const warn = existing && existing.number;
+    overlay.innerHTML = `
+      <div class="modal push-modal">
+        <div class="modal-head"><h2>${warn ? "PR already open" : "Push handoff to internal.airbyte.ai"}</h2><button class="modal-close">✕</button></div>
+        <div class="push-body">
+          ${warn ? `
+            <p class="push-warn">⚠ <strong>${esc(account)}</strong> already has an open pull request:
+              <a class="push-result" href="${esc(existing.url)}" target="_blank" rel="noopener">PR #${esc(String(existing.number))}</a>.</p>
+            <p>Pushing again opens a <strong>second</strong> PR for the same handoff. Update the existing one instead, or push anyway if you meant to.</p>
+          ` : `
+            <p>Push the <strong>${esc(account)}</strong> coverage handoff to <code>internal.airbyte.ai</code>? This branches off <code>origin/main</code> and opens a pull request.</p>
+          `}
+        </div>
+        <div class="modal-foot">
+          ${warn ? `<a class="ghost small" href="${esc(existing.url)}" target="_blank" rel="noopener" style="margin-right:auto;text-decoration:none;">Open PR #${esc(String(existing.number))}</a>` : ""}
+          <button class="ghost small modal-cancel">Cancel</button>
+          <button class="${warn ? "danger" : "primary"} small" id="push-go">${warn ? "Push anyway" : "Push &amp; open PR"}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const done = (v) => { overlay.remove(); resolve(v); };
+    overlay.querySelector(".modal-close").onclick = () => done(false);
+    overlay.querySelector(".modal-cancel").onclick = () => done(false);
+    overlay.onclick = (e) => { if (e.target === overlay) done(false); };
+    overlay.querySelector("#push-go").onclick = () => done(true);
+  });
+}
+
+function showPushResult(account, res) {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal push-modal">
+      <div class="modal-head"><h2>Pushed ✓</h2><button class="modal-close">✕</button></div>
+      <div class="push-body">
+        <p><strong>${esc(account)}</strong> handoff pushed to <code>${esc(res.target || "")}</code>.</p>
+        ${res.pr_url ? `<p><a class="push-result" href="${esc(res.pr_url)}" target="_blank" rel="noopener">${esc(res.pr_url)}</a></p>` : `<p class="muted">Branch <code>${esc(res.branch || "")}</code> pushed (no PR URL returned).</p>`}
+      </div>
+      <div class="modal-foot"><button class="primary small modal-cancel">Done</button></div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector(".modal-close").onclick = close;
+  overlay.querySelector(".modal-cancel").onclick = close;
+  overlay.onclick = (e) => { if (e.target === overlay) close(); };
+}
+
+function showPushError(account, message) {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal push-modal">
+      <div class="modal-head"><h2>Push failed</h2><button class="modal-close">✕</button></div>
+      <div class="push-body">
+        <p>Could not push the <strong>${esc(account)}</strong> handoff:</p>
+        <pre class="push-err">${esc(message)}</pre>
+      </div>
+      <div class="modal-foot"><button class="primary small modal-cancel">Close</button></div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector(".modal-close").onclick = close;
+  overlay.querySelector(".modal-cancel").onclick = close;
+  overlay.onclick = (e) => { if (e.target === overlay) close(); };
 }
 
 // ---- Page: opportunity (outputs + invoke) --------------------------------
 async function pageOpportunity(account, slug, oppName) {
   setCrumbs([...(await accountCrumbs(account)), { label: account, href: `#/account/${encodeURIComponent(account)}` }, { label: oppName }]);
   const outputs = await api(`/api/accounts/${encodeURIComponent(account)}/outputs?opp=${encodeURIComponent(slug)}`);
+  // Resolve the owning member's display name (for the handoff repo-path). Owner
+  // is a member id on the account; map to its name. Empty is fine (endpoint
+  // falls back to a placeholder slug).
+  let _memberName = "";
+  try {
+    const [meta, members] = await Promise.all([
+      api(`/api/accounts/${encodeURIComponent(account)}`).catch(() => ({})),
+      api("/api/members").catch(() => []),
+    ]);
+    _memberName = (members.find((m) => m.id === meta.owner)?.name) || "";
+  } catch { /* best-effort */ }
   view.innerHTML = `
     <div class="row">
       <div><h1>${esc(oppName)}</h1><p class="sub">${esc(account)} · outputs &amp; skills</p></div>
       <div class="row-actions">
         <a class="primary live-btn" href="#/live/${encodeURIComponent(account)}/${encodeURIComponent(slug)}/${encodeURIComponent(oppName)}">🎙 Live Transcribe</a>
+        <button class="ghost" id="handoff-btn" title="Generate a PTO coverage handoff for a covering SE">🤝 Coverage Handoff</button>
         <button class="primary" id="invoke-btn">⚡ Invoke Skill</button>
       </div>
     </div>
@@ -832,9 +1350,7 @@ async function pageOpportunity(account, slug, oppName) {
     <div class="outputs" id="outputs">
       ${outputs.length ? renderOutputGroups(outputs) : `<div class="empty">No outputs yet for this opportunity. Invoke a skill to generate one.</div>`}
     </div>`;
-  document.querySelectorAll(".out-item").forEach((el) => {
-    el.onclick = () => navOpenOutput(el.dataset.path, el.dataset.title, { account, slug, oppName });
-  });
+  wireOutItems(view, { account, slug, oppName, memberName: _memberName });
   // onDeleted runs on user click (after refreshOutputs is defined below) → safe.
   wireDownloadMenus(view, () => refreshOutputs());
   document.getElementById("invoke-btn").onclick = () => openInvoke(account, { slug, name: oppName });
@@ -843,8 +1359,7 @@ async function pageOpportunity(account, slug, oppName) {
   const freeInput = document.getElementById("opp-free");
   const freeBtn = document.getElementById("opp-free-run");
   const fStatus = document.getElementById("freebar-status");
-
-  const dismissRun = () => { fStatus.className = "status hidden"; fStatus.innerHTML = ""; };
+  fStatus.className = "status-stack";  // container of per-job rows (was a single line)
 
   // Re-fetch the Generated Outputs list (after a run produces a new file).
   const refreshOutputs = async () => {
@@ -852,56 +1367,76 @@ async function pageOpportunity(account, slug, oppName) {
     const el = document.getElementById("outputs");
     if (!el) return;
     el.innerHTML = outs.length ? renderOutputGroups(outs) : `<div class="empty">No outputs yet for this opportunity. Invoke a skill to generate one.</div>`;
-    el.querySelectorAll(".out-item").forEach((it) => {
-      it.onclick = () => navOpenOutput(it.dataset.path, it.dataset.title, { account, slug, oppName });
-    });
+    wireOutItems(el, { account, slug, oppName, memberName: _memberName });
     wireDownloadMenus(el, () => refreshOutputs());
   };
 
-  // Status-only line — the result goes to Generated Outputs (no inline preview).
-  const renderJob = (job, finishedAt) => {
+  // ── Multi-job status stack ──────────────────────────────────────────────
+  // Each invoke gets its OWN status row, keyed by job id, so several skills can
+  // run at once for the same opp and each shows independent progress. (Was a
+  // single line that only ever tracked one job.) `rows` maps job id → its <div>;
+  // a freshly-started run uses a temp key until the POST returns its real id.
+  const rows = new Map();
+
+  const ensureRow = (key) => {
+    let row = rows.get(key);
+    if (!row) {
+      row = document.createElement("div");
+      row.className = "status";
+      rows.set(key, row);
+      fStatus.appendChild(row);
+    }
+    return row;
+  };
+
+  // Status-only row — the result goes to Generated Outputs (no inline preview).
+  const renderJob = (key, job, finishedAt) => {
+    const row = ensureRow(key);
     if (job.status === "running") {
-      fStatus.className = "status running";
-      fStatus.innerHTML = `<span class="run-head"><span class="spinner"></span>Running ${esc(job.skill || "instruction")} … (keeps running even if you leave this page)</span>`;
-      freeBtn.disabled = true;
+      row.className = "status running";
+      row.innerHTML = `<span class="run-head"><span class="spinner"></span>Running ${esc(job.skill || "instruction")} … (keeps running even if you leave this page)</span>`;
       return;
     }
-    freeBtn.disabled = false;
     const ok = job.ok;
-    fStatus.className = ok ? "status ok" : "status err";
+    row.className = ok ? "status ok" : "status err";
     const ago = finishedAt ? ` · ran ${relTime(finishedAt)}` : "";
     const head = ok
       ? `✓ ${esc(job.skill || "run")}${ago} — saved to Generated Outputs below`
       : `✕ ${esc(job.skill || "run")}${ago} — finished with an error`;
-    fStatus.innerHTML = `<span class="run-head">${head}</span><button class="run-dismiss" id="run-dismiss" title="Dismiss">✕</button>`;
-    document.getElementById("run-dismiss").onclick = dismissRun;
+    row.innerHTML = `<span class="run-head">${head}</span><button class="run-dismiss" title="Dismiss">✕</button>`;
+    row.querySelector(".run-dismiss").onclick = () => { row.remove(); rows.delete(key); };
   };
 
-  let _lastStatus = null;
   const watch = (jobId) => pollJob(jobId, (job) => {
     if (!document.getElementById("freebar-status")) return;  // left the page
-    renderJob(job);
-    if (job.status !== "running" && _lastStatus === "running") refreshOutputs();  // new file landed
-    _lastStatus = job.status;
+    const wasRunning = rows.get(jobId)?.classList.contains("running");
+    renderJob(jobId, job);
+    if (job.status !== "running" && wasRunning) refreshOutputs();  // new file landed
   });
 
-  // Recover a run started earlier (still-running job re-attaches). We no longer
-  // surface the last finished run inline — finished results live in Generated
-  // Outputs (and chat-only skills like next-move show their text when opened).
+  // Recover runs started earlier (still-running jobs re-attach) — ALL of them,
+  // not just the first. Finished results live in Generated Outputs (and chat-only
+  // skills like next-move show their text when opened), so we only re-surface
+  // the ones still in flight.
   const existing = await api(`/api/jobs?account=${encodeURIComponent(account)}&opp_slug=${encodeURIComponent(slug)}`).catch(() => []);
-  const running = existing.find((j) => j.status === "running");
-  if (running) { _lastStatus = "running"; renderJob(running); watch(running.job_id);
-    trackJob(running.job_id, { account, slug, oppName, skill: running.skill || null }); }
+  existing.filter((j) => j.status === "running").forEach((j) => {
+    renderJob(j.job_id, j);
+    watch(j.job_id);
+    trackJob(j.job_id, { account, slug, oppName, skill: j.skill || null });
+  });
 
   // Start a run. `skill` = run that named skill (typed text becomes context);
-  // otherwise run the typed text as a freeform instruction.
+  // otherwise run the typed text as a freeform instruction. Multiple runs can be
+  // in flight at once — each gets its own row and the Run button stays enabled.
+  let _tmpSeq = 0;
   const startRun = async (skill) => {
     const free = freeInput.value.trim();
     if (!skill && !free) return;
     suggestBox.classList.add("hidden");
-    fStatus.className = "status running";
-    fStatus.innerHTML = `<span class="run-head"><span class="spinner"></span>Starting…</span>`;
-    freeBtn.disabled = true;
+    const tmpKey = `pending-${_tmpSeq++}`;
+    const row = ensureRow(tmpKey);
+    row.className = "status running";
+    row.innerHTML = `<span class="run-head"><span class="spinner"></span>Starting ${esc(skill || "instruction")}…</span>`;
     const payload = skill
       ? { account, opportunity: oppName, opp_slug: slug, skill, extra: free || null }
       : { account, opportunity: oppName, opp_slug: slug, freeform: free };
@@ -910,15 +1445,42 @@ async function pageOpportunity(account, slug, oppName) {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify(payload),
       });
+      // Re-key the pending row to the real job id so watch() updates it in place.
+      rows.delete(tmpKey); rows.set(res.job_id, row);
       // Global toast when it finishes (fires even if you navigate away); the
       // inline `watch` handles the on-page status while you stay here.
       trackJob(res.job_id, { account, slug, oppName, skill: skill || null });
       await watch(res.job_id);
     } catch (e) {
-      fStatus.className = "status err"; fStatus.textContent = "Error: " + e.message;
-      freeBtn.disabled = false;
+      row.className = "status err"; row.textContent = "Error: " + e.message;
+      rows.delete(tmpKey);
     }
   };
+
+  // ── Coverage Handoff (PTO) ────────────────────────────────────────────
+  // Run the coverage-handoff skill with structured PTO context from a modal
+  // form. Reuses the same job stack/watch as startRun; the form is serialized
+  // into `extra` so the skill's prompt receives it.
+  const startHandoff = async (extraText) => {
+    const tmpKey = `pending-${_tmpSeq++}`;
+    const row = ensureRow(tmpKey);
+    row.className = "status running";
+    row.innerHTML = `<span class="run-head"><span class="spinner"></span>Generating coverage handoff…</span>`;
+    try {
+      const res = await api("/api/invoke", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ account, opportunity: oppName, opp_slug: slug, skill: "coverage-handoff", extra: extraText }),
+      });
+      rows.delete(tmpKey); rows.set(res.job_id, row);
+      trackJob(res.job_id, { account, slug, oppName, skill: "coverage-handoff" });
+      await watch(res.job_id);
+    } catch (e) {
+      row.className = "status err"; row.textContent = "Error: " + e.message;
+      rows.delete(tmpKey);
+    }
+  };
+
+  document.getElementById("handoff-btn").onclick = () => openHandoffModal(oppName, startHandoff);
 
   // ── Suggestive skill dropdown ─────────────────────────────────────────
   // As you type, surface skills whose label / id / triggers match a word.
@@ -1041,6 +1603,15 @@ const TILE_LABELS = [
 // probability ranges). Drives the tile's left-accent color.
 function tileSentiment(label, valueText) {
   const t = (valueText || "").toLowerCase();
+  const l = (label || "").toLowerCase();
+  // "High/Medium/Low" reads as good/warn/danger on a confidence tile. Scope the
+  // bare-word match to confidence tiles so "low" in an unrelated value (e.g. a
+  // Stage "low engagement") isn't mis-colored red.
+  if (/confidence/.test(l)) {
+    if (/🔴/.test(valueText) || /\blow\b/.test(t)) return "sev-danger";
+    if (/🟡/.test(valueText) || /\bmedium\b/.test(t)) return "sev-warn";
+    if (/🟢/.test(valueText) || /\bhigh\b/.test(t)) return "sev-good";
+  }
   if (/🔴/.test(valueText) || /\bat risk\b|\bblocker\b|\bsilent\b|\bdead\b|\bdying\b|\bweak\b|<\s*20/.test(t)) return "sev-danger";
   if (/🟡/.test(valueText) || /\bneeds\b|\bcaution\b|\bsteady\b|\bmedium\b|20[–-]40|20[–-]60|40[–-]60/.test(t)) return "sev-warn";
   if (/🟢/.test(valueText) || /\blikely\b|\bvery likely\b|\bcommitted\b|\bstrong\b|\bviable\b|\bgo\b|60[–-]80|>\s*80/.test(t)) return "sev-good";
@@ -1073,6 +1644,12 @@ const RISK_SECTION = /watch-?outs?|what would lose|new objections|concerns|risks
 // rendered as calm info cards (no severity pill) for scannability. (Constraints &
 // Edge Cases, Decision Criteria, etc.) Distinct from RISK_SECTION (severity cards).
 const INFO_SECTION = /constraints?|edge cases?|considerations?|assumptions?/i;
+
+// Ranked action lists (next-move "Ranked Next Moves") — lead-bolded bullets like
+// "**1 · Run tech-qual — …**" become the same calm info cards, so the ranked moves
+// read as scannable cards with a bold lead-title instead of a dense list. Kept
+// separate from INFO_SECTION for clarity; both render as `.risk-card.info`.
+const EXEC_SECTION = /ranked next moves?/i;
 
 // Infer a severity for a risk bullet from its wording (no explicit dot in prose).
 function riskSeverity(text) {
@@ -1176,7 +1753,11 @@ async function openOutput(path, title, ctx) {
     if (readHead) {
       readNodes.add(readHead);
       let n = readHead.nextElementSibling, parts = [];
-      while (n && !/^h[1-6]$/i.test(n.tagName)) {
+      // Stop the narrative at the next heading, a callout, or a rule — a callout
+      // (e.g. next-move's [!blocker]/[!risk] overrides) is its own block and must
+      // survive to feed the Top-Risks strip, not get absorbed into the summary.
+      while (n && !/^h[1-6]$/i.test(n.tagName) && n.tagName !== "HR"
+             && !n.classList?.contains("callout")) {
         if (!n.classList?.contains("kv-grid") && (n.textContent || "").trim()) parts.push(n.innerHTML);
         readNodes.add(n); n = n.nextElementSibling;
       }
@@ -1248,8 +1829,44 @@ async function openOutput(path, title, ctx) {
   for (const s of sections) {
     const title = s.querySelector(":scope > h2.md-h2")?.textContent || "";
     const isRisk = RISK_SECTION.test(title);
-    const isInfo = !isRisk && INFO_SECTION.test(title);
-    if (!isRisk && !isInfo) continue;
+    const isExec = !isRisk && EXEC_SECTION.test(title);
+    const isInfo = !isRisk && !isExec && INFO_SECTION.test(title);
+    if (!isRisk && !isInfo && !isExec) continue;
+
+    // Ranked-move shape: a bold-lead PARAGRAPH ("**1 · skill — headline.**")
+    // followed by its detail nodes (a kv-grid of Why-now/Inputs/Effort, or prose)
+    // until the next bold-lead paragraph. Group each run into a calm info card so
+    // the ranked moves read as scannable cards. (The bullet path below handles
+    // the RISK/INFO `<ul>` shape.)
+    if (isExec) {
+      const kids = Array.from(s.children).filter((n) => n !== s.querySelector(":scope > h2.md-h2"));
+      const isLead = (n) => n.tagName === "P" && n.firstElementChild?.tagName === "STRONG"
+        && n.firstElementChild === n.firstChild;
+      if (kids.some(isLead)) {
+        const wrap = document.createElement("div");
+        wrap.className = "risk-cards";
+        let card = null;
+        kids.forEach((n) => {
+          if (isLead(n)) {
+            const leadText = (n.firstElementChild.textContent || "").replace(/[.:]\s*$/, "").trim();
+            card = document.createElement("div");
+            card.className = "risk-card info";
+            card.innerHTML = `<div class="risk-card-head"><span class="risk-card-title">${esc(leadText)}</span></div>`
+              + `<div class="risk-card-body"></div>`;
+            wrap.appendChild(card);
+          } else if (card) {
+            card.querySelector(".risk-card-body").appendChild(n.cloneNode(true));
+          } else {
+            wrap.appendChild(n.cloneNode(true));  // stray intro before first lead
+          }
+        });
+        kids.forEach((n) => n.remove());
+        const h2 = s.querySelector(":scope > h2.md-h2");
+        if (h2) h2.after(wrap); else s.prepend(wrap);
+      }
+      continue;
+    }
+
     const ul = s.querySelector(":scope > ul.md-list");
     if (!ul) continue;
     const items = Array.from(ul.children).filter((li) => li.tagName === "LI");
@@ -1305,7 +1922,9 @@ async function openOutput(path, title, ctx) {
   // in place (not a copy). Scanned in document order across both shapes.
   const riskItems = [];
   sections.forEach((s) => {
-    s.querySelectorAll(".callout-risk, .callout-blocker, .risk-card").forEach((c) => {
+    // `.risk-card.info` are neutral cards (Constraints / Edge Cases / ranked moves)
+    // — they carry no severity, so keep them OUT of the Top-Risks strip.
+    s.querySelectorAll(".callout-risk, .callout-blocker, .risk-card:not(.info)").forEach((c) => {
       let sev, title;
       if (c.classList.contains("risk-card")) {
         sev = c.classList.contains("blocker") ? "blocker" : "risk";
@@ -1993,11 +2612,32 @@ async function pageLive(account, slug, oppName) {
 // ---- Invoke modal ---------------------------------------------------------
 const modal = document.getElementById("modal");
 // opp = { slug, name } | null
+// Build the skill picker <option>s grouped by tier, with a step number prefixed
+// to workflow skills (e.g. "1 · PREP CALL"). Tiers keep the order they first
+// appear in SKILLS (already dependency-sorted by the backend). Labels use the
+// pretty upper-case form (PREP CALL) per the display convention.
+function skillOptionsGrouped() {
+  const tiers = [];                       // preserve first-seen tier order
+  const byTier = {};
+  for (const s of SKILLS) {
+    const t = s.tier || "Other";
+    if (!byTier[t]) { byTier[t] = []; tiers.push(t); }
+    byTier[t].push(s);
+  }
+  return tiers.map((t) => {
+    const opts = byTier[t].map((s) => {
+      const num = s.step ? `${s.step} · ` : "";
+      return `<option value="${s.id}">${num}${esc(prettySkill(s.id))}</option>`;
+    }).join("");
+    return `<optgroup label="${esc(t)}">${opts}</optgroup>`;
+  }).join("");
+}
+
 function openInvoke(account, opp = null) {
   const ctx = opp ? `${account} · ${opp.name}` : account;
   document.getElementById("modal-title").textContent = `Invoke — ${ctx}`;
   const sel = document.getElementById("skill-select");
-  sel.innerHTML = SKILLS.map((s) => `<option value="${s.id}">${esc(s.label)}</option>`).join("");
+  sel.innerHTML = skillOptionsGrouped();
   const blurb = document.getElementById("skill-blurb");
   const setBlurb = () => {
     const h = SKILLS_HELP[sel.value] || {};

@@ -67,8 +67,8 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 - **Action items:** ==[N]== · **Next step:** [one line]
 - **Deal-assessment update needed?** [yes/no — if yes, one line on what changed]
 
-**Jump to:** [At a Glance](#at-a-glance) · [Key Takeaways](#key-takeaways) · [Deal Health Signals](#deal-health-signals) · [New Objections / Concerns Surfaced](#new-objections--concerns-surfaced) · [Action Items](#action-items) · [Technical Notes](#technical-notes) · [Open Questions / Follow-ups](#open-questions--follow-ups) · [Attendees](#attendees) · [Next Step](#next-step) · [Source Coverage](#source-coverage)
-*(omit the Technical Notes anchor if the call had no technical content)*
+**Jump to:** [At a Glance](#at-a-glance) · [Key Takeaways](#key-takeaways) · [Deal Health Signals](#deal-health-signals) · [New Objections / Concerns Surfaced](#new-objections--concerns-surfaced) · [Action Items](#action-items) · [Sources & Destinations](#sources--destinations) · [Technical Notes](#technical-notes) · [Open Questions / Follow-ups](#open-questions--follow-ups) · [Attendees](#attendees) · [Next Step](#next-step) · [Source Coverage](#source-coverage)
+*(omit the Sources & Destinations and/or Technical Notes anchors if the call had no such content)*
 *(Append [MEDDPICC Quick Pass](#meddpicc-quick-pass) and [Coaching Observations](#coaching-observations) to the Jump-to line only when those conditional sections are present — see SE Best Practices below.)*
 *(Section order is "what changed → what to do": takeaways, health, and new objections lead; the attendee roster and source audit sit at the bottom — see `_se-playbook.md`.)*
 
@@ -94,11 +94,26 @@ Anything the customer raised that wasn't on your radar before the call — prici
 Markdown checklist. Each item: who owns it, what they're doing, by when (if stated).
 - [ ] **[Owner]** — [action] *(by [date if mentioned])*
 
+## Sources & Destinations
+*Include this section whenever the call named ANY system the customer wants to move data from or to. This is the single most reused fact downstream — `connector-feasibility` and `tech-qual` both build directly on it — so capture it as its own section, not buried in prose. Omit only for a purely business/exec call with zero systems mentioned.*
+
+Capture each system verbatim as named, tagged as a **Source** (data comes FROM it) or **Destination** (data goes TO it). Note if a system's role is ambiguous or if it's a new mention vs. a prior call. Don't assess connector coverage here — that's `connector-feasibility`'s job; this is just the record of what was said.
+
+| System | Role | Notes (version, hosting, new this call?) |
+|---|---|---|
+| [e.g. Salesforce] | Source | [as stated] |
+| [e.g. Snowflake] | Destination | [as stated] |
+
+- **Ambiguous / unconfirmed:** [systems mentioned without a clear source/destination role — flag for the SE to confirm]
+- **Changed since a prior call:** [added, dropped, or re-scoped systems]
+
+> [!info] Feeds connector-feasibility & tech-qual
+> Run or update `connector-feasibility` to check Airbyte coverage for these systems, and `tech-qual` to fold them into the canonical requirements. (Routed in "After Generating" below.)
+
 ## Technical Notes
-*Include this section ONLY if the call surfaced technical scope (sources, destinations, volume, latency, deployment, auth, sizing/pricing). Omit entirely for a purely business/exec call.*
+*Include this section ONLY if the call surfaced technical scope beyond source/destination systems (volume, latency, deployment, auth, sizing/pricing). Omit entirely for a purely business/exec call.*
 
 Capture the technical FACTS as stated on this call — raw, attributed, not synthesized. This is a record, not an analysis: don't build the full requirements matrix here (that's `tech-qual`'s job). Quote numbers and system names verbatim where load-bearing.
-- **Sources/destinations mentioned:** [systems named this call + any new ones]
 - **Volume / scale / frequency:** [figures stated — flag if they revise an earlier estimate]
 - **Deployment / infra / security:** [constraints raised — on-prem, residency, VPC, SSO, KMS]
 - **Sizing / pricing signals:** [data-worker count, enterprise connectors, capacity-vs-volume comments]
@@ -145,7 +160,8 @@ User can suppress with `--no-save`.
 1. **Update Notion** — create a new subpage under the customer's parent page named `<YYYY-MM-DD> — <Call Name>` with Attendees / Key Takeaways / Action Items / Follow-up Date sections. Also append new Q&A items to the customer's `Q&A` subpage.
 2. **Propose memory update** — if call surfaced a material change (new blocker, stakeholder change, decision). Per conditional rule in earlier section.
 3. **Suggest deal-assessment** — if call materially shifted deal health (not every call warrants this).
-4. **Suggest tech-qual** — if the call surfaced technical scope (the Technical Notes section is non-empty). Recommend running or updating `tech-qual` so the facts land in its canonical **Technical Requirements & Scope** section. If a `tech-qual-*.md` already exists, frame it as an update (revised volume, new source, new constraint), not a fresh run.
+4. **Suggest connector-feasibility** — if the call named any new sources/destinations (the Sources & Destinations section is non-empty with systems not already checked). Recommend running or updating `connector-feasibility` to confirm Airbyte coverage for those systems.
+5. **Suggest tech-qual** — if the call surfaced technical scope (the Technical Notes or Sources & Destinations section is non-empty). Recommend running or updating `tech-qual` so the facts land in its canonical **Technical Requirements & Scope** section. If a `tech-qual-*.md` already exists, frame it as an update (revised volume, new source, new constraint), not a fresh run.
 
 Wait for explicit yes/no on Notion / memory / deal-assessment / tech-qual before doing those.
 
@@ -244,6 +260,7 @@ If the customer revealed a belief about their own business that Airbyte data cou
 
 ## Changelog
 
+- **2026-07-07** — Promoted sources/destinations from a single bullet in Technical Notes to a dedicated **Sources & Destinations** section (table: system · role · notes) — the single most reused fact downstream. Added to Jump-to index; routes to `connector-feasibility` + `tech-qual` in After Generating.
 - **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.
 
 - **2026-05-28** — Auto-save to outputs/<skill>/ folder (default; --no-save to suppress). Source Coverage section required (anti-hallucination). Reads SE identity from ~/airbyte-work/.se-config.yaml. Output filename: <skill>-YYYY-MM-DD-<descriptor>.md.
