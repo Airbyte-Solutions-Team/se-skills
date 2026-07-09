@@ -491,6 +491,14 @@ The model can produce plausible-looking summaries from partial reads, and the us
 
 If a skill claims to do thorough work but reads only part of a source, this section will reveal it.
 
+### Fail loud on missing sources/tools (don't silently degrade)
+
+Graceful degradation must be *visible*, not silent. Source Coverage MUST list each expected source/tool as `used` or `unavailable` (never omit an unavailable one). If a **load-bearing** source was unavailable:
+1. Cap the At-a-Glance confidence (a metadata-only read is never High confidence), and
+2. Say so in the lead, in one clause — e.g. "assessed from registry metadata only; prod failure data was unavailable, so reliability risks are unverified."
+
+A confident-looking doc built on a fraction of the intended evidence is worse than an honest partial one.
+
 ---
 
 ## Memory Check (Active Project Context)
@@ -736,6 +744,7 @@ If/when built, this should be a separate skill (not a mode flag on biz-qual/deal
 
 ## Changelog
 
+- **2026-07-09** — Source Coverage now requires an explicit used/unavailable line per source/tool; load-bearing gaps cap confidence and are stated in the lead (fail-loud, not fail-silent).
 - **2026-07-09** — Added "Confidence & Assumptions" convention: skills surface working assumptions + "what would change this," and label [stated]/[inferred]/[recommendation]. Hardens against unverified CRM/product facts being shown as confirmed.
 - **2026-07-02** — **`next-move` reclassified from light-touch to lightweight Decision Card.** As the workflow router, its recommendation is the deliverable, so it now leads with an At-a-Glance hero card + `Current read` narrative + override callouts, then decision-first sections (Why This Move → Ranked Next Moves → Don't Do Yet → Workflow State → Context Inventory → Gaps → External Actions → Source Coverage). Stays exempt from the full analytical apparatus (MEDDPICC scorecard, formal decision tables). Exemptions list updated; `objection-handler` + `account-refresher` remain light-touch. Pairs with web-app renderer changes (`EXEC_SECTION` → ranked-move cards; Low-confidence tile colors red) in `webapp/static/app.js`.
 - **2026-07-01** — **Source Coverage moved to the BOTTOM** of the doc (was right after At-a-Glance) — it's the audit trail, not the lead. Top-of-document structure + progressive-disclosure note updated; applied to all four decision-first-ordered skills (connector-feasibility, prep-call, post-call, tech-qual). Also **per-skill decision-first section reordering**: connector-feasibility (Fit Verdict before Use Case); prep-call (Company Snapshot + Why Airbyte to the top, before AE-learned/where-we-left-off); post-call (Key Takeaways → Deal Health → New Objections → Action Items up top, Attendees + Source Coverage at bottom); tech-qual (verdict-then-architecture already good, only Source Coverage moved down). Pairs with web-app renderer: checkbox affordance (no more square-bullet ☐), constraint/info cards, calmer bold, Inter + slate palette.
