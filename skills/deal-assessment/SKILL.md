@@ -12,13 +12,13 @@ You are helping a Solutions Engineer at Airbyte produce a candid, structured ass
 The user will name a customer (e.g., "deal assessment for Acme"). You should:
 
 1. **Read all transcripts** in `~/airbyte-work/01-customers/_transcripts/` matching the customer
-2. **Read local notes** in `~/airbyte-work/01-customers/<Customer-Name>/` — especially:
-   - Prior `Deal-Assessment-*.md` files (compare against — fuels the "Movement Since Last Assessment" section)
-   - `biz-qual-*.md` (use MEDDPICC scoring as input, don't re-derive)
-   - `tech-qual-*.md` (technical risk feeds into Deal Blocker analysis)
-   - `deployment-qual-*.md` (deployment-model verdict — if 🔴, that's often the deal)
-   - `connector-feasibility-*.md` (gap analysis)
-   - `call-summary-*.md` files (pre-digested call content)
+2. **Read prior outputs** in `~/airbyte-work/01-customers/<Customer-Name>/outputs/<skill>/` — especially:
+   - Prior `outputs/deal-assessment/deal-assessment-*.md` files (compare against — fuels the "What Changed Since Last Assessment" section)
+   - `outputs/biz-qual/biz-qual-*.md` (use MEDDPICC scoring as input, don't re-derive)
+   - `outputs/tech-qual/tech-qual-*.md` (technical risk feeds into Deal Blocker analysis)
+   - `outputs/deployment-qual/deployment-qual-*.md` (deployment-model verdict — if 🔴, that's often the deal)
+   - `outputs/connector-feasibility/connector-feasibility-*.md` (gap analysis)
+   - `outputs/post-call/post-call-*.md` files (pre-digested call content)
 3. **Read memory** — `~/.claude/projects/-Users-gary-yang-airbyte-work/memory/MEMORY.md` and any customer-specific memory files (active blockers, pending Airbyte-side actions)
 4. **Optionally pull Notion context** if the user references it (use Notion:search to find the customer's parent page, then read Overview and Q&A subpages)
 5. Read full source material before synthesizing — do not skim
@@ -86,7 +86,8 @@ The punchy verdict should be honest, e.g.:
 - **Driver:** [one line — what's pushing them now]
 - **Source confidence:** [one line — N transcripts + notes, dates; "see Source Coverage"]
 
-**Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [Activity Trajectory](#activity-trajectory) · [Driver](#driver) · [Need](#need) · [Urgency](#urgency) · [What Would Close It](#what-would-close-it) · [Deal Blocker](#deal-blocker) · [What Would Lose It](#what-would-lose-it) · [Bottom Line](#bottom-line) · [Coaching Observations](#coaching-observations)
+**Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [Activity Trajectory](#activity-trajectory) · [What Changed Since Last Assessment](#what-changed-since-last-assessment) · [Driver](#driver) · [Need](#need) · [Urgency](#urgency) · [What Would Close It](#what-would-close-it) · [Deal Blocker](#deal-blocker) · [What Would Lose It](#what-would-lose-it) · [Bottom Line](#bottom-line) · [Coaching Observations](#coaching-observations)
+*(Include the "What Changed Since Last Assessment" anchor only when a prior assessment exists — see that section; drop it from this line on a first assessment.)*
 
 ---
 
@@ -103,6 +104,18 @@ The punchy verdict should be honest, e.g.:
 
 **What this signals:**
 [1-2 sentences. Acceleration = healthy. Silence on a deal with a forcing function = serious deal-decay signal. Long gaps between meetings + verbal commitments not yet executed = walking it back. Be honest about what the cadence indicates. Wrap a headline figure such as ==31 days silent== if it's decision-relevant.]
+
+---
+
+## What Changed Since Last Assessment
+*Conditional — include this section ONLY when a prior `outputs/deal-assessment/deal-assessment-*.md` exists. On a first assessment, omit it entirely (and drop it from the Jump-to line). This is what turns the skill from a one-time snapshot into health monitoring.*
+
+Compared to the prior assessment ([its date]):
+- **Probability band:** [prior band → current band — and the one reason it moved, or "unchanged"]
+- **MEDDPICC movement:** [which letters moved up/down since last time — e.g. "Economic Buyer 🔴→🟡 (met the VP Data on 06.02)"]
+- **Timeline / forcing function:** [shifted? slipped? newly introduced?]
+- **New since last time:** [new objections, new stakeholders, new blockers, or new positive signals]
+- **Net read:** [one line — is this deal healthier or weaker than at the last assessment, and why]
 
 ---
 
@@ -172,7 +185,7 @@ Keep candid. This is the part of the assessment Gary can act on personally.
 - **Cite sources** — every material claim references a transcript date + speaker, a memory file, or a prior qual doc
 - **Flag what you don't know** — "Urgency: unknown — not asked in available transcripts" beats a guess
 - **Separate fact from read** — when you state something the customer did NOT say, label it *"(inferred — not stated)"* (per `_se-playbook.md` → Decision-First, facts vs. judgment). The narrative sections are judgment; keep the evidence behind them visible.
-- **Compare to prior assessments** when they exist; flag movement in the Movement section
+- **Compare to prior assessments** when they exist; flag movement in the "What Changed Since Last Assessment" section
 - **Bias toward pessimism over optimism** — happy-ears assessments are worse than no assessment
 
 ## After Generating
@@ -275,7 +288,7 @@ If the deal is drifting, the honest verdict might be: "Based on three reschedule
 This is the kind of honest read that justifies the skill existing.
 
 ### Compare to prior Deal Assessment
-If a `Deal-Assessment-*.md` already exists for this customer, the new one MUST include a "What Changed Since Last Assessment" section. Did MEDDPICC letters move up or down? Did the timeline shift? New objections? Without this comparison, the assessment is a snapshot — not health monitoring.
+If a prior `outputs/deal-assessment/deal-assessment-*.md` already exists for this customer, the new one MUST include the "What Changed Since Last Assessment" section (see the template, after Activity Trajectory). Did MEDDPICC letters move up or down? Did the timeline shift? New objections? Without this comparison, the assessment is a snapshot — not health monitoring.
 
 ### Anti-patterns to avoid in this skill
 - Optimistic "Bottom Line" without specific evidence
@@ -287,6 +300,7 @@ If a `Deal-Assessment-*.md` already exists for this customer, the new one MUST i
 
 ## Changelog
 
+- **2026-07-09** — Added the **"What Changed Since Last Assessment"** section to the Output Format template + Jump-to index (was referenced in prose but had no slot — the "MUST include" instruction produced inconsistent output). Reconciled the two names ("Movement" / "What Changed") to one. Fixed the prior-doc read path + glob: reads from `outputs/deal-assessment/deal-assessment-*.md` (was capitalized `Deal-Assessment-*.md` at the customer root — missed the file it saves), and the other prior docs from `outputs/<skill>/`; `call-summary-*.md` → `post-call-*.md`. Together this makes the health-monitoring comparison actually work (D1 + D2).
 - **2026-07-09** — Verified self-contained (P7): the required 7-section format (Driver / Need / Urgency / What Would Close It / Deal Blocker / What Would Lose It / Bottom Line, each with its one-line intent + in the Jump-to index) is defined in this file's Output Format section and matches the canonical spec; no external dependency remains, band logic unchanged. (Known follow-on, out of scope: reconcile the prose "Movement / What Changed Since Last Assessment" references with the template — currently referenced but not templated.)
 - **2026-07-09** — Removed the external `~/airbyte-work/CLAUDE.md` dependency for the output format. The skill's own "Output Format" section already defined the full template (all 7 sections + At-a-Glance + probability bands, richer than the CLAUDE.md spec), so the reference was vestigial — repointed to it. Skill is now self-contained.
 
