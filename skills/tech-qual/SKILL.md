@@ -54,6 +54,7 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 - **Confidence:** [low / medium / medium-high / high — and what it's pending on]
 - **Next gate:** [the concrete checkpoint that resolves the primary risk — e.g. "live Postgres connection in workshop"]
 - **Scope:** [sources → destination] · **# connectors:** ==[N]== · **Volume:** ==[e.g., 50M rows/day]== · **Latency:** [e.g., 15 min]
+- **Compliance:** [omit if none in scope; else "N/A" or "compliance claims pending verification" if any cert/security line is unverified — see Security & Compliance]
 - **Source confidence:** [one line — N transcripts + SFDC + qual docs; "see Source Coverage"]
 
 **Jump to:** [At a Glance](#at-a-glance) · [Technical Fit Summary](#technical-fit-summary) · [Technical Requirements & Scope](#technical-requirements--scope) · [Data Sources & Destinations](#data-sources--destinations) · [Data Volume & Scale](#data-volume--scale) · [Deployment Model](#deployment-model) · [Security & Compliance](#security--compliance) · [Current Stack & Integration Context](#current-stack--integration-context) · [Team & Implementation Readiness](#team--implementation-readiness) · [Technical Risks & Open Items](#technical-risks--open-items) · [Questions Still Needed](#questions-still-needed) · [Recommended Next Actions](#recommended-next-actions) · [Source Coverage](#source-coverage)
@@ -141,8 +142,13 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 - **Audit logging required:** [Yes / No]
 - **Encryption requirements:** [at rest / in transit / customer-managed keys — note that customer-managed KMS is SME-only, not Cloud]
 
-> [!risk] Verify before asserting — compliance/certifications
-> Do NOT assert SOC 2 / HIPAA / GDPR / etc. status without verifying — Airbyte's certifications change over time. If the customer's compliance requirement is mission-critical, mark the row as "needs verification" rather than green-lighting based on assumption. Flag any requirement that needs validation against Airbyte's *current* certifications.
+> [!risk] Compliance self-check (mandatory before save)
+> Every certification/security claim must be either:
+> (a) cited to an authoritative source with a date, or
+> (b) written as "believed — SE to verify with [team] before customer confirmation."
+> Never state a certification (SOC 2, HIPAA, region availability, etc.) as fact from memory. Separate `[customer requires]` from `[Airbyte supports — verified]` from `[Airbyte supports — unverified]`. If any compliance line is unverified, note it in the At-a-Glance ("compliance claims pending verification").
+>
+> This is a save gate, not a suggestion: if a compliance row is neither cited nor marked "verify with [team]," fix it before the doc is written.
 
 ## Current Stack & Integration Context
 - **Current ETL/ELT tools:** [Fivetran / Stitch / custom / dbt / etc.]
@@ -284,6 +290,7 @@ Read `~/airbyte-work/.se-config.yaml` for the `[SE name]` field.
 
 ## Changelog
 
+- **2026-07-09** — Compliance claims now a mandatory pre-save self-check: cite+date or mark "verify with [team]"; never assert certifications from memory; verified/unverified/required labeled distinctly (`[customer requires]` / `[Airbyte supports — verified]` / `[Airbyte supports — unverified]`). Unverified compliance surfaces in At-a-Glance ("compliance claims pending verification").
 - **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.
 
 - **2026-05-28** — Salesforce enrichment added (reads from sf-mcp via mcp__salesforce__run_soql_query). Pulls AE-view MEDDPICC / technical / forecast fields per the playbook field map; assertive SFDC-vs-reality mismatch flagging; graceful degradation if SFDC disabled. Org alias + query dir from .se-config.yaml.
