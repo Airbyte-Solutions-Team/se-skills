@@ -55,6 +55,10 @@ Then the forecast table is ~80% pre-filled. The skill's job becomes **comparing 
 
 If SFDC unavailable, skip per graceful-degradation and ask the user for deal list/amounts as before.
 
+### Missing inputs are surfaced, not blanked
+
+If an SFDC forecast field is absent, write "not in CRM — confirm with RevOps" and add it to the pre-meeting asks (don't leave blank or guess). In `deal-review`, fill only columns you have SE-side evidence for; mark AE/AM columns "to confirm live" and list them as the specific inputs you need from each owner. A blank cell reads as "no data"; "confirm with [owner]" reads as "known gap, here's who closes it" — the second is what an internal meeting needs.
+
 ## Output mode
 
 Default = full prep doc per meeting type.
@@ -203,11 +207,13 @@ Be concrete:
 - **Recent activity:** [last call, last decision]
 
 ## Alignment check — does everyone see this deal the same way?
+*Fill only the columns you have SE-side evidence for. Mark AE/AM cells you can't source "to confirm live" (never guess their view) and carry them into Cross-functional asks as the specific input you need from each owner.*
+
 | Question | AE view | SE view | AM view (if applicable) |
 |----------|---------|---------|--------------------------|
-| Probability to close | | | |
-| Top blocker | | | |
-| Best next move | | | |
+| Probability to close | [to confirm live] | | [to confirm live] |
+| Top blocker | [to confirm live] | | [to confirm live] |
+| Best next move | [to confirm live] | | [to confirm live] |
 
 > [!risk] Misalignment to resolve
 > [Only if AE/SE/AM genuinely disagree — name the fault line (e.g., AE says 70%, SE says 30% on the same deal) and why. Surfacing disagreement is the point of the review; omit only if there's true alignment.]
@@ -289,6 +295,7 @@ Read `~/airbyte-work/.se-config.yaml` for the `[SE Gary]` and similar fields. Im
 
 ## Changelog
 
+- **2026-07-09** — Missing SFDC fields / cross-functional inputs now render as explicit "confirm with [owner]" asks rather than blanks or guesses (forecast: "not in CRM — confirm with RevOps" + pre-meeting ask; deal-review Alignment-check: AE/AM columns marked "to confirm live," never guessed, carried into Cross-functional asks).
 - **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis. Applied to all four mode templates (ae-sync, forecast, exec-readout, deal-review).
 
 - **2026-05-28** — Salesforce enrichment added (reads from sf-mcp via mcp__salesforce__run_soql_query). Pulls AE-view MEDDPICC / technical / forecast fields per the playbook field map; assertive SFDC-vs-reality mismatch flagging; graceful degradation if SFDC disabled. Org alias + query dir from .se-config.yaml.
