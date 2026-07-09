@@ -76,12 +76,12 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 *(Section order is context-first: who they are and why we matter, then the AE's inheritance, then the call plan. Source Coverage is the last content section — see `_se-playbook.md`.)*
 
 ## Company Snapshot
-*Context first — the SE needs to know who they are before the AE's notes mean anything.*
-- **What they do:** [1-2 sentence business description]
-- **Industry:** 
-- **Size:** [employees / ARR if known]
-- **Tech signals:** [any known tech stack, tools, or integrations — look for job postings, G2 reviews, BuiltWith signals]
-- **Recent news:** [funding, launches, acquisitions, leadership changes]
+*Context first — the SE needs to know who they are before the AE's notes mean anything. **Tag each fact with its origin** — `[per AE call]` / `[SFDC]` / `[public — G2/news/BuiltWith]` / `[assumption — confirm live]`. Never present an unsourced fact as known; a cold-prep snapshot built on invented company facts is a live-call credibility risk.*
+- **What they do:** [1-2 sentence business description — with source tag]
+- **Industry:** [with source tag]
+- **Size:** [employees / ARR if known — with source tag]
+- **Tech signals:** [any known tech stack, tools, or integrations — job postings, G2, BuiltWith — tag `[public]` or `[assumption — confirm live]`]
+- **Recent news:** [funding, launches, acquisitions, leadership changes — with source tag]
 
 ## Why Airbyte (Hypothesis)
 *Positioning anchor — comes before talk tracks/agenda because it frames how the SE leads the call.* Based on their profile, the most likely reasons they're evaluating Airbyte:
@@ -117,7 +117,9 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 
 > [Example: "Most data teams think their cost problem is warehouse spend. The data shows 60-70% of actual cost is engineering time maintaining custom connectors — invisible because it's salary, not SaaS."]
 
-Why this reframe for this customer: [brief rationale based on their stack/industry/news]
+State the reframe as **"They likely believe X (basis: …); we reframe to Y."** Name the belief you're reframing and its basis — if there's no basis in the sources, label it a **hypothesis to test on the call**, not a finding.
+
+Why this reframe for this customer: [brief rationale based on their stack/industry/news — cite the signal, or mark it a hypothesis]
 
 ## Upfront Contract (Sandler)
 **Your opener — sets agenda, outcomes, and mutual permission to disqualify.**
@@ -334,6 +336,7 @@ Read `~/airbyte-work/.se-config.yaml` to populate the `[SE name]` field in heade
 
 ## Changelog
 
+- **2026-07-09** — Sourcing discipline for cold-prep facts: every Company Snapshot fact carries an origin tag (`[per AE call]` / `[SFDC]` / `[public]` / `[assumption — confirm live]`); the reframe is now stated as "they likely believe X (basis…); reframe to Y," labeled a hypothesis to test if unsourced. No refuse-gate added — stays cold-runnable (light-touch).
 - **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.
 
 - **2026-05-28** — Auto-save to outputs/<skill>/ folder (default; --no-save to suppress). Source Coverage section required (anti-hallucination). Reads SE identity from ~/airbyte-work/.se-config.yaml. Output filename: <skill>-YYYY-MM-DD-<descriptor>.md.
