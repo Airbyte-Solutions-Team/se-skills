@@ -140,6 +140,8 @@ Any stage + objection raised on most recent call
 3. Stage-based recommendation
 4. Active objection (add-on, not override)
 
+**Conflicting signals — name the tension, don't force one tree path.** When signals genuinely collide (e.g. all quals exist but are >30 days stale AND a fresh objection landed; or SFDC stage says POC-scoping but the local artifacts say early-discovery), don't silently pick one branch. In the `Current read`, name the tension in one line and choose the move that **de-risks most**, stating the assumption behind the pick — e.g. "Stage says POC-scoping, but a 60-day-old biz-qual + a fresh pricing objection outrank that — recommend `deal-assessment` first to re-baseline, then `objection-handler`. Assumes the objection is real, not a negotiating feint." The recommendation still resolves to ONE top move in the At-a-Glance (keep those labels exactly — the reader keys on them); the conflict handling lives in the prose, not in new card fields.
+
 ---
 
 ## Output Format
@@ -340,6 +342,7 @@ Avoid "run follow-up-email because it's been a while" without a substantive trig
 
 ## Changelog
 
+- **2026-07-09** — Added a **conflicting-signals branch** to the override logic: when signals collide (stale quals + fresh objection, or SFDC-stage vs local-artifact mismatch), name the tension in `Current read` and pick the de-risking move with its assumption stated, rather than forcing one tree path. Handled in prose only — the four At-a-Glance labels (`Recommended Next Move`/`Confidence`/`Stage`/`Top Blocker`) the web-app reader keys on for hero-card routing are unchanged.
 - **2026-07-02** — **Decision-first output rewrite.** For a "what do I do next?" skill, the recommendation was buried below an Artifacts Inventory + diagnostics — it read like an audit report. Reordered the template to lead with the answer: **At-a-Glance decision card → Current read → override callouts → Why This Move → Ranked Next Moves → Don't Do Yet → Workflow State → Context Inventory → Gaps → External Actions → Source Coverage.** The At-a-Glance labels (`Recommended Next Move`/`Confidence`/`Stage`/`Top Blocker`) are chosen to render as the web-app reader's hero decision tiles; `### Current read` becomes the hero's narrative one-liner (relocated from the old bottom TL;DR — no duplicate). Renamed "Artifacts Inventory" → **Context Inventory** with a `Needed Now?` column (missing ≠ todo); split "Gaps" into Critical / Non-critical / Data-hygiene; "Ranked Next Moves" render as cards; External Actions is now an Owner/Why/Definition-of-done table. next-move is no longer "light-touch" — it now leads with a Decision Card (reader change: `EXEC_SECTION` card routing + Low-confidence tile color in `webapp/static/app.js`). Playbook reclassification updated to match.
 
 - **2026-07-01** — **Now auto-saves** (reversing the 2026-05-28 exemption). Chat-only output meant a web-app invoke finished with no file, so the recommendation vanished with nothing in Generated Outputs to open. Saves a dated snapshot to `outputs/next-move/next-move-<YYYY-MM-DD>.md` (opp-scoped when invoked for an opportunity); `--no-save` suppresses. Still a point-in-time read — the dated filename signals staleness. Playbook exemption + CLAUDE.md folder structure updated to match.
