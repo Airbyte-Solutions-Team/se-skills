@@ -10,6 +10,9 @@
 # The webapp (webapp/app.py) auto-derives its list from skills/, so it can't
 # drift and isn't checked here.
 #
+# Also warns (non-blocking) at commit time if webapp/ or skills/ code is staged
+# without a matching webapp/SESSION-LOG.md update (the doc-sync contract).
+#
 # Exit 0 if everything matches; exit 1 (with a diff) if not.
 # Run anytime: ./scripts/check-sync.sh   (also runs as a pre-commit hook)
 
@@ -68,3 +71,19 @@ if [[ "$fail" -ne 0 ]]; then
   exit 1
 fi
 echo "All references in sync. ✓"
+
+# --- 4. SESSION-LOG staleness (staged-files only; skipped when nothing staged)
+# If this commit touches webapp/ or skills/ code, webapp/SESSION-LOG.md should be
+# updated too (the doc-sync contract in webapp/CLAUDE.md). Warn — don't block —
+# so it's a nudge, not a wall; bypass reasons are legitimate (typo fixes, etc.).
+staged="$(git diff --cached --name-only 2>/dev/null || true)"
+if [[ -n "$staged" ]]; then
+  touches_code="$(echo "$staged" | grep -E '^(webapp/|skills/)' | grep -vE '(SESSION-LOG\.md|\.md$)' || true)"
+  logs_updated="$(echo "$staged" | grep -E '^webapp/SESSION-LOG\.md$' || true)"
+  if [[ -n "$touches_code" && -z "$logs_updated" ]]; then
+    echo ""
+    echo "⚠ webapp/ or skills/ code is staged but webapp/SESSION-LOG.md is NOT."
+    echo "  Per the doc-sync contract (webapp/CLAUDE.md), add a SESSION-LOG entry"
+    echo "  and refresh its _Last updated:_ header. (Warning only — commit proceeds.)"
+  fi
+fi

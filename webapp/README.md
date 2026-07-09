@@ -98,8 +98,12 @@ Notes:
 ## What it does
 
 - **Main page** — solutions team members (from `team-members.yaml`, or your `.se-config.yaml` if absent)
-- **Member page** — that member's accounts (folders in `~/airbyte-work/01-customers/`), with a **+ Create Account** box
-- **Account page** — every saved skill output for that account (newest first), click to read; plus **⚡ Invoke Skill** to run any skill on that account
+- **Member page** — that member's accounts (folders in `~/airbyte-work/01-customers/`), with a **+ Create Account** box. Can also bulk-create accounts from a Salesforce preview (per-account failures surface for retry).
+- **Account / opportunity page** — every saved skill output (newest first, concise titles), plus **⚡ Invoke Skill** to run any skill. The invoke picker is grouped into tiers (Workflow 1–7 / Anytime / When unsure) reflecting real dependency order.
+- **Output reader** — a rich document view of any saved skill output: decision-first layout (exec card + tiles), top-risks strip, collapsible audit sections, grouped TOC, and a **follow-up chat bar** (ask questions about the doc, or launch another skill from the chat).
+- **Export & share** — from a **3-dots options menu** on any output: download **PDF** (server-rendered, paginated) or **MD**, or **Export to internal HTML** (a self-contained rs-group page for internal.airbyte.ai). Coverage-handoff outputs additionally support **push-to-repo** — a one-click PR to internal.airbyte.ai with open-PR detection.
+- **Live Transcribe** — transcribe a live call with an AI copilot ask-bar (see the Live Transcribe section below).
+- **Skill-completion toasts** — run a skill, navigate away, and a top-right banner tells you when it's ready with an Open deep-link.
 
 Invoking a skill shells out to Claude Code headless:
 ```
@@ -125,6 +129,8 @@ The team hub (`internal.airbyte.ai`) is a static GCS site — it can't run an ag
 A deployed version would need a backend service, per-user Salesforce/Gong auth, and a
 hosted customer-data store (multi-tenant). That's a real product, out of scope here.
 Running locally sidesteps all of it: it's just *you*, on *your* machine.
+
+(The app *does* export/push finished outputs to internal.airbyte.ai as static HTML — that's publishing a rendered artifact, not running the agent there. The skill still runs locally.)
 
 If the team later wants a shared deployment, the backend (`app.py`) is the seed — but
 it would need: hosted auth, per-user credential isolation, and a central (or per-user)
