@@ -287,6 +287,7 @@ If a `Deal-Assessment-*.md` already exists for this customer, the new one MUST i
 
 ## Changelog
 
+- **2026-07-09** — Verified self-contained (P7): the required 7-section format (Driver / Need / Urgency / What Would Close It / Deal Blocker / What Would Lose It / Bottom Line, each with its one-line intent + in the Jump-to index) is defined in this file's Output Format section and matches the canonical spec; no external dependency remains, band logic unchanged. (Known follow-on, out of scope: reconcile the prose "Movement / What Changed Since Last Assessment" references with the template — currently referenced but not templated.)
 - **2026-07-09** — Removed the external `~/airbyte-work/CLAUDE.md` dependency for the output format. The skill's own "Output Format" section already defined the full template (all 7 sections + At-a-Glance + probability bands, richer than the CLAUDE.md spec), so the reference was vestigial — repointed to it. Skill is now self-contained.
 
 - **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.
