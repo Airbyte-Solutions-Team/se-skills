@@ -86,6 +86,10 @@ Surface the weakest letters as callouts directly under the scorecard — `[!bloc
 > No InfoSec/legal timeline confirmed. New-vendor onboarding can run ==60–90 days==; if not started now, the close date slips.
 ```
 
+### No gap without a close-path
+
+Every 🔴/🟡 MEDDPICC element must produce a Next Actions row: `Gap → the specific ask that closes it → owner (or TBD) → by when`. A logged gap with no owned next step is incomplete. State score confidence: e.g. "Scored from 3 transcripts through 05.20; Economic Buyer unconfirmed — treat the EB line as [inferred], not fact."
+
 ---
 
 ## Metrics
@@ -228,13 +232,13 @@ Flag any letter that regressed (especially Champion, EB, Pain) — that's a *wal
 ---
 
 ## Recommended Next Actions
-*Action table — render `TBD` for Owner when the source doesn't state one; never invent a name.*
+*Action table — render `TBD` for Owner when the source doesn't state one; never invent a name. **Every 🔴/🟡 letter in the scorecard gets a row here** (no gap without an owned close-path); order by what unblocks the deal soonest.*
 
-| # | Next Action | Goal | Success criteria | Owner |
-|---|-------------|------|------------------|-------|
-| 1 | [Most critical gap to close] | [the MEDDPICC letter it advances] | [what "done" looks like] | [name or **TBD**] |
-| 2 | [Second priority] | | | |
-| 3 | [Third priority] | | | |
+| # | Gap (MEDDPICC letter) | The ask that closes it | By when | Owner |
+|---|-----------------------|------------------------|---------|-------|
+| 1 | [weakest/blocking letter] | [the specific question or action that resolves it] | [date or **TBD**] | [name or **TBD**] |
+| 2 | [next 🔴/🟡] | | | |
+| 3 | [next 🔴/🟡] | | | |
 
 ---
 
@@ -338,6 +342,7 @@ Wait for explicit yes/no on Notion / memory before doing those.
 
 ## Changelog
 
+- **2026-07-09** — Every 🔴/🟡 element now requires a paired, owned close-path in Next Actions (`Gap → ask that closes it → by when → owner/TBD`); added explicit score-confidence + `[inferred]` labeling for unconfirmed elements. Next Actions table restructured to make the gap→close-path pairing explicit.
 - **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.
 
 - **2026-05-28** — Salesforce enrichment added (reads from sf-mcp via mcp__salesforce__run_soql_query). Pulls AE-view MEDDPICC / technical / forecast fields per the playbook field map; assertive SFDC-vs-reality mismatch flagging; graceful degradation if SFDC disabled. Org alias + query dir from .se-config.yaml.
