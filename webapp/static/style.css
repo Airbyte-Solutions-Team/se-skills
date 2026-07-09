@@ -795,6 +795,7 @@ a.live-btn { text-decoration: none; display: inline-flex; align-items: center; }
 .sfdc-prev-col { color: var(--muted); }
 .modal-foot { display: flex; align-items: center; gap: 10px; justify-content: flex-end; padding: 16px 22px; border-top: 1px solid var(--line); }
 .sfdc-prev-hint { margin-right: auto; font-size: 12px; }
+.sfdc-prev-hint.sfdc-prev-err { color: var(--danger); font-weight: 600; line-height: 1.5; }
 
 /* ── Coverage Handoff modal form ──────────────────────────────────────── */
 .handoff-modal .modal { width: min(720px, 94vw); }

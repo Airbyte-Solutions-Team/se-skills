@@ -100,6 +100,26 @@ async function downloadPdf(path, extraMd = "") {
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+// Export to a self-contained internal.airbyte.ai (rs-group) HTML page. Same
+// design system as coverage-handoff but generic across skills — each H2 section
+// renders as a card in the doc's own order. The SE drops the file into the
+// internal repo and PRs it (no auto-push). `path` is already encodeURIComponent'd.
+async function downloadInternalHtml(path) {
+  const res = await fetch("/api/output/internal-html?path=" + path);
+  if (!res.ok) {
+    let msg = "Internal HTML export failed.";
+    try { msg = (await res.json()).detail || msg; } catch {}
+    alert(msg);
+    return;
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = baseName(path).replace(/\.md$/i, "") + ".html";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 // Build a ⬇ download control with a PDF/MD popup menu. `cls` lets callers add
 // position modifiers. Wire it up afterward with wireDownloadMenus(root).
 // `label` (optional) renders a labeled "Export ▾" trigger instead of the icon-only
@@ -121,6 +141,7 @@ function downloadMenuHtml(path, cls = "", label = "") {
     <div class="dropdown-menu hidden">
       <button class="menu-item dl-pdf">Download PDF</button>
       <button class="menu-item dl-md">Download Markdown (.md)</button>
+      <button class="menu-item dl-html">Export to internal HTML</button>
       ${withQa}
       <button class="menu-item danger dl-del">Delete output</button>
     </div></span>`;
@@ -149,6 +170,7 @@ function wireDownloadMenus(root, onDeleted) {
     };
     wrap.querySelector(".dl-pdf").onclick = (e) => { e.preventDefault(); e.stopPropagation(); closeAll(); downloadPdf(path); };
     wrap.querySelector(".dl-md").onclick = (e) => { e.preventDefault(); e.stopPropagation(); closeAll(); downloadMd(path); };
+    wrap.querySelector(".dl-html").onclick = (e) => { e.preventDefault(); e.stopPropagation(); closeAll(); downloadInternalHtml(path); };
     // "with Q&A" exports (doc reader only) — append the live thread. If the
     // thread is empty, fall back to the plain export so the file is never broken.
     wrap.querySelector(".dl-pdf-qa")?.addEventListener("click", (e) => {
@@ -852,13 +874,38 @@ async function pageMember(memberId, tab = "active") {
       const names = [..._picked];
       if (!names.length) { alert("Select at least one account."); return; }
       const btn = overlay.querySelector("#sfdc-create-btn");
+      const hint = overlay.querySelector(".sfdc-prev-hint");
+      if (hint) { hint.classList.remove("sfdc-prev-err"); hint.textContent = "Select the accounts to add."; }
       btn.disabled = true; btn.textContent = "Creating…";
+      const resetBtn = () => { btn.disabled = false; btn.textContent = "Create selected"; };
       try {
-        await api("/api/bulk-create-accounts", { method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ accounts: names.map((name) => ({ name, owner: memberId })) }) });
+        // carry the real SFDC account name through so opp lookups match exactly
+        // (folder names are lossy — punctuation is stripped for fs-safety).
+        const sfdcByFolder = {};
+        for (const it of [...nb, ...rn]) sfdcByFolder[it.name] = it.account_name;
+        const resp = await api("/api/bulk-create-accounts", { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ accounts: names.map((name) => ({ name, owner: memberId, sfdc_name: sfdcByFolder[name] })) }) });
+        // The endpoint returns HTTP 200 even when individual accounts fail
+        // (per-account errors are collected in `results`). Surface those instead
+        // of silently closing — a swallowed failure used to look like a no-op.
+        const results = (resp && resp.results) || [];
+        const failed = results.filter((r) => !r.ok);
+        if (failed.length) {
+          // drop the ones that DID succeed from the selection so a retry only
+          // re-attempts the failures, then re-render to reflect what got added.
+          results.filter((r) => r.ok).forEach((r) => _picked.delete(r.name));
+          renderPanel();
+          resetBtn();
+          if (hint) {
+            hint.classList.add("sfdc-prev-err");
+            const lines = failed.map((r) => `${esc(r.name)} — ${esc(r.error || "unknown error")}`).join("<br>");
+            hint.innerHTML = `Couldn't add ${failed.length} of ${results.length}:<br>${lines}`;
+          }
+          return;
+        }
         close();
         pageMember(memberId, "active");
-      } catch (err) { btn.disabled = false; btn.textContent = "Create selected"; alert("Create failed: " + err.message); }
+      } catch (err) { resetBtn(); alert("Create failed: " + err.message); }
     };
   }
 

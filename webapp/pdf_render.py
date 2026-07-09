@@ -133,9 +133,14 @@ def find_chrome() -> str | None:
     return None
 
 
-def markdown_to_html(md_text: str) -> str:
-    """Convert skill-output markdown (with the non-standard extras) to a full
-    print-styled HTML document string."""
+def markdown_to_body_html(md_text: str) -> str:
+    """Convert skill-output markdown (with the non-standard extras) to an HTML
+    body FRAGMENT (no <html>/<style> wrapper).
+
+    Shared by both the PDF path and the internal.airbyte.ai HTML export so the
+    non-standard markdown the skills emit — admonitions, ==highlight==, GFM
+    checkboxes, status dots, the tables/lists blank-line fixup — is handled in
+    exactly one place."""
     raw = md_text
 
     # GitHub-style admonitions: a blockquote whose first line is "> [!type] title".
@@ -198,6 +203,13 @@ def markdown_to_html(md_text: str) -> str:
     for dot in ["🟢", "🟡", "🔴", "⚠️", "❌", "✅", "⭐", "★"]:
         body = body.replace(dot, f'<span class="dot">{dot}</span>')
 
+    return body
+
+
+def markdown_to_html(md_text: str) -> str:
+    """Convert skill-output markdown to a full print-styled HTML document string
+    (used by the PDF pipeline)."""
+    body = markdown_to_body_html(md_text)
     return (
         '<!doctype html><html><head><meta charset="utf-8">'
         f"<style>{_CSS}</style></head><body>{body}</body></html>"

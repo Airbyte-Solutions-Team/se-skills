@@ -160,8 +160,12 @@ def _safe(name: str) -> str:
 
 
 def _titlecase_folder(name: str) -> str:
-    """Title-Case-Hyphenated, matching the workspace convention (e.g. Build-Manufacturing)."""
-    return "-".join(part.capitalize() for part in re.split(r"[ _-]+", name.strip()) if part)
+    """Title-Case-Hyphenated, matching the workspace convention (e.g. Build-Manufacturing).
+
+    Splits on any run of non-alphanumeric characters so SFDC account names with
+    punctuation (e.g. "Octus (fka Reorg Research)") yield a SAFE_NAME-valid folder
+    ("Octus-Fka-Reorg-Research") rather than one with stray parens that _safe() rejects."""
+    return "-".join(part.capitalize() for part in re.split(r"[^A-Za-z0-9]+", name.strip()) if part)
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +231,33 @@ def _archived_file(account_dir: Path) -> Path:
 
 def _is_archived(account_dir: Path) -> bool:
     return _archived_file(account_dir).exists()
+
+
+def _sfdc_name_file(account_dir: Path) -> Path:
+    return account_dir / ".sfdc-name"
+
+
+def _read_sfdc_name(account: str) -> str | None:
+    """The true SFDC Account.Name captured at create time, if any. Folder names
+    are lossy (punctuation stripped for filesystem safety), so we cannot rebuild
+    the SFDC name from the folder — we store it verbatim instead."""
+    f = _sfdc_name_file(CUSTOMERS_DIR / account)
+    return f.read_text().strip() if f.exists() else None
+
+
+def _sfdc_like_prefix(account: str) -> str:
+    """A SOQL-LIKE-safe prefix for matching this account's opportunities.
+
+    Prefers the stored real SFDC name (exact). Falls back — for folders created
+    before we captured it — to the first alphanumeric token of the folder, which
+    survives punctuation loss (e.g. 'Octus-Fka-Reorg-Research' -> 'Octus') far
+    better than the old hyphen->space reconstruction, which never matched a name
+    like 'Octus (fka Reorg Research)'."""
+    real = _read_sfdc_name(account)
+    if real:
+        return real.replace("'", r"\'")
+    first = next((p for p in re.split(r"[^A-Za-z0-9]+", account) if p), account)
+    return first.replace("'", r"\'")
 
 
 # ---------------------------------------------------------------------------
@@ -337,7 +368,7 @@ async def sfdc_opportunities(account: str) -> list[dict]:
     if not sf.get("enabled", True):
         return []
     alias = sf.get("org_alias", "airbyte-prod")
-    like = account.replace("-", " ").replace("'", "")
+    like = _sfdc_like_prefix(account)
     soql = (
         "SELECT Name, StageName, Stage_Number__c, Amount, CloseDate, Type, "
         "IsClosed, Owner.Name "
@@ -426,7 +457,7 @@ async def sfdc_stage_amount(account_names: list[str]) -> dict:
         return {}
     alias = sf.get("org_alias", "airbyte-prod")
     likes = " OR ".join(
-        f"Account.Name LIKE '{n.replace('-', ' ').replace(chr(39), '')}%'" for n in account_names[:50]
+        f"Account.Name LIKE '{_sfdc_like_prefix(n)}%'" for n in account_names[:50]
     )
     soql = (
         "SELECT Account.Name, StageName, Stage_Number__c, Amount, CloseDate, "
@@ -448,10 +479,21 @@ async def sfdc_stage_amount(account_names: list[str]) -> dict:
         return {}
 
     by_acct: dict[str, dict] = {}
-    folder_for = {n.replace("-", " ").lower(): n for n in account_names}
+    # Exact map from stored SFDC name → folder (authoritative), plus a lossy
+    # token/prefix map for legacy folders with no captured .sfdc-name.
+    exact_for = {}
+    prefix_for = {}
+    for n in account_names:
+        real = _read_sfdc_name(n)
+        if real:
+            exact_for[real.lower()] = n
+        prefix_for[_sfdc_like_prefix(n).lower()] = n
     for r in records:
         acct_name = ((r.get("Account") or {}).get("Name") or "").lower()
-        folder = next((fn for key, fn in folder_for.items() if acct_name.startswith(key) or key.startswith(acct_name)), None)
+        folder = exact_for.get(acct_name)
+        if not folder:
+            folder = next((fn for key, fn in prefix_for.items()
+                           if acct_name.startswith(key) or key.startswith(acct_name)), None)
         if not folder:
             continue
         cand = {
@@ -643,6 +685,7 @@ async def api_sfdc_stage_amount(body: dict):
 class CreateAccount(BaseModel):
     name: str
     owner: str | None = None
+    sfdc_name: str | None = None  # true SFDC Account.Name, for exact opp matching
 
 
 @app.post("/api/accounts")
@@ -656,6 +699,9 @@ def api_create_account(body: CreateAccount):
     (acc_dir / "raw").mkdir(parents=True, exist_ok=True)
     if body.owner:
         _owner_file(acc_dir).write_text(_safe(body.owner))
+    # Capture the real SFDC name so opp lookups match punctuated names exactly.
+    if body.sfdc_name and body.sfdc_name.strip():
+        _sfdc_name_file(acc_dir).write_text(body.sfdc_name.strip())
     return {"name": folder, "created": created, "owner": body.owner}
 
 
@@ -1154,6 +1200,33 @@ def api_output_pdf(path: str):
         content=data,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@app.get("/api/output/internal-html")
+def api_output_internal_html(path: str):
+    """Render a generated output .md to a self-contained internal.airbyte.ai
+    (rs-group) HTML page — the same design system as coverage-handoff, but
+    generic across skills (each H2 section renders as a card, in the doc's own
+    order; nothing is dropped or reordered). Returns the HTML as an attachment
+    the SE drops into the internal.airbyte.ai repo and PRs (no auto-push)."""
+    target = (CUSTOMERS_DIR / path).resolve()
+    if not str(target).startswith(str(CUSTOMERS_DIR.resolve())) or not target.is_file():
+        raise HTTPException(404, "Not found")
+    if target.suffix != ".md":
+        raise HTTPException(400, "Only .md outputs can be exported to internal HTML")
+    import internal_html
+    # Customer = the first path segment (the account folder), de-slugged for display.
+    rel = target.relative_to(CUSTOMERS_DIR.resolve())
+    customer = rel.parts[0].replace("-", " ") if rel.parts else ""
+    try:
+        doc = internal_html.render_internal_html(target.read_text(), customer=customer)
+    except Exception as e:  # best-effort render; surface rather than 500 silently
+        raise HTTPException(500, f"Internal HTML render failed: {e}")
+    return Response(
+        content=doc,
+        media_type="text/html; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{target.stem}.html"'},
     )
 
 
