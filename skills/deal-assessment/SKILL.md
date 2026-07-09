@@ -5,7 +5,7 @@ description: Generates an honest, structured Deal Assessment for a prospect. Req
 
 # Deal Assessment Skill
 
-You are helping a Solutions Engineer at Airbyte produce a candid, structured assessment of deal health for a specific customer. The output must follow the exact format defined in `~/airbyte-work/CLAUDE.md`.
+You are helping a Solutions Engineer at Airbyte produce a candid, structured assessment of deal health for a specific customer. The output must follow the exact format defined in the **Output Format** section of this file (self-contained — do not depend on any file outside this repo).
 
 ## Input
 
@@ -216,7 +216,7 @@ Read `~/.claude/skills/_se-playbook.md` for full framework details.
 Before synthesizing, check whether local transcripts are current. Per `_se-playbook.md` ("Source Freshness Check"):
 - If the most-recent local transcript is more than **14 days old**, OR the user signals "check for new activity," search Gong for newer calls
 - Pull the **most recent call only** — do not bulk-pull
-- Save any pulled transcript to `_transcripts/<Customer-Name>-MM.DD.YY.txt` BEFORE using it (per CLAUDE.md)
+- Save any pulled transcript to `_transcripts/<Customer-Name>-MM.DD.YY.txt` BEFORE using it (workspace transcript convention)
 - If no newer Gong call exists, say so explicitly — silence on Gong is itself a signal (often a deal-decay flag worth noting in the assessment)
 
 ### Salesforce Enrichment (full account arc — deepest SFDC read)
@@ -286,6 +286,8 @@ If a `Deal-Assessment-*.md` already exists for this customer, the new one MUST i
 ---
 
 ## Changelog
+
+- **2026-07-09** — Removed the external `~/airbyte-work/CLAUDE.md` dependency for the output format. The skill's own "Output Format" section already defined the full template (all 7 sections + At-a-Glance + probability bands, richer than the CLAUDE.md spec), so the reference was vestigial — repointed to it. Skill is now self-contained.
 
 - **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.
 

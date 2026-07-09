@@ -5,7 +5,7 @@ description: Drafts a customer follow-up email in Gary's voice — conversationa
 
 # Follow-Up Email Skill
 
-You are helping a Solutions Engineer at Airbyte draft a customer email in his established voice. The tone and structure are defined in `~/airbyte-work/CLAUDE.md` under "Customer Email Communication Style" — follow it exactly.
+You are helping a Solutions Engineer at Airbyte draft a customer email in their established voice. The tone and structure are defined in **"Email Voice & Structure (canonical)"** at the bottom of this file — follow it exactly.
 
 ## Input
 
@@ -35,7 +35,7 @@ If purpose isn't clear, ask.
 
 Emails are already short by design — brief mode is the default.
 
-If user signals "longer" or "more context": expand the email by 2-3 sentences with additional rationale, but never sacrifice the direct-answer-first structure. The CLAUDE.md voice rules (fits a phone screen) trump everything else. See `_se-playbook.md` "Output Mode" for rules.
+If user signals "longer" or "more context": expand the email by 2-3 sentences with additional rationale, but never sacrifice the direct-answer-first structure. The voice rules below (fits a phone screen) trump everything else. See `_se-playbook.md` "Output Mode" for rules.
 
 ## Structure by Purpose
 
@@ -64,7 +64,7 @@ Gary
 ```
 
 ### Issue Report Email
-Follow the four-part structure from CLAUDE.md exactly:
+Follow the five-part structure from "Email Voice & Structure (canonical)" below exactly:
 
 ```
 To: [recipients — extracted from prior thread or transcript attendees]
@@ -126,7 +126,7 @@ When's a good time to reconnect?
 Gary
 ```
 
-## Style (per CLAUDE.md voice rules)
+## Style (quick reference — see canonical section below for full rules + examples)
 
 - **Conversational and advisory** — advising them, not reporting at them
 - **Direct and clear** — no corporate jargon, no "we hope this email finds you well"
@@ -153,7 +153,7 @@ Read `~/.claude/skills/_se-playbook.md` for full framework details.
 ### Source Freshness Check (Gong Fallback)
 Per `_se-playbook.md` ("Source Freshness Check"): if the most-recent local transcript is more than **14 days old**, search Gong for newer calls before drafting. A recap or nudge based on stale context will sound disconnected from the customer's current state. For Nudge emails especially, recent silence is the substance of the email — knowing whether Gong has anything new is essential.
 - Pull the **most recent call only** — do not bulk-pull
-- Save to `_transcripts/<Customer-Name>-MM.DD.YY.txt` BEFORE using it (per CLAUDE.md)
+- Save to `_transcripts/<Customer-Name>-MM.DD.YY.txt` BEFORE using it (workspace transcript convention)
 
 ### Every email must end with a concrete next step
 "Weak next-step setting" is a top SE anti-pattern. Bad: "I'll follow up next week." Good: "Tuesday 2pm, 30 min, you + your security lead + me, agenda: encryption-at-rest and network egress." Reject any draft that doesn't have date + attendees + agenda in the next step.
@@ -165,8 +165,8 @@ Don't just list action items — connect them to qualification gaps. Example:
 
 This trains both parties to see the deal as a shared path forward.
 
-### For Issue Report emails: don't sugarcoat (per CLAUDE.md)
-Use the four-part structure exactly (state issue → what's happening → why → how to fix). If we don't have a fix yet, say so plainly: "We don't have a permanent fix for this yet. Here's what I'm doing: [specific actions]. I'll have an update by [date]." Vague "we're looking into it" damages trust.
+### For Issue Report emails: don't sugarcoat
+Use the five-part structure exactly (state issue → what's happening → why → how to fix → be upfront). If we don't have a fix yet, say so plainly: "We don't have a permanent fix for this yet. Here's what I'm doing: [specific actions]. I'll have an update by [date]." Vague "we're looking into it" damages trust.
 
 ### For Nudge emails: use Sandler negative reverse
 If a deal has stalled, don't write another polite "checking in." Use negative reverse framing:
@@ -181,7 +181,7 @@ This forces a real answer rather than another non-response.
 If the customer asked a question that has a concern behind it (e.g., "do you support OAuth?" → probably means "our security team will reject this if you don't"), label the underlying concern before answering. "It sounds like your security team is reviewing auth options closely. To answer directly: yes, we support OAuth 2.0 with [details]. If it's useful, I can share our SOC 2 report ahead of the security review."
 
 ### Voice consistency check
-Every email must pass these tests (from CLAUDE.md):
+Every email must pass these tests (from the canonical voice rules below):
 - No "I hope this email finds you well" or corporate fluff
 - No "we're looking into it" without specifics
 - Direct answer in the first sentence (for question replies) or first paragraph (for recaps/issues)
@@ -222,7 +222,62 @@ Never send via Gmail MCP unless the user explicitly says "send it." Default is d
 
 ---
 
+## Email Voice & Structure (canonical)
+
+The definitive tone + structure spec for customer emails. Self-contained — do not depend on any file outside this repo.
+
+**Tone**
+- Conversational and advisory-focused — you are advising them, not just reporting information
+- Direct and clear, but helpful and supportive
+- No unnecessary fluff or corporate jargon
+
+**Structure for answering questions**
+- Answer the question directly and clearly
+- Provide recommendations or advice when applicable
+- Offer next steps or additional context that helps them succeed
+
+**Structure for reporting issues** (five parts, in order)
+1. **State the issue** — what's broken or not working
+2. **What's happening** — describe the symptoms/behavior
+3. **Why it's happening** — explain the root cause
+4. **How to fix it** — provide clear solution(s) with specific steps
+5. **Be upfront** — if there's no solution yet, say so clearly and explain what you're doing about it
+
+**What to avoid**
+- Don't sugarcoat problems or hide issues
+- Don't use vague language like "we're looking into it" without specifics
+- Don't lecture or patronize — assume the customer is technical and intelligent
+- Don't provide unnecessary background information they already know
+
+**Example — Good**
+```
+Hi team,
+
+The workload-launcher pod is failing SSL validation when connecting to Airbyte's control plane.
+
+Your corporate firewall is performing SSL inspection and presenting certificates signed by your internal CA. The pod doesn't trust this CA, so TLS validation fails.
+
+Recommended fix: Allowlist *.airbyte.com from SSL inspection. Contact your network team to add these domains to the bypass list. This requires no Airbyte configuration changes.
+
+Alternative: If bypass isn't permitted, we can inject your corporate CA cert into the pod's truststore. We have a ready-to-use Helm config for this.
+
+Which approach works for your environment?
+```
+
+**Example — Avoid**
+```
+Hi team,
+
+We hope this email finds you well. We wanted to reach out regarding an issue we've identified with your deployment. After careful analysis and investigation by our engineering team, we've determined that there appears to be a certificate-related challenge impacting connectivity...
+
+[Too wordy, not direct, delays getting to the point]
+```
+
+---
+
 ## Changelog
+
+- **2026-07-09** — Inlined the canonical "Email Voice & Structure" spec (was referenced from the external `~/airbyte-work/CLAUDE.md`, which isn't in the repo). Skill is now self-contained; all internal pointers repointed. Corrected the issue-report structure from four-part to five-part (added "Be upfront").
 
 - **2026-06-18** — Confirmed exempt from the shared Output Document Format (_se-playbook.md): follow-up-email is a customer-facing email, not a report — no At-a-Glance/Jump-to/callouts.
 
