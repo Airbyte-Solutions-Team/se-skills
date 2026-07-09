@@ -52,7 +52,7 @@ If the user signals brief mode (`--brief`, `quick summary`, `just the takeaways`
 
 ## What to Produce
 
-Generate a structured summary with these sections. Default output is in the chat. Do NOT auto-write to Notion or local files — ask first (per Gary's CLAUDE.md default behavior rule).
+Generate a structured summary with these sections. **Local auto-save is ON** (see After Generating). Only **Notion and memory writes are ask-first** — never auto-write those without confirmation.
 
 Document structure follows `_se-playbook.md` → Output Document Format (H1 title → At a Glance → Jump-to index → Source Coverage → H2 body sections, callouts, `==key==` emphasis).
 
@@ -73,7 +73,7 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 *(Section order is "what changed → what to do": takeaways, health, and new objections lead; the attendee roster and source audit sit at the bottom — see `_se-playbook.md`.)*
 
 ## Key Takeaways
-3–6 bullets capturing the most important things learned. Lead with what changed in your understanding of the deal, not a chronological recap.
+3–6 bullets capturing the most important things learned. Lead with what changed in your understanding of the deal, not a chronological recap. Mark each takeaway `[stated]` (the customer said it — cite speaker) or `[inferred]` (your read of the evidence) — never blend the two in one bullet. A downstream skill (deal-assessment, tech-qual) will treat a `[stated]` fact differently from an `[inferred]` read.
 
 ## Deal Health Signals
 Quick read on what this call moved (or didn't):
@@ -154,6 +154,9 @@ mkdir -p ~/airbyte-work/01-customers/<Customer>/outputs/post-call
 ```
 
 User can suppress with `--no-save`.
+
+### Self-check before save
+(1) every action item has an owner or `TBD`; (2) every deal-health signal cites speaker + timestamp; (3) no attendee/company fact appears that isn't in the transcript; (4) the Sources & Destinations table matches what was actually said. Mark each takeaway `[stated]` (customer said it) or `[inferred]` (SE read) — never blend. If a check fails, fix the summary before saving — don't persist a summary a downstream skill will treat as ground truth when it isn't.
 
 ### Then ask which other artifacts to update
 
@@ -260,6 +263,7 @@ If the customer revealed a belief about their own business that Airbyte data cou
 
 ## Changelog
 
+- **2026-07-09** — Resolved save-behavior contradiction (local auto-save ON; Notion/memory ask-first — was a head-on conflict with "do NOT auto-write local files"). Added a pre-save self-check (owners, cited signals, no ungrounded facts, S&D matches transcript) + `[stated]`/`[inferred]` labeling on takeaways so downstream skills don't treat an SE read as ground truth.
 - **2026-07-07** — Promoted sources/destinations from a single bullet in Technical Notes to a dedicated **Sources & Destinations** section (table: system · role · notes) — the single most reused fact downstream. Added to Jump-to index; routes to `connector-feasibility` + `tech-qual` in After Generating.
 - **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.
 
