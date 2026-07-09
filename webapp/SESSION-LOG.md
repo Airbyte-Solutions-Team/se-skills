@@ -2,7 +2,7 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`, mine = `gyairbyte/SE-Workflow`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: July 9, 2026 — HEAD `02b1459`. Working tree clean; all commits pushed to both remotes._
+_Last updated: July 9, 2026 — HEAD `8d5dd13`. Working tree clean; all commits pushed to both remotes._
 
 ## What the app is
 Local FastAPI + vanilla-JS UI (no build step) over the SE skills suite. `cd webapp && uv run app.py` → http://127.0.0.1:8787 (needs `CPATH/LIBRARY_PATH` for portaudio on this Mac — see "Run" below). Browse team → member's accounts → an account's opportunities → generated outputs; invoke skills; ask follow-ups on outputs; Live Transcribe a Zoom call with an AI copilot.
@@ -16,6 +16,7 @@ uv run --python 3.11 app.py    # port 8787
 ```
 
 ## Built this session (newest first — see `git log`)
+- **Favicon 404 fixed + TODO audit** (July 9). Added an inline SVG data-URI favicon to `index.html` `<head>` (accent "S" on a slate tile) AND a `GET /favicon.ico` route in `app.py` returning the same SVG (belt-and-suspenders — silences the 404 even for clients that ignore the `<link>`; registered before the catch-all static mount). Verified live: `/favicon.ico` → `200 image/svg+xml`, no 404 in the log. Also audited the Open TODO list against current code: removed the stale "customer names in `_se-playbook.md`" item (scrubbed in `6c93dc9`) and corrected the "Gary" hardcode count (~47 → ~52 across 11 files).
 - **Doc-sync tooling + docs refresh** (July 9). Brought stale docs current and made "keep docs updated as we go" durable. (1) Refreshed this SESSION-LOG (header + the two missing July 7 / July 9 commit entries) and `webapp/README.md` "What it does" (reader, PDF/MD/internal-HTML export, push-to-repo, tiered picker, Live Transcribe, toasts) + a "Why local" clarification. (2) New **`webapp/CLAUDE.md`** — a doc-sync contract (auto-read in-repo): touching `webapp/`/`skills/` requires a same-session SESSION-LOG + README update. (3) Extended **`scripts/check-sync.sh`** with a non-blocking commit-time warning when `webapp/`/`skills/` code is staged without a `SESSION-LOG.md` update (the skill-list parity check it already did stays hard-enforced). Detection logic unit-tested against 6 staged-file cases.
 - **SFDC punctuated-name fix + internal-HTML export + bulk-create hardening** (commit `02b1459`, July 9). Three items:
   1. **SFDC account create + opp lookup for punctuated names.** `_titlecase_folder` now strips ALL non-alphanumerics, so names like `Octus (fka Reorg Research)` yield a `SAFE_NAME`-valid folder instead of one with parens that `_safe()` silently rejected (create no-op'd on HTTP 200). Also stopped reconstructing the SFDC name from the lossy folder: the real `Account.Name` is captured at create time in a `.sfdc-name` sidecar, and `sfdc_opportunities` / `sfdc_stage_amount` match on it exactly (first-token fallback for legacy folders). Fixes empty opp pages for punctuated accounts.
@@ -84,9 +85,9 @@ uv run --python 3.11 app.py    # port 8787
 - [ ] Echo de-dupe is a heuristic — if a *real* line ever gets dropped, tighten the timing window. Heavily-divergent echoes (Whisper transcribes the two channels very differently, ~0.3 similarity) may still slip through as doubles.
 - [ ] Rolling-window + running summary for very long (1hr+) live transcripts (ask-bar currently sends the tail ~12–16k chars).
 - [ ] Live sessions are in-memory — survive leaving/returning the page, but NOT an `app.py` restart mid-call (saved transcript file is safe once stopped).
-- [ ] Repo skills still hardcode "Gary" as the SE name in ~47 spots (genericize if the repo goes more broadly shared). Real customer names in `_se-playbook.md` examples (Invesco/Raghu/Lumitec) too — fine while private.
-- [ ] Both repos are **private**. Don't make public without scrubbing the above.
-- [ ] `favicon.ico` 404 in logs — harmless; add an inline favicon to silence if desired.
+- [ ] Repo skills still hardcode "Gary" as the SE name in ~52 spots across 11 files (genericize if the repo goes more broadly shared). Should read from `.se-config.yaml` like the webapp does. (Customer names in `_se-playbook.md` examples were scrubbed in `6c93dc9` — no longer a concern.)
+- [ ] Both repos are **private**. Don't make public without scrubbing the "Gary" hardcoding above.
+- [x] ~~`favicon.ico` 404 in logs~~ — DONE (July 9): inline SVG data-URI favicon in `index.html` `<head>` (accent "S" on a slate tile; no external file, no route).
 
 ## Conventions / gotchas to remember
 - Kill the 8787 test instance after every test (leftover blocks the user's own run).

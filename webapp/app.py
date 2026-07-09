@@ -2180,6 +2180,22 @@ def api_transcribe_stop(session_id: str):
             "chars": len(text), "transcript": text}
 
 
+# Favicon: inline SVG (also linked in index.html <head>). Serving it here too
+# silences the browser's default GET /favicon.ico even for clients that ignore
+# the <link>. Must be registered before the catch-all static mount below.
+_FAVICON_SVG = (
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>"
+    "<rect width='32' height='32' rx='7' fill='#151a24'/>"
+    "<text x='16' y='22' font-family='Inter,system-ui,sans-serif' font-size='19' "
+    "font-weight='700' fill='#4263eb' text-anchor='middle'>S</text></svg>"
+)
+
+
+@app.get("/favicon.ico")
+async def favicon() -> Response:
+    return Response(content=_FAVICON_SVG, media_type="image/svg+xml")
+
+
 # Serve the static frontend at root
 app.mount("/", StaticFiles(directory=str(WEBAPP_DIR / "static"), html=True), name="static")
 
