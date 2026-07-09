@@ -105,6 +105,16 @@ Document structure follows `_se-playbook.md` → Output Document Format (At-a-Gl
 
 *(Section order is decision-first: the verdict and gaps come before the use-case recap and the audit trail. Source Coverage is the last content section — see `_se-playbook.md` → Progressive disclosure.)*
 
+### Fail loud on unavailable tools (per `_se-playbook.md` → Fail loud on missing sources/tools)
+
+This skill's rigor depends on external sources. In Source Coverage, list each as used/unavailable:
+- live connector registry (`get_connector_info`) · local connector source checkout · prod failed-sync data · docs MCPs (deepwiki/Kapa) · observability (Sentry/Datadog).
+
+If the registry OR local source OR prod-failure data was unavailable, this is NOT a full feasibility verdict. Cap the Feasibility confidence at 🟡 and lead with the caveat:
+> "Fit assessed from registry metadata only — connector source and prod failure data were unavailable, so pagination/auth/reliability risks are unverified. Treat as a first-pass screen, not a validated verdict."
+
+Also label build-effort ranges as planning estimates: "1–3 wks build is a planning estimate, not a commitment."
+
 ---
 
 ## Fit Verdict
@@ -283,6 +293,7 @@ If a connector is only available on Cloud (or only on Self-Managed), flag it. Th
 
 ## Changelog
 
+- **2026-07-09** — Fail-loud on unavailable tools: Source Coverage lists each dependency used/unavailable; metadata-only runs are capped at 🟡 with a lead caveat; effort ranges labeled as estimates.
 - **2026-06-26** — Richer troubleshooting/feasibility kit wired in. Step 2 now reads **local connector source** (`02-repos/airbyte/airbyte-integrations/connectors/<name>/` manifest/metadata/BEHAVIOR + Python/Java CDK) for implementation details the registry spec doesn't expose (pagination, cursors, sub-streams, quirks) — the MCPs serve metadata, not code. Added a **freshness guard**: check the checkout's age and `git pull --ff-only` if >~14 days stale before relying on it; live registry (`get_connector_info`) stays the source of truth for existence/version/streams, never overridden by a stale checkout. Added **deepwiki MCP** for upstream vendor-API/library docs (public, no auth) and referenced **Kapa Docs MCP** (internal/Devin) + **Sentry/Datadog** for runtime observability — all guarded as "skip silently / note 'not available' if not configured on this machine." Source Coverage now reports local-source-read + checkout date + which docs/observability tools were (un)available.
 
 - **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.
