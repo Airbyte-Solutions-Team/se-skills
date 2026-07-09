@@ -1,6 +1,6 @@
 ---
 name: follow-up-email
-description: Drafts a customer follow-up email in Gary's voice — conversational, advisory, direct. Pulls from call transcripts and notes for context. Produces either a recap email (after a call) or an issue/resolution email (when reporting a problem). Use when the user says "follow-up email", "draft email", "email recap", "write email to <customer>", or "send <customer> a follow-up".
+description: Drafts a customer follow-up email in the SE's voice — conversational, advisory, direct. Pulls from call transcripts and notes for context. Produces either a recap email (after a call) or an issue/resolution email (when reporting a problem). Use when the user says "follow-up email", "draft email", "email recap", "write email to <customer>", or "send <customer> a follow-up".
 ---
 
 # Follow-Up Email Skill
@@ -27,9 +27,9 @@ If purpose isn't clear, ask.
 3. **Identify the recipient(s).** Pull email addresses from:
    - Prior email threads in the customer folder
    - Transcript attendee names (cross-reference Notion or memory for emails)
-   - If unknown, ask Gary
+   - If unknown, ask the SE
 4. **Match purpose to structure** (see below).
-5. **Write in Gary's voice** — conversational, advisory, direct. No corporate fluff.
+5. **Write in the SE's voice** (per the canonical Email Voice & Structure section below) — conversational, advisory, direct. No corporate fluff.
 
 ## Output mode
 
@@ -60,7 +60,7 @@ Thanks for the time today. Quick recap of where we landed:
 
 Let me know if I missed anything.
 
-Gary
+[Sign-off — name from `.se-config.yaml`]
 ```
 
 ### Issue Report Email
@@ -81,7 +81,7 @@ Hi [team/name],
 
 [Question / next step]
 
-Gary
+[Sign-off — name from `.se-config.yaml`]
 ```
 
 ### Answering a Question
@@ -123,7 +123,7 @@ Wanted to check in on [specific thing — POC, decision, evaluation]. Last we le
 
 When's a good time to reconnect?
 
-Gary
+[Sign-off — name from `.se-config.yaml`]
 ```
 
 ## Style (quick reference — see canonical section below for full rules + examples)
@@ -137,12 +137,15 @@ Gary
 
 ## After Drafting
 
-Output the email in chat. Ask if Gary wants to:
+Output the email in chat. Ask if the SE wants to:
 1. **Refine** (tone tweaks, add/remove sections)
-2. **Save as draft** in `~/airbyte-work/01-customers/<Customer>/emails/<MM-DD-YY>-<purpose>.md`
-3. **Send via Gmail MCP** (only if he explicitly says send — never auto-send)
+2. **Save as draft** — single canonical path: `~/airbyte-work/01-customers/<Customer>/outputs/emails/email-<YYYY-MM-DD>-<purpose>.md` (matches After Drafting → Auto-save below)
+3. **Send via Gmail MCP** (only if the SE explicitly says send — never auto-send)
 
 Default: chat output only. Never send without explicit instruction.
+
+### Self-check before emitting the draft
+(1) the ask is ONE concrete next step with date + attendees + agenda; (2) no claim about the customer that isn't grounded in the cited call/summary; (3) no invented commitment or capability. If the next step isn't concrete, don't emit — ask what the intended ask is. (Internal check only — keep the email itself human and uncluttered; do not add citations to the customer-facing text.)
 
 ---
 
@@ -277,6 +280,7 @@ We hope this email finds you well. We wanted to reach out regarding an issue we'
 
 ## Changelog
 
+- **2026-07-09** — Single canonical save path (`outputs/emails/email-<YYYY-MM-DD>-<purpose>.md` — reconciled the After-Drafting manual path with the Auto-save default); sign-off sourced from `.se-config.yaml` (removed hardcoded "Gary" in the three template sign-offs + the "ask Gary"/"Gary's voice" refs + the description); added a pre-send self-check (concrete next step, grounded claims, no invented commitments — internal-only, keeps the email human).
 - **2026-07-09** — Inlined the canonical "Email Voice & Structure" spec (was referenced from the external `~/airbyte-work/CLAUDE.md`, which isn't in the repo). Skill is now self-contained; all internal pointers repointed. Corrected the issue-report structure from four-part to five-part (added "Be upfront").
 
 - **2026-06-18** — Confirmed exempt from the shared Output Document Format (_se-playbook.md): follow-up-email is a customer-facing email, not a report — no At-a-Glance/Jump-to/callouts.
