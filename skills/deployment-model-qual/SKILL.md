@@ -7,7 +7,7 @@ description: Qualifies a customer's deployment model fit BEFORE diving into conn
 
 You are helping a Solutions Engineer at Airbyte answer the single most important early-deal question: **can this customer use Airbyte Cloud, or do they need a different deployment model?**
 
-Per Gary's CLAUDE.md: Airbyte currently sells **one product to new customers — Airbyte Cloud (Pro)**. Self-Managed Enterprise is a separate sales motion. Enterprise Flex (BYOC) is NOT available for new deployments today. Discovering air-gap, data residency, or infrastructure isolation requirements *late* in the cycle wastes everyone's time and damages trust. This skill exists to surface those requirements *early*.
+Product reality (the basis for this skill — see "Product reality these questions assume" below for the full statement, and verify it's current): Airbyte currently sells **one product to new customers — Airbyte Cloud (Pro)**. Self-Managed Enterprise is a separate sales motion. Enterprise Flex (BYOC) is NOT GA for new deployments today. Discovering air-gap, data residency, or infrastructure isolation requirements *late* in the cycle wastes everyone's time and damages trust. This skill exists to surface those requirements *early*.
 
 ## When to Run
 
@@ -41,13 +41,20 @@ If user signals brief mode (`--brief`, `quick deployment check`, `cloud or not`)
 
 ## The Five Qualifying Questions
 
-These come directly from Gary's CLAUDE.md. Answer each one for the customer using available evidence:
+These five questions are the canonical deployment gate — defined **here** so this skill is self-contained and reviewable (they mirror the workspace `CLAUDE.md` "Customer Qualification — Deployment Model" section, but this SKILL.md is the source of record for the qualification logic). Answer each one for the customer using available evidence:
 
 1. **What is their deployment preference?** Cloud SaaS, self-hosted, or hybrid?
 2. **Do they have data residency or air-gap requirements?** If data cannot leave their environment, Cloud is not viable.
 3. **Do they have multi-tenancy concerns?** Shared infrastructure may be a blocker for regulated PII data.
 4. **Do they need to bring their own KMS or secrets manager?** Not supported on Cloud — Self-Managed Enterprise only.
 5. **Do they require VPC isolation for the data plane?** Cloud runs Airbyte's data plane, not the customer's.
+
+**Product reality these questions assume (the basis for every verdict — verify it's still current):**
+- Airbyte sells **one product to new customers: Airbyte Cloud (Pro tier)**.
+- **Enterprise Flex (BYOC)** — cloud control plane + self-hosted data plane — is **not GA for new deployments** (exists for some existing customers / as a migration path).
+- **Self-Managed Enterprise** — fully self-hosted, supports BYOK/KMS and VPC isolation — is available but a **separate sales motion**.
+
+This product reality changes over time. If Flex goes GA (or regions/capabilities shift), the verdict logic below can flip — see the product-reality stamp in the Verdict section.
 
 ## Output Format
 
@@ -81,6 +88,10 @@ Render the verdict as a callout, picking the type by status: `[!verdict]` if �
 
 - **Status:** 🟢 Cloud Pro is viable / 🟡 Cloud Pro is viable with caveats / 🔴 Cloud Pro NOT viable — requalify or park
 - **One-sentence rationale:** [punchy verdict]
+
+### Product-reality stamp (verdict can go stale)
+
+State the product-capability basis and its date with the verdict: "Verdict assumes Flex/BYOC is not GA for new customers as of [reference date] and Cloud regions = [list]. If any changed, re-run — the verdict can flip." If a customer requirement hinges on a capability you can't verify as current, issue a 🟡 **Provisional** verdict ("verify current product state before acting"), not a hard 🔴 requalify. A 🔴 that sends a deal to a separate sales motion is expensive to get wrong on a stale fact.
 
 ---
 
@@ -201,6 +212,7 @@ Read `~/airbyte-work/.se-config.yaml` for the `[SE name]` field.
 
 ## Changelog
 
+- **2026-07-09** — Added product-reality as-of stamp; capability-dependent verdicts render 🟡 Provisional when current product state is unverifiable. Inlined the 5 qualifying questions + the product reality they assume (Cloud Pro only; Flex not GA; SME separate motion) so the skill is self-contained — this SKILL.md is now the source of record, mirroring but no longer dependent on the workspace CLAUDE.md.
 - **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.
 
 - **2026-05-28** — Auto-save to outputs/<skill>/ folder (default; --no-save to suppress). Source Coverage section required (anti-hallucination). Reads SE identity from ~/airbyte-work/.se-config.yaml. Output filename: <skill>-YYYY-MM-DD-<descriptor>.md.
