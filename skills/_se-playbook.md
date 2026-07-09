@@ -445,6 +445,22 @@ The web app degrades gracefully: documents predating this contract still get an 
 
 ---
 
+## Confidence & Assumptions (all skills)
+
+Every analytical or decision output states, near the top (inside or just under At-a-Glance):
+
+- **Working assumptions** — anything the read depends on that isn't confirmed. Written as an SE would say it, e.g. "Assuming the 05.20 architecture is still current" or "Assuming SFDC Amount reflects the live scope."
+- **What would change this** — the one or two facts that, if different, flip the verdict. e.g. "If Flex is now GA, the deployment verdict changes."
+
+Separate the three registers explicitly wherever a claim could be mistaken for fact:
+- `[stated]` — the customer/source said it (cite speaker + date)
+- `[inferred]` — the SE's read of the evidence (not confirmed)
+- `[recommendation]` — what to do about it
+
+Rule: never present an `[inferred]` conclusion or an unverified product/CRM fact in the visual language of a confirmed fact. When in doubt, downgrade the confidence pill and say why.
+
+---
+
 ## Source Coverage Transparency (Anti-Hallucination)
 
 When a skill processes large source material (transcripts, multi-doc synthesis), it must report what it actually read.
@@ -720,6 +736,7 @@ If/when built, this should be a separate skill (not a mode flag on biz-qual/deal
 
 ## Changelog
 
+- **2026-07-09** — Added "Confidence & Assumptions" convention: skills surface working assumptions + "what would change this," and label [stated]/[inferred]/[recommendation]. Hardens against unverified CRM/product facts being shown as confirmed.
 - **2026-07-02** — **`next-move` reclassified from light-touch to lightweight Decision Card.** As the workflow router, its recommendation is the deliverable, so it now leads with an At-a-Glance hero card + `Current read` narrative + override callouts, then decision-first sections (Why This Move → Ranked Next Moves → Don't Do Yet → Workflow State → Context Inventory → Gaps → External Actions → Source Coverage). Stays exempt from the full analytical apparatus (MEDDPICC scorecard, formal decision tables). Exemptions list updated; `objection-handler` + `account-refresher` remain light-touch. Pairs with web-app renderer changes (`EXEC_SECTION` → ranked-move cards; Low-confidence tile colors red) in `webapp/static/app.js`.
 - **2026-07-01** — **Source Coverage moved to the BOTTOM** of the doc (was right after At-a-Glance) — it's the audit trail, not the lead. Top-of-document structure + progressive-disclosure note updated; applied to all four decision-first-ordered skills (connector-feasibility, prep-call, post-call, tech-qual). Also **per-skill decision-first section reordering**: connector-feasibility (Fit Verdict before Use Case); prep-call (Company Snapshot + Why Airbyte to the top, before AE-learned/where-we-left-off); post-call (Key Takeaways → Deal Health → New Objections → Action Items up top, Attendees + Source Coverage at bottom); tech-qual (verdict-then-architecture already good, only Source Coverage moved down). Pairs with web-app renderer: checkbox affordance (no more square-bullet ☐), constraint/info cards, calmer bold, Inter + slate palette.
 - **2026-06-25** — Added the **Decision-First Layout** sub-contract to Output Document Format: analytical skills (tech-qual, biz-qual, deal-assessment, deployment-model-qual, connector-feasibility, poc-plan) lead with a **Decision Card** (verdict/motion/primary-risk/confidence/next-gate), a standardized **Scorecard** with a "Why it matters" column, **facts-vs-judgment-vs-recommendation** labeling, and **Open-Questions / Next-Actions decision tables** (Owner / Needed-By / Why / Status — render `TBD` where unstated, never invent). Plus progressive disclosure (Source Coverage stays low) and jargon-translation in user-facing prose. Reinforced `==…==` = numbers/short-tokens-only (no sentence highlighting). Extended exemptions (account-refresher light-touch; internal-prep light adoption). Pairs with web-app render fixes (softer highlight, wider tables, checkbox bullets).
