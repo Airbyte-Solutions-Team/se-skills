@@ -92,9 +92,11 @@ Keep it to ~1 page. This is a briefing, not a report. Document structure follows
 
 - **Fast and scannable.** This is read in the 2 minutes before a call. Lead with the 10-second version.
 - **Facts, not judgment.** "Last call was 03.17; champion went quiet after" — not "this deal is at risk" (that's deal-assessment's call to make).
+- **Mark any read as a read.** Keep the light `[fact]`/`[inference]` split so the briefing never smuggles a judgment in as a fact: "Champion went quiet after 03.17 `[fact]`; may signal slipping priority `[inference — not a deal-health call, see deal-assessment]`." Facts get a date/source; inferences get the tag and stay out of deal-health territory.
 - **Cite dates and sources.** "Per the 04.01 transcript…", "SFDC stage = Negotiation as of [date]".
 - **Flag SFDC-vs-reality gaps** assertively but neutrally — state both, let the reader judge.
 - **Don't pad.** If the account is thin (one call, little history), the refresher is short. Say what's known, flag what isn't.
+- **Keep it lean — no gates, no dumps.** A refresher trades completeness for speed: do NOT add a validation checklist, a full Source Coverage dump, or a self-check gate, and do NOT exceed ~1 page. Thin input is valid — produce the short version, don't refuse.
 
 ## Output mode
 
@@ -136,6 +138,7 @@ Per the playbook, surface gaps between SFDC and transcripts — but frame them n
 
 ## Changelog
 
+- **2026-07-09** — Enforced the light `[fact]`/`[inference]` split so a read never reads as a fact (inferences tagged + kept out of deal-health territory, which stays deal-assessment's lane); explicitly reaffirmed the no-validation-checklist / no-source-dump / ≤1-page / thin-input-is-valid discipline (no gates added — this is a light-touch skill).
 - **2026-06-18** — Applied the shared Output Document Format (`_se-playbook.md`): added At-a-Glance (current state, key players, last touch with ==days-since==, ==# open items==), a Jump-to index, promoted primary sections (Who's Who, The Story So Far, Where Things Stand, What's Open, Watch-outs) to H2, and moved the "where to go next" footer into an `[!info]` callout. Key-number emphasis on days-since-last-touch and open-item count.
 
 - **2026-06-03** — Initial creation. Informational account briefing (players / story / current state / open items) synthesized from local + transcripts + memory + Salesforce. Stays out of judgment (points to deal-assessment / prep-call / router). Router-like read depth. Auto-save + brief mode.
