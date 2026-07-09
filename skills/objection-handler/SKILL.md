@@ -35,9 +35,9 @@ The user will paste or describe a customer concern. Examples:
 
 ## Output mode
 
-Default = full structured response (objection classification, severity, what's actually true, 4-step Voss talk track with all steps, follow-ups, deal-killer assessment, related context).
+Default = full structured response (objection classification, severity, what's actually true, Voss talk track using the moves that fit — substantive answer last, follow-ups, deal-killer assessment, related context).
 
-If user signals brief mode (`--brief`, `quick talk track`, `just the talk track`): produce just the 4-step Voss talk track (Mirror → Label → Calibrated Q → Substantive) + one-line severity assessment. Skip classification framing, deal-killer section, related context. See `_se-playbook.md` "Output Mode" for the unified brief-mode rule.
+If user signals brief mode (`--brief`, `quick talk track`, `just the talk track`): produce just the Voss talk track (the moves that fit — mirror/label → calibrated Q → substantive answer last) + one-line severity assessment. Skip classification framing, deal-killer section, related context. See `_se-playbook.md` "Output Mode" for the unified brief-mode rule.
 
 ## Output Format
 
@@ -58,9 +58,9 @@ This skill is **light-touch** under `_se-playbook.md` → Output Document Format
 ### What's actually true
 Plain-language statement of Airbyte's actual capability/position on this. Do NOT spin. If the customer is right that we don't support something, say so. If they're misinformed, gently correct.
 
-### Talk Track (Voss 4-Step — REQUIRED structure)
+### Talk Track (Voss moves — use what fits)
 
-**Do not collapse these into a paragraph. Output four separate steps so Gary can deliver them in order.**
+Use the Voss moves that fit — mirror/label to defuse, a calibrated question to open it up, the substantive answer **last**. Don't force all four when a clean two-move response is stronger; a talk track that sounds scripted loses the room. Keep the moves as separate beats (not one collapsed paragraph) so the SE can deliver them in order. The ordering rule — substantive answer last — always holds; the four steps below are the full scaffold to draw from, not a quota to fill.
 
 #### Step 1 — Mirror
 A 1-3 word mirror of the customer's objection. Followed by silence. Goal: get them to elaborate and reveal what they actually mean.
@@ -112,6 +112,12 @@ Read `~/airbyte-work/04-notes/airbyte-objection-reference.md` for the full refer
 
 The reference doc is the canonical source for Airbyte positioning on common objections. Always check it before crafting a talk track — saves time and ensures consistency with current product capabilities. Update the doc (not this skill) when Airbyte's positioning changes.
 
+### Product-fact freshness (anti-stale)
+
+Ground every product claim in the objection reference above and note that file's `Last updated` date in the output. If the objection turns on a capability that may have changed since then (GA status, supported regions, pricing terms), do NOT assert it — write: "confirm current product state before using this line." A confidently-wrong product fact costs more trust than a hedge.
+
+If the reference file is absent (fresh machine, new teammate), fall back to `_se-playbook.md` → Airbyte-Specific Application Notes + the deployment-model guidance, and note in the output that the canonical reference wasn't available — don't invent positioning.
+
 ## After Generating
 
 ### Auto-save (default, customer-specific only)
@@ -160,8 +166,8 @@ In either case, **acknowledge the repetition directly** rather than running the 
 
 If the input is an abstract objection ("how do I respond to multi-tenancy concerns" without a customer), skip this step — go straight to the framework.
 
-### Voss 4-step is enforced in Output Format above
-The 4 steps (Mirror → Label → Calibrated Q → Substantive) are the prescriptive structure; see Output Format. Don't collapse them into prose. For full Voss tactical background, see `_se-playbook.md` "Chris Voss / Never Split the Difference" section.
+### Voss moves — draw from the four, keep the ordering
+The four moves (Mirror → Label → Calibrated Q → Substantive) are the scaffold; see Output Format. Use the ones that fit — a clean two-move response beats a forced four when it sounds more human — but keep the substantive answer last and keep the moves as separate beats, not one collapsed paragraph. For full Voss tactical background, see `_se-playbook.md` "Chris Voss / Never Split the Difference" section.
 
 ### Accusations Audit for known-tough conversations
 If the objection is one of the deal-killer categories (data residency, BYOK, multi-tenancy on regulated data), recommend an Accusations Audit opener for the next call:
@@ -191,6 +197,7 @@ Per the deployment-model guidance: don't spin. If Cloud can't meet their require
 
 ## Changelog
 
+- **2026-07-09** — Added product-fact freshness guard (cite reference last-updated date; hedge possibly-stale capabilities; fall back to playbook guidance if the reference is absent). Softened Voss from "always emit 4 steps" to "use the moves that fit" (substantive-last preserved).
 - **2026-06-18** — Severity callout per `_se-playbook.md` → Output Document Format (objection-handler is light-touch: no At-a-Glance/Jump-to). The Severity indicator is now a top-of-output callout — `[!blocker]` for Deal-killer/High, `[!risk]` for Medium, `[!info]` for Low. Enforced Voss 4-step structure unchanged.
 
 - **2026-05-28** — Auto-save to outputs/<skill>/ folder (default; --no-save to suppress). Source Coverage section required (anti-hallucination). Reads SE identity from ~/airbyte-work/.se-config.yaml. Output filename: <skill>-YYYY-MM-DD-<descriptor>.md.
