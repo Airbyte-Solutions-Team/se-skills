@@ -41,17 +41,17 @@ The router operates at a **deliberately shallow read depth**:
 Read these in order. Don't synthesize until all are read.
 
 ### 1. Local artifacts
-Check `~/airbyte-work/01-customers/<Customer>/` for:
-- `deployment-qual-*.md` — deployment model qualified?
-- `biz-qual-*.md` — MEDDPICC scored?
-- `tech-qual-*.md` — technical fit assessed?
-- `connector-feasibility-*.md` — coverage analyzed?
-- `poc-plan-*.md` — POC scoped?
-- `Deal-Assessment-*.md` — recent honest read on health?
-- `call-summary-*.md` files — post-call digests
-- `call-prep-*.md` files — call prep docs
-- `emails/` — sent communications
-- Any raw notes
+Check the customer's `outputs/` folder (`~/airbyte-work/01-customers/<Customer>/outputs/<skill>/`) for:
+- `outputs/deployment-qual/deployment-qual-*.md` — deployment model qualified?
+- `outputs/biz-qual/biz-qual-*.md` — MEDDPICC scored?
+- `outputs/tech-qual/tech-qual-*.md` — technical fit assessed?
+- `outputs/connector-feasibility/connector-feasibility-*.md` — coverage analyzed?
+- `outputs/poc-plan/poc-plan-*.md` — POC scoped?
+- `outputs/deal-assessment/deal-assessment-*.md` — recent honest read on health?
+- `outputs/post-call/post-call-*.md` files — post-call digests
+- `outputs/call-prep/call-prep-*.md` files — call prep docs
+- `outputs/emails/` — sent communications
+- `raw/` — any manual notes
 
 For each, note the **date** (from filename). Stale artifacts (>30 days old) are treated as incomplete.
 
@@ -342,6 +342,7 @@ Avoid "run follow-up-email because it's been a while" without a substantive trig
 
 ## Changelog
 
+- **2026-07-09** — Fixed the Local Artifacts scan: reads each prior doc from `outputs/<skill>/` (was the customer root); `Deal-Assessment-*.md` → lowercase `deal-assessment-*.md`; `call-summary-*.md` → `post-call-*.md`. The stage-inference was silently missing every prior artifact.
 - **2026-07-09** — Added a **conflicting-signals branch** to the override logic: when signals collide (stale quals + fresh objection, or SFDC-stage vs local-artifact mismatch), name the tension in `Current read` and pick the de-risking move with its assumption stated, rather than forcing one tree path. Handled in prose only — the four At-a-Glance labels (`Recommended Next Move`/`Confidence`/`Stage`/`Top Blocker`) the web-app reader keys on for hero-card routing are unchanged.
 - **2026-07-02** — **Decision-first output rewrite.** For a "what do I do next?" skill, the recommendation was buried below an Artifacts Inventory + diagnostics — it read like an audit report. Reordered the template to lead with the answer: **At-a-Glance decision card → Current read → override callouts → Why This Move → Ranked Next Moves → Don't Do Yet → Workflow State → Context Inventory → Gaps → External Actions → Source Coverage.** The At-a-Glance labels (`Recommended Next Move`/`Confidence`/`Stage`/`Top Blocker`) are chosen to render as the web-app reader's hero decision tiles; `### Current read` becomes the hero's narrative one-liner (relocated from the old bottom TL;DR — no duplicate). Renamed "Artifacts Inventory" → **Context Inventory** with a `Needed Now?` column (missing ≠ todo); split "Gaps" into Critical / Non-critical / Data-hygiene; "Ranked Next Moves" render as cards; External Actions is now an Owner/Why/Definition-of-done table. next-move is no longer "light-touch" — it now leads with a Decision Card (reader change: `EXEC_SECTION` card routing + Low-confidence tile color in `webapp/static/app.js`). Playbook reclassification updated to match.
 

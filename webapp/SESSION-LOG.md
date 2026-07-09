@@ -2,7 +2,7 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`, mine = `gyairbyte/SE-Workflow`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: July 9, 2026 — completed the se-skills runbook-improvement work order (P0–P10), one item per commit, pushed to both remotes. Working tree clean after the full-qual commit._
+_Last updated: July 9, 2026 — completed the P0–P10 work order, then the three deferred follow-ons (D1 chaining-path/glob bugs, D2 deal-assessment Movement slot, D3 Gary genericization). One item per commit, pushed to both remotes._
 
 ## What the app is
 Local FastAPI + vanilla-JS UI (no build step) over the SE skills suite. `cd webapp && uv run app.py` → http://127.0.0.1:8787 (needs `CPATH/LIBRARY_PATH` for portaudio on this Mac — see "Run" below). Browse team → member's accounts → an account's opportunities → generated outputs; invoke skills; ask follow-ups on outputs; Live Transcribe a Zoom call with an AI copilot.
@@ -16,7 +16,9 @@ uv run --python 3.11 app.py    # port 8787
 ```
 
 ## Built this session (newest first — see `git log`)
-- **Runbook-improvement work order — P-series (July 9, in progress).** Applying the reviewed set of skill hardening edits (P0–P10) from the improvement proposal, one item per commit, GTM-voice only (no coding-agent tone). Landed so far:
+- **Deferred follow-ons after the P-series (July 9).** Three items flagged during the work order, now cleared:
+  - **D1 — silent-chaining path/glob bugs.** Several skills READ prior artifacts from the customer *root* while everything SAVES to `outputs/<skill>/`, so movement/what-changed/inventory sections silently found nothing. Fixed the read paths in **tech-qual** (lines 26-30 + 125), **next-move** (Local Artifacts scan), **biz-qual** (Movement read glob), **poc-plan** ("Before generating" block — its earlier check was already correct), **follow-up-email** ("prefer call summaries"). Also fixed two stale globs everywhere they appeared: `call-summary-*.md` → `post-call-*.md` (post-call's real output name) and capitalized `Deal-Assessment-*.md` → lowercase `deal-assessment-*.md`. deal-assessment's own copies fixed with D2 (same lines).
+- **Runbook-improvement work order — P-series (July 9).** Applying the reviewed set of skill hardening edits (P0–P10) from the improvement proposal, one item per commit, GTM-voice only (no coding-agent tone). Landed so far:
   - **P0-A** — `_se-playbook.md`: new **"Confidence & Assumptions (all skills)"** convention (working assumptions + "what would change this" + `[stated]`/`[inferred]`/`[recommendation]` registers). Foundational — per-skill edits reference it. Placed between Decision-First Layout and Source Coverage Transparency.
   - **P0-B** — `_se-playbook.md`: extended **Source Coverage Transparency** with **"Fail loud on missing sources/tools"** — every expected source/tool listed `used`/`unavailable`; a load-bearing gap caps At-a-Glance confidence and is stated in the lead. Turns silent graceful-degradation into a visible signal (connector-feasibility is the flagship consumer, P1).
   - **P1** — `connector-feasibility/SKILL.md`: dedicated **"Fail loud on unavailable tools"** block (registry / local source / prod-failure / docs MCPs / observability listed used/unavailable; registry|source|prod-failure gap → cap Feasibility at 🟡 + lead caveat; effort ranges labeled planning estimates). **Acceptance test PASSED** — re-ran on PRGX: this machine has registry ✅ but prod-failure ❌ (no GCP ADC) + stale source (2026-03-25), so the output correctly capped to 🟡, listed each tool used/unavailable, and led with the metadata-only caveat. No webapp coupling (grep clean).

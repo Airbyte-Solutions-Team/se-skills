@@ -41,12 +41,12 @@ The user will provide one or more of:
 
 ## Before generating: read prior outputs
 
-POC scope must build on prior qualification. Before generating, check `~/airbyte-work/01-customers/<Customer>/` for and read:
-- **`deployment-qual-*.md`** — required. POC architecture depends on deployment model. If missing and the customer has non-trivial requirements, **stop and suggest running `deployment-model-qual` first**.
-- **`tech-qual-*.md`** — technical fit, volume, security, integration risks → feed directly into POC scope and success criteria
-- **`biz-qual-*.md`** — MEDDPICC Metrics directly map to Success Criteria; Decision Process informs Mutual Commitments
-- **`connector-feasibility-*.md`** — confirmed coverage feeds Sources/Destinations sections
-- **Prior call summaries** in `call-summary-*.md` — recent customer commitments and concerns
+POC scope must build on prior qualification. Before generating, check the customer's `outputs/` folder (`~/airbyte-work/01-customers/<Customer>/outputs/<skill>/`) for and read:
+- **`outputs/deployment-qual/deployment-qual-*.md`** — required. POC architecture depends on deployment model. If missing and the customer has non-trivial requirements, **stop and suggest running `deployment-model-qual` first**.
+- **`outputs/tech-qual/tech-qual-*.md`** — technical fit, volume, security, integration risks → feed directly into POC scope and success criteria
+- **`outputs/biz-qual/biz-qual-*.md`** — MEDDPICC Metrics directly map to Success Criteria; Decision Process informs Mutual Commitments
+- **`outputs/connector-feasibility/connector-feasibility-*.md`** — confirmed coverage feeds Sources/Destinations sections
+- **Prior call summaries** in `outputs/post-call/post-call-*.md` — recent customer commitments and concerns
 
 Cite source documents inline. **If a POC is being scoped without prior tech-qual and biz-qual, flag this as risky** — POCs without qualification usually drift.
 
@@ -293,6 +293,7 @@ Read `~/airbyte-work/.se-config.yaml` for the `[SE name]` field in the SE owner 
 
 ## Changelog
 
+- **2026-07-09** — Fixed the "Before generating" prior-doc read block: reads `deployment-qual`/`tech-qual`/`biz-qual`/`connector-feasibility` from `outputs/<skill>/` (was the customer root — inconsistent with the already-correct check earlier in the skill); prior call summaries now `outputs/post-call/post-call-*.md` (was the never-existing `call-summary-*.md`).
 - **2026-07-09** — Added duration-sizing heuristics (1–2 wk single-connector / 3–5 wk multi-source or transform / 6–8 wk only with a stated enterprise reason) so the timeline is right-sized to scope, not habit; reframed the mid-POC checkpoint as an explicit go/no-go gate with a named decider ("by [mid-date] X works or we pause & diagnose").
 - **2026-07-07** — Prerequisite handling changed from warn-but-proceed to **detect & offer to run first**: if biz-qual/tech-qual are missing (but a transcript exists), poc-plan now lists what's missing and offers to run the missing qualification skill(s) in order, then continue. Still refuses on zero transcripts (nothing to chain); still allows 'skip' with a drift-risk flag; never fabricates a qual doc.
 - **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.

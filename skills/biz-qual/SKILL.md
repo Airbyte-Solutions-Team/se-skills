@@ -212,7 +212,7 @@ If they only relay your messages, they're a coach — not a champion. Downgrade 
 ---
 
 ## Movement Since Last Qualification
-*If a prior biz-qual exists for this customer (check `~/airbyte-work/01-customers/<Customer>/biz-qual-*.md`), compare letter-by-letter:*
+*If a prior biz-qual exists for this customer (check `~/airbyte-work/01-customers/<Customer>/outputs/biz-qual/biz-qual-*.md`), compare letter-by-letter:*
 
 | Letter | Prior status | Current status | Trend |
 |--------|--------------|----------------|-------|
@@ -342,6 +342,7 @@ Wait for explicit yes/no on Notion / memory before doing those.
 
 ## Changelog
 
+- **2026-07-09** — Fixed the "Movement Since Last Qualification" read path: prior biz-qual is read from `outputs/biz-qual/biz-qual-*.md` (was the customer root, where it's never saved) so the letter-by-letter comparison actually finds the prior scorecard.
 - **2026-07-09** — Every 🔴/🟡 element now requires a paired, owned close-path in Next Actions (`Gap → ask that closes it → by when → owner/TBD`); added explicit score-confidence + `[inferred]` labeling for unconfirmed elements. Next Actions table restructured to make the gap→close-path pairing explicit.
 - **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.
 

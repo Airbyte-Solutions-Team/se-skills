@@ -23,11 +23,11 @@ If zero transcripts exist (local + Gong checked): **REFUSE TO RUN.** Output:
 
 ## Before generating: read prior outputs
 
-Tech qual builds on earlier work. Before generating, check `~/airbyte-work/01-customers/<Customer>/` for and read:
-- **`deployment-qual-*.md`** — if exists, the deployment model is already qualified. Reference its verdict in your Deployment Model section; don't re-derive. If it doesn't exist and the customer has non-trivial requirements, **suggest running `deployment-model-qual` first**.
-- **`biz-qual-*.md`** — pulls in MEDDPICC Decision Criteria, which directly inform what to evaluate technically
-- **`connector-feasibility-*.md`** — already-done connector coverage analysis; reference it instead of re-doing
-- **Prior `tech-qual-*.md`** — if one exists, compare and note movement
+Tech qual builds on earlier work. Before generating, check the customer's `outputs/` folder (`~/airbyte-work/01-customers/<Customer>/outputs/<skill>/`) for and read:
+- **`outputs/deployment-qual/deployment-qual-*.md`** — if exists, the deployment model is already qualified. Reference its verdict in your Deployment Model section; don't re-derive. If it doesn't exist and the customer has non-trivial requirements, **suggest running `deployment-model-qual` first**.
+- **`outputs/biz-qual/biz-qual-*.md`** — pulls in MEDDPICC Decision Criteria, which directly inform what to evaluate technically
+- **`outputs/connector-feasibility/connector-feasibility-*.md`** — already-done connector coverage analysis; reference it instead of re-doing
+- **Prior `outputs/tech-qual/tech-qual-*.md`** — if one exists, compare and note movement
 
 Cite the source documents inline (filename + date) when pulling in prior conclusions.
 
@@ -122,7 +122,7 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 - [Flag any volume or latency requirements that could be a fit risk]
 
 ## Deployment Model
-*If `deployment-qual-*.md` exists for this customer, summarize its verdict here and reference the doc — don't re-derive. Use this section for technical implications, not for re-qualifying.*
+*If `outputs/deployment-qual/deployment-qual-*.md` exists for this customer, summarize its verdict here and reference the doc — don't re-derive. Use this section for technical implications, not for re-qualifying.*
 
 - **Verdict (from deployment-qual):** [🟢 Cloud Pro viable / 🟡 with caveats / 🔴 not viable]
 - **Preferred deployment:** [Airbyte Cloud / Self-Managed Enterprise / Open Source]
@@ -290,6 +290,7 @@ Read `~/airbyte-work/.se-config.yaml` for the `[SE name]` field.
 
 ## Changelog
 
+- **2026-07-09** — Fixed prior-doc read paths: now reads `deployment-qual`/`biz-qual`/`connector-feasibility`/`tech-qual` from `outputs/<skill>/` (was the customer root, where nothing is saved) so the "read prior outputs" chaining actually finds them.
 - **2026-07-09** — Compliance claims now a mandatory pre-save self-check: cite+date or mark "verify with [team]"; never assert certifications from memory; verified/unverified/required labeled distinctly (`[customer requires]` / `[Airbyte supports — verified]` / `[Airbyte supports — unverified]`). Unverified compliance surfaces in At-a-Glance ("compliance claims pending verification").
 - **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.
 

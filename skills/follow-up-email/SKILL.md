@@ -22,7 +22,7 @@ If purpose isn't clear, ask.
 
 ## How to Draft
 
-1. **Prefer call summaries over raw transcripts.** Check `01-customers/<Customer>/call-summary-*.md` first — these are pre-digested. Fall back to raw transcripts in `01-customers/_transcripts/<Customer>-*.txt` only if no summary exists or if a specific quote/detail is needed.
+1. **Prefer call summaries over raw transcripts.** Check `01-customers/<Customer>/outputs/post-call/post-call-*.md` first — these are pre-digested. Fall back to raw transcripts in `01-customers/_transcripts/<Customer>-*.txt` only if no summary exists or if a specific quote/detail is needed.
 2. **Read all relevant source material.** Notes in `01-customers/<Customer>/`, recent transcripts, prior emails in `01-customers/<Customer>/emails/`, and (if relevant) memory records.
 3. **Identify the recipient(s).** Pull email addresses from:
    - Prior email threads in the customer folder
@@ -280,6 +280,7 @@ We hope this email finds you well. We wanted to reach out regarding an issue we'
 
 ## Changelog
 
+- **2026-07-09** — Fixed the "prefer call summaries" read path: checks `outputs/post-call/post-call-*.md` (was `call-summary-*.md`, which post-call never produces — so the skill always fell back to raw transcripts, defeating the optimization).
 - **2026-07-09** — Single canonical save path (`outputs/emails/email-<YYYY-MM-DD>-<purpose>.md` — reconciled the After-Drafting manual path with the Auto-save default); sign-off sourced from `.se-config.yaml` (removed hardcoded "Gary" in the three template sign-offs + the "ask Gary"/"Gary's voice" refs + the description); added a pre-send self-check (concrete next step, grounded claims, no invented commitments — internal-only, keeps the email human).
 - **2026-07-09** — Inlined the canonical "Email Voice & Structure" spec (was referenced from the external `~/airbyte-work/CLAUDE.md`, which isn't in the repo). Skill is now self-contained; all internal pointers repointed. Corrected the issue-report structure from four-part to five-part (added "Be upfront").
 
