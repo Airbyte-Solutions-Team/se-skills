@@ -60,7 +60,8 @@ Copy these straight from the SFDC query into the page; IDs and numbers must be e
 8. **In-Flight Commitments** — what the owner SE promised the customer, owner, due, status. (The #1 coverage failure is a dropped promise — mine transcripts/notes hard for these.)
 9. **Live Technical Thread** — mid-investigation questions/blockers, state, who it's waiting on.
 10. **Access & Logistics** — SFDC opp link, Airbyte Org ID, workspace IDs, Slack channel, Notion/drive links, prior SE doc filenames. SFDC/raw-derived; mark unknowns.
-11. **Source Coverage** — what was read, with dates (anti-hallucination).
+    - **"If you get stuck" (internal escalation) sub-block** — a covering SE inheriting a deal cold needs a routing map: **owner SE's return date** (from the PTO form), **the AE**, **the internal Slack channel**, and **the one eng/PS contact** for any live technical thread (§9). Names or `TBD` — never invented. This is the human analog of "who do I escalate to when blocked"; keep it in Access & Logistics so it's one glance from the IDs/links.
+11. **Source Coverage** — what was read, with dates (anti-hallucination). **Note which `template.html` version this was built from** (its top-of-file version/date comment) so that if the internal.airbyte.ai rs-group design system changes, a stale handoff is caught and re-generated rather than hand-edited.
 
 ## After Generating
 
@@ -98,5 +99,6 @@ Read `~/.claude/skills/_se-playbook.md` for the source-reading pattern, SFDC fie
 
 ## Changelog
 
+- **2026-07-09** — Added an "If you get stuck" internal-escalation sub-block to Access & Logistics (owner SE return date, AE, internal Slack channel, one eng/PS contact — names or TBD, never invented) so a covering SE has a routing map when blocked; added a template-version note (Source Coverage records which `template.html` version was used; template now carries a `TEMPLATE VERSION` stamp) so an rs-group design-system change triggers re-generation instead of hand-editing.
 - **2026-07-06** — Initial creation. PTO coverage handoff → self-contained HTML in the internal.airbyte.ai rs-group design system. SFDC hard facts injected verbatim; consumes PTO modal-form context; portable to the internal repo (no auto-push).
 - **2026-07-06** — Slimmed to 11 sections: removed the form-fed Scheduled-During-Coverage, Guardrails, and Escalation-Contacts sections (meetings are now inferred from transcripts+SFDC). Modal input reduced to SE-out / covering-SE / coverage-window.
