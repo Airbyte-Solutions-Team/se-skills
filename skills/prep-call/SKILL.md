@@ -16,7 +16,7 @@ The user will provide one or more of:
 
 ## Default Use Case: Tech Call After AE Discovery
 
-**The most common SE invocation of this skill (~90%) is prepping for a technical/discovery call where the AE already did a business discovery call 1-14 days ago.** That AE call is in Gong and is the single most important input — Gary inherits the AE's discovery rather than re-running it.
+**The most common SE invocation of this skill (~90%) is prepping for a technical/discovery call where the AE already did a business discovery call 1-14 days ago.** That AE call is in Gong and is the single most important input — the SE inherits the AE's discovery rather than re-running it.
 
 Default behavior:
 1. **Aggressively check Gong** for a prior call on this account (see Gong lookback below)
@@ -235,7 +235,7 @@ Why this reframe for this customer: [brief rationale based on their stack/indust
 - **Attendees needed:** [specific names/roles]
 - **Proposed date:** [specific date or "within 1 week of this call"]
 - **Agenda:** [3-4 bullets]
-- **Pre-work:** [anything Gary or customer needs to do beforehand]
+- **Pre-work:** [anything the SE or customer needs to do beforehand]
 
 ## Source Coverage
 *Audit trail — last content section (progressive disclosure per `_se-playbook.md`).* [AE Gong transcript path + line count, local notes, memory files, web queries — see After Generating. In cold-prep mode, state that explicitly here.]
@@ -288,7 +288,7 @@ Before the call, draft ONE provocative reframe based on what you know about thei
 For each likely pain point, write 2-3 Implication questions that force the customer to quantify the cost themselves. Don't just ask "is X a problem?" — ask "when X happens, who gets paged, how long are you down, what does that cost?" Add these under each pain hypothesis.
 
 ### Draft an Upfront Contract (Sandler)
-Add a `### Upfront Contract` section to the prep doc with a 2-3 sentence opener Gary can use to set agenda + outcomes + mutual permission to disqualify. Example: "We've got 30 minutes. I want to understand your current data integration pain and evaluation criteria. You'll want to see how we handle [their likely use case]. By the end we should know whether a POC makes sense — or whether this isn't a fit. Sound good?"
+Add a `### Upfront Contract` section to the prep doc with a 2-3 sentence opener the SE can use to set agenda + outcomes + mutual permission to disqualify. Example: "We've got 30 minutes. I want to understand your current data integration pain and evaluation criteria. You'll want to see how we handle [their likely use case]. By the end we should know whether a POC makes sense — or whether this isn't a fit. Sound good?"
 
 ### Tailor by persona
 If multiple attendees are known, list discovery questions *per persona*. CDO ≠ CFO ≠ security lead. Same deck for everyone is the #1 expansion killer.
@@ -336,6 +336,7 @@ Read `~/airbyte-work/.se-config.yaml` to populate the `[SE name]` field in heade
 
 ## Changelog
 
+- **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE" (reads identity from `.se-config.yaml`).
 - **2026-07-09** — Sourcing discipline for cold-prep facts: every Company Snapshot fact carries an origin tag (`[per AE call]` / `[SFDC]` / `[public]` / `[assumption — confirm live]`); the reframe is now stated as "they likely believe X (basis…); reframe to Y," labeled a hypothesis to test if unsourced. No refuse-gate added — stays cold-runnable (light-touch).
 - **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.
 

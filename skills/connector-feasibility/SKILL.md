@@ -260,7 +260,7 @@ If the customer is comparing total connector counts to Fivetran/Stitch/Matillion
 2. How the long tail gets built when something's missing (manifest-only builder + custom CDK)
 3. Schema-drift and reliability over time, which count doesn't measure
 
-Add a `## Reframe Talk Track` section at the end with 2-3 sentences Gary can use if the customer reverts to a count comparison.
+Add a `## Reframe Talk Track` section at the end with 2-3 sentences the SE can use if the customer reverts to a count comparison.
 
 ### Anchor gaps in stated value (SPIN Implication)
 For each missing connector, don't just note effort — note the cost of not having it. Example:
@@ -293,6 +293,7 @@ If a connector is only available on Cloud (or only on Self-Managed), flag it. Th
 
 ## Changelog
 
+- **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE" (reframe talk-track note).
 - **2026-07-09** — Fail-loud on unavailable tools: Source Coverage lists each dependency used/unavailable; metadata-only runs are capped at 🟡 with a lead caveat; effort ranges labeled as estimates.
 - **2026-06-26** — Richer troubleshooting/feasibility kit wired in. Step 2 now reads **local connector source** (`02-repos/airbyte/airbyte-integrations/connectors/<name>/` manifest/metadata/BEHAVIOR + Python/Java CDK) for implementation details the registry spec doesn't expose (pagination, cursors, sub-streams, quirks) — the MCPs serve metadata, not code. Added a **freshness guard**: check the checkout's age and `git pull --ff-only` if >~14 days stale before relying on it; live registry (`get_connector_info`) stays the source of truth for existence/version/streams, never overridden by a stale checkout. Added **deepwiki MCP** for upstream vendor-API/library docs (public, no auth) and referenced **Kapa Docs MCP** (internal/Devin) + **Sentry/Datadog** for runtime observability — all guarded as "skip silently / note 'not available' if not configured on this machine." Source Coverage now reports local-source-read + checkout date + which docs/observability tools were (un)available.
 

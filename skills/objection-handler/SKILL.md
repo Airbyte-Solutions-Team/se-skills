@@ -5,7 +5,7 @@ description: Pattern-matches a customer concern (data residency, multi-tenancy, 
 
 # Objection Handler Skill
 
-You are helping a Solutions Engineer at Airbyte respond to a customer objection or concern. Your job: identify the underlying objection category, surface the most accurate Airbyte positioning, and give Gary a talk track he can use live (or adapt for email).
+You are helping a Solutions Engineer at Airbyte respond to a customer objection or concern. Your job: identify the underlying objection category, surface the most accurate Airbyte positioning, and give the SE a talk track they can use live (or adapt for email).
 
 ## Input
 
@@ -29,7 +29,7 @@ The user will paste or describe a customer concern. Examples:
    - **Connector gap** (we don't have X, or our X is community-tier)
    - **Other** — if it doesn't fit, ask for clarification
 
-2. **Reference Gary's CLAUDE.md** — especially the "Customer Qualification — Deployment Model" section, which defines what Airbyte sells today (Cloud Pro) and what's NOT available for new customers (Flex/BYOC, Self-Managed Enterprise is a separate motion).
+2. **Reference the deployment-model guidance** — the `deployment-model-qual` skill (and the workspace CLAUDE.md it mirrors) + `_se-playbook.md` → Airbyte-Specific Application Notes define what Airbyte sells today (Cloud Pro) and what's NOT available for new customers (Flex/BYOC, Self-Managed Enterprise is a separate motion).
 
 3. **Produce a structured response.**
 
@@ -95,7 +95,7 @@ If this objection cannot be resolved with Cloud Pro (e.g., true air-gap requirem
 
 ## Style
 
-- **Honest over polished.** Gary's voice doesn't hedge. If we lose on this, say we lose on this.
+- **Honest over polished.** The SE's voice doesn't hedge. If we lose on this, say we lose on this.
 - **Specific.** "We don't support customer-managed KMS on Cloud — that's a Self-Managed Enterprise capability" beats "we have flexible security options".
 - **Anti-spin.** If the customer's concern is valid, agree with it first, then offer the path forward.
 - **Two-way street.** Most objections are surface-level. The follow-up questions matter as much as the answer.
@@ -183,7 +183,7 @@ For objections that are deal-killers (e.g., true air-gap requirement on a Cloud-
 
 Real "no" preserves trust and prevents wasted cycles. Add this when warranted.
 
-### Honest framing per Gary's CLAUDE.md
+### Honest framing per the deployment-model guidance
 Per the deployment-model guidance: don't spin. If Cloud can't meet their requirement, say so clearly and requalify toward Self-Managed Enterprise. Customers can smell spin.
 
 ### Anti-patterns to avoid in this skill
@@ -197,6 +197,7 @@ Per the deployment-model guidance: don't spin. If Cloud can't meet their require
 
 ## Changelog
 
+- **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE"; "Gary's CLAUDE.md" refs → the deployment-model guidance (skill + playbook).
 - **2026-07-09** — Added product-fact freshness guard (cite reference last-updated date; hedge possibly-stale capabilities; fall back to playbook guidance if the reference is absent). Softened Voss from "always emit 4 steps" to "use the moves that fit" (substantive-last preserved).
 - **2026-06-18** — Severity callout per `_se-playbook.md` → Output Document Format (objection-handler is light-touch: no At-a-Glance/Jump-to). The Severity indicator is now a top-of-output callout — `[!blocker]` for Deal-killer/High, `[!risk]` for Medium, `[!info]` for Low. Enforced Voss 4-step structure unchanged.
 

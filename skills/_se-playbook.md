@@ -186,11 +186,11 @@ NEW PROSPECT
 
 The webapp's Invoke picker mirrors this: skills are grouped into **Workflow — run in order** (numbered 1–7, with full-qual as a 4+5 shortcut), **Anytime — as needed**, and **When you're not sure** (next-move). The numbers are a suggested sequence, not a hard gate — the refusal rules below are what actually enforce dependencies.
 
-**Cold prep mode (rare):** If no AE call exists yet, prep-call runs on pure web research. Output explicitly flags "cold-prep mode" so Gary knows the AE handoff hasn't happened.
+**Cold prep mode (rare):** If no AE call exists yet, prep-call runs on pure web research. Output explicitly flags "cold-prep mode" so the SE knows the AE handoff hasn't happened.
 
 ### Internal vs. customer-facing skills
 
-The customer-facing chain above produces docs for or about the customer. Separately, **`internal-prep`** handles internal meetings (AE syncs, forecasts, exec readouts, deal reviews). It reads the same artifacts but produces differently-structured output for Gary's Airbyte colleagues, not for customers.
+The customer-facing chain above produces docs for or about the customer. Separately, **`internal-prep`** handles internal meetings (AE syncs, forecasts, exec readouts, deal reviews). It reads the same artifacts but produces differently-structured output for the SE's Airbyte colleagues, not for customers.
 
 `internal-prep` is invoked independently — it doesn't fit linearly into the customer-facing chain. Use whenever an internal meeting is upcoming.
 
@@ -254,7 +254,7 @@ For skills that process transcripts (`post-call`, especially the coaching layer)
 
 ### Why this matters
 
-If Gary's `post-call` skill critiques the discovery on an AE-led call as if Gary did the discovery, the output is wrong — Gary wasn't there. Coaching observations need the right audience or they're noise.
+If the `post-call` skill critiques the discovery on an AE-led call as if the SE did the discovery, the output is wrong — the SE wasn't there. Coaching observations need the right audience or they're noise.
 
 ---
 
@@ -517,13 +517,13 @@ When a memory contains a critical claim that affects the skill's output (e.g., "
 
 ## Source Freshness Check (Gong Fallback)
 
-Before synthesizing across transcripts and notes, confirm the local sources are current. The default behavior depends on the skill — see table below. Always follow Gary's CLAUDE.md Gong workflow when pulling:
+Before synthesizing across transcripts and notes, confirm the local sources are current. The default behavior depends on the skill — see table below. Always follow the workspace CLAUDE.md Gong workflow when pulling:
 
 1. Check `~/airbyte-work/01-customers/_transcripts/` first — never call Gong if the call is already local
 2. Use `search_calls` with date + account filters — never bulk-pull
 3. Fetch via `gong://calls/{callId}/transcript`
 4. **Save the pulled transcript immediately** to `_transcripts/<Customer-Name>-MM.DD.YY.txt` before using it
-5. Note in the output which sources were freshly pulled vs. pre-existing — Gary should know what's new
+5. Note in the output which sources were freshly pulled vs. pre-existing — the SE should know what's new
 
 ### Per-skill defaults
 
@@ -735,7 +735,7 @@ If/when built, this should be a separate skill (not a mode flag on biz-qual/deal
 
 ## Airbyte-Specific Application Notes
 
-- **Deployment-model qualification first.** Per Gary's CLAUDE.md: confirm Cloud SaaS / Self-Managed / Hybrid early. Air-gap, data residency, BYOK, or VPC isolation requirements mean Cloud isn't viable — requalify to Self-Managed Enterprise or park. Don't waste cycles.
+- **Deployment-model qualification first.** Per the `deployment-model-qual` skill (and the workspace CLAUDE.md it mirrors): confirm Cloud SaaS / Self-Managed / Hybrid early. Air-gap, data residency, BYOK, or VPC isolation requirements mean Cloud isn't viable — requalify to Self-Managed Enterprise or park. Don't waste cycles.
 - **The connector-count reframe (Challenger).** Customers compare Airbyte to Fivetran on connector count. Real reframe: it's not the count, it's coverage of *your* stack + how the long tail gets built when something's missing. Pivot to manifest-only builder + custom CDK story.
 - **The "build it ourselves" objection (TCO move).** Engage seriously. Stack implications: connector count over 3 years, schema-drift handling, on-call burden, opportunity cost of engineering time. Often this is the strongest reframe opportunity in a deal.
 - **OSS skepticism reframe.** "Open source = support risk" is the misconception. Cloud Pro is fully managed with SLAs; OSS is the trust-building distribution model, not the support model.
@@ -744,6 +744,7 @@ If/when built, this should be a separate skill (not a mode flag on biz-qual/deal
 
 ## Changelog
 
+- **2026-07-09** — Genericized hardcoded SE name: "Gary"/"Gary's" prose → "the SE"/"the SE's"; "Gary's CLAUDE.md" doctrine refs → "the workspace CLAUDE.md" / the now-inlined skill+playbook guidance. Repo no longer bakes in one operator's name (multi-user via `.se-config.yaml`). (OS-username memory paths left as-is — not config-derivable.)
 - **2026-07-09** — Source Coverage now requires an explicit used/unavailable line per source/tool; load-bearing gaps cap confidence and are stated in the lead (fail-loud, not fail-silent).
 - **2026-07-09** — Added "Confidence & Assumptions" convention: skills surface working assumptions + "what would change this," and label [stated]/[inferred]/[recommendation]. Hardens against unverified CRM/product facts being shown as confirmed.
 - **2026-07-02** — **`next-move` reclassified from light-touch to lightweight Decision Card.** As the workflow router, its recommendation is the deliverable, so it now leads with an At-a-Glance hero card + `Current read` narrative + override callouts, then decision-first sections (Why This Move → Ranked Next Moves → Don't Do Yet → Workflow State → Context Inventory → Gaps → External Actions → Source Coverage). Stays exempt from the full analytical apparatus (MEDDPICC scorecard, formal decision tables). Exemptions list updated; `objection-handler` + `account-refresher` remain light-touch. Pairs with web-app renderer changes (`EXEC_SECTION` → ranked-move cards; Low-confidence tile colors red) in `webapp/static/app.js`.

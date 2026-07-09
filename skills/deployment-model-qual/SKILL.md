@@ -29,7 +29,7 @@ The user will provide:
 If zero transcripts exist (local + Gong checked): **REFUSE TO RUN.** Output:
 > "Cannot qualify deployment model for [Customer] — the 5 questions (Cloud/self-host preference, data residency, multi-tenancy, BYOK, VPC isolation) need customer answers. Recommend: run `prep-call` to plan the call, then add the 5 questions to discovery, then re-run after transcript is saved."
 
-**Exception:** If Gary explicitly provides answers in chat ("they told me they need air-gap deployment"), proceed with that as the source — but cite it as "user-provided in conversation" not as transcript data, and flag that it should be confirmed in a call.
+**Exception:** If the SE explicitly provides answers in chat ("they told me they need air-gap deployment"), proceed with that as the source — but cite it as "user-provided in conversation" not as transcript data, and flag that it should be confirmed in a call.
 
 If you have transcripts but the 5 questions weren't asked, partial-fill the table with ⬜ Unknown for missing questions and recommend asking them on the next call — don't refuse, but flag the gaps loudly.
 
@@ -117,7 +117,7 @@ For each 🔴 answer above, state explicitly:
 
 For each 🟡 answer (ambiguous or partially answered):
 - **What's unclear:** [what we still need to know]
-- **Question to ask:** [specific question Gary should ask in next call]
+- **Question to ask:** [specific question the SE should ask in next call]
 
 For each 🟢 answer:
 - Briefly confirm and move on. Don't pad.
@@ -136,7 +136,7 @@ ONE of:
 
 ## Discovery Questions for Next Call
 
-If any answer is Unknown or ambiguous, draft 3-5 specific questions Gary can ask to close the gap. Avoid generic phrasing — use SPIN/Sandler tactics. Examples:
+If any answer is Unknown or ambiguous, draft 3-5 specific questions the SE can ask to close the gap. Avoid generic phrasing — use SPIN/Sandler tactics. Examples:
 
 - "Walk me through how your security team thinks about data leaving your environment. Where's the line?"
 - "If we ran the data plane in your VPC vs. ours, would that change the conversation with your CISO?"
@@ -149,7 +149,7 @@ If any answer is Unknown or ambiguous, draft 3-5 specific questions Gary can ask
 - **Bias toward "no" early.** A clean 🔴 verdict in week 1 saves 6 months of wasted cycles. This skill exists to disqualify when needed — not to keep deals alive.
 - **No spin.** If Cloud can't meet their requirement, say so. Customers smell hedging.
 - **Cite sources.** Every answer in the table must reference a transcript date or note "not asked yet."
-- **Flag the cost of not knowing.** If Gary hasn't asked these questions yet, the output should be a list of questions, not a list of guesses.
+- **Flag the cost of not knowing.** If the SE hasn't asked these questions yet, the output should be a list of questions, not a list of guesses.
 
 ---
 
@@ -212,6 +212,7 @@ Read `~/airbyte-work/.se-config.yaml` for the `[SE name]` field.
 
 ## Changelog
 
+- **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE" (reads identity from `.se-config.yaml` like the rest of the suite).
 - **2026-07-09** — Added product-reality as-of stamp; capability-dependent verdicts render 🟡 Provisional when current product state is unverifiable. Inlined the 5 qualifying questions + the product reality they assume (Cloud Pro only; Flex not GA; SME separate motion) so the skill is self-contained — this SKILL.md is now the source of record, mirroring but no longer dependent on the workspace CLAUDE.md.
 - **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.
 

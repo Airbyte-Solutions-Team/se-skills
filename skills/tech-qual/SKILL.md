@@ -231,7 +231,7 @@ Per `_se-playbook.md` ("Source Freshness Check"): if the most-recent local trans
 - Pull the **most recent call only** — do not bulk-pull
 - Save to `_transcripts/<Customer-Name>-MM.DD.YY.txt` BEFORE using it (per CLAUDE.md)
 
-### Deployment model FIRST (per Gary's CLAUDE.md)
+### Deployment model FIRST (per the deployment-model guidance)
 Before any other section, confirm: Cloud SaaS / Self-Managed Enterprise / Hybrid. If they have air-gap, data residency, BYOK, or VPC isolation hard requirements, Cloud is not viable — requalify or park. Don't fill out the rest of this doc if deployment model isn't sorted. Flag this as a 🔴 blocker.
 
 ### Apply SPIN to technical questions
@@ -252,7 +252,7 @@ Technical qual is when security/legal landmines surface. Don't wait. Add specifi
 Map answers to a Paper Process section. Vague answers = high risk.
 
 ### Reframe connector-count comparisons (Challenger)
-If the customer is comparing connector counts to Fivetran/Matillion, that's a Reframe opportunity, not a feature debate. Add a `### Reframe Opportunities` callout: it's not count, it's coverage of *their* stack + how the long tail gets built (manifest-only + custom CDK). Flag for Gary to use in next call.
+If the customer is comparing connector counts to Fivetran/Matillion, that's a Reframe opportunity, not a feature debate. Add a `### Reframe Opportunities` callout: it's not count, it's coverage of *their* stack + how the long tail gets built (manifest-only + custom CDK). Flag for the SE to use in next call.
 
 ### "Build it ourselves" is the competition (MEDDPICC C)
 Always include "build internally" as a competitor in tech qual — it's often the strongest alternative. Surface their actual current-state cost: engineer hours/week, on-call burden, schema-drift handling, opportunity cost. Without this number, you can't win the TCO conversation.
@@ -290,6 +290,7 @@ Read `~/airbyte-work/.se-config.yaml` for the `[SE name]` field.
 
 ## Changelog
 
+- **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE"; "Gary's CLAUDE.md" ref → the deployment-model guidance.
 - **2026-07-09** — Fixed prior-doc read paths: now reads `deployment-qual`/`biz-qual`/`connector-feasibility`/`tech-qual` from `outputs/<skill>/` (was the customer root, where nothing is saved) so the "read prior outputs" chaining actually finds them.
 - **2026-07-09** — Compliance claims now a mandatory pre-save self-check: cite+date or mark "verify with [team]"; never assert certifications from memory; verified/unverified/required labeled distinctly (`[customer requires]` / `[Airbyte supports — verified]` / `[Airbyte supports — unverified]`). Unverified compliance surfaces in At-a-Glance ("compliance claims pending verification").
 - **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.

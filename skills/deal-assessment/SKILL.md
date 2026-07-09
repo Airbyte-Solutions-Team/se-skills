@@ -1,6 +1,6 @@
 ---
 name: deal-assessment
-description: Generates an honest, structured Deal Assessment for a prospect. Requires at least one transcript OR one real qualification doc (refuses on empty source). Reads all transcripts, prior Deal Assessments, biz-qual, tech-qual, deployment-qual, connector-feasibility, call summaries, and memory. Produces MEDDPICC pre-scorecard, Activity Trajectory (silence-as-signal), and the seven Gary-required narrative sections (Driver, Need, Urgency, What Would Close It, Deal Blocker, What Would Lose It, Bottom Line) — Bottom Line uses constrained probability bands (<20% / 20-40% / 40-60% / 60-80% / >80%) with required evidence. Includes Coaching Observations section for SE-craft growth. Use when the user says "deal assessment", "assess the deal", "deal health", "is this deal real", or wants a candid read on whether a customer will close.
+description: Generates an honest, structured Deal Assessment for a prospect. Requires at least one transcript OR one real qualification doc (refuses on empty source). Reads all transcripts, prior Deal Assessments, biz-qual, tech-qual, deployment-qual, connector-feasibility, call summaries, and memory. Produces MEDDPICC pre-scorecard, Activity Trajectory (silence-as-signal), and the seven required narrative sections (Driver, Need, Urgency, What Would Close It, Deal Blocker, What Would Lose It, Bottom Line) — Bottom Line uses constrained probability bands (<20% / 20-40% / 40-60% / 60-80% / >80%) with required evidence. Includes Coaching Observations section for SE-craft growth. Use when the user says "deal assessment", "assess the deal", "deal health", "is this deal real", or wants a candid read on whether a customer will close.
 ---
 
 # Deal Assessment Skill
@@ -165,22 +165,22 @@ If you don't have enough signal to band, say "Unable to estimate — source base
 
 ---
 
-## Coaching Observations (For Gary's Growth)
-*This section is for Gary, not for the deal. Flag SE-craft issues surfaced by the source material:*
+## Coaching Observations (For the SE's Growth)
+*This section is for the SE, not for the deal. Flag SE-craft issues surfaced by the source material:*
 
 - **Happy-ears moments:** Times when verbal positivity wasn't backed by a next step
-- **Skipped Implication:** Pains stated but not quantified — the customer said it but Gary didn't follow up with "what does that cost?"
+- **Skipped Implication:** Pains stated but not quantified — the customer said it but the SE didn't follow up with "what does that cost?"
 - **Weak next-steps:** Calls that ended with "we'll follow up" instead of date + attendees + agenda
 - **Solution-pitching too early:** Airbyte features pitched before the customer articulated the underlying problem
 - **Walking-it-back signals missed:** Stakeholders softening commitment that wasn't addressed directly
 
-Keep candid. This is the part of the assessment Gary can act on personally.
+Keep candid. This is the part of the assessment the SE can act on personally.
 
 ---
 
 ## Style
 
-- **Brutally honest** — internal use, not customer-facing. Sugarcoating wastes Gary's time.
+- **Brutally honest** — internal use, not customer-facing. Sugarcoating wastes the SE's time.
 - **Specific over generic** — "Jordan mentioned competitor X by name on 04.01" beats "they're considering alternatives"
 - **Cite sources** — every material claim references a transcript date + speaker, a memory file, or a prior qual doc
 - **Flag what you don't know** — "Urgency: unknown — not asked in available transcripts" beats a guess
@@ -300,6 +300,7 @@ If a prior `outputs/deal-assessment/deal-assessment-*.md` already exists for thi
 
 ## Changelog
 
+- **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE" (Coaching Observations section + description) so the skill isn't tied to one operator.
 - **2026-07-09** — Added the **"What Changed Since Last Assessment"** section to the Output Format template + Jump-to index (was referenced in prose but had no slot — the "MUST include" instruction produced inconsistent output). Reconciled the two names ("Movement" / "What Changed") to one. Fixed the prior-doc read path + glob: reads from `outputs/deal-assessment/deal-assessment-*.md` (was capitalized `Deal-Assessment-*.md` at the customer root — missed the file it saves), and the other prior docs from `outputs/<skill>/`; `call-summary-*.md` → `post-call-*.md`. Together this makes the health-monitoring comparison actually work (D1 + D2).
 - **2026-07-09** — Verified self-contained (P7): the required 7-section format (Driver / Need / Urgency / What Would Close It / Deal Blocker / What Would Lose It / Bottom Line, each with its one-line intent + in the Jump-to index) is defined in this file's Output Format section and matches the canonical spec; no external dependency remains, band logic unchanged. (Known follow-on, out of scope: reconcile the prose "Movement / What Changed Since Last Assessment" references with the template — currently referenced but not templated.)
 - **2026-07-09** — Removed the external `~/airbyte-work/CLAUDE.md` dependency for the output format. The skill's own "Output Format" section already defined the full template (all 7 sections + At-a-Glance + probability bands, richer than the CLAUDE.md spec), so the reference was vestigial — repointed to it. Skill is now self-contained.

@@ -5,7 +5,7 @@ description: Summarizes a customer call from a transcript and updates customer a
 
 # Post-Call Summary Skill
 
-You are helping a Solutions Engineer at Airbyte process a customer call after it happened. Your job: turn a raw transcript into structured, actionable artifacts in the places Gary's workflow expects them.
+You are helping a Solutions Engineer at Airbyte process a customer call after it happened. Your job: turn a raw transcript into structured, actionable artifacts in the places the SE's workflow expects them.
 
 ## Input
 
@@ -197,7 +197,7 @@ Read `~/.claude/projects/-Users-gary-yang-airbyte-work/memory/MEMORY.md` and any
 - ✅ Propose update if: new active blocker, stakeholder change, deal-status change (e.g., POC paused, deal at-risk), material commitment from either side
 - ❌ Skip if: routine progress check-in, no new information beyond what's already in memory, just incremental status
 
-Don't ask Gary to update memory after every call — only when the call moved something meaningful.
+Don't ask the SE to update memory after every call — only when the call moved something meaningful.
 
 ### Source Freshness Check (Gong Fallback)
 Per `_se-playbook.md` ("Source Freshness Check"): if the user references a specific call that isn't in `_transcripts/`, fall back to Gong before asking the user to pull it manually.
@@ -249,7 +249,7 @@ This section is for SE growth or AE collaboration, not for the customer-facing N
 Per Sandler/Voss: a real "no" is more valuable than a fake "yes." If the call ended with vague positivity, flag it as a happy-ears risk. If the customer pushed back on something specific, flag that as healthy signal.
 
 ### Strengthen the Next Step
-The "Next Step" section in the summary must be concrete: who, what, when, agenda. If the call didn't produce one, propose one Gary should drive via follow-up email.
+The "Next Step" section in the summary must be concrete: who, what, when, agenda. If the call didn't produce one, propose one the SE should drive via follow-up email.
 
 ### Surface Reframe opportunities (Challenger)
 If the customer revealed a belief about their own business that Airbyte data could refute (e.g., "we just need more connectors", "we'll build it ourselves cheaper"), flag it as a Reframe opportunity for the next call.
@@ -263,6 +263,7 @@ If the customer revealed a belief about their own business that Airbyte data cou
 
 ## Changelog
 
+- **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE" (intro + memory-ask + next-step notes).
 - **2026-07-09** — Resolved save-behavior contradiction (local auto-save ON; Notion/memory ask-first — was a head-on conflict with "do NOT auto-write local files"). Added a pre-save self-check (owners, cited signals, no ungrounded facts, S&D matches transcript) + `[stated]`/`[inferred]` labeling on takeaways so downstream skills don't treat an SE read as ground truth.
 - **2026-07-07** — Promoted sources/destinations from a single bullet in Technical Notes to a dedicated **Sources & Destinations** section (table: system · role · notes) — the single most reused fact downstream. Added to Jump-to index; routes to `connector-feasibility` + `tech-qual` in After Generating.
 - **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.

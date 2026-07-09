@@ -7,7 +7,7 @@ description: Prepares an SE for an INTERNAL meeting (not customer-facing). Suppo
 
 You are helping a Solutions Engineer at Airbyte prepare for an INTERNAL meeting — talking to other Airbyte people about customer deals, not talking to customers.
 
-This skill is **not** customer-facing. The output goes to Gary or his Airbyte colleagues; tone is more candid (no PR voice), and the structure reflects internal context (deal forecasting, leadership briefing) rather than customer discovery.
+This skill is **not** customer-facing. The output goes to the SE or their Airbyte colleagues; tone is more candid (no PR voice), and the structure reflects internal context (deal forecasting, leadership briefing) rather than customer discovery.
 
 ## Input
 
@@ -20,7 +20,7 @@ If meeting type is unclear, ask before proceeding. Don't guess — a forecast pr
 
 ### Meeting types
 
-- **`ae-sync`** — Gary's 1:1 with the AE on a specific deal or set of deals. Tactical, honest, focused on next moves.
+- **`ae-sync`** — the SE's 1:1 with the AE on a specific deal or set of deals. Tactical, honest, focused on next moves.
 - **`forecast`** — Going through a list of deals and committing to a probability/timing forecast. Requires deal-assessment-style honesty per customer.
 - **`exec-readout`** — Briefing leadership (VP Sales, CRO, exec sponsor) on a customer or deal. Tighter, more strategic, less granular than ae-sync.
 - **`deal-review`** — Cross-functional review (AE + SE + AM + sometimes Product/Eng) on a specific deal. Multi-stakeholder, focused on alignment + asks.
@@ -34,7 +34,7 @@ This skill requires customer source material for any customer being discussed. F
 - `~/.claude/projects/-Users-gary-yang-airbyte-work/memory/` — customer-specific memory
 - Apply Source Freshness Check per `_se-playbook.md` — pull from Gong if local is stale (14-day rule), respecting session-dedupe
 
-**If a customer has zero artifacts and zero transcripts: flag it explicitly in the prep doc — Gary shouldn't enter an internal meeting unable to speak about a deal.**
+**If a customer has zero artifacts and zero transcripts: flag it explicitly in the prep doc — the SE shouldn't enter an internal meeting unable to speak about a deal.**
 
 ## Salesforce Enrichment
 
@@ -74,14 +74,14 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 ### Type: `ae-sync`
 
 ```
-# AE Sync Prep — [AE Name] × [SE Gary] — [Date]
+# AE Sync Prep — [AE Name] × [SE name] — [Date]
 **Date:** [today's date, long form] · **Duration:** [if known]
 
 ### At a Glance
 - **Meeting type:** AE sync (1:1 with [AE Name])
-- **Meeting purpose:** [What does Gary want to walk away with?]
+- **Meeting purpose:** [What does the SE want to walk away with?]
 - **Deals in scope:** [Customer A, Customer B, … — count]
-- **Headline ask:** [the single most important thing Gary needs from the AE]
+- **Headline ask:** [the single most important thing the SE needs from the AE]
 
 **Jump to:** [At a Glance](#at-a-glance) · [Deal-by-deal status](#deal-by-deal-status) · [Open Items Between Us](#open-items-between-us) · [Cross-Deal Themes](#cross-deal-themes-if-multiple-customers) · [Decisions Needed This Sync](#decisions-needed-this-sync)
 
@@ -284,7 +284,7 @@ Include a Source Coverage section reporting which customer folders, qual docs, t
 
 ### SE Identity
 
-Read `~/airbyte-work/.se-config.yaml` for the `[SE Gary]` and similar fields. Important for productionization — different team members will run this skill on the same customer.
+Read `~/airbyte-work/.se-config.yaml` for the `[SE name]` and similar fields. Important for productionization — different team members will run this skill on the same customer.
 
 ### Then offer to
 
@@ -295,6 +295,7 @@ Read `~/airbyte-work/.se-config.yaml` for the `[SE Gary]` and similar fields. Im
 
 ## Changelog
 
+- **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE"; fixed the corrupted template placeholder `[SE Gary]` → `[SE name]` (header + config-read instruction).
 - **2026-07-09** — Missing SFDC fields / cross-functional inputs now render as explicit "confirm with [owner]" asks rather than blanks or guesses (forecast: "not in CRM — confirm with RevOps" + pre-meeting ask; deal-review Alignment-check: AE/AM columns marked "to confirm live," never guessed, carried into Cross-functional asks).
 - **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis. Applied to all four mode templates (ae-sync, forecast, exec-readout, deal-review).
 

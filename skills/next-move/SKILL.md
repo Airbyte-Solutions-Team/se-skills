@@ -7,7 +7,7 @@ description: Determines where a customer sits in the SE workflow and recommends 
 
 You are helping a Solutions Engineer at Airbyte decide what to do next on a specific customer. Your job: inspect what's already been done, figure out where the deal is in the SE workflow, and recommend the most valuable 1-3 next moves.
 
-This skill **does not generate customer-facing content.** It routes Gary to the right downstream skill. Output is a short navigation doc, not a deliverable.
+This skill **does not generate customer-facing content.** It routes the SE to the right downstream skill. Output is a short navigation doc, not a deliverable.
 
 ## Input
 
@@ -188,7 +188,7 @@ Any stage + objection raised on most recent call
 **1 · `[skill]` — [headline reason]**
 - **Priority:** High
 - **Why now:** [1–2 sentence rationale tied to the gap or override]
-- **Inputs needed from Gary:** [anything not already in the workspace, or "None"]
+- **Inputs needed from the SE:** [anything not already in the workspace, or "None"]
 - **Expected output:** [what artifact this produces]
 - **Effort:** [quick / moderate / depends on source coverage]
 
@@ -315,7 +315,7 @@ Don't auto-invoke downstream skills without confirmation — the user may have c
 Read `~/.claude/skills/_se-playbook.md` for full framework details.
 
 ### Honest stage inference, not optimistic
-A deal with 4 transcripts and no MEDDPICC is *not* in "advanced discovery" — it's in "POC-scoping with happy ears." Diagnose what's actually there, not what Gary wishes were there.
+A deal with 4 transcripts and no MEDDPICC is *not* in "advanced discovery" — it's in "POC-scoping with happy ears." Diagnose what's actually there, not what the SE wishes were there.
 
 ### Silence is signal (Sandler / Cross-Transcript Analysis)
 Long gaps between transcripts are not "the customer is thinking it over" by default. Per the SE playbook, silence on a deal where the forcing function is on the seller is decay. Route to `deal-assessment` to diagnose.
@@ -336,12 +336,13 @@ Avoid "run follow-up-email because it's been a while" without a substantive trig
 - Treating an old artifact as "done" without checking freshness
 - Inferring stage from gut feel instead of artifact inventory
 - Skipping the Stalled and Blocked overrides — those are the most important routing decisions
-- Auto-invoking downstream skills without Gary's confirmation
+- Auto-invoking downstream skills without the SE's confirmation
 
 ---
 
 ## Changelog
 
+- **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE" (routing prose, inputs-needed field).
 - **2026-07-09** — Fixed the Local Artifacts scan: reads each prior doc from `outputs/<skill>/` (was the customer root); `Deal-Assessment-*.md` → lowercase `deal-assessment-*.md`; `call-summary-*.md` → `post-call-*.md`. The stage-inference was silently missing every prior artifact.
 - **2026-07-09** — Added a **conflicting-signals branch** to the override logic: when signals collide (stale quals + fresh objection, or SFDC-stage vs local-artifact mismatch), name the tension in `Current read` and pick the de-risking move with its assumption stated, rather than forcing one tree path. Handled in prose only — the four At-a-Glance labels (`Recommended Next Move`/`Confidence`/`Stage`/`Top Blocker`) the web-app reader keys on for hero-card routing are unchanged.
 - **2026-07-02** — **Decision-first output rewrite.** For a "what do I do next?" skill, the recommendation was buried below an Artifacts Inventory + diagnostics — it read like an audit report. Reordered the template to lead with the answer: **At-a-Glance decision card → Current read → override callouts → Why This Move → Ranked Next Moves → Don't Do Yet → Workflow State → Context Inventory → Gaps → External Actions → Source Coverage.** The At-a-Glance labels (`Recommended Next Move`/`Confidence`/`Stage`/`Top Blocker`) are chosen to render as the web-app reader's hero decision tiles; `### Current read` becomes the hero's narrative one-liner (relocated from the old bottom TL;DR — no duplicate). Renamed "Artifacts Inventory" → **Context Inventory** with a `Needed Now?` column (missing ≠ todo); split "Gaps" into Critical / Non-critical / Data-hygiene; "Ranked Next Moves" render as cards; External Actions is now an Owner/Why/Definition-of-done table. next-move is no longer "light-touch" — it now leads with a Decision Card (reader change: `EXEC_SECTION` card routing + Low-confidence tile color in `webapp/static/app.js`). Playbook reclassification updated to match.
