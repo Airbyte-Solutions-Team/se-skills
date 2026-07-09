@@ -60,9 +60,11 @@ Two independent documents (or one + a skip note, per above), each auto-saved to 
 ## Notes
 
 - This wrapper adds no new analysis. If you find yourself writing MEDDPICC or technical-scope content directly here, stop — that belongs in the underlying skill.
+- **Owns no logic; inherits child contracts as-is.** full-qual chains biz-qual then tech-qual at their *current* contracts — if either child's prerequisites or refusal rules change, this sequence inherits them automatically. Do NOT re-implement or override a child's refusal/format here; the wrapper's only job is ordering + pass-through.
 - `--brief` and `--no-save` flags pass through to both underlying skills.
 - The individual skills remain fully available; full-qual is purely a convenience for when you know you want both.
 
 ## Changelog
 
+- **2026-07-09** — Clarified that the wrapper owns no logic and inherits its child skills' prerequisites/refusals at their current contracts — don't re-implement or override them here; ordering + flag pass-through only.
 - **2026-07-07** — Initial creation. Convenience wrapper that chains biz-qual → tech-qual, producing two separate docs. Added after considering (and rejecting) a hard merge of the two skills — separation preserves distinct frameworks, refusal rules, and audiences (see `_se-playbook.md` Skill Sequencing Rules).
