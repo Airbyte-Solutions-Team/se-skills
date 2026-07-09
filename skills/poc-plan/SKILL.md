@@ -136,7 +136,13 @@ These are the specific, measurable outcomes that define a successful POC. Both p
 - **Approximate data volume for POC:** [estimate]
 
 ## Timeline & Milestones
-*Adjust based on POC duration. Default below is a 4-week template — for 2-week POCs, compress; for 6-8 week enterprise POCs, expand the validation phase.*
+
+**Size the POC to scope, not habit:**
+- **1–2 weeks** — single-connector validation (one source → one destination, no transformation).
+- **3–5 weeks** — multi-source and/or a transformation/modeling requirement.
+- **6–8 weeks** — only with a stated enterprise reason (security review, procurement gate, multi-team coordination). If you're reaching for 6–8 weeks without one of those, right-size down.
+
+*Default below is a 4-week template — for 1–2-week POCs, compress; for 6–8-week enterprise POCs, expand the validation phase.*
 
 | Week | Milestone | Owner |
 |------|-----------|-------|
@@ -145,9 +151,11 @@ These are the specific, measurable outcomes that define a successful POC. Both p
 | Week 1-2 | [Use case 2 configured] | Prospect |
 | Week 2-3 | [Security requirements validated] | Prospect + Airbyte SE |
 | Week 2-3 | [Performance / volume test run] | Both |
-| Mid-POC | Checkpoint call — score progress, flag risks | Both |
+| Mid-POC | **Go/no-go checkpoint** — see below | Both |
 | End of POC | Results review call, success criteria scored | Both |
 | Post-POC | Commercial conversation / next steps | AE + SE |
+
+**Mid-POC checkpoint is an explicit go/no-go gate, not a status call.** State it as: "By [mid-date] we should have [specific must-have working]; if not, we pause and diagnose rather than pushing to the end date." Name who declares go/no-go (the SE + the customer's POC owner). A POC that's clearly off-track at the midpoint is cheaper to reset than to let drift to the end.
 
 ## Roles & Responsibilities
 
@@ -285,6 +293,7 @@ Read `~/airbyte-work/.se-config.yaml` for the `[SE name]` field in the SE owner 
 
 ## Changelog
 
+- **2026-07-09** — Added duration-sizing heuristics (1–2 wk single-connector / 3–5 wk multi-source or transform / 6–8 wk only with a stated enterprise reason) so the timeline is right-sized to scope, not habit; reframed the mid-POC checkpoint as an explicit go/no-go gate with a named decider ("by [mid-date] X works or we pause & diagnose").
 - **2026-07-07** — Prerequisite handling changed from warn-but-proceed to **detect & offer to run first**: if biz-qual/tech-qual are missing (but a transcript exists), poc-plan now lists what's missing and offers to run the missing qualification skill(s) in order, then continue. Still refuses on zero transcripts (nothing to chain); still allows 'skip' with a drift-risk flag; never fabricates a qual doc.
 - **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.
 
