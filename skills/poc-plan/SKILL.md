@@ -50,6 +50,11 @@ POC scope must build on prior qualification. Before generating, check the custom
 
 Cite source documents inline. **If a POC is being scoped without prior tech-qual and biz-qual, flag this as risky** — POCs without qualification usually drift.
 
+**Light connector-availability validation of POC scope.** When the POC names connectors, don't scope on a connector that turns out to be community-tier or non-Cloud by surprise. **Prefer to reuse the already-computed Availability column from `outputs/connector-feasibility/connector-feasibility-*.md` if it exists — don't re-derive.** Only if no connector-feasibility doc exists, run a quick connector availability lookup (per `_se-playbook.md` → "Product & Connector Reference Data") for each scoped connector to resolve `{ exists, supportLevel, cloud_available, self_managed_only, isEnterprise }`. Two things to flag (as a Scope bullet and/or a Risks-table row — keep it a footnote, not a new section):
+- **`self_managed_only`** (in the OSS registry but absent from Cloud — the OSS-minus-Cloud set difference) or an **enterprise variant** (DS3 `airbyte-enterprise` `connector_stubs.json` — Oracle/NetSuite/SAP HANA/ServiceNow/SharePoint/Workday/DB2/dest-Salesforce): **flag it — the POC can't run on a Cloud trial. It forces Enterprise Flex (hybrid) or self-hosted OSS,** which changes prerequisites (data-plane provisioning, entitlement) and timeline. Reflect this in POC Architecture (Deployment) and the Access & Prerequisites checklist.
+- **`supportLevel: community`** — note that the connector isn't certified; set expectations on reliability in the POC and don't hang a must-have success criterion on it without saying so.
+- **Graceful degradation (per playbook):** if the registry cache / `airbyte-enterprise` isn't reachable and no connector-feasibility doc exists, do **not** assert availability — say "connector availability not verified against registry" and don't claim a deployment shape you couldn't confirm.
+
 ## Output mode
 
 Default = full POC plan (objective, mutual commitments, success criteria, scope, architecture, timeline, R&R, prerequisites, risks, exit criteria, story).
@@ -78,7 +83,7 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 **Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [POC Objective](#poc-objective) · [Mutual Commitments](#mutual-commitments-upfront-contract--sandler) · [Success Criteria](#success-criteria) · [Scope](#scope) · [POC Architecture](#poc-architecture) · [Timeline & Milestones](#timeline--milestones) · [Roles & Responsibilities](#roles--responsibilities) · [Access & Prerequisites Checklist](#access--prerequisites-checklist) · [Risks & Mitigations](#risks--mitigations) · [POC Exit Criteria](#poc-exit-criteria) · [Story for Results Review](#story-for-results-review-pre-staged) · [Notes / Open Items](#notes--open-items)
 
 ## Source Coverage
-[Prior qual docs read, transcripts referenced (line counts), external context pulled — see After Generating.]
+[Prior qual docs read, transcripts referenced (line counts), external context pulled — see After Generating. Note whether scoped-connector availability was **reused from connector-feasibility**, checked directly against the **registry/`airbyte-enterprise`** (with cache/checkout date), or **not verified** (source unavailable → availability claims capped).]
 
 ## POC Objective
 **In one sentence, what does this POC need to prove?**
@@ -121,6 +126,8 @@ These are the specific, measurable outcomes that define a successful POC. **Both
 - [Use case 2 — e.g., Postgres CDC → Snowflake]
 - [Specific streams or tables to validate]
 - [Security validation — SSO, RBAC, audit logs]
+
+*Connector-availability note (from connector-feasibility, or a quick registry lookup — see "Before generating"): [confirm each scoped connector is Cloud-available + certified, OR flag — e.g. "`source-db2` is Self-Managed-only (not on Cloud) → this POC runs on Enterprise Flex or self-hosted OSS, not a Cloud trial"; "`source-workday` is an enterprise variant (Flex, entitlement-gated)". If unverified: "connector availability not verified against registry."]*
 
 **Out of scope (explicitly):**
 - [e.g., Custom connector development]
@@ -192,6 +199,7 @@ Before the POC can begin, the following must be in place. *Access delays are the
 |------|------------|------------|
 | [e.g., Access provisioning delays] | Medium | Start checklist 1 week before kickoff |
 | [e.g., Connector gap for custom source] | Low | Pre-validate catalog before POC starts |
+| [Scoped connector is Self-Managed-only or an enterprise variant → POC can't run on a Cloud trial] | [only if flagged above] | Provision Enterprise Flex (or self-hosted OSS) up front; add data-plane/entitlement to prerequisites — don't discover it at kickoff |
 | [e.g., Stakeholder availability] | Medium | Lock milestone review dates upfront |
 | [e.g., Scope creep] | Medium | Enforce written scope; log any additions as post-POC |
 
@@ -295,6 +303,7 @@ Read `config_file` (per playbook → Workspace Paths) for the `[SE name]` field 
 
 ## Changelog
 
+- **2026-07-10** — **Light DS1/DS3 connector-availability validation of POC scope (secondary consumer of "Product & Connector Reference Data").** When the POC names connectors, validate each against the registry — existence, `supportLevel` tier, and Cloud-vs-Self-Managed availability (the OSS-minus-Cloud set difference) + enterprise-variant detection (private `airbyte-enterprise` `connector_stubs.json`) — so a POC isn't scoped on a community-tier or non-Cloud connector by surprise. A `self_managed_only` or enterprise-variant connector now flags a POC-shape risk: it forces Enterprise Flex (hybrid) or self-hosted OSS rather than a Cloud trial, changing prerequisites/timeline. Prefers to reuse connector-feasibility's already-computed Availability column (no re-derive); hits the registry directly only if no connector-feasibility doc exists; degrades loud ("availability not verified against registry") when the cache/enterprise repo is unreachable. Surfaced as a Scope bullet + a Risks-table row + a Source Coverage note — no new section, refusal rules unchanged.
 - **2026-07-10** — Success criteria now must tie each criterion to a MEDDPICC Decision Criterion + record who pre-agreed them in writing (per playbook → Operating Disciplines); POC timeline anchored to the customer's compelling event (D2) with backward-planning to signature.
 - **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
 - **2026-07-09** — Fixed the "Before generating" prior-doc read block: reads `deployment-qual`/`tech-qual`/`biz-qual`/`connector-feasibility` from `outputs/<skill>/` (was the customer root — inconsistent with the already-correct check earlier in the skill); prior call summaries now `outputs/post-call/post-call-*.md` (was the never-existing `call-summary-*.md`).
