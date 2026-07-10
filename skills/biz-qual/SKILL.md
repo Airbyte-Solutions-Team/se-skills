@@ -19,7 +19,7 @@ The user will provide one or more of:
 **This skill requires at least one customer transcript to run.** MEDDPICC scoring is synthesis of what the customer said — without a transcript, the output is hypothesis, not qualification.
 
 Before doing anything else, check:
-1. `~/airbyte-work/01-customers/_transcripts/` for files matching the customer
+1. `{transcripts_dir}/` (per playbook → Workspace Paths) for files matching the customer
 2. If none local, check Gong (14-day window for existing customer, 7-day for new prospect per `_se-playbook.md` Source Freshness Check)
 
 **If zero transcripts exist in either location: REFUSE TO RUN.** Output:
@@ -212,7 +212,7 @@ If they only relay your messages, they're a coach — not a champion. Downgrade 
 ---
 
 ## Movement Since Last Qualification
-*If a prior biz-qual exists for this customer (check `~/airbyte-work/01-customers/<Customer>/outputs/biz-qual/biz-qual-*.md`), compare letter-by-letter:*
+*If a prior biz-qual exists for this customer (check `{customers_dir}/<Customer>/outputs/biz-qual/biz-qual-*.md`), compare letter-by-letter:*
 
 | Letter | Prior status | Current status | Trend |
 |--------|--------------|----------------|-------|
@@ -316,7 +316,7 @@ If you can't fill layer 3, pain isn't fully identified.
 
 Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save to:
 ```
-~/airbyte-work/01-customers/<Customer>/outputs/biz-qual/biz-qual-<YYYY-MM-DD>-<Descriptor>.md
+{customers_dir}/<Customer>/outputs/biz-qual/biz-qual-<YYYY-MM-DD>-<Descriptor>.md
 ```
 
 Filename example: `biz-qual-2026-05-28-Post-Tech-Call.md`. Create folders if missing. Append `-v2` etc. for same-day duplicates. User can suppress with `--no-save`.
@@ -329,7 +329,7 @@ Include a Source Coverage section at the top reporting transcripts read (with li
 
 ### SE Identity
 
-Read `~/airbyte-work/.se-config.yaml` for the `[SE name]` field.
+Read `config_file` (per playbook → Workspace Paths) for the `[SE name]` field.
 
 ### Then ask which other artifacts to update
 
@@ -342,6 +342,7 @@ Wait for explicit yes/no on Notion / memory before doing those.
 
 ## Changelog
 
+- **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
 - **2026-07-09** — Fixed the "Movement Since Last Qualification" read path: prior biz-qual is read from `outputs/biz-qual/biz-qual-*.md` (was the customer root, where it's never saved) so the letter-by-letter comparison actually finds the prior scorecard.
 - **2026-07-09** — Every 🔴/🟡 element now requires a paired, owned close-path in Next Actions (`Gap → ask that closes it → by when → owner/TBD`); added explicit score-confidence + `[inferred]` labeling for unconfirmed elements. Next Actions table restructured to make the gap→close-path pairing explicit.
 - **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.

@@ -214,11 +214,61 @@ In each case, the right output is: explain why the skill can't run, and recommen
 
 ---
 
+## Workspace Paths (Multi-User Support)
+
+Skills are shared across an SE team, and every teammate keeps their own customer data in their own location. **No skill should hardcode `~/airbyte-work/...`.** Instead, resolve a single **workspace root** once, then treat every data path as relative to it. This is a prompt-level convention: when you run a skill, resolve these values yourself from config/env before touching the filesystem.
+
+### Resolution order (highest priority first)
+
+```
+workspace_root = $SE_WORKSPACE (env var)
+              || .se-config.yaml: workspace_root
+              || ~/.se-skills                      (default if neither is set)
+```
+
+Resolve `.se-config.yaml` itself the same way: `$SE_WORKSPACE/.se-config.yaml`, else `~/.se-skills/.se-config.yaml`, else `~/airbyte-work/.se-config.yaml` (legacy fallback — many existing setups still live there). If you find a config in the legacy location, use it and note the `workspace_root` it declares.
+
+### Derived paths (reference these NAMES in skills, not literal paths)
+
+| Name | Default (relative to `workspace_root`) | Config override |
+|------|----------------------------------------|-----------------|
+| `customers_dir`   | `{workspace_root}/customers`                | `layout.customers_dir` |
+| `transcripts_dir` | `{customers_dir}/_transcripts`              | `layout.transcripts_dir` |
+| `notes_dir`       | `{workspace_root}/notes`                    | `layout.notes_dir` |
+| `config_file`     | `{workspace_root}/.se-config.yaml`          | — |
+| `memory_dir`      | *(no portable default — read from config)*  | `memory_dir` (required for memory features) |
+| `airbyte_repos_dir` | *(unset → skill degrades)*                | `airbyte_repos_dir` (optional) |
+
+**Per-customer output convention (unchanged, now root-relative):**
+```
+{customers_dir}/<Customer>/outputs/<skill>/<skill>-<YYYY-MM-DD>-<Descriptor>.md
+{customers_dir}/<Customer>/raw/
+{transcripts_dir}/<Customer-Name>-MM.DD.YY.txt
+```
+
+### Layout overrides (how a bespoke setup keeps working)
+
+The default drops numeric folder prefixes (`customers/`, `notes/`) for a clean shared-tool layout. A teammate whose existing tree uses a different scheme sets a `layout:` block in `.se-config.yaml` to point each dir at their real location — e.g. an existing `~/airbyte-work/01-customers`, `.../04-notes` setup maps `customers_dir → ~/airbyte-work/01-customers`, `notes_dir → ~/airbyte-work/04-notes`, `transcripts_dir → ~/airbyte-work/01-customers/_transcripts`. No file migration needed; the config just describes where things already are.
+
+### `memory_dir` (per-user, no safe default)
+
+Claude Code's project-memory directory is derived from the OS username and workspace path (e.g. `~/.claude/projects/-Users-<you>-<workspace-slug>/memory/`), so it is **not** portable and has no sensible default. Read it from `.se-config.yaml: memory_dir`. If it's unset, skip memory features gracefully and note "memory not configured" — do NOT guess a path with someone else's username in it.
+
+### `airbyte_repos_dir` (optional, graceful degradation)
+
+Some skills (notably `connector-feasibility`) can read Airbyte connector source from local repo checkouts for deeper analysis. This is **optional**. If `airbyte_repos_dir` is unset or the directory is missing, the skill relies on MCP/registry data only and reports the reduced depth in Source Coverage — it does not fail. See README → Optional enhancements for how to set it up.
+
+### If nothing is configured
+
+If there's no `.se-config.yaml` and no `$SE_WORKSPACE`, use the `~/.se-skills` default for the workspace root, create it if writing an output, and suggest the user run `./install.sh` + create their config so paths and identity are stable across runs.
+
+---
+
 ## SE Identity (Multi-User Support)
 
 Skills are designed to be shared across an SE team. To identify which SE is running them, all skills should read the config file:
 
-**Path:** `~/airbyte-work/.se-config.yaml`
+**Path:** `config_file` (resolved per "Workspace Paths" above — `{workspace_root}/.se-config.yaml`, with a legacy fallback to `~/airbyte-work/.se-config.yaml`).
 
 **Contains:** `name`, `email`, `slack_handle`, `role`, `aliases` (nicknames for transcript matching), `ae_pairings` (typical AE collaborators).
 
@@ -230,7 +280,7 @@ Skills are designed to be shared across an SE team. To identify which SE is runn
 - **File ownership** — saved outputs should reference the SE who ran the skill
 
 ### If the config doesn't exist
-Fall back to asking the user: "I don't see `~/airbyte-work/.se-config.yaml`. Who are you running this as? (name + role)". Suggest they create the config so future skills don't ask again.
+Fall back to asking the user: "I don't see a `.se-config.yaml` (checked `$SE_WORKSPACE`, `~/.se-skills`, and the legacy `~/airbyte-work`). Who are you running this as? (name + role)". Suggest they create the config so future skills don't ask again.
 
 ---
 
@@ -240,7 +290,7 @@ For skills that process transcripts (`post-call`, especially the coaching layer)
 
 ### How to detect
 
-1. Read the SE's `name` + `aliases` from `~/airbyte-work/.se-config.yaml`
+1. Read the SE's `name` + `aliases` from `config_file` (per "Workspace Paths")
 2. Scan the transcript for any of those names appearing as a speaker label or mentioned in introductions
 3. Cross-reference with the `ae_pairings` list — if an AE name appears but the SE name doesn't, this is an AE-led call
 
@@ -270,9 +320,9 @@ All other SE skills follow the auto-save rule.
 
 ### Folder structure
 
-All customer-specific outputs are saved under:
+All customer-specific outputs are saved under (paths resolved per "Workspace Paths"):
 ```
-~/airbyte-work/01-customers/<Customer>/outputs/<skill-name>/
+{customers_dir}/<Customer>/outputs/<skill-name>/
 ```
 
 Standard subfolders (created on first save):
@@ -287,8 +337,8 @@ Standard subfolders (created on first save):
 - `emails/` — drafted follow-up emails
 - `workflow-status/` — router outputs (when saved)
 
-Manual artifacts (technical docs, guides, raw notes) go in `~/airbyte-work/01-customers/<Customer>/raw/`.
-Transcripts continue to live in `~/airbyte-work/01-customers/_transcripts/`.
+Manual artifacts (technical docs, guides, raw notes) go in `{customers_dir}/<Customer>/raw/`.
+Transcripts continue to live in `{transcripts_dir}`.
 
 ### Filename format
 
@@ -503,7 +553,7 @@ A confident-looking doc built on a fraction of the intended evidence is worse th
 
 ## Memory Check (Active Project Context)
 
-Before synthesizing for a customer, check the persistent memory directory at `~/.claude/projects/-Users-gary-yang-airbyte-work/memory/` for any project memories matching this customer. These often hold critical context not in transcripts:
+Before synthesizing for a customer, check the persistent memory directory (`memory_dir`, resolved per "Workspace Paths" from `.se-config.yaml`) for any project memories matching this customer. If `memory_dir` is unset, skip this step and note "memory not configured" — don't guess a path. These memories often hold critical context not in transcripts:
 - Active blockers (e.g., the Acme 403 secret storage issue)
 - Stakeholder dynamics
 - Decisions made between calls
@@ -519,7 +569,7 @@ When a memory contains a critical claim that affects the skill's output (e.g., "
 
 Before synthesizing across transcripts and notes, confirm the local sources are current. The default behavior depends on the skill — see table below. Always follow the workspace CLAUDE.md Gong workflow when pulling:
 
-1. Check `~/airbyte-work/01-customers/_transcripts/` first — never call Gong if the call is already local
+1. Check `{transcripts_dir}` first — never call Gong if the call is already local
 2. Use `search_calls` with date + account filters — never bulk-pull
 3. Fetch via `gong://calls/{callId}/transcript`
 4. **Save the pulled transcript immediately** to `_transcripts/<Customer-Name>-MM.DD.YY.txt` before using it
@@ -543,9 +593,9 @@ If you can't find a Gong call for the customer, say so explicitly in the output 
 
 Within a single workflow session, multiple skills may each independently want to check Gong for the same customer. To avoid redundant API calls:
 
-**Before calling Gong, run this exact check and report the result in the output:**
+**Before calling Gong, run this exact check and report the result in the output** (`{transcripts_dir}` resolved per "Workspace Paths"):
 ```bash
-find ~/airbyte-work/01-customers/_transcripts/ -iname "<Customer>*" -mmin -30
+find "{transcripts_dir}" -iname "<Customer>*" -mmin -30
 ```
 
 ### Required: log the dedupe check result
@@ -574,7 +624,7 @@ Several skills enrich their analysis with Salesforce CRM data. This section is t
 ### Connection
 
 - **Tool:** `mcp__salesforce__run_soql_query` (read-only SOQL)
-- **Org alias + query directory:** read from `~/airbyte-work/.se-config.yaml` under `salesforce:` (`org_alias`, `query_directory`). Default org alias `airbyte-prod`; default directory `~/airbyte-work`.
+- **Org alias + query directory:** read from `config_file` (per "Workspace Paths") under `salesforce:` (`org_alias`, `query_directory`). Default org alias `airbyte-prod`; default query directory = `workspace_root`.
 - **Enabled flag:** if `salesforce.enabled: false` in the config, or the config/org isn't available, **skip SFDC enrichment entirely and run the skill exactly as it would without CRM data.** SFDC is additive, never required. Note in output: "Salesforce enrichment: skipped (not configured)."
 
 ### Finding the right Opportunity (matching rule)
@@ -744,6 +794,7 @@ If/when built, this should be a separate skill (not a mode flag on biz-qual/deal
 
 ## Changelog
 
+- **2026-07-10** — **Portability: workspace base-path resolver.** Added the "Workspace Paths (Multi-User Support)" section — no skill hardcodes `~/airbyte-work/` anymore. `workspace_root` resolves `$SE_WORKSPACE` → `.se-config.yaml: workspace_root` → `~/.se-skills` default; derived `customers_dir` / `transcripts_dir` / `notes_dir` / `config_file` / `memory_dir` / `airbyte_repos_dir`. Default layout drops numeric folder prefixes; a `layout:` config block lets an existing `~/airbyte-work/01-customers` setup keep working with no migration. **Fixed the memory path** (previously hardcoded to username `gary-yang`) → now `memory_dir` from config, skipped gracefully if unset. `airbyte_repos_dir` optional (connector-feasibility degrades to MCP/registry-only when absent).
 - **2026-07-09** — Genericized hardcoded SE name: "Gary"/"Gary's" prose → "the SE"/"the SE's"; "Gary's CLAUDE.md" doctrine refs → "the workspace CLAUDE.md" / the now-inlined skill+playbook guidance. Repo no longer bakes in one operator's name (multi-user via `.se-config.yaml`). (OS-username memory paths left as-is — not config-derivable.)
 - **2026-07-09** — Source Coverage now requires an explicit used/unavailable line per source/tool; load-bearing gaps cap confidence and are stated in the lead (fail-loud, not fail-silent).
 - **2026-07-09** — Added "Confidence & Assumptions" convention: skills surface working assumptions + "what would change this," and label [stated]/[inferred]/[recommendation]. Hardens against unverified CRM/product facts being shown as confirmed.

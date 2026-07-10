@@ -11,15 +11,15 @@ You are helping a Solutions Engineer at Airbyte produce a candid, structured ass
 
 The user will name a customer (e.g., "deal assessment for Acme"). You should:
 
-1. **Read all transcripts** in `~/airbyte-work/01-customers/_transcripts/` matching the customer
-2. **Read prior outputs** in `~/airbyte-work/01-customers/<Customer-Name>/outputs/<skill>/` — especially:
+1. **Read all transcripts** in `{transcripts_dir}/` (per playbook → Workspace Paths) matching the customer
+2. **Read prior outputs** in `{customers_dir}/<Customer-Name>/outputs/<skill>/` — especially:
    - Prior `outputs/deal-assessment/deal-assessment-*.md` files (compare against — fuels the "What Changed Since Last Assessment" section)
    - `outputs/biz-qual/biz-qual-*.md` (use MEDDPICC scoring as input, don't re-derive)
    - `outputs/tech-qual/tech-qual-*.md` (technical risk feeds into Deal Blocker analysis)
    - `outputs/deployment-qual/deployment-qual-*.md` (deployment-model verdict — if 🔴, that's often the deal)
    - `outputs/connector-feasibility/connector-feasibility-*.md` (gap analysis)
    - `outputs/post-call/post-call-*.md` files (pre-digested call content)
-3. **Read memory** — `~/.claude/projects/-Users-gary-yang-airbyte-work/memory/MEMORY.md` and any customer-specific memory files (active blockers, pending Airbyte-side actions)
+3. **Read memory** — `memory_dir/MEMORY.md` (per playbook → Workspace Paths; skip gracefully if unset) and any customer-specific memory files (active blockers, pending Airbyte-side actions)
 4. **Optionally pull Notion context** if the user references it (use Notion:search to find the customer's parent page, then read Overview and Q&A subpages)
 5. Read full source material before synthesizing — do not skim
 6. Cite source documents inline (filename + date) when pulling in prior conclusions
@@ -194,7 +194,7 @@ Keep candid. This is the part of the assessment the SE can act on personally.
 
 Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save to:
 ```
-~/airbyte-work/01-customers/<Customer>/outputs/deal-assessment/deal-assessment-<YYYY-MM-DD>.md
+{customers_dir}/<Customer>/outputs/deal-assessment/deal-assessment-<YYYY-MM-DD>.md
 ```
 
 Append `-v2` etc. if running multiple times same day. User can suppress with `--no-save`.
@@ -210,7 +210,7 @@ Include a Source Coverage section at the top reporting:
 
 ### SE Identity
 
-Read `~/airbyte-work/.se-config.yaml` for the `[SE name]` field where applicable.
+Read `config_file` (per playbook → Workspace Paths) for the `[SE name]` field where applicable.
 
 ### Then ask which other artifacts to update
 
@@ -300,6 +300,7 @@ If a prior `outputs/deal-assessment/deal-assessment-*.md` already exists for thi
 
 ## Changelog
 
+- **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
 - **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE" (Coaching Observations section + description) so the skill isn't tied to one operator.
 - **2026-07-09** — Added the **"What Changed Since Last Assessment"** section to the Output Format template + Jump-to index (was referenced in prose but had no slot — the "MUST include" instruction produced inconsistent output). Reconciled the two names ("Movement" / "What Changed") to one. Fixed the prior-doc read path + glob: reads from `outputs/deal-assessment/deal-assessment-*.md` (was capitalized `Deal-Assessment-*.md` at the customer root — missed the file it saves), and the other prior docs from `outputs/<skill>/`; `call-summary-*.md` → `post-call-*.md`. Together this makes the health-monitoring comparison actually work (D1 + D2).
 - **2026-07-09** — Verified self-contained (P7): the required 7-section format (Driver / Need / Urgency / What Would Close It / Deal Blocker / What Would Lose It / Bottom Line, each with its one-line intent + in the Jump-to index) is defined in this file's Output Format section and matches the canonical spec; no external dependency remains, band logic unchanged. (Known follow-on, out of scope: reconcile the prose "Movement / What Changed Since Last Assessment" references with the template — currently referenced but not templated.)

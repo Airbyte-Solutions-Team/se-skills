@@ -23,7 +23,7 @@ If zero transcripts exist (local + Gong checked): **REFUSE TO RUN.** Output:
 
 ## Before generating: read prior outputs
 
-Tech qual builds on earlier work. Before generating, check the customer's `outputs/` folder (`~/airbyte-work/01-customers/<Customer>/outputs/<skill>/`) for and read:
+Tech qual builds on earlier work. Before generating, check the customer's `outputs/` folder (`{customers_dir}/<Customer>/outputs/<skill>/`, per playbook → Workspace Paths) for and read:
 - **`outputs/deployment-qual/deployment-qual-*.md`** — if exists, the deployment model is already qualified. Reference its verdict in your Deployment Model section; don't re-derive. If it doesn't exist and the customer has non-trivial requirements, **suggest running `deployment-model-qual` first**.
 - **`outputs/biz-qual/biz-qual-*.md`** — pulls in MEDDPICC Decision Criteria, which directly inform what to evaluate technically
 - **`outputs/connector-feasibility/connector-feasibility-*.md`** — already-done connector coverage analysis; reference it instead of re-doing
@@ -271,7 +271,7 @@ Always include "build internally" as a competitor in tech qual — it's often th
 
 Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save to:
 ```
-~/airbyte-work/01-customers/<Customer>/outputs/tech-qual/tech-qual-<YYYY-MM-DD>-<Descriptor>.md
+{customers_dir}/<Customer>/outputs/tech-qual/tech-qual-<YYYY-MM-DD>-<Descriptor>.md
 ```
 
 Create folders if missing. Append `-v2` etc. for same-day duplicates. User can suppress with `--no-save`.
@@ -284,12 +284,13 @@ Include a Source Coverage section at the top reporting transcripts read (with li
 
 ### SE Identity
 
-Read `~/airbyte-work/.se-config.yaml` for the `[SE name]` field.
+Read `config_file` (per playbook → Workspace Paths) for the `[SE name]` field.
 
 ---
 
 ## Changelog
 
+- **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
 - **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE"; "Gary's CLAUDE.md" ref → the deployment-model guidance.
 - **2026-07-09** — Fixed prior-doc read paths: now reads `deployment-qual`/`biz-qual`/`connector-feasibility`/`tech-qual` from `outputs/<skill>/` (was the customer root, where nothing is saved) so the "read prior outputs" chaining actually finds them.
 - **2026-07-09** — Compliance claims now a mandatory pre-save self-check: cite+date or mark "verify with [team]"; never assert certifications from memory; verified/unverified/required labeled distinctly (`[customer requires]` / `[Airbyte supports — verified]` / `[Airbyte supports — unverified]`). Unverified compliance surfaces in At-a-Glance ("compliance claims pending verification").

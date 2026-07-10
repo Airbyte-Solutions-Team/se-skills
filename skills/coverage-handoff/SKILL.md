@@ -24,9 +24,9 @@ The deliverable is a **self-contained styled HTML page** in the internal.airbyte
 
 Read and weave together — per `~/.claude/skills/_se-playbook.md`:
 
-1. **Local artifacts** — `~/airbyte-work/01-customers/<Customer>/outputs/` (qual docs, deal-assessments, call summaries, prep docs, connector-feasibility) and the opportunity's own `opportunities/<slug>/outputs/`, plus `raw/` (manual notes — often where org/workspace IDs, Slack channels, and promises live).
-2. **Transcripts** — `~/airbyte-work/01-customers/_transcripts/<Customer>-*` — most recent in full; older skimmed for the arc and for **promises/commitments** made to the customer.
-3. **Memory** — `~/.claude/projects/<your-airbyte-work-project>/memory/` for active blockers / project context (often records live technical threads and access details).
+1. **Local artifacts** — `{customers_dir}/<Customer>/outputs/` (qual docs, deal-assessments, call summaries, prep docs, connector-feasibility) and the opportunity's own `opportunities/<slug>/outputs/`, plus `raw/` (manual notes — often where org/workspace IDs, Slack channels, and promises live). Paths per playbook → Workspace Paths.
+2. **Transcripts** — `{transcripts_dir}/<Customer>-*` — most recent in full; older skimmed for the arc and for **promises/commitments** made to the customer.
+3. **Memory** — `memory_dir` (skip if unset) for active blockers / project context (often records live technical threads and access details).
 4. **Salesforce** — per `_se-playbook.md` "Salesforce Enrichment": pull the opportunity (matching rule) + account arc. Fields to pull and **inject verbatim** (see below).
 5. **Source Freshness** — apply the Gong session-dedupe + 14-day rule. If the most recent local transcript is stale, check Gong.
 
@@ -39,7 +39,7 @@ Copy these straight from the SFDC query into the page; IDs and numbers must be e
 
 ## Output Format — HTML in the rs-group design system
 
-**Produce one self-contained HTML file.** Use `~/airbyte-work/02-repos/se-skills/skills/coverage-handoff/template.html` as the exact skeleton:
+**Produce one self-contained HTML file.** Use `template.html` in this skill's own directory (the installed skill lives at `~/.claude/skills/coverage-handoff/`, so read `~/.claude/skills/coverage-handoff/template.html`) as the exact skeleton:
 
 - Copy its `<style>` block **verbatim** (no external CSS — the file must render standalone and inside the internal repo).
 - Keep the `.airbyte-auth-marker` and `.footer`.
@@ -76,7 +76,7 @@ Append `-v2` etc. for same-day duplicates.
 This file is drop-in for `src/solutions-team/members/<member-slug>/accounts/<account-slug>/index.html`. At the end of your run, print that suggested target path so the SE can copy it into the repo and PR it. Do **not** push to the repo yourself.
 
 ### SE Identity
-Read `~/airbyte-work/.se-config.yaml` for the SE name / attribution (the default "SE out" when the form omits it).
+Read `config_file` (per playbook → Workspace Paths) for the SE name / attribution (the default "SE out" when the form omits it).
 
 ## Style
 
@@ -99,6 +99,7 @@ Read `~/.claude/skills/_se-playbook.md` for the source-reading pattern, SFDC fie
 
 ## Changelog
 
+- **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`memory_dir`/`config_file`) per playbook → Workspace Paths; the `template.html` reference is now skill-relative (`~/.claude/skills/coverage-handoff/template.html`) instead of assuming the repo lives at `~/airbyte-work/02-repos/se-skills`. Portable across SE machines.
 - **2026-07-09** — Added an "If you get stuck" internal-escalation sub-block to Access & Logistics (owner SE return date, AE, internal Slack channel, one eng/PS contact — names or TBD, never invented) so a covering SE has a routing map when blocked; added a template-version note (Source Coverage records which `template.html` version was used; template now carries a `TEMPLATE VERSION` stamp) so an rs-group design-system change triggers re-generation instead of hand-editing.
 - **2026-07-06** — Initial creation. PTO coverage handoff → self-contained HTML in the internal.airbyte.ai rs-group design system. SFDC hard facts injected verbatim; consumes PTO modal-form context; portable to the internal repo (no auto-push).
 - **2026-07-06** — Slimmed to 11 sections: removed the form-fed Scheduled-During-Coverage, Guardrails, and Escalation-Contacts sections (meetings are now inferred from transcripts+SFDC). Modal input reduced to SE-out / covering-SE / coverage-window.

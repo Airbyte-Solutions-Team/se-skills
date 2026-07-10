@@ -41,7 +41,7 @@ The router operates at a **deliberately shallow read depth**:
 Read these in order. Don't synthesize until all are read.
 
 ### 1. Local artifacts
-Check the customer's `outputs/` folder (`~/airbyte-work/01-customers/<Customer>/outputs/<skill>/`) for:
+Check the customer's `outputs/` folder (`{customers_dir}/<Customer>/outputs/<skill>/`, per playbook → Workspace Paths) for:
 - `outputs/deployment-qual/deployment-qual-*.md` — deployment model qualified?
 - `outputs/biz-qual/biz-qual-*.md` — MEDDPICC scored?
 - `outputs/tech-qual/tech-qual-*.md` — technical fit assessed?
@@ -56,13 +56,13 @@ Check the customer's `outputs/` folder (`~/airbyte-work/01-customers/<Customer>/
 For each, note the **date** (from filename). Stale artifacts (>30 days old) are treated as incomplete.
 
 ### 2. Transcripts
-Check `~/airbyte-work/01-customers/_transcripts/` for files matching the customer. Note:
+Check `{transcripts_dir}/` for files matching the customer. Note:
 - Total count
 - Date of most recent
 - Days since most recent (vs. today)
 
 ### 3. Memory
-Check `~/.claude/projects/-Users-gary-yang-airbyte-work/memory/` for any project memory files matching the customer. Specifically look for active blockers, pending Airbyte-side actions, or status flags.
+Check `memory_dir` for any project memory files matching the customer (skip gracefully if `memory_dir` is unset). Specifically look for active blockers, pending Airbyte-side actions, or status flags.
 
 ### 4. Notion (optional)
 Don't auto-query Notion. If the user explicitly asks for "deeper context" or if local artifacts are very thin, use `Notion:search` to find the customer's parent page.
@@ -287,11 +287,11 @@ Any stage + objection raised on most recent call
 
 Save the routing recommendation as an output file so it shows up in the web app's Generated Outputs (and the completion toast can deep-link to it). Per `_se-playbook.md` "Output Persistence (Auto-Save)", write to:
 ```
-~/airbyte-work/01-customers/<Customer>/outputs/next-move/next-move-<YYYY-MM-DD>.md
+{customers_dir}/<Customer>/outputs/next-move/next-move-<YYYY-MM-DD>.md
 ```
 When invoked for a specific opportunity, save under that opp's folder instead:
 ```
-~/airbyte-work/01-customers/<Customer>/opportunities/<opp-slug>/outputs/next-move/next-move-<YYYY-MM-DD>.md
+{customers_dir}/<Customer>/opportunities/<opp-slug>/outputs/next-move/next-move-<YYYY-MM-DD>.md
 ```
 Append `-v2` etc. for same-day re-runs. User can suppress with `--no-save`.
 
@@ -342,6 +342,7 @@ Avoid "run follow-up-email because it's been a while" without a substantive trig
 
 ## Changelog
 
+- **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
 - **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE" (routing prose, inputs-needed field).
 - **2026-07-09** — Fixed the Local Artifacts scan: reads each prior doc from `outputs/<skill>/` (was the customer root); `Deal-Assessment-*.md` → lowercase `deal-assessment-*.md`; `call-summary-*.md` → `post-call-*.md`. The stage-inference was silently missing every prior artifact.
 - **2026-07-09** — Added a **conflicting-signals branch** to the override logic: when signals collide (stale quals + fresh objection, or SFDC-stage vs local-artifact mismatch), name the tension in `Current read` and pick the de-risking move with its assumption stated, rather than forcing one tree path. Handled in prose only — the four At-a-Glance labels (`Recommended Next Move`/`Confidence`/`Stage`/`Top Blocker`) the web-app reader keys on for hero-card routing are unchanged.

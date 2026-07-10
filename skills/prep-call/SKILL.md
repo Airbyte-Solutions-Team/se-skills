@@ -257,7 +257,7 @@ Why this reframe for this customer: [brief rationale based on their stack/indust
 Read `~/.claude/skills/_se-playbook.md` for full framework details. Apply specifically to call prep:
 
 ### Memory Check
-Read `~/.claude/projects/-Users-gary-yang-airbyte-work/memory/MEMORY.md` and any customer-specific memory files before generating prep. Active blockers, pending Airbyte-side actions, and stakeholder dynamics often live here and don't appear in transcripts. Per `_se-playbook.md` ("Memory Check").
+Read `memory_dir` (per playbook → Workspace Paths) `MEMORY.md` and any customer-specific memory files before generating prep (skip gracefully if `memory_dir` is unset). Active blockers, pending Airbyte-side actions, and stakeholder dynamics often live here and don't appear in transcripts. Per `_se-playbook.md` ("Memory Check").
 
 ### Source Freshness Check — Always Check Gong First
 **Always check Gong for the most recent call on this account before generating prep.** Per `_se-playbook.md` ("Source Freshness Check"):
@@ -267,10 +267,10 @@ Read `~/.claude/projects/-Users-gary-yang-airbyte-work/memory/MEMORY.md` and any
 - **EXISTING customer** (local folder exists with prior artifacts): apply the standard **14-day rule** — pull from Gong if most-recent local transcript is older than that.
 
 **Workflow:**
-- Check `_transcripts/` first. If a transcript matching this customer was saved in the last 30 min (`mtime`-recent), use it and skip Gong — per `_se-playbook.md` session-dedupe rule.
+- Check `{transcripts_dir}` first. If a transcript matching this customer was saved in the last 30 min (`mtime`-recent), use it and skip Gong — per `_se-playbook.md` session-dedupe rule.
 - If no local match for a recent call, search Gong with the appropriate lookback
 - Pull the **most recent call only** — do not bulk-pull
-- Save the pulled transcript to `_transcripts/<Customer-Name>-MM.DD.YY.txt` BEFORE using it (per CLAUDE.md)
+- Save the pulled transcript to `{transcripts_dir}/<Customer-Name>-MM.DD.YY.txt` BEFORE using it (per CLAUDE.md)
 - Note in the output which sources were freshly pulled
 - If no Gong call exists in the window, say so — don't silently fall back to web research only
 
@@ -309,7 +309,7 @@ Don't end prep with "follow up next week." Write the specific next-step you'll p
 
 Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save the prep doc automatically to:
 ```
-~/airbyte-work/01-customers/<Customer>/outputs/call-prep/call-prep-<YYYY-MM-DD>-<Descriptor>.md
+{customers_dir}/<Customer>/outputs/call-prep/call-prep-<YYYY-MM-DD>-<Descriptor>.md
 ```
 
 Filename example: `call-prep-2026-05-28-Tech-Discovery.md`. Create folders if missing. Append `-v2` etc. if same-day duplicate.
@@ -330,12 +330,13 @@ Per `_se-playbook.md` "Source Coverage Transparency" rule.
 
 ### SE Identity
 
-Read `~/airbyte-work/.se-config.yaml` to populate the `[SE name]` field in headers and the Upfront Contract opener. If the config doesn't exist, ask the user once and recommend they create it.
+Read `config_file` (per playbook → Workspace Paths) to populate the `[SE name]` field in headers and the Upfront Contract opener. If the config doesn't exist, ask the user once and recommend they create it.
 
 ---
 
 ## Changelog
 
+- **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
 - **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE" (reads identity from `.se-config.yaml`).
 - **2026-07-09** — Sourcing discipline for cold-prep facts: every Company Snapshot fact carries an origin tag (`[per AE call]` / `[SFDC]` / `[public]` / `[assumption — confirm live]`); the reframe is now stated as "they likely believe X (basis…); reframe to Y," labeled a hypothesis to test if unsourced. No refuse-gate added — stays cold-runnable (light-touch).
 - **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.

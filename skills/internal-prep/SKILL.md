@@ -29,9 +29,9 @@ If meeting type is unclear, ask before proceeding. Don't guess — a forecast pr
 
 This skill requires customer source material for any customer being discussed. For each customer in scope, read:
 
-- `~/airbyte-work/01-customers/<Customer>/` — qual docs, deal assessments, call summaries
-- `~/airbyte-work/01-customers/_transcripts/<Customer>-*.txt` — recent transcripts
-- `~/.claude/projects/-Users-gary-yang-airbyte-work/memory/` — customer-specific memory
+- `{customers_dir}/<Customer>/` — qual docs, deal assessments, call summaries (paths per playbook → Workspace Paths)
+- `{transcripts_dir}/<Customer>-*.txt` — recent transcripts
+- `memory_dir` — customer-specific memory (skip if unset)
 - Apply Source Freshness Check per `_se-playbook.md` — pull from Gong if local is stale (14-day rule), respecting session-dedupe
 
 **If a customer has zero artifacts and zero transcripts: flag it explicitly in the prep doc — the SE shouldn't enter an internal meeting unable to speak about a deal.**
@@ -268,12 +268,12 @@ Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule:
 
 For single-customer prep (ae-sync, exec-readout, deal-review):
 ```
-~/airbyte-work/01-customers/<Customer>/outputs/internal-prep/<type>-<YYYY-MM-DD>.md
+{customers_dir}/<Customer>/outputs/internal-prep/<type>-<YYYY-MM-DD>.md
 ```
 
 For multi-customer forecast:
 ```
-~/airbyte-work/04-notes/forecast-prep-<YYYY-MM-DD>.md
+{notes_dir}/forecast-prep-<YYYY-MM-DD>.md
 ```
 
 User can suppress with `--no-save`.
@@ -284,7 +284,7 @@ Include a Source Coverage section reporting which customer folders, qual docs, t
 
 ### SE Identity
 
-Read `~/airbyte-work/.se-config.yaml` for the `[SE name]` and similar fields. Important for productionization — different team members will run this skill on the same customer.
+Read `config_file` (per playbook → Workspace Paths) for the `[SE name]` and similar fields. Important for productionization — different team members will run this skill on the same customer.
 
 ### Then offer to
 
@@ -295,6 +295,7 @@ Read `~/airbyte-work/.se-config.yaml` for the `[SE name]` and similar fields. Im
 
 ## Changelog
 
+- **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
 - **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE"; fixed the corrupted template placeholder `[SE Gary]` → `[SE name]` (header + config-read instruction).
 - **2026-07-09** — Missing SFDC fields / cross-functional inputs now render as explicit "confirm with [owner]" asks rather than blanks or guesses (forecast: "not in CRM — confirm with RevOps" + pre-meeting ask; deal-review Alignment-check: AE/AM columns marked "to confirm live," never guessed, carried into Cross-functional asks).
 - **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis. Applied to all four mode templates (ae-sync, forecast, exec-readout, deal-review).

@@ -1,13 +1,13 @@
 ---
 name: deployment-model-qual
-description: Qualifies a customer's deployment model fit BEFORE diving into connectors or technical scoping. Confirms whether Airbyte Cloud (Pro) is viable or whether the deal needs to requalify to Self-Managed Enterprise (or park until Flex/BYOC is GA). Use when the user says "deployment qual", "deployment model", "cloud vs self-managed", "is this a cloud deal", or at the start of any new customer engagement before tech qual.
+description: Qualifies a customer's deployment model fit BEFORE diving into connectors or technical scoping. Routes the customer to the right shape — Airbyte Cloud (Pro), Enterprise Flex (hybrid — cloud control plane + customer-hosted data plane), or Self-Managed Enterprise. Use when the user says "deployment qual", "deployment model", "cloud vs self-managed", "cloud vs flex", "is this a cloud deal", or at the start of any new customer engagement before tech qual.
 ---
 
 # Deployment Model Qualification Skill
 
-You are helping a Solutions Engineer at Airbyte answer the single most important early-deal question: **can this customer use Airbyte Cloud, or do they need a different deployment model?**
+You are helping a Solutions Engineer at Airbyte answer the single most important early-deal question: **which deployment shape does this customer need — Cloud, Flex, or Self-Managed Enterprise?**
 
-Product reality (the basis for this skill — see "Product reality these questions assume" below for the full statement, and verify it's current): Airbyte currently sells **one product to new customers — Airbyte Cloud (Pro)**. Self-Managed Enterprise is a separate sales motion. Enterprise Flex (BYOC) is NOT GA for new deployments today. Discovering air-gap, data residency, or infrastructure isolation requirements *late* in the cycle wastes everyone's time and damages trust. This skill exists to surface those requirements *early*.
+Product reality (the basis for this skill — see "Product reality these questions assume" below for the full statement, and verify it's current): Airbyte sells **three** deployment shapes. **Cloud (Pro)** — Airbyte runs control + data plane. **Enterprise Flex (hybrid)** — Airbyte-hosted control plane + a **customer-hosted self-managed data plane** in the customer's own VPC (data never leaves their environment; full connector parity); **sellable to new customers with caveats** (region availability, deal-desk/commercial approval, possible limited-availability gating — confirm current terms). **Self-Managed Enterprise** — customer runs everything, incl. control plane; supports BYOK/KMS; separate sales motion. The job is to route to the right shape *early* — discovering air-gap, data-residency, or isolation requirements *late* wastes cycles and damages trust. Flex means most data-isolation requirements are now **winnable**, not walk-away — but BYOK/KMS and full-platform-control requirements still point to SME.
 
 ## When to Run
 
@@ -43,18 +43,18 @@ If user signals brief mode (`--brief`, `quick deployment check`, `cloud or not`)
 
 These five questions are the canonical deployment gate — defined **here** so this skill is self-contained and reviewable (they mirror the workspace `CLAUDE.md` "Customer Qualification — Deployment Model" section, but this SKILL.md is the source of record for the qualification logic). Answer each one for the customer using available evidence:
 
-1. **What is their deployment preference?** Cloud SaaS, self-hosted, or hybrid?
-2. **Do they have data residency or air-gap requirements?** If data cannot leave their environment, Cloud is not viable.
-3. **Do they have multi-tenancy concerns?** Shared infrastructure may be a blocker for regulated PII data.
-4. **Do they need to bring their own KMS or secrets manager?** Not supported on Cloud — Self-Managed Enterprise only.
-5. **Do they require VPC isolation for the data plane?** Cloud runs Airbyte's data plane, not the customer's.
+1. **What is their deployment preference?** Cloud SaaS, hybrid (cloud control plane + own data plane), or fully self-hosted?
+2. **Do they have data residency or air-gap requirements?** Distinguish carefully: *"data can't leave our VPC/environment"* → **Flex** (customer-hosted data plane) resolves it. *True air-gap* (no outbound to a cloud control plane at all) → **SME**.
+3. **Do they have multi-tenancy concerns?** *"Our data can't share compute"* → **Flex** (dedicated customer-run data plane). Broader control-plane/tenancy mandate → **SME**.
+4. **Do they need to bring their own KMS or secrets manager?** Not supported on Cloud **or Flex** (both use Airbyte-managed secrets) — **Self-Managed Enterprise only**. This is the sharpest Flex-vs-SME divider.
+5. **Do they require VPC isolation — for the data plane, or the whole platform?** Data-plane-only → **Flex** (runs in their VPC). Entire platform incl. control plane in-VPC → **SME**.
 
 **Product reality these questions assume (the basis for every verdict — verify it's still current):**
-- Airbyte sells **one product to new customers: Airbyte Cloud (Pro tier)**.
-- **Enterprise Flex (BYOC)** — cloud control plane + self-hosted data plane — is **not GA for new deployments** (exists for some existing customers / as a migration path).
-- **Self-Managed Enterprise** — fully self-hosted, supports BYOK/KMS and VPC isolation — is available but a **separate sales motion**.
+- **Cloud (Pro)** — Airbyte runs control + data plane; managed regions US + EU. Control plane is US-hosted; cursor & primary-key values transit it even for EU data planes (a real compliance nuance — probe it for regulated data).
+- **Enterprise Flex (hybrid)** — Airbyte-hosted control plane + **customer-hosted self-managed data plane** in their VPC (Helm on K8s, or Airbox single-node); full 600+ connector parity; per-region data planes possible. **Sellable to new customers with caveats** — region availability, deal-desk/commercial approval, possible limited-availability gating. Does **not** support BYOK/customer KMS.
+- **Self-Managed Enterprise** — fully self-hosted incl. control plane; supports BYOK/KMS and full VPC isolation; a **separate sales motion**.
 
-This product reality changes over time. If Flex goes GA (or regions/capabilities shift), the verdict logic below can flip — see the product-reality stamp in the Verdict section.
+This product reality changes over time. Flex availability/terms in particular are caveat-gated and can shift — always confirm current Flex availability for the customer's region before committing to it in a verdict. See the product-reality stamp in the Verdict section.
 
 ## Output Format
 
@@ -67,9 +67,9 @@ Document structure follows `_se-playbook.md` → Output Document Format (At-a-Gl
 
 ### At a Glance
 *Decision card — lead with the verdict (see `_se-playbook.md` → Decision-First Layout).*
-- **Verdict:** 🟢 Cloud Pro viable / 🟡 viable with caveats / 🔴 not viable, requalify — [3–6 word headline]
+- **Verdict:** 🟢 Cloud Pro viable / 🟦 Flex viable (data-plane isolation) / 🟠 Self-Managed Enterprise required / 🔴 genuine blocker — [3–6 word headline]
 - **Hard constraint:** [the single requirement that drives the verdict, or "none — no hard blockers surfaced"]
-- **Recommended motion:** [Proceed with Cloud Pro / Proceed with caveats / Pause & clarify / Requalify to SME / Park]
+- **Recommended motion:** [Proceed with Cloud Pro / Position Flex (confirm availability) / Requalify to SME / Pause & clarify / Park-or-escalate]
 - **Next gate:** [what resolves the open constraint — e.g. "confirm KMS requirement with CISO"]
 - **Source confidence:** [one line — N transcripts; which of the 5 questions are actually answered vs. assumed]
 
@@ -79,19 +79,30 @@ Document structure follows `_se-playbook.md` → Output Document Format (At-a-Gl
 
 ## Verdict
 
-Render the verdict as a callout, picking the type by status: `[!verdict]` if 🟢 Cloud Pro viable, `[!risk]` if 🟡 viable with caveats, `[!blocker]` if 🔴 not viable / requalify.
+This is a **4-way** verdict — route to the right shape, don't just gate Cloud in/out. Render as a callout, picking the type by status: `[!verdict]` if 🟢 Cloud viable, `[!info]` if 🟦 Flex viable, `[!risk]` if 🟠 SME required, `[!blocker]` if 🔴 genuine blocker.
+
+- 🟢 **Cloud Pro viable** — no data-isolation / KMS / control-plane requirement. Default happy path.
+- 🟦 **Flex viable** — data must stay in the customer's VPC (data-plane isolation) but they don't need to control the control plane or bring their own KMS. Cloud control plane + customer-hosted data plane. *Confirm current Flex availability/terms for their region before committing.*
+- 🟠 **Self-Managed Enterprise required** — BYOK/customer-managed KMS, full-platform (control-plane) control, or true air-gap. Separate sales motion; heavier lift.
+- 🔴 **Genuine blocker** — a requirement no shape meets today (e.g. a capability gap even SME can't cover). Park/escalate.
 
 ```markdown
-> [!blocker] 🔴 Cloud Pro NOT viable — requalify to Self-Managed Enterprise
-> Customer requires customer-managed KMS (hard requirement, confirmed by CISO 06.10). Cloud Pro does not support BYOK. Hand to AE for SME motion.
+> [!info] 🟦 Flex viable — data-plane isolation in customer VPC
+> Customer requires all data to stay in their AWS VPC (confirmed by CISO 06.10), but has no BYOK mandate and is fine with an Airbyte-hosted control plane. Flex fits: customer-hosted data plane, cloud control plane. NEXT: confirm Flex availability + terms for their region with AE/deal-desk before scoping.
+```
+```markdown
+> [!risk] 🟠 Self-Managed Enterprise required — customer-managed KMS mandate
+> Customer requires customer-managed KMS (hard requirement, confirmed by CISO 06.10). Neither Cloud nor Flex supports BYOK. Hand to AE for SME motion.
 ```
 
-- **Status:** 🟢 Cloud Pro is viable / 🟡 Cloud Pro is viable with caveats / 🔴 Cloud Pro NOT viable — requalify or park
+- **Status:** 🟢 Cloud viable / 🟦 Flex viable / 🟠 SME required / 🔴 genuine blocker
 - **One-sentence rationale:** [punchy verdict]
 
 ### Product-reality stamp (verdict can go stale)
 
-State the product-capability basis and its date with the verdict: "Verdict assumes Flex/BYOC is not GA for new customers as of [reference date] and Cloud regions = [list]. If any changed, re-run — the verdict can flip." If a customer requirement hinges on a capability you can't verify as current, issue a 🟡 **Provisional** verdict ("verify current product state before acting"), not a hard 🔴 requalify. A 🔴 that sends a deal to a separate sales motion is expensive to get wrong on a stale fact.
+State the product-capability basis and its date with the verdict: "Verdict assumes Flex is sellable-with-caveats to new customers as of [reference date], Cloud managed regions = [list], and BYOK is SME-only. If any changed, re-run — the verdict can flip." Two stale-fact guards:
+- If a **🟦 Flex** verdict depends on Flex being available for the customer's region/segment and you can't confirm current terms, mark it **🟦 Flex viable — availability unconfirmed** and make "confirm Flex terms with deal-desk" the next gate. Don't promise Flex on a stale availability assumption.
+- If a customer requirement hinges on any capability you can't verify as current, issue a **Provisional** verdict ("verify current product state before acting") rather than a hard route to a separate sales motion. A 🟠 that sends a deal to SME is expensive to get wrong on a stale fact — and so is a 🟦 that promises Flex before terms are confirmed.
 
 ---
 
@@ -111,9 +122,10 @@ State the product-capability basis and its date with the verdict: "Verdict assum
 
 ## Implications by Answer
 
-For each 🔴 answer above, state explicitly:
-- **What it breaks:** Cloud Pro [can/cannot] support this requirement because [reason].
-- **Path forward:** Requalify to Self-Managed Enterprise / Park until Flex is GA / Disqualify.
+For each answer that rules out Cloud Pro, state explicitly:
+- **What it breaks:** Cloud Pro cannot support this requirement because [reason].
+- **Which shape fixes it:** **Flex** (data-plane isolation in customer VPC — data residency, VPC isolation, "our data can't share compute") **or SME** (BYOK/KMS, full control-plane control, true air-gap). Name which, and why.
+- **Path forward:** Position Flex (confirm availability/terms) / Requalify to SME / Disqualify.
 
 For each 🟡 answer (ambiguous or partially answered):
 - **What's unclear:** [what we still need to know]
@@ -127,10 +139,10 @@ For each 🟢 answer:
 ## Recommended Next Action
 ONE of:
 1. **Proceed with Cloud Pro.** All five questions answered 🟢. Move to tech qual / connector feasibility.
-2. **Proceed with caveats.** Mostly 🟢, with 1-2 🟡. Specific questions to resolve in next call before scoping POC.
-3. **Pause and clarify.** Multiple Unknowns. Run a deployment-model-focused conversation before further investment.
-4. **Requalify to Self-Managed Enterprise.** Cloud Pro is not viable due to [specific reason]. Hand to AE for SME motion.
-5. **Park.** Customer needs Flex/BYOC which isn't GA. Document the requirement, park the opportunity, revisit when Flex is available.
+2. **Position Enterprise Flex.** Data-plane isolation is required (data must stay in customer VPC) but no BYOK/control-plane mandate. Confirm current Flex availability + terms for their region with the AE/deal-desk, then proceed to tech qual scoped for a customer-hosted data plane.
+3. **Requalify to Self-Managed Enterprise.** BYOK/KMS, full-platform control, or true air-gap makes Cloud and Flex non-viable. Hand to AE for the SME motion.
+4. **Pause and clarify.** Multiple Unknowns, or the Flex-vs-SME divider (KMS? control-plane vs data-plane isolation?) is unresolved. Run a deployment-model-focused conversation before further investment.
+5. **Park / escalate.** A requirement no shape meets today, or Flex is required but unavailable for their region/segment. Document the requirement, escalate to leadership, revisit when terms change.
 
 ---
 
@@ -146,8 +158,9 @@ If any answer is Unknown or ambiguous, draft 3-5 specific questions the SE can a
 
 ## Style
 
-- **Bias toward "no" early.** A clean 🔴 verdict in week 1 saves 6 months of wasted cycles. This skill exists to disqualify when needed — not to keep deals alive.
-- **No spin.** If Cloud can't meet their requirement, say so. Customers smell hedging.
+- **Route early, don't just gate.** The job is to land on the right shape (Cloud / Flex / SME) in week 1, not 6 months in. A clean 🟠 SME verdict or 🔴 blocker still saves wasted cycles — but with Flex in the picture, many "data can't leave our VPC" requirements are now a 🟦 *route to Flex*, not a walk-away. Don't reflexively disqualify what Flex can win.
+- **But don't over-rescue with Flex either.** BYOK/KMS and full-platform-control requirements are genuine SME triggers — positioning Flex there just moves the dead-end later. Be honest about the Flex boundary.
+- **No spin.** If no shape meets their requirement, say so. Customers smell hedging.
 - **Cite sources.** Every answer in the table must reference a transcript date or note "not asked yet."
 - **Flag the cost of not knowing.** If the SE hasn't asked these questions yet, the output should be a list of questions, not a list of guesses.
 
@@ -162,8 +175,8 @@ Per `_se-playbook.md` ("Source Freshness Check"): if the most-recent local trans
 - Pull the **most recent call only** — do not bulk-pull
 - Save to `_transcripts/<Customer-Name>-MM.DD.YY.txt` BEFORE using it (per CLAUDE.md)
 
-### This is the single most important Sandler "qualify-out" moment
-A 🔴 deployment-model verdict is the cleanest disqualification signal in the funnel. Don't soften it. Per Sandler: mutual qualification means saying "this isn't a fit" is a feature of the process, not a failure of it.
+### This is the single most important Sandler "qualify + route" moment
+A deployment-model verdict is the cleanest routing signal in the funnel. A 🟠 SME or 🔴 blocker verdict is a legitimate qualify-out of the *Cloud* motion — don't soften it; per Sandler, "this isn't a fit for Cloud" is a feature of mutual qualification, not a failure. But routing is now three-way, not in/out: a 🟦 Flex verdict *keeps a winnable deal alive* on the right motion rather than parking it. The discipline is to name the shape honestly — including saying "this is an SME motion, not a Cloud deal" when that's true.
 
 ### Apply MEDDPICC Decision Criteria
 Deployment preferences are formal Decision Criteria. They belong in biz-qual too. If this skill surfaces a deployment requirement that's not in the customer's biz-qual doc, suggest updating it.
@@ -188,7 +201,7 @@ Don't lead with reframes here. The job is to find the truth, not to convert. If 
 
 Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save to:
 ```
-~/airbyte-work/01-customers/<Customer>/outputs/deployment-qual/deployment-qual-<YYYY-MM-DD>.md
+{customers_dir}/<Customer>/outputs/deployment-qual/deployment-qual-<YYYY-MM-DD>.md
 ```
 
 Append `-v2` etc. for same-day duplicates. User can suppress with `--no-save`.
@@ -199,20 +212,20 @@ Include a Source Coverage section at the top reporting: which transcripts answer
 
 ### SE Identity
 
-Read `~/airbyte-work/.se-config.yaml` for the `[SE name]` field.
+Read `config_file` (per playbook → Workspace Paths) for the `[SE name]` field.
 
 ### Then offer to
 
 1. **Add to Notion Overview page** as a deployment fit section
 2. **Update biz-qual** with the deployment model row in Decision Criteria
 3. **Draft a follow-up email** with the specific discovery questions (invoke `follow-up-email`)
-4. **Update memory** — if the verdict is 🔴 (Cloud Pro not viable) or the customer has a hard requirement that meaningfully constrains the deal (BYOK mandate, air-gap, data residency boundary), propose adding a project memory. Don't update for 🟢 verdicts — those are the default state.
+4. **Update memory** — if the verdict is 🟦 Flex, 🟠 SME, or 🔴 blocker, or the customer has a hard requirement that meaningfully constrains the deal (BYOK mandate, air-gap, data-residency/VPC-isolation boundary, Flex-availability dependency), propose adding a project memory. Don't update for 🟢 Cloud verdicts — those are the default state.
 
 ---
 
 ## Changelog
 
-- **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE" (reads identity from `.se-config.yaml` like the rest of the suite).
+- **2026-07-10** — **Flex is back.** Verdict moved from 2-way (Cloud in/out) to **4-way** routing: 🟢 Cloud / 🟦 Flex (customer-hosted data plane in their VPC, cloud control plane — sellable to new customers *with caveats*: region/deal-desk/limited-availability, confirm current terms) / 🟠 SME (BYOK/KMS, full control-plane control, true air-gap) / 🔴 genuine blocker. Reframed the 5 questions to split *data-plane isolation* (→ Flex) from *full-platform control / BYOK* (→ SME). Product-reality stamp now guards a stale **Flex-availability** assumption (mark "availability unconfirmed" rather than promise Flex). Added the control-plane-in-US / cursor-&-PK compliance probe. Qualify-out reframed to qualify-*and-route*.
 - **2026-07-09** — Added product-reality as-of stamp; capability-dependent verdicts render 🟡 Provisional when current product state is unverifiable. Inlined the 5 qualifying questions + the product reality they assume (Cloud Pro only; Flex not GA; SME separate motion) so the skill is self-contained — this SKILL.md is now the source of record, mirroring but no longer dependent on the workspace CLAUDE.md.
 - **2026-06-18** — Output adopts the shared Output Document Format (_se-playbook.md): At-a-Glance + Jump-to index, H2-per-section, callouts, ==key== emphasis.
 

@@ -23,13 +23,13 @@ The user will paste or describe a customer concern. Examples:
    - **Security & compliance** (KMS/BYOK, secrets manager, SOC 2, HIPAA, PII handling)
    - **Multi-tenancy** (shared infra concerns for regulated data)
    - **Competitor** (Fivetran, Matillion, Stitch, custom build, dbt+EL combo, etc.)
-   - **Pricing / commercial** (cost, contract terms, MAR pricing model)
+   - **Pricing / commercial** (cost, contract terms, capacity-based vs. consumption-based)
    - **Open-source skepticism** (support risk, abandoned project fear)
    - **Reliability / scale** (sync failures, throughput, latency)
    - **Connector gap** (we don't have X, or our X is community-tier)
    - **Other** — if it doesn't fit, ask for clarification
 
-2. **Reference the deployment-model guidance** — the `deployment-model-qual` skill (and the workspace CLAUDE.md it mirrors) + `_se-playbook.md` → Airbyte-Specific Application Notes define what Airbyte sells today (Cloud Pro) and what's NOT available for new customers (Flex/BYOC, Self-Managed Enterprise is a separate motion).
+2. **Reference the deployment-model guidance** — the `deployment-model-qual` skill (and the workspace CLAUDE.md it mirrors) + `_se-playbook.md` → Airbyte-Specific Application Notes define the **three** shapes Airbyte sells: Cloud Pro, **Enterprise Flex** (hybrid — cloud control plane + customer-hosted data plane in their VPC; sellable to new customers *with caveats*), and Self-Managed Enterprise (separate motion; BYOK/KMS). Most data-isolation objections now resolve to **Flex**, not "park."
 
 3. **Produce a structured response.**
 
@@ -81,11 +81,11 @@ NOW the actual answer. Specific, honest, 2-3 sentences max. This is what most SE
 ### Follow-up questions to ask
 2-3 questions that help qualify whether this objection is real or surfaceable. Often the stated objection isn't the real one.
 
-### If it's a deal-killer
-If this objection cannot be resolved with Cloud Pro (e.g., true air-gap requirement, customer KMS mandate), state it plainly and recommend the requalification path:
-- Self-Managed Enterprise (separate sales motion)
-- Park until Flex is GA for new customers
-- Disqualify
+### If Cloud Pro can't resolve it — route, don't reflexively kill
+If this objection can't be met by Cloud Pro, check whether **Flex** solves it before treating it as a deal-killer:
+- **Data must stay in their VPC / data residency / VPC isolation / "our data can't share compute"** → **Enterprise Flex** (customer-hosted data plane). This is a *route*, not a kill. Confirm current Flex availability/terms for their region.
+- **Customer-managed KMS / BYOK, full control-plane control, or true air-gap** → **Self-Managed Enterprise** (separate motion). Genuine Flex boundary — don't oversell Flex here.
+- **A requirement no shape meets, or Flex unavailable for their region/segment** → park/escalate or disqualify. State it plainly.
 
 ### Related context
 - Link to relevant docs/resources if applicable
@@ -102,7 +102,7 @@ If this objection cannot be resolved with Cloud Pro (e.g., true air-gap requirem
 
 ## Common Objections — Reference
 
-Read `~/airbyte-work/04-notes/airbyte-objection-reference.md` for the full reference table covering:
+Read `~/.claude/skills/_reference/airbyte-objection-reference.md` (canonical, version-controlled in the repo at `skills/_reference/`) for the full reference table covering:
 - Deployment model objections (data residency, BYOK, multi-tenancy, BYOC/Flex, VPC)
 - Trust / OSS objections
 - Pricing / commercial objections
@@ -124,7 +124,7 @@ If the reference file is absent (fresh machine, new teammate), fall back to `_se
 
 If a customer was named, save the talk track to:
 ```
-~/airbyte-work/01-customers/<Customer>/outputs/objection-handler/objection-<YYYY-MM-DD>-<category>.md
+{customers_dir}/<Customer>/outputs/objection-handler/objection-<YYYY-MM-DD>-<category>.md
 ```
 
 Filename example: `objection-2026-05-28-Data-Residency.md` (category descriptor in Title Case per `_se-playbook.md`). User can suppress with `--no-save`. Any date written in the doc body (headers/prose) should be long form, e.g. June 11, 2026 — not 2026-06-11.
@@ -138,7 +138,7 @@ If customer-specific: include Source Coverage noting which transcripts, memory, 
 ### Then offer to
 
 1. **Add to customer Notion Q&A page** as a yellow callout (question) + green callout (answer)
-2. **Append to personal objection playbook** at `~/airbyte-work/04-notes/objection-playbook.md` (for cross-customer pattern tracking)
+2. **Append to personal objection playbook** at `{notes_dir}/objection-playbook.md` (for cross-customer pattern tracking)
 3. **Draft an email response** (invoke `follow-up-email` skill)
 
 ---
@@ -151,11 +151,11 @@ This is the skill where Voss tactics matter most. Apply them in order:
 
 ### Customer Context Check (when customer is named)
 If the user names a specific customer (not just an abstract objection), pull customer-specific context before crafting the talk track:
-- Read `~/airbyte-work/01-customers/<Customer>/` for prior notes and prior objection handling
+- Read `{customers_dir}/<Customer>/` for prior notes and prior objection handling
 - Read recent transcripts in `_transcripts/` matching that customer
 - Apply Source Freshness Check per `_se-playbook.md`: if most-recent local transcript is **>14 days old**, check Gong for newer calls
-- Read `~/.claude/projects/-Users-gary-yang-airbyte-work/memory/` for any active project context (blockers, prior commitments)
-- Check `~/airbyte-work/04-notes/objection-playbook.md` (if exists) for prior entries on this customer — has this objection been raised before? Did the prior talk track work?
+- Read `memory_dir` (per playbook → Workspace Paths; skip if unset) for any active project context (blockers, prior commitments)
+- Check `{notes_dir}/objection-playbook.md` (if exists) for prior entries on this customer — has this objection been raised before? Did the prior talk track work?
 
 **Recurring objection signal:** If the same objection has been raised more than once by the same customer/stakeholder, that's a different problem than a first-time objection. Either:
 - The prior talk track didn't land (need a different approach)
@@ -179,7 +179,7 @@ This pre-empts the objections and signals you're not going to dance around them.
 ### Get to "no" — don't push for "yes"
 For objections that are deal-killers (e.g., true air-gap requirement on a Cloud-only sale), the talk track must include a clean off-ramp. Example:
 
-> "If Cloud-only is a hard 'no' for your environment, this isn't going to be a fit today — and I'd rather know now than push you through a 6-month eval that ends here anyway. Is there a path where Cloud could work, or should we park this until Flex is available?"
+> "If running the data plane in *our* cloud is a hard 'no' for your security team, Cloud isn't the fit — but Enterprise Flex runs the data plane in your own VPC while we manage the control plane, so your data never leaves your environment. Is that the boundary we're actually solving for, or is it deeper — do you need to control the whole platform and your own encryption keys? That's the line between Flex and a self-managed deployment."
 
 Real "no" preserves trust and prevents wasted cycles. Add this when warranted.
 
@@ -197,7 +197,7 @@ Per the deployment-model guidance: don't spin. If Cloud can't meet their require
 
 ## Changelog
 
-- **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE"; "Gary's CLAUDE.md" refs → the deployment-model guidance (skill + playbook).
+- **2026-07-10** — **Flex is back + reference relocated.** Deployment objections (data residency, VPC isolation, BYOC) now resolve to **Enterprise Flex** (customer-hosted data plane, sellable with caveats), not "park until GA"; BYOK/full-control stays SME. Pricing objection reframed to **capacity-based (Pro/Flex, always) vs. consumption-based (Fivetran MAR)** — only Standard is volume-based. Canonical reference moved from `~/airbyte-work/04-notes/` to the repo at `skills/_reference/airbyte-objection-reference.md` (read via `~/.claude/skills/_reference/`), eliminating the special-case `04-notes/` symlink and the drift surface behind the stale-Flex line. Added control-plane-in-US compliance nuance and a Cloud-can't-resolve-it → route-to-Flex-first block.
 - **2026-07-09** — Added product-fact freshness guard (cite reference last-updated date; hedge possibly-stale capabilities; fall back to playbook guidance if the reference is absent). Softened Voss from "always emit 4 steps" to "use the moves that fit" (substantive-last preserved).
 - **2026-06-18** — Severity callout per `_se-playbook.md` → Output Document Format (objection-handler is light-touch: no At-a-Glance/Jump-to). The Severity indicator is now a top-of-output callout — `[!blocker]` for Deal-killer/High, `[!risk]` for Medium, `[!info]` for Low. Enforced Voss 4-step structure unchanged.
 

@@ -18,7 +18,7 @@ The user provides a customer/account name (and optionally deal context). Everyth
 **This wrapper requires at least one customer transcript.** Both underlying skills refuse without customer voice, so there's nothing to run.
 
 Before doing anything else, check:
-1. `~/airbyte-work/01-customers/_transcripts/` for files matching the customer
+1. `{transcripts_dir}/` (per playbook → Workspace Paths) for files matching the customer
 2. If none local, check Gong (14-day window for existing customer, 7-day for new prospect per `_se-playbook.md` Source Freshness Check)
 
 **If zero transcripts exist: REFUSE TO RUN.** Output:
@@ -66,5 +66,6 @@ Two independent documents (or one + a skip note, per above), each auto-saved to 
 
 ## Changelog
 
+- **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
 - **2026-07-09** — Clarified that the wrapper owns no logic and inherits its child skills' prerequisites/refusals at their current contracts — don't re-implement or override them here; ordering + flag pass-through only.
 - **2026-07-07** — Initial creation. Convenience wrapper that chains biz-qual → tech-qual, producing two separate docs. Added after considering (and rejecting) a hard merge of the two skills — separation preserves distinct frameworks, refusal rules, and audiences (see `_se-playbook.md` Skill Sequencing Rules).

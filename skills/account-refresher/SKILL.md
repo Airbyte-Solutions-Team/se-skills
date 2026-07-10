@@ -28,9 +28,9 @@ If no account is named, ask which one.
 
 Read and weave together — per `~/.claude/skills/_se-playbook.md`:
 
-1. **Local artifacts** — `~/airbyte-work/01-customers/<Customer>/outputs/` (prior qual docs, deal assessments, call summaries, prep docs) and `raw/` (manual notes)
-2. **Transcripts** — `~/airbyte-work/01-customers/_transcripts/<Customer>-*` (read the most recent in full; skim older for the arc — this is a refresher, not a deep audit, so apply a router-like read depth: most recent transcript fully, older ones for trajectory)
-3. **Memory** — `~/.claude/projects/<your-airbyte-work-project>/memory/` for active blockers / project context
+1. **Local artifacts** — `{customers_dir}/<Customer>/outputs/` (per playbook → Workspace Paths) (prior qual docs, deal assessments, call summaries, prep docs) and `raw/` (manual notes)
+2. **Transcripts** — `{transcripts_dir}/<Customer>-*` (read the most recent in full; skim older for the arc — this is a refresher, not a deep audit, so apply a router-like read depth: most recent transcript fully, older ones for trajectory)
+3. **Memory** — `memory_dir` for active blockers / project context (skip gracefully if `memory_dir` is unset)
 4. **Salesforce** — per `_se-playbook.md` "Salesforce Enrichment": pull the active opp (matching rule) + light account arc (other opps, existing ARR). Fields: `StageName`, `Amount`, `CloseDate`, `Owner.Name`, `SE_Name__c`, `Champion__c`, `Economic_Buyer__c`, `Identify_Pain__c`, `Primary_Competitor__c`, `Days_Since_Last_Activity__c`, `Next_Step_Date__c`, `Why_buy_*__c`
 5. **Source Freshness** — apply the Gong session-dedupe + 14-day rule. If the most recent local transcript is stale, check Gong.
 
@@ -109,14 +109,14 @@ If user signals brief mode (`--brief`, `just the gist`, `one-liner`): produce on
 ### Auto-save (default)
 Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save to:
 ```
-~/airbyte-work/01-customers/<Customer>/outputs/account-refresher/account-refresher-<YYYY-MM-DD>.md
+{customers_dir}/<Customer>/outputs/account-refresher/account-refresher-<YYYY-MM-DD>.md
 ```
 Append `-v2` etc. for same-day duplicates. User can suppress with `--no-save`.
 
 *Note: refreshers go stale fast (like router output). Auto-save is on for record-keeping, but don't treat a saved refresher as current days later — re-run it.*
 
 ### SE Identity
-Read `~/airbyte-work/.se-config.yaml` for the `[SE name]` / attribution where relevant.
+Read `config_file` for the `[SE name]` / attribution where relevant.
 
 ## SE Best Practices Applied
 
@@ -138,6 +138,7 @@ Per the playbook, surface gaps between SFDC and transcripts — but frame them n
 
 ## Changelog
 
+- **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
 - **2026-07-09** — Enforced the light `[fact]`/`[inference]` split so a read never reads as a fact (inferences tagged + kept out of deal-health territory, which stays deal-assessment's lane); explicitly reaffirmed the no-validation-checklist / no-source-dump / ≤1-page / thin-input-is-valid discipline (no gates added — this is a light-touch skill).
 - **2026-06-18** — Applied the shared Output Document Format (`_se-playbook.md`): added At-a-Glance (current state, key players, last touch with ==days-since==, ==# open items==), a Jump-to index, promoted primary sections (Who's Who, The Story So Far, Where Things Stand, What's Open, Watch-outs) to H2, and moved the "where to go next" footer into an `[!info]` callout. Key-number emphasis on days-since-last-touch and open-item count.
 

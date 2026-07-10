@@ -51,21 +51,11 @@ echo ""
 echo "Done. Linked $linked, skipped $skipped."
 echo ""
 
-# Symlink the Airbyte objection reference where objection-handler expects it
-NOTES_DIR="$HOME/airbyte-work/04-notes"
-REF_SRC="$REPO_DIR/reference/airbyte-objection-reference.md"
-REF_DEST="$NOTES_DIR/airbyte-objection-reference.md"
-if [ -f "$REF_SRC" ]; then
-  mkdir -p "$NOTES_DIR"
-  if [ -e "$REF_DEST" ] && [ ! -L "$REF_DEST" ]; then
-    echo "  SKIP (real file exists): airbyte-objection-reference.md — yours is kept"
-  else
-    [ -L "$REF_DEST" ] && rm "$REF_DEST"
-    ln -s "$REF_SRC" "$REF_DEST"
-    echo "  linked reference: airbyte-objection-reference.md -> 04-notes/"
-  fi
-fi
-echo ""
+# NOTE: the Airbyte objection reference lives in the repo at skills/_reference/ and is
+# symlinked into ~/.claude/skills/_reference/ by the loop above (like _se-playbook.md).
+# No special-case symlink needed — it rides the same mechanism as every other skill.
+# (Prior versions symlinked it into ~/airbyte-work/04-notes/; that hop was removed on
+# 2026-07-10 to keep a single source of truth and eliminate a drift surface.)
 
 # Config check
 CONFIG="$HOME/airbyte-work/.se-config.yaml"

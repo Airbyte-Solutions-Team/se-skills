@@ -24,7 +24,7 @@ The user will provide one or more of:
 1. **Check for transcripts** (local `_transcripts/` + Gong). If **zero transcripts exist: REFUSE TO RUN.** A POC can't be scoped from hypotheses, and biz-qual/tech-qual would themselves refuse without customer voice — so there's nothing to chain. Output:
    > "Cannot scope a POC for [Customer] — no customer voice in any source. Run `prep-call` → hold the call → then `biz-qual` + `tech-qual` → then re-run `poc-plan`."
 
-2. **If a transcript exists, check for the qualification docs** in `~/airbyte-work/01-customers/<Customer>/outputs/` — `biz-qual-*.md` and `tech-qual-*.md`.
+2. **If a transcript exists, check for the qualification docs** in `{customers_dir}/<Customer>/outputs/` (per playbook → Workspace Paths) — `biz-qual-*.md` and `tech-qual-*.md`.
 
    - **Both present** → proceed to generate the POC plan.
    - **One or both missing** → **do NOT silently proceed, and do NOT silently auto-run.** List exactly what's missing and offer to run it first:
@@ -41,7 +41,7 @@ The user will provide one or more of:
 
 ## Before generating: read prior outputs
 
-POC scope must build on prior qualification. Before generating, check the customer's `outputs/` folder (`~/airbyte-work/01-customers/<Customer>/outputs/<skill>/`) for and read:
+POC scope must build on prior qualification. Before generating, check the customer's `outputs/` folder (`{customers_dir}/<Customer>/outputs/<skill>/`) for and read:
 - **`outputs/deployment-qual/deployment-qual-*.md`** — required. POC architecture depends on deployment model. If missing and the customer has non-trivial requirements, **stop and suggest running `deployment-model-qual` first**.
 - **`outputs/tech-qual/tech-qual-*.md`** — technical fit, volume, security, integration risks → feed directly into POC scope and success criteria
 - **`outputs/biz-qual/biz-qual-*.md`** — MEDDPICC Metrics directly map to Success Criteria; Decision Process informs Mutual Commitments
@@ -274,7 +274,7 @@ When designing the POC, identify the *story* the data will tell at the results r
 
 Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save to:
 ```
-~/airbyte-work/01-customers/<Customer>/outputs/poc-plan/poc-plan-<YYYY-MM-DD>-<Descriptor>.md
+{customers_dir}/<Customer>/outputs/poc-plan/poc-plan-<YYYY-MM-DD>-<Descriptor>.md
 ```
 
 Create folders if missing. Append `-v2` etc. for same-day duplicates. User can suppress with `--no-save`.
@@ -287,12 +287,13 @@ Include a Source Coverage section at the top reporting prior qual docs read, tra
 
 ### SE Identity
 
-Read `~/airbyte-work/.se-config.yaml` for the `[SE name]` field in the SE owner row.
+Read `config_file` (per playbook → Workspace Paths) for the `[SE name]` field in the SE owner row.
 
 ---
 
 ## Changelog
 
+- **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
 - **2026-07-09** — Fixed the "Before generating" prior-doc read block: reads `deployment-qual`/`tech-qual`/`biz-qual`/`connector-feasibility` from `outputs/<skill>/` (was the customer root — inconsistent with the already-correct check earlier in the skill); prior call summaries now `outputs/post-call/post-call-*.md` (was the never-existing `call-summary-*.md`).
 - **2026-07-09** — Added duration-sizing heuristics (1–2 wk single-connector / 3–5 wk multi-source or transform / 6–8 wk only with a stated enterprise reason) so the timeline is right-sized to scope, not habit; reframed the mid-POC checkpoint as an explicit go/no-go gate with a named decider ("by [mid-date] X works or we pause & diagnose").
 - **2026-07-07** — Prerequisite handling changed from warn-but-proceed to **detect & offer to run first**: if biz-qual/tech-qual are missing (but a transcript exists), poc-plan now lists what's missing and offers to run the missing qualification skill(s) in order, then continue. Still refuses on zero transcripts (nothing to chain); still allows 'skip' with a drift-risk flag; never fabricates a qual doc.

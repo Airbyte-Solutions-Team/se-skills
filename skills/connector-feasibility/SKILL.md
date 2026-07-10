@@ -34,8 +34,8 @@ If user signals brief mode (`--brief`, `quick coverage check`, `coverage summary
 
 For each system the customer needs, go through this chain. "The connector exists" is step 2a, not the answer.
 
-1. **Exists?** — `mcp__airbyte-mcp__list_connectors` to find matches. For "Postgres"-type names, confirm the flavor (Postgres CDC vs. standard source).
-2. **Capability fit** — `mcp__airbyte-mcp__get_connector_info` to pull the connector's actual auth methods, supported streams/objects, and sync modes. **This is the live source of truth for existence, version, support level, and the published spec** — always trust it over the local checkout for "does it exist / what version / which streams." Then **compare against what the customer needs:**
+1. **Exists?** — `mcp__airbyte-ops-mcp__list_connectors_in_registry` to find matches. For "Postgres"-type names, confirm the flavor (Postgres CDC vs. standard source).
+2. **Capability fit** — `mcp__airbyte-ops-mcp__get_connector_registry_entry` (metadata: version, support level, breaking-change history) and `mcp__airbyte-ops-mcp__get_connector_registry_spec` (the published spec: auth methods, supported streams/objects, sync modes) to pull the connector's actual capabilities. **This is the live source of truth for existence, version, support level, and the published spec** — always trust it over the local checkout for "does it exist / what version / which streams." (These `airbyte-ops-mcp` tools read the GCS registry and require that MCP + GCS credentials; if unavailable, note it and fall back to local source / published docs.) Then **compare against what the customer needs:**
    - **Objects/streams:** do they need a specific object/table the connector doesn't expose? (e.g., a custom Salesforce object, a NetSuite saved search)
    - **Sync mode:** do they need incremental/CDC on a stream that only supports full refresh? This is a frequent silent dealbreaker.
    - **Auth model:** does the connector's auth match what the customer can provide? (OAuth app approval, IP allowlisting, service account, etc.)
@@ -55,18 +55,20 @@ For each system the customer needs, go through this chain. "The connector exists
 
 ### Reading connector source locally
 
-The connector **source code** is not in any MCP — the MCPs serve registry metadata, specs, and runtime data *about* connectors, not their implementation. The code lives in the local monorepo checkout:
+The connector **source code** is not in any MCP — the MCPs serve registry metadata, specs, and runtime data *about* connectors, not their implementation. The code lives in local Airbyte repo checkouts.
 
-- **Connector:** `02-repos/airbyte/airbyte-integrations/connectors/<connector-name>/` — `manifest.yaml` (declarative connectors), `metadata.yaml` (version, support level, breaking-change history), `BEHAVIOR.md` (known quirks, certified low-code connectors), `CLAUDE.md`, `README.md`, Python `source_<name>/` stream classes, and `integration_tests/` / `unit_tests/`.
-- **Python CDK:** `02-repos/airbyte-python-cdk/` — base classes, HTTP stream behaviour, error handling, pagination, incremental/cursor logic that declarative + Python connectors build on.
-- **Java CDK:** `02-repos/airbyte/airbyte-cdk/java/` — for Java/Kotlin connectors.
-- **User-facing docs + changelogs:** `02-repos/airbyte/docs/integrations/sources/<name>.md` and `.../destinations/<name>.md`.
+**Optional — graceful degradation.** Local source reading requires `airbyte_repos_dir` (resolved per playbook → Workspace Paths from `.se-config.yaml`). If it's **unset or the directory is missing**, skip this whole section — rely on MCP/registry data only, and note in Source Coverage: "local connector source not read (`airbyte_repos_dir` not configured) — build-path depth reduced." Do NOT fail. All paths below are relative to `{airbyte_repos_dir}`:
+
+- **Connector:** `{airbyte_repos_dir}/airbyte/airbyte-integrations/connectors/<connector-name>/` — `manifest.yaml` (declarative connectors), `metadata.yaml` (version, support level, breaking-change history), `BEHAVIOR.md` (known quirks, certified low-code connectors), `CLAUDE.md`, `README.md`, Python `source_<name>/` stream classes, and `integration_tests/` / `unit_tests/`.
+- **Python CDK:** `{airbyte_repos_dir}/airbyte-python-cdk/` — base classes, HTTP stream behaviour, error handling, pagination, incremental/cursor logic that declarative + Python connectors build on.
+- **Java CDK:** `{airbyte_repos_dir}/airbyte/airbyte-cdk/java/` — for Java/Kotlin connectors.
+- **User-facing docs + changelogs:** `{airbyte_repos_dir}/airbyte/docs/integrations/sources/<name>.md` and `.../destinations/<name>.md`.
 
 Use `shared-airbyte-skills:connector-type-identification` to determine the connector type first (manifest-only / low-code / Python CDK / Java) — it dictates which files matter.
 
 **Freshness guard (do this BEFORE relying on local source).** The checkout can be stale, which matters for build-path/CDK reasoning (it does *not* matter for existence/version — that comes from the live registry in step 2). Before reading source for a feasibility verdict:
-1. Check the checkout's age: `git -C 02-repos/airbyte log -1 --format=%cd --date=short` (and same for `airbyte-python-cdk`).
-2. If it's more than ~14 days old, refresh before reading: `git -C 02-repos/airbyte fetch --depth=1 origin master && git -C 02-repos/airbyte pull --ff-only` (and `airbyte-python-cdk` on `main`). If the pull fails (local changes / network), fall back to reading as-is and **report the checkout date in Source Coverage** so the SE knows how fresh the build-path reasoning is.
+1. Check the checkout's age: `git -C {airbyte_repos_dir}/airbyte log -1 --format=%cd --date=short` (and same for `{airbyte_repos_dir}/airbyte-python-cdk`).
+2. If it's more than ~14 days old, refresh before reading: `git -C {airbyte_repos_dir}/airbyte fetch --depth=1 origin master && git -C {airbyte_repos_dir}/airbyte pull --ff-only` (and `airbyte-python-cdk` on `main`). If the pull fails (local changes / network), fall back to reading as-is and **report the checkout date in Source Coverage** so the SE knows how fresh the build-path reasoning is.
 3. Never let a stale local checkout override the live registry. If the registry says a connector exists but the local checkout doesn't have it (or vice-versa), trust the registry and note the discrepancy — the local copy is just behind.
 
 ## Step 3 — Surface what the SE still needs to ask
@@ -108,7 +110,7 @@ Document structure follows `_se-playbook.md` → Output Document Format (At-a-Gl
 ### Fail loud on unavailable tools (per `_se-playbook.md` → Fail loud on missing sources/tools)
 
 This skill's rigor depends on external sources. In Source Coverage, list each as used/unavailable:
-- live connector registry (`get_connector_info`) · local connector source checkout · prod failed-sync data · docs MCPs (deepwiki/Kapa) · observability (Sentry/Datadog).
+- live connector registry (`get_connector_registry_entry` / `get_connector_registry_spec`) · local connector source checkout · prod failed-sync data · docs MCPs (deepwiki/Kapa) · observability (Sentry/Datadog).
 
 If the registry OR local source OR prod-failure data was unavailable, this is NOT a full feasibility verdict. Cap the Feasibility confidence at 🟡 and lead with the caveat:
 > "Fit assessed from registry metadata only — connector source and prod failure data were unavailable, so pagination/auth/reliability risks are unverified. Treat as a first-pass screen, not a validated verdict."
@@ -222,18 +224,18 @@ For each missing connector, provide:
 
 Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save to:
 ```
-~/airbyte-work/01-customers/<Customer>/outputs/connector-feasibility/connector-feasibility-<YYYY-MM-DD>-<Descriptor>.md
+{customers_dir}/<Customer>/outputs/connector-feasibility/connector-feasibility-<YYYY-MM-DD>-<Descriptor>.md
 ```
 
 Append `-v2` etc. for same-day duplicates. User can suppress with `--no-save`.
 
 ### Source Coverage
 
-Include a Source Coverage section at the top reporting: MCP queries run (`list_connectors`, `get_connector_info`, etc.), transcripts referenced for source/dest list, and connectors verified for known issues. **Also report, when used:** which connectors' local source was read (and the `02-repos/airbyte` checkout date — so the SE can gauge build-path freshness), any docs queries run (Kapa / deepwiki), and any runtime-observability checks (Sentry / Datadog). If a tool was unavailable on this machine (e.g. Kapa MCP, Sentry, Datadog not configured), don't list it as consulted — note "not available" rather than implying coverage you didn't have.
+Include a Source Coverage section at the top reporting: MCP queries run (`list_connectors_in_registry`, `get_connector_registry_entry`/`_spec`, etc.), transcripts referenced for source/dest list, and connectors verified for known issues. **Also report, when used:** which connectors' local source was read (and the `{airbyte_repos_dir}/airbyte` checkout date — so the SE can gauge build-path freshness), any docs queries run (Kapa / deepwiki), and any runtime-observability checks (Sentry / Datadog). If a tool or checkout was unavailable on this machine (e.g. `airbyte_repos_dir` unset, Kapa MCP, Sentry, Datadog not configured), don't list it as consulted — note "not available" rather than implying coverage you didn't have.
 
 ### SE Identity
 
-Read `~/airbyte-work/.se-config.yaml` for the `[SE name]` field if applicable.
+Read `config_file` (per playbook → Workspace Paths) for the `[SE name]` field if applicable.
 
 ### Then offer to
 
@@ -293,6 +295,7 @@ If a connector is only available on Cloud (or only on Self-Managed), flag it. Th
 
 ## Changelog
 
+- **2026-07-10** — **Portability + MCP fix.** Repointed hardcoded `~/airbyte-work/` output/config paths to the resolver (`{customers_dir}`/`config_file`); local Airbyte repo checkouts now resolve via `{airbyte_repos_dir}` (optional — skill degrades to MCP/registry-only when unset, noted in Source Coverage). **Fixed dead MCP tool names:** `mcp__airbyte-mcp__list_connectors` → `mcp__airbyte-ops-mcp__list_connectors_in_registry`, and `mcp__airbyte-mcp__get_connector_info` → `mcp__airbyte-ops-mcp__get_connector_registry_entry` + `get_connector_registry_spec` (there is no `airbyte-mcp` server; the old names would have failed on every machine). These require the `airbyte-ops-mcp` server + GCS creds; skill notes and falls back if unavailable.
 - **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE" (reframe talk-track note).
 - **2026-07-09** — Fail-loud on unavailable tools: Source Coverage lists each dependency used/unavailable; metadata-only runs are capped at 🟡 with a lead caveat; effort ranges labeled as estimates.
 - **2026-06-26** — Richer troubleshooting/feasibility kit wired in. Step 2 now reads **local connector source** (`02-repos/airbyte/airbyte-integrations/connectors/<name>/` manifest/metadata/BEHAVIOR + Python/Java CDK) for implementation details the registry spec doesn't expose (pagination, cursors, sub-streams, quirks) — the MCPs serve metadata, not code. Added a **freshness guard**: check the checkout's age and `git pull --ff-only` if >~14 days stale before relying on it; live registry (`get_connector_info`) stays the source of truth for existence/version/streams, never overridden by a stale checkout. Added **deepwiki MCP** for upstream vendor-API/library docs (public, no auth) and referenced **Kapa Docs MCP** (internal/Devin) + **Sentry/Datadog** for runtime observability — all guarded as "skip silently / note 'not available' if not configured on this machine." Source Coverage now reports local-source-read + checkout date + which docs/observability tools were (un)available.

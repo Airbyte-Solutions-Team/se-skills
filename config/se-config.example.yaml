@@ -1,12 +1,38 @@
-# SE identity config — copy this to ~/airbyte-work/.se-config.yaml and fill in YOUR values.
+# SE config — copy this to your workspace root as `.se-config.yaml` and fill in YOUR values.
+# Default workspace root is ~/.se-skills (override below or via the $SE_WORKSPACE env var).
 # Each team member maintains their own. Do NOT commit your real config to the repo.
 #
 # Skills use this for:
+#  - Where your customer data / transcripts / notes live (workspace_root + layout)
 #  - [SE name] placeholder in generated outputs
 #  - Call attribution in post-call (matches transcript attendees to determine if you were on the call)
 #  - Email signatures in follow-up-email
 #  - Salesforce org alias for CRM enrichment
+#  - Project memory location
 
+# ── Workspace paths ──────────────────────────────────────────────────────────
+# Root for all customer data, transcripts, and notes.
+# Resolution order: $SE_WORKSPACE env var  >  this value  >  ~/.se-skills (default)
+workspace_root: "~/.se-skills"
+
+# Optional — override individual dirs if your existing tree differs from the default
+# (default: {workspace_root}/customers, {customers_dir}/_transcripts, {workspace_root}/notes).
+# Example for a legacy numbered layout under ~/airbyte-work:
+# layout:
+#   customers_dir:   "~/airbyte-work/01-customers"
+#   transcripts_dir: "~/airbyte-work/01-customers/_transcripts"
+#   notes_dir:       "~/airbyte-work/04-notes"
+
+# Claude Code project-memory directory. Per-user; NO portable default (it embeds your
+# OS username + workspace slug). Find yours: `ls ~/.claude/projects/` and pick the one
+# matching your workspace. Leave unset to disable memory features (skills skip gracefully).
+# memory_dir: "~/.claude/projects/<your-project-slug>/memory"
+
+# Optional — local Airbyte repo checkouts for deeper connector analysis (connector-feasibility).
+# Unset → the skill uses MCP/registry data only. See README → "Optional enhancements".
+# airbyte_repos_dir: "~/airbyte-work/02-repos"
+
+# ── SE identity ────────────────────────────────────────────────────────────────
 name: "Your Name"
 email: "you@airbyte.io"
 slack_handle: "@you"
@@ -26,7 +52,7 @@ ae_pairings:
 salesforce:
   # The alias you used in `sf org login web --alias <alias>`. Confirm via `sf org list`.
   org_alias: "airbyte-prod"
-  # Directory the MCP runs from — workspace root, consistent across the team
-  query_directory: "~/airbyte-work"
+  # Directory the MCP runs from — set to your workspace_root
+  query_directory: "~/.se-skills"
   # Set false to disable SFDC reads entirely (skills degrade gracefully)
   enabled: true

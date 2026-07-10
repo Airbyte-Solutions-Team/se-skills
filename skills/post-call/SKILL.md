@@ -11,8 +11,8 @@ You are helping a Solutions Engineer at Airbyte process a customer call after it
 
 The user will typically say something like "post-call for Acme" or "summarize the Acme call from yesterday". You should:
 
-1. **Read SE identity config** from `~/airbyte-work/.se-config.yaml` (per `_se-playbook.md` SE Identity section). Used for call attribution below.
-2. **Find the transcript** in `~/airbyte-work/01-customers/_transcripts/` matching the customer name. File naming convention: `<Customer-Name>-MM.DD.YY.<ext>`.
+1. **Read SE identity config** from `config_file` (per playbook → Workspace Paths; per `_se-playbook.md` SE Identity section). Used for call attribution below.
+2. **Find the transcript** in `{transcripts_dir}/` matching the customer name. File naming convention: `<Customer-Name>-MM.DD.YY.<ext>`.
    - Accepted extensions: `.txt`, `.rtf`, `.md`. For `.rtf`, strip RTF markup before reading.
 3. **Resolution logic when multiple transcripts match:**
    - If user specified a date, use that specific file
@@ -38,7 +38,7 @@ If the transcript is over ~2000 lines (rare but possible for long workshops), re
 
 Per `_se-playbook.md` "Call Attribution" section. Determine whether the SE was on this call:
 
-1. Get SE name + aliases from `~/airbyte-work/.se-config.yaml`
+1. Get SE name + aliases from `config_file`
 2. Scan the transcript for the SE's name (and aliases) appearing as a speaker or in introductions
 3. Set attribution: **SE-attended** (SE name found) vs. **AE-led** (AE name found, SE name absent) vs. **Unknown**
 
@@ -141,7 +141,7 @@ The single most important next action. Be specific — "send POC proposal by Fri
 
 Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save the output automatically to:
 ```
-~/airbyte-work/01-customers/<Customer>/outputs/post-call/post-call-<YYYY-MM-DD>-<Descriptor>.md
+{customers_dir}/<Customer>/outputs/post-call/post-call-<YYYY-MM-DD>-<Descriptor>.md
 ```
 
 Filename example: `post-call-2026-05-28-Tech-Discovery.md`. If a file already exists with the same name, append `-v2`, `-v3`, etc.
@@ -150,7 +150,7 @@ Filename rules (per `_se-playbook.md` "Filename format"): keep the numeric `YYYY
 
 Create the folder structure if it doesn't exist:
 ```bash
-mkdir -p ~/airbyte-work/01-customers/<Customer>/outputs/post-call
+mkdir -p "{customers_dir}/<Customer>/outputs/post-call"
 ```
 
 User can suppress with `--no-save`.
@@ -182,7 +182,7 @@ Wait for explicit yes/no on Notion / memory / deal-assessment / tech-qual before
 - Notion parent: under `AE Calls > Charlie` unless the user says Graham
 - No emoji in Notion page titles
 - Customer parent page in Notion has no content directly — always create a subpage
-- Local files in `01-customers/<Customer>/`, transcripts in `01-customers/_transcripts/`
+- Local files in `{customers_dir}/<Customer>/`, transcripts in `{transcripts_dir}/`
 
 ---
 
@@ -191,7 +191,7 @@ Wait for explicit yes/no on Notion / memory / deal-assessment / tech-qual before
 Read `~/.claude/skills/_se-playbook.md` for full framework details. Apply to post-call analysis:
 
 ### Memory Check
-Read `~/.claude/projects/-Users-gary-yang-airbyte-work/memory/MEMORY.md` and any customer-specific memory files before summarizing. Active blockers and prior context shape how to interpret what was said. Per `_se-playbook.md` ("Memory Check").
+Read `memory_dir` `MEMORY.md` and any customer-specific memory files before summarizing (skip gracefully if `memory_dir` is unset). Active blockers and prior context shape how to interpret what was said. Per `_se-playbook.md` ("Memory Check").
 
 **After the summary, propose memory updates only if warranted:**
 - ✅ Propose update if: new active blocker, stakeholder change, deal-status change (e.g., POC paused, deal at-risk), material commitment from either side
@@ -203,7 +203,7 @@ Don't ask the SE to update memory after every call — only when the call moved 
 Per `_se-playbook.md` ("Source Freshness Check"): if the user references a specific call that isn't in `_transcripts/`, fall back to Gong before asking the user to pull it manually.
 - Search Gong via `search_calls` with date + account filter
 - Pull the specific call only — do not bulk-pull
-- Save to `_transcripts/<Customer-Name>-MM.DD.YY.txt` BEFORE using it (per CLAUDE.md)
+- Save to `{transcripts_dir}/<Customer-Name>-MM.DD.YY.txt` BEFORE using it (per CLAUDE.md)
 - If the requested call isn't in Gong either, say so and ask the user for clarification
 
 ### Apply Cross-Transcript Analysis
@@ -263,6 +263,7 @@ If the customer revealed a belief about their own business that Airbyte data cou
 
 ## Changelog
 
+- **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
 - **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE" (intro + memory-ask + next-step notes).
 - **2026-07-09** — Resolved save-behavior contradiction (local auto-save ON; Notion/memory ask-first — was a head-on conflict with "do NOT auto-write local files"). Added a pre-save self-check (owners, cited signals, no ungrounded facts, S&D matches transcript) + `[stated]`/`[inferred]` labeling on takeaways so downstream skills don't treat an SE read as ground truth.
 - **2026-07-07** — Promoted sources/destinations from a single bullet in Technical Notes to a dedicated **Sources & Destinations** section (table: system · role · notes) — the single most reused fact downstream. Added to Jump-to index; routes to `connector-feasibility` + `tech-qual` in After Generating.

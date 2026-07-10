@@ -76,54 +76,86 @@ next-move        ← run anytime: "what should I do next on X?"
 
 ## Setup (for a new team member)
 
-### 1. Skills
-Copy the skill folders + `_se-playbook.md` + `README.md` into your `~/.claude/skills/`.
+### Required
 
-### 2. SE identity config
-Create `~/airbyte-work/.se-config.yaml` with your details:
+#### 1. Install the skills
+From the repo root:
+```bash
+./install.sh
+```
+This symlinks every skill (plus `_se-playbook.md` and the `_reference/` objection reference) into `~/.claude/skills/`. Because they're symlinks, a `git pull` instantly updates your installed skills — no reinstall. Restart Claude Code afterward.
+
+#### 2. SE config (identity + workspace paths)
+Copy the template to your workspace root and fill it in:
+```bash
+cp config/se-config.example.yaml ~/.se-skills/.se-config.yaml   # or wherever your workspace_root is
+```
+Key fields (see the template for the full annotated version):
 ```yaml
+# Where your customer data / transcripts / notes live.
+# Resolution order: $SE_WORKSPACE env var > workspace_root > ~/.se-skills (default)
+workspace_root: "~/.se-skills"
+# Optional layout override if your tree differs from the default (customers/ transcripts/ notes/):
+# layout: { customers_dir: "...", transcripts_dir: "...", notes_dir: "..." }
+# Per-user Claude Code memory dir (no portable default — leave unset to disable memory features):
+# memory_dir: "~/.claude/projects/<your-project-slug>/memory"
+
 name: "Your Name"
 email: "you@airbyte.io"
 slack_handle: "@you"
 role: "Solutions Engineer"
 aliases: ["Nickname"]
-ae_pairings:
-  - name: "Your AE"
-    role: "AE"
-salesforce:
-  org_alias: "airbyte-prod"
-  query_directory: "~/airbyte-work"
-  enabled: true
+ae_pairings: [{ name: "Your AE", role: "AE" }]
+salesforce: { org_alias: "airbyte-prod", query_directory: "~/.se-skills", enabled: true }
 ```
-Skills read this for the `[SE name]` placeholder, call attribution, email signatures, and SFDC org alias.
+Skills read this for the workspace paths, `[SE name]` placeholder, call attribution, email signatures, and SFDC org alias. **No skill hardcodes a workspace path** — everything resolves from `workspace_root` (see `_se-playbook.md` → "Workspace Paths"). If you already have a bespoke tree (e.g. `~/airbyte-work/01-customers`), just point `workspace_root` + a `layout:` block at it — no file migration needed.
 
-### 3. Gong MCP (transcripts)
-Already configured if you use the team Gong MCP. Skills pull AE call transcripts automatically.
+#### 3. MCP servers
+The suite assumes these MCPs are configured in `~/.claude.json`:
+- **Gong** (transcripts) — skills pull AE call transcripts automatically. Configured if you use the team Gong MCP.
+- **Notion** (optional) — `post-call` and `objection-handler` write to customer Notion pages.
+- **Salesforce** (optional, high-value) — CRM enrichment:
+  ```bash
+  npm install -g @salesforce/cli          # the sf CLI (NOT brew — deprecated/Gatekeeper)
+  sf org login web --alias airbyte-prod --set-default   # browser SSO auth
+  npm install -g @salesforce/mcp          # the MCP server (global, NOT npx — lock-timeout)
+  ```
+  ```json
+  "salesforce": {
+    "command": "sf-mcp-server",
+    "args": ["--orgs", "DEFAULT_TARGET_ORG", "--toolsets", "data,orgs,users", "--allow-non-ga-tools"]
+  }
+  ```
+  Skip any of these and skills degrade gracefully — no SFDC/Notion enrichment, everything else works.
 
-### 4. Salesforce MCP (CRM enrichment) — optional but high-value
+### Optional enhancements
+
+#### Local Airbyte repos (deeper connector analysis)
+`connector-feasibility` can read live connector **source code** (manifests, CDK internals, `BEHAVIOR.md`) for deeper build-path reasoning than the registry metadata alone provides. This is optional — without it the skill uses MCP/registry data and notes the reduced depth.
+
+To enable:
 ```bash
-npm install -g @salesforce/cli          # the sf CLI (NOT brew — deprecated/Gatekeeper)
-sf org login web --alias airbyte-prod --set-default   # browser SSO auth
-npm install -g @salesforce/mcp          # the MCP server (global, NOT npx — lock-timeout)
+git clone --depth=1 https://github.com/airbytehq/airbyte.git            ~/airbyte-work/02-repos/airbyte
+git clone --depth=1 https://github.com/airbytehq/airbyte-python-cdk.git ~/airbyte-work/02-repos/airbyte-python-cdk
 ```
-Then add to `~/.claude.json` under `mcpServers`:
-```json
-"salesforce": {
-  "command": "sf-mcp-server",
-  "args": ["--orgs", "DEFAULT_TARGET_ORG", "--toolsets", "data,orgs,users", "--allow-non-ga-tools"]
-}
+Then point config at wherever you cloned them:
+```yaml
+airbyte_repos_dir: "~/airbyte-work/02-repos"
 ```
-Restart Claude Code. If you skip this, skills degrade gracefully (no SFDC enrichment, everything else works).
+`connector-feasibility` also draws on a few externally-distributed skills when present — `discovering-connectors` and the `shared-airbyte-skills:*` family (`connector-type-identification`, `connector-health-check`, `query-airbyte-docs`). These ship separately (Airbyte's connector-skills marketplace), not with this repo; the skill degrades if they're absent.
+
+The `airbyte-ops-mcp` server (registry/prod queries, requires GCS creds) powers the connector existence/spec lookups. Without it, `connector-feasibility` falls back to local source + published docs and says so in Source Coverage.
 
 ---
 
 ## Where outputs go
 
+Paths resolve from `workspace_root` (default `~/.se-skills`; see `_se-playbook.md` → "Workspace Paths"):
 ```
-~/airbyte-work/01-customers/<Customer>/
+{customers_dir}/<Customer>/
 ├── outputs/<skill-name>/      ← auto-saved skill outputs (call-prep/, biz-qual/, etc.)
 ├── raw/                       ← manual notes, technical docs, AE summaries
-└── (transcripts in ~/airbyte-work/01-customers/_transcripts/)
+└── (transcripts in {transcripts_dir})
 ```
 
 Filename format: `<skill>-YYYY-MM-DD-<descriptor>[-vN].md`. Outputs auto-save by default; pass `--no-save` to suppress. (Exception: `next-move` is ephemeral — saves only on request.)
@@ -137,7 +169,7 @@ Filename format: `<skill>-YYYY-MM-DD-<descriptor>[-vN].md`. Outputs auto-save by
 - **Source coverage transparency.** Every synthesizing skill reports what it actually read (line counts, files) — anti-hallucination.
 - **CRM is a hypothesis, not truth.** Salesforce data is the AE's narrative; transcripts are ground truth. Skills flag SFDC-vs-reality mismatches assertively (this is the highest-value CRM signal).
 - **Brief mode.** Any skill: add `--brief` for a tight version.
-- **Multi-user.** Identity comes from `.se-config.yaml`, so the suite works for any SE who sets up their own config.
+- **Multi-user & portable.** Identity *and* all workspace paths come from `.se-config.yaml` (resolved via `workspace_root`, overridable by `$SE_WORKSPACE`), so the suite works for any SE on any machine layout — nothing is hardcoded to one person's folders.
 - **Graceful degradation.** No Salesforce? No Gong? Skills still run on what's available.
 
 ---
@@ -151,5 +183,5 @@ The suite is grounded in MEDDPICC but the frameworks live in `_se-playbook.md` �
 ## Maintenance
 
 - Each skill has a `## Changelog` at the bottom — append dated entries when you modify it
-- Airbyte-specific positioning (objections, product capabilities) lives in `~/airbyte-work/04-notes/airbyte-objection-reference.md` — update there, not in the skills, when the product changes
+- Airbyte-specific positioning (objections, product capabilities) lives in the repo at `skills/_reference/airbyte-objection-reference.md` (installed to `~/.claude/skills/_reference/`) — update there, not in the individual skills, when the product changes. It carries a `Last updated` date + owner/refresh cadence; keep it current.
 - The SFDC field map lives in `_se-playbook.md` "Salesforce Enrichment" — update if SFDC fields change

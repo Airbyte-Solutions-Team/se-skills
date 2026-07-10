@@ -22,8 +22,8 @@ If purpose isn't clear, ask.
 
 ## How to Draft
 
-1. **Prefer call summaries over raw transcripts.** Check `01-customers/<Customer>/outputs/post-call/post-call-*.md` first — these are pre-digested. Fall back to raw transcripts in `01-customers/_transcripts/<Customer>-*.txt` only if no summary exists or if a specific quote/detail is needed.
-2. **Read all relevant source material.** Notes in `01-customers/<Customer>/`, recent transcripts, prior emails in `01-customers/<Customer>/emails/`, and (if relevant) memory records.
+1. **Prefer call summaries over raw transcripts.** Check `{customers_dir}/<Customer>/outputs/post-call/post-call-*.md` (per playbook → Workspace Paths) first — these are pre-digested. Fall back to raw transcripts in `{transcripts_dir}/<Customer>-*.txt` only if no summary exists or if a specific quote/detail is needed.
+2. **Read all relevant source material.** Notes in `{customers_dir}/<Customer>/`, recent transcripts, prior emails in `{customers_dir}/<Customer>/emails/`, and (if relevant) memory records.
 3. **Identify the recipient(s).** Pull email addresses from:
    - Prior email threads in the customer folder
    - Transcript attendee names (cross-reference Notion or memory for emails)
@@ -139,7 +139,7 @@ When's a good time to reconnect?
 
 Output the email in chat. Ask if the SE wants to:
 1. **Refine** (tone tweaks, add/remove sections)
-2. **Save as draft** — single canonical path: `~/airbyte-work/01-customers/<Customer>/outputs/emails/email-<YYYY-MM-DD>-<purpose>.md` (matches After Drafting → Auto-save below)
+2. **Save as draft** — single canonical path: `{customers_dir}/<Customer>/outputs/emails/email-<YYYY-MM-DD>-<purpose>.md` (matches After Drafting → Auto-save below)
 3. **Send via Gmail MCP** (only if the SE explicitly says send — never auto-send)
 
 Default: chat output only. Never send without explicit instruction.
@@ -156,7 +156,7 @@ Read `~/.claude/skills/_se-playbook.md` for full framework details.
 ### Source Freshness Check (Gong Fallback)
 Per `_se-playbook.md` ("Source Freshness Check"): if the most-recent local transcript is more than **14 days old**, search Gong for newer calls before drafting. A recap or nudge based on stale context will sound disconnected from the customer's current state. For Nudge emails especially, recent silence is the substance of the email — knowing whether Gong has anything new is essential.
 - Pull the **most recent call only** — do not bulk-pull
-- Save to `_transcripts/<Customer-Name>-MM.DD.YY.txt` BEFORE using it (workspace transcript convention)
+- Save to `{transcripts_dir}/<Customer-Name>-MM.DD.YY.txt` BEFORE using it (workspace transcript convention)
 
 ### Every email must end with a concrete next step
 "Weak next-step setting" is a top SE anti-pattern. Bad: "I'll follow up next week." Good: "Tuesday 2pm, 30 min, you + your security lead + me, agenda: encryption-at-rest and network egress." Reject any draft that doesn't have date + attendees + agenda in the next step.
@@ -206,7 +206,7 @@ Exempt from the Output Document Format contract (see `_se-playbook.md`) — this
 
 Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save drafted emails to:
 ```
-~/airbyte-work/01-customers/<Customer>/outputs/emails/email-<YYYY-MM-DD>-<purpose>.md
+{customers_dir}/<Customer>/outputs/emails/email-<YYYY-MM-DD>-<purpose>.md
 ```
 
 Filename examples: `email-2026-05-28-Recap.md`, `email-2026-05-28-Nudge.md`, `email-2026-05-28-Issue-403-Secret.md` (purpose descriptor in Title Case per `_se-playbook.md`). User can suppress with `--no-save`. Any date written in the email body (e.g. an action-item due date in prose) should be long form, e.g. June 11, 2026 — not 2026-06-11.
@@ -217,7 +217,7 @@ Include a Source Coverage section at the top: which call summary, transcript, or
 
 ### SE Identity
 
-Sign-off uses the `name` from `~/airbyte-work/.se-config.yaml`. Don't hardcode "Gary".
+Sign-off uses the `name` from `config_file` (per playbook → Workspace Paths). Don't hardcode "Gary".
 
 ### Sending
 
@@ -280,6 +280,7 @@ We hope this email finds you well. We wanted to reach out regarding an issue we'
 
 ## Changelog
 
+- **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
 - **2026-07-09** — Fixed the "prefer call summaries" read path: checks `outputs/post-call/post-call-*.md` (was `call-summary-*.md`, which post-call never produces — so the skill always fell back to raw transcripts, defeating the optimization).
 - **2026-07-09** — Single canonical save path (`outputs/emails/email-<YYYY-MM-DD>-<purpose>.md` — reconciled the After-Drafting manual path with the Auto-save default); sign-off sourced from `.se-config.yaml` (removed hardcoded "Gary" in the three template sign-offs + the "ask Gary"/"Gary's voice" refs + the description); added a pre-send self-check (concrete next step, grounded claims, no invented commitments — internal-only, keeps the email human).
 - **2026-07-09** — Inlined the canonical "Email Voice & Structure" spec (was referenced from the external `~/airbyte-work/CLAUDE.md`, which isn't in the repo). Skill is now self-contained; all internal pointers repointed. Corrected the issue-report structure from four-part to five-part (added "Be upfront").
