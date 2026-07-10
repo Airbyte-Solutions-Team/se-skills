@@ -56,6 +56,32 @@ These five questions are the canonical deployment gate — defined **here** so t
 
 This product reality changes over time. Flex availability/terms in particular are caveat-gated and can shift — always confirm current Flex availability for the customer's region before committing to it in a verdict. If Self-Managed Enterprise is ever revived, re-run this qualification — verdicts that currently land 🔴 for BYOK/air-gap/control-plane-in-VPC would change. See the product-reality stamp in the Verdict section.
 
+## Product & entitlement grounding (DS2 — ground the verdict, don't reason from memory)
+
+Per `_se-playbook.md` → "Product & Connector Reference Data," ground each qualifying answer in the **actual entitlement definitions + the Flex data-plane chart** from the `airbyte-platform` repo (`reference_data.repos.airbyte_platform`), rather than reasoning about capabilities from memory. Read:
+
+- **Entitlements** — `airbyte-commons-entitlements/src/main/kotlin/io/airbyte/commons/entitlements/models/EntitlementDefinitions.kt`. Each capability an SE qualifies on is a named `feature-*` entitlement; its presence/gating tells you the edition. **Verify the id in the file** (don't assert from this list — the file is the source of truth; report the checkout date in Source Coverage).
+- **Flex topology** — `charts/v2/airbyte-data-plane/values.yaml`. This chart *is* the concrete Flex artifact: `airbyteUrl` + `dataPlane.controlPlaneAuthEndpoint` + `clientId`/`clientSecret` (the customer-hosted data plane registers to the Airbyte-hosted control plane), a `region` field, and a PrivateLink data-plane mode. When you assert "Flex resolves this," this is what you're pointing at.
+
+### Entitlement → question mapping (as of the checkout — verify current)
+
+| Customer requirement (question) | Named entitlement (`EntitlementDefinitions.kt`) | Deployment implication |
+|---|---|---|
+| SSO / identity federation | `feature-sso` | Governance tier — Pro/Flex; not on lower plans |
+| RBAC roles / groups | `feature-rbac-roles`, `feature-groups` | Governance tier |
+| Data residency / customer-VPC data plane (Q2, Q5) | `feature-self-managed-regions` + the `airbyte-data-plane` chart | **→ 🟦 Flex** (customer-hosted data plane in their VPC) |
+| Network isolation / PrivateLink (Q2, Q5) | `feature-privatelink` (+ `feature-privatelink-limit`) | **→ 🟦 Flex** (PrivateLink data-plane mode) |
+| Sub-hourly / 15-min sync latency | `feature-15-minute-sync-frequency`, `feature-faster-sync-frequency` | Pro/edition latency tier |
+| Row filtering / hashing / encryption in-pipeline | `feature-mappers`, `feature-rejected-records-storage` | Pro/Flex capability (NOT customer-managed KMS — see below) |
+| Capacity / data-worker commitments | `feature-committed-data-workers`, `feature-on-demand-capacity-enabled` | Pricing/capacity signal — feeds biz-qual/ROI, not the deployment gate |
+| Enterprise connector (Oracle/NetSuite/SAP HANA/ServiceNow/SharePoint/Workday/DB2/dest-Salesforce) | the `ConnectorEntitlement` objects (e.g. `SourceWorkdayEnterpriseConnector`) | Entitlement-gated on **Flex**; ties to connector-feasibility's 🟧 Enterprise availability |
+| Customer-managed KMS / BYOK (Q4) | **no entitlement exists** on any currently-offered shape | **→ 🔴 park** — was Self-Managed Enterprise (retired); Flex uses Airbyte-managed secrets |
+| Full control-plane-in-VPC / true air-gap (Q2, Q3, Q5) | **no entitlement / no chart** for a customer-run control plane | **→ 🔴 park** — the data-plane chart is data-plane-only; historically SME (retired) |
+
+**Key boundary the entitlements make concrete:** there are named entitlements for data-*plane* isolation (`feature-self-managed-regions`, `feature-privatelink`) → Flex resolves it. There is **no** entitlement — and no chart — for a customer-run *control plane* or customer-managed KMS. That absence is the hard Flex boundary: Q4 (BYOK) and the control-plane/air-gap halves of Q2/Q3/Q5 route to 🔴 park precisely because no currently-offered shape has the entitlement.
+
+**Guardrail:** feature-ids and chart internals are *internal reasoning* — keep them out of customer-facing prose (say "available on Enterprise Flex," not "gated behind `feature-privatelink`"). Per `_se-playbook.md` graceful-degradation: if the `airbyte-platform` checkout is unavailable, say so in Source Coverage and reason from the inlined product reality above with capped confidence — don't assert an entitlement you couldn't verify.
+
 ## Output Format
 
 Document structure follows `_se-playbook.md` → Output Document Format (At-a-Glance + Jump-to index, H2-per-section, callouts, `==key==` emphasis).
@@ -124,6 +150,7 @@ State the product-capability basis and its date with the verdict: "Verdict assum
 For each answer that rules out Cloud Pro, state explicitly:
 - **What it breaks:** Cloud Pro cannot support this requirement because [reason].
 - **Which shape fixes it:** **Flex** (data-plane isolation in customer VPC — data residency, VPC isolation, "our data can't share compute") — or **no currently-offered fit** (BYOK/KMS, full control-plane-in-VPC control, true air-gap fall outside the Flex boundary; historically SME, now retired). Name which, and why.
+- **Grounded in:** the named entitlement (per the DS2 mapping above) — e.g. "data residency → `feature-self-managed-regions` + the `airbyte-data-plane` chart → Flex," or "BYOK → no entitlement on any currently-offered shape → 🔴 park." Cite the entitlement in this internal reasoning; keep it out of any customer-facing wording.
 - **Path forward:** Position Flex (confirm availability/terms) / 🔴 Park or disqualify — no currently-offered shape meets this (note what would need to be true, e.g. an SME revival).
 
 For each 🟡 answer (ambiguous or partially answered):
@@ -208,7 +235,7 @@ Append `-v2` etc. for same-day duplicates. User can suppress with `--no-save`.
 
 ### Source Coverage
 
-Include a Source Coverage section at the top reporting: which transcripts answered which of the 5 questions, who said what (cite speaker), and which questions remain unasked.
+Include a Source Coverage section at the top reporting: which transcripts answered which of the 5 questions, who said what (cite speaker), and which questions remain unasked. **Also report the DS2 product-truth sources used/unavailable** (per `_se-playbook.md` → fail-loud): the `airbyte-platform` checkout (date) for `EntitlementDefinitions.kt` + the `airbyte-data-plane` chart, or "airbyte-platform not available — entitlement claims reasoned from inlined product reality, confidence capped." Never assert an entitlement you couldn't verify against the file.
 
 ### SE Identity
 
@@ -225,6 +252,7 @@ Read `config_file` (per playbook → Workspace Paths) for the `[SE name]` field.
 
 ## Changelog
 
+- **2026-07-10** — **Entitlement grounding (P-EXT DS2).** Wired the DS2 entitlement→edition lookup from `_se-playbook.md` → "Product & Connector Reference Data" into the skill: added a **"Product & entitlement grounding"** section that reads the real `EntitlementDefinitions.kt` (named `feature-*` ids: `feature-self-managed-regions`, `feature-privatelink`, `feature-sso`, `feature-rbac-roles`, `feature-mappers`, `feature-15-minute-sync-frequency`, the `ConnectorEntitlement` objects, etc.) + the `charts/v2/airbyte-data-plane` chart (the concrete Flex topology: control-plane-auth-endpoint + client creds + PrivateLink mode) from the `airbyte-platform` repo, with an entitlement→question mapping table. Each of the 5 questions' implication now cites the named entitlement instead of reasoning from memory; the hard Flex boundary is made concrete by the *absence* of any entitlement/chart for a customer-run control plane or customer-managed KMS (→ 🔴 park). DS2 sources added to Source Coverage (used/unavailable + checkout date); feature-ids kept internal per guardrail (customer-facing = "Enterprise Flex," not the feature-id). Degrades to the inlined product reality with capped confidence if `airbyte-platform` is absent.
 - **2026-07-10** — **Self-Managed Enterprise retired.** SME is no longer sellable, so the verdict is now **3-way**, not 4-way: 🟢 Cloud / 🟦 Flex / 🔴 genuine blocker (park / no fit today). Dropped the 🟠 SME lane as a routable verdict. Requirements only SME ever met — BYOK/customer-managed KMS, full control-plane-in-VPC control, true air-gap — now route to **🔴 park / no fit today** ("No currently-offered shape meets this — park or disqualify") instead of "requalify to SME." The 5 questions keep the Flex split but their former-SME branch now reads "beyond the Flex boundary → 🔴 park" while still explaining *why* it's a no-fit and what would change if SME returns. BYOK reframed from "SME-only" to "not available on any currently-offered shape (was SME — retired, may return)." Product-reality stamp now records SME as retired-as-of-now so a future revival re-runs the verdict. SME is framed throughout as **retired / not currently offered (may return)** — kept as a real capability fact, but removed as a sales motion.
 - **2026-07-10** — **Flex is back.** Verdict moved from 2-way (Cloud in/out) to **4-way** routing: 🟢 Cloud / 🟦 Flex (customer-hosted data plane in their VPC, cloud control plane — sellable to new customers *with caveats*: region/deal-desk/limited-availability, confirm current terms) / 🟠 SME (BYOK/KMS, full control-plane control, true air-gap) / 🔴 genuine blocker. Reframed the 5 questions to split *data-plane isolation* (→ Flex) from *full-platform control / BYOK* (→ SME). Product-reality stamp now guards a stale **Flex-availability** assumption (mark "availability unconfirmed" rather than promise Flex). Added the control-plane-in-US / cursor-&-PK compliance probe. Qualify-out reframed to qualify-*and-route*.
 - **2026-07-09** — Added product-reality as-of stamp; capability-dependent verdicts render 🟡 Provisional when current product state is unverifiable. Inlined the 5 qualifying questions + the product reality they assume (Cloud Pro only; Flex not GA; SME separate motion) so the skill is self-contained — this SKILL.md is now the source of record, mirroring but no longer dependent on the workspace CLAUDE.md.
