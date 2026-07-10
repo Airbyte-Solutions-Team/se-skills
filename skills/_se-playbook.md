@@ -1,6 +1,6 @@
 # SE Playbook — Frameworks & Tactics
 
-This is the canonical reference for SE craft. All SE skills in `~/.claude/skills/` (prep-call, post-call, biz-qual, tech-qual, full-qual, poc-plan, deal-assessment, connector-feasibility, deployment-model-qual, follow-up-email, objection-handler, internal-prep, next-move, account-refresher, coverage-handoff) reference this document. When a skill fires, it should read the relevant section here and apply the tactics.
+This is the canonical reference for SE craft. All SE skills in `~/.claude/skills/` (prep-call, post-call, biz-qual, tech-qual, full-qual, poc-plan, deal-assessment, connector-feasibility, deployment-model-qual, follow-up-email, objection-handler, internal-prep, next-move, account-refresher, coverage-handoff, roi-business-case, mutual-close-plan) reference this document. When a skill fires, it should read the relevant section here and apply the tactics.
 
 **Not a skill itself** — the leading underscore prevents auto-trigger. Read it on demand from other skills.
 
@@ -134,6 +134,57 @@ If every question you ask is discovery, you're not a salesperson — you're a re
 - **Never getting to "no."** A pipeline of "maybes" is a pipeline of stalled deals. Use Sandler negative reverse and Voss calibrated questions.
 - **Weak next-steps.** "I'll follow up next week" is not a next step. "Tuesday 2pm, 30 min, you + your security lead + our solutions architect, agenda: encryption-at-rest and network egress" is a next step. End every call this way.
 - **Not tailoring to persona.** Same deck for CDO and CFO. #1 expansion killer in enterprise deals.
+
+---
+
+## Operating Disciplines (cross-cutting — several skills reference these)
+
+These four disciplines aren't a framework of their own — they're the operating rules that separate a senior SE from a demo jockey. They cut across MEDDPICC and Sandler, so they live here once and skills (`biz-qual`, `deal-assessment`, `poc-plan`, `full-qual`, `deployment-model-qual`, `internal-prep`, `coverage-handoff`, `next-move`) reference them rather than each reinventing them.
+
+### D1. The disqualification bar — qualifying OUT is a win
+
+MEDDPICC and Sandler both treat a fast, clean "no" as a *success*, not a failure. Most SE tooling qualifies *in* rigorously and never defines the walk-away line. Every qualification output should carry an explicit **"Reasons to walk / deprioritize"** read. Deprioritize (or walk) when any of these hold and there's no credible path to change them:
+
+- **No economic buyer identified** after 2-3 substantive calls (you're selling to someone who can't sign).
+- **No quantified pain** — the customer can't put a number on the cost of the status quo, so there's no budget logic.
+- **No compelling event** (see D2) — nothing forces a decision, so the deal will drift indefinitely.
+- **Entrenched competitor / incumbent with no reframe path** — they've already decided and you're column fodder.
+- **A hard product/deployment blocker** with no in-product answer (see deployment-model-qual — but note Flex now clears many former blockers).
+
+The output isn't "this deal is dead" — it's "here's what would have to become true to keep investing, and by when." A senior SE protects their time by naming this early and explicitly, not by letting a weak deal coast on optimism. **Make it an explicit section, not a vibe.**
+
+### D2. Compelling event + mutual timeline — "why now, and what breaks if it slips"
+
+A deal without a compelling event slips a quarter, every quarter. MEDDPICC's Decision Process captures *how* they decide but not *when* or *why now*. Force both:
+
+- **The compelling event:** a dated, external forcing function — contract renewal, migration deadline, audit, funding milestone, a system being sunset, a board commitment. "They're keen" is not a compelling event. "Their Fivetran contract renews March 31 and they won't re-sign" is.
+- **The mutual timeline (backward-planned):** from the compelling-event date, work backwards through the buy sequence — signature → procurement/legal → security review → POC success → POC start — and put a date on each. If the backward math doesn't fit before the event, the timeline is fiction and you surface that now.
+
+If there is no compelling event, say so plainly and treat it as a D1 deprioritization signal — don't manufacture urgency the customer doesn't feel.
+
+### D3. Coach vs. champion — and pressure-test power
+
+A **coach** gives you information. A **champion** spends political capital on your behalf. They are not the same person and confusing them is a top loss reason. The 3-test champion check (does the contact have power / do they sell when you're not in the room / do they give you access to other stakeholders) tells you which you have. A helpful contact who fails the access/power tests is a coach — valuable, but not someone who will carry the deal.
+
+- **Name it explicitly** in qualification output: "Contact X is a coach, not a champion — friendly and informative but hasn't introduced us to the EB and doesn't carry risk internally."
+- **Then pressure-test power the way MEDDPICC §1 says** — confirm the EB by behavior ("walk me through the last >$200K tool purchase — who signed?"), not title.
+
+### D4. Multi-threading — never single-thread a deal
+
+A deal that lives on one friendly contact is one reorg, one PTO, one job change from dead. Require a **multi-threading read** in qualification: who else must be sold (EB, technical evaluator, security/compliance, procurement), who we've actually reached, and where we're single-threaded. If the answer is "we only know one person," that's a risk to flag, not a detail to omit.
+
+### The stakeholder map (the reusable artifact D3+D4 produce)
+
+Rather than each skill reinventing "who's who," produce a single **stakeholder map** that `biz-qual`, `deal-assessment`, `internal-prep`, and `coverage-handoff` all reference:
+
+| Name | Role / title | Authority | Disposition | Last touched |
+|------|--------------|-----------|-------------|--------------|
+| [name] | [title] | EB / decision-maker / evaluator / influencer / gatekeeper | champion / coach / neutral / skeptic / blocker | [date + how] |
+
+- **Authority** = their formal power in the buy (distinct from disposition).
+- **Disposition** = are they for us, neutral, or against — and coach vs. champion where it applies.
+- **Last touched** = date + channel; a stakeholder not touched in weeks is a multi-threading gap.
+- Mark **unknowns explicitly** (`⬜ not yet mapped`) — a blank isn't "no stakeholder," it's "we haven't done the work." Single-threading shows up as a map with one row.
 
 ---
 
@@ -794,6 +845,7 @@ If/when built, this should be a separate skill (not a mode flag on biz-qual/deal
 
 ## Changelog
 
+- **2026-07-10** — Added the "Operating Disciplines" section (D1 disqualification bar / qualify-out; D2 compelling event + backward-planned mutual timeline; D3 coach-vs-champion + power pressure-test; D4 multi-threading), plus the reusable **stakeholder map** artifact. Cross-cutting rules that `biz-qual`, `deal-assessment`, `poc-plan`, `full-qual`, `internal-prep`, `coverage-handoff` reference rather than reinvent.
 - **2026-07-10** — **Portability: workspace base-path resolver.** Added the "Workspace Paths (Multi-User Support)" section — no skill hardcodes `~/airbyte-work/` anymore. `workspace_root` resolves `$SE_WORKSPACE` → `.se-config.yaml: workspace_root` → `~/.se-skills` default; derived `customers_dir` / `transcripts_dir` / `notes_dir` / `config_file` / `memory_dir` / `airbyte_repos_dir`. Default layout drops numeric folder prefixes; a `layout:` config block lets an existing `~/airbyte-work/01-customers` setup keep working with no migration. **Fixed the memory path** (previously hardcoded to username `gary-yang`) → now `memory_dir` from config, skipped gracefully if unset. `airbyte_repos_dir` optional (connector-feasibility degrades to MCP/registry-only when absent).
 - **2026-07-09** — Genericized hardcoded SE name: "Gary"/"Gary's" prose → "the SE"/"the SE's"; "Gary's CLAUDE.md" doctrine refs → "the workspace CLAUDE.md" / the now-inlined skill+playbook guidance. Repo no longer bakes in one operator's name (multi-user via `.se-config.yaml`). (OS-username memory paths left as-is — not config-derivable.)
 - **2026-07-09** — Source Coverage now requires an explicit used/unavailable line per source/tool; load-bearing gaps cap confidence and are stated in the lead (fail-loud, not fail-silent).

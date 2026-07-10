@@ -126,7 +126,10 @@ What's pushing them to evaluate Airbyte *right now*? (Not what their general pro
 What do they actually require from the product? Be specific — connectors, deployment model, volume, latency, compliance. Distinguish must-have from nice-to-have.
 
 ## Urgency
-What's the forcing function and timeline? Contract renewal? Project deadline? Compliance deadline? Internal initiative? If urgency is vague ("sometime this year"), call it out.
+What's the **compelling event** (D2 — a dated, external forcing function: contract renewal, migration deadline, compliance/audit date, funding milestone, system sunset)? "They're keen" or "sometime this year" is not a compelling event — if that's all there is, say so plainly: absence of a compelling event is why deals slip a quarter every quarter, and it caps the probability band. If a real forcing function exists, does the backward-planned timeline (signature → procurement → security → POC) actually fit before it? See `_se-playbook.md` → Operating Disciplines D2.
+
+## Stakeholder read (multi-threading)
+Pull the stakeholder map from the customer's biz-qual (per `_se-playbook.md` → Operating Disciplines) if it exists; otherwise reconstruct a quick who's-who. Flag two things: (1) are we **single-threaded** (deal lives on one contact — a top failure mode)? (2) is there a **coach masquerading as a champion** (friendly and informative but no power/access)? Both belong in the health read.
 
 ## What Would Close It
 Specific levers that could move this to signature. Be concrete — "POC success on Workday source", "exec demo with their CDO", "pricing concession on Pro tier", "introducing them to reference customer in financial services".
@@ -300,6 +303,7 @@ If a prior `outputs/deal-assessment/deal-assessment-*.md` already exists for thi
 
 ## Changelog
 
+- **2026-07-10** — Sharpened Urgency into an explicit compelling-event + backward-timeline read (D2), and added a Stakeholder read (multi-threading / coach-vs-champion, D3/D4) that pulls the biz-qual stakeholder map. Per playbook → Operating Disciplines.
 - **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
 - **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE" (Coaching Observations section + description) so the skill isn't tied to one operator.
 - **2026-07-09** — Added the **"What Changed Since Last Assessment"** section to the Output Format template + Jump-to index (was referenced in prose but had no slot — the "MUST include" instruction produced inconsistent output). Reconciled the two names ("Movement" / "What Changed") to one. Fixed the prior-doc read path + glob: reads from `outputs/deal-assessment/deal-assessment-*.md` (was capitalized `Deal-Assessment-*.md` at the customer root — missed the file it saves), and the other prior docs from `outputs/<skill>/`; `call-summary-*.md` → `post-call-*.md`. Together this makes the health-monitoring comparison actually work (D1 + D2).

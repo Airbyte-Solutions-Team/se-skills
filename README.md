@@ -19,6 +19,8 @@ Built by Gary Yang (Solutions Engineer, Airbyte). Designed to be team-shareable.
 | `connector-feasibility` | Checks customer source/dest list vs. Airbyte registry | "connector feasibility", "do we have X" |
 | `poc-plan` | Structured POC plan with mutual commitments + success criteria | "poc plan", "proof of concept" |
 | `deal-assessment` | Honest deal-health read with probability bands | "deal assessment", "is this deal real" |
+| `roi-business-case` | Quantified TCO/ROI + one-slide business case for the economic buyer | "roi", "business case", "tco" |
+| `mutual-close-plan` | Backward-planned path to signature, owners + dates both sides | "close plan", "mutual action plan", "path to close" |
 | `follow-up-email` | Drafts customer emails in your voice | "follow-up email", "draft email" |
 | `objection-handler` | Voss-style talk track for a customer objection | "objection", "how do I respond to X" |
 | `internal-prep` | Internal meeting prep (ae-sync / forecast / exec-readout / deal-review) | "internal prep", "forecast prep" |
@@ -60,6 +62,10 @@ biz-qual + tech-qual      ← qualify business + technical fit
 connector-feasibility     ← coverage check
         ↓
 poc-plan                  ← scope the POC
+        ↓
+roi-business-case         ← compile Metrics → the number the EB signs off on
+        ↓
+mutual-close-plan         ← path from POC-success to signature (owners + dates)
         ↓
 [ ongoing ]
 deal-assessment           ← honest health read (every ~2 weeks)

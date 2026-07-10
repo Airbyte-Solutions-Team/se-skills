@@ -102,17 +102,17 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 | **Both** | If criteria are not met, mutually agree the deal doesn't move forward (or explicitly extend scope with a renegotiated commitment) | — | [POC end] |
 
 ## Success Criteria
-These are the specific, measurable outcomes that define a successful POC. Both parties should agree on these before the POC begins.
+These are the specific, measurable outcomes that define a successful POC. **Both parties must agree on these in writing before the POC begins** (Sandler upfront contract — "if we hit these, you move to procurement"). Each criterion must be numeric/verifiable and **tie back to a MEDDPICC Decision Criterion** — the POC should prove the thing that actually drives the buy, not a generic feature checklist. See `_se-playbook.md` → Operating Disciplines for why an open-ended POC without pre-agreed exit criteria becomes a science project.
 
-| # | Criterion | How it will be measured | Must-have or Nice-to-have |
-|---|-----------|------------------------|--------------------------|
-| 1 | [e.g., Data from Salesforce successfully synced to Snowflake] | Manual data validation / row count check | Must-have |
-| 2 | [e.g., Full refresh completes within X hours] | Sync duration logged | Must-have |
-| 3 | [e.g., Incremental sync detects and captures all CDC events] | Delta validation | Must-have |
-| 4 | [e.g., SSO login works with their IdP] | Login test | Must-have |
-| 5 | [e.g., SE can configure connector without engineering support] | Usability assessment | Nice-to-have |
+| # | Criterion | How it will be measured | Ties to Decision Criterion | Must-have or Nice-to-have |
+|---|-----------|------------------------|----------------------------|--------------------------|
+| 1 | [e.g., Data from Salesforce successfully synced to Snowflake] | Manual data validation / row count check | [which MEDDPICC DC this proves] | Must-have |
+| 2 | [e.g., Full refresh completes within X hours] | Sync duration logged | [DC] | Must-have |
+| 3 | [e.g., Incremental sync detects and captures all CDC events] | Delta validation | [DC] | Must-have |
+| 4 | [e.g., SSO login works with their IdP] | Login test | [DC] | Must-have |
+| 5 | [e.g., SE can configure connector without engineering support] | Usability assessment | [DC] | Nice-to-have |
 
-**POC passes if:** All must-have criteria are met.
+**POC passes if:** All must-have criteria are met. **Pre-agreed with:** [name + role who signed off on these criteria, and date] — if this is blank, the criteria aren't really agreed yet; flag it.
 
 ## Scope
 
@@ -143,6 +143,8 @@ These are the specific, measurable outcomes that define a successful POC. Both p
 - **6–8 weeks** — only with a stated enterprise reason (security review, procurement gate, multi-team coordination). If you're reaching for 6–8 weeks without one of those, right-size down.
 
 *Default below is a 4-week template — for 1–2-week POCs, compress; for 6–8-week enterprise POCs, expand the validation phase.*
+
+**Anchor the end date to the customer's compelling event (D2).** If biz-qual surfaced a dated forcing function (contract renewal, migration deadline, audit), back-plan the POC so results-review + commercial conversation land with enough runway to hit it (POC success → security review → procurement/legal → signature, before the event). If there's no compelling event, say so — the POC timeline is then SE-driven, not customer-driven, which is a weaker position worth noting.
 
 | Week | Milestone | Owner |
 |------|-----------|-------|
@@ -293,6 +295,7 @@ Read `config_file` (per playbook → Workspace Paths) for the `[SE name]` field 
 
 ## Changelog
 
+- **2026-07-10** — Success criteria now must tie each criterion to a MEDDPICC Decision Criterion + record who pre-agreed them in writing (per playbook → Operating Disciplines); POC timeline anchored to the customer's compelling event (D2) with backward-planning to signature.
 - **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
 - **2026-07-09** — Fixed the "Before generating" prior-doc read block: reads `deployment-qual`/`tech-qual`/`biz-qual`/`connector-feasibility` from `outputs/<skill>/` (was the customer root — inconsistent with the already-correct check earlier in the skill); prior call summaries now `outputs/post-call/post-call-*.md` (was the never-existing `call-summary-*.md`).
 - **2026-07-09** — Added duration-sizing heuristics (1–2 wk single-connector / 3–5 wk multi-source or transform / 6–8 wk only with a stated enterprise reason) so the timeline is right-sized to scope, not habit; reframed the mid-POC checkpoint as an explicit go/no-go gate with a named decider ("by [mid-date] X works or we pause & diagnose").

@@ -135,8 +135,14 @@ Every 🔴/🟡 MEDDPICC element must produce a Next Actions row: `Gap → the s
 - Timeline to decision: 
 - Decision-maker on POC outcome:
 
+**Compelling event (D2 — "why now, and what breaks if it slips"):**
+- Dated forcing function: [contract renewal / migration deadline / audit / funding milestone / system sunset / board commitment — or "none identified"]
+- Mutual timeline (backward from the event): signature → procurement/legal → security review → POC success → POC start, each with a date.
+- ⚠️ If there is **no** compelling event, say so — "they're keen" is not a compelling event, and its absence is a D1 deprioritization signal (carry to Reasons to Walk).
+
 **Gaps / questions to resolve:**
 - [ ] [e.g., Is there a formal RFP or vendor review committee?]
+- [ ] [e.g., What is the dated forcing function, and does the backward-planned timeline actually fit before it?]
 
 ---
 
@@ -186,10 +192,24 @@ A real champion does all three:
 - [ ] Shares internal context unprompted
 - [ ] Gives you bad news, not just good news
 
-If they only relay your messages, they're a coach — not a champion. Downgrade accordingly.
+If they only relay your messages, they're a coach — not a champion. Downgrade accordingly. See `_se-playbook.md` → Operating Disciplines **D3** (coach vs. champion — a coach gives info, a champion spends political capital; name which you have explicitly).
+
+**Multi-threading (D4):** name who else must be sold and whether we're single-threaded.
+- Stakeholders we've actually reached: [names]
+- Stakeholders still unreached who must be sold: [EB? technical evaluator? security/compliance? procurement?]
+- **Single-threaded?** [Yes/No] — if the deal lives on one contact, flag it as a risk (carry to Deal Risks).
 
 **Gaps / questions to resolve:**
 - [ ] [e.g., Has the champion explicitly agreed to advocate internally?]
+
+---
+
+## Stakeholder Map
+*The reusable artifact per `_se-playbook.md` → Operating Disciplines. `deal-assessment`, `internal-prep`, and `coverage-handoff` read this. Mark unknowns `⬜ not yet mapped` — a blank means "we haven't done the work," not "no stakeholder." A one-row map = single-threaded (a risk).*
+
+| Name | Role / title | Authority | Disposition | Last touched |
+|------|--------------|-----------|-------------|--------------|
+| [name] | [title] | EB / decision-maker / evaluator / influencer / gatekeeper | champion / coach / neutral / skeptic / blocker | [date + channel] |
 
 ---
 
@@ -228,6 +248,17 @@ Flag any letter that regressed (especially Champion, EB, Pain) — that's a *wal
 | [e.g., No EB access] | High | |
 | [e.g., Competitor entrenched] | Medium | |
 | [e.g., Budget not confirmed] | High | |
+| [e.g., Single-threaded on one contact] | High | |
+
+### Reasons to walk / deprioritize
+*Per `_se-playbook.md` → Operating Disciplines **D1** — qualifying OUT is a win. State honestly whether any hold, and if so, what would have to become true (and by when) to keep investing. This is a required read, not optional — a senior SE names the walk-away line early.*
+- **No economic buyer** identified after 2-3 substantive calls?
+- **No quantified pain** (customer can't put a number on the status quo cost)?
+- **No compelling event** (nothing dated forces a decision — see Decision Process)?
+- **Entrenched competitor/incumbent with no reframe path**?
+- **Hard product/deployment blocker with no in-product answer** (check deployment-model-qual — Flex clears many former blockers)?
+
+If none hold → say "no disqualifying signals; proceed." If one+ hold → state the close-path-or-walk explicitly.
 
 ---
 
@@ -342,6 +373,7 @@ Wait for explicit yes/no on Notion / memory before doing those.
 
 ## Changelog
 
+- **2026-07-10** — Added qual-craft disciplines (per playbook → Operating Disciplines): compelling-event + backward-timeline probe in Decision Process (D2); coach-vs-champion + multi-threading in Champion (D3/D4); a new **Stakeholder Map** section (the reusable artifact); and a **Reasons to walk / deprioritize** read in Deal Risks (D1 — qualifying out as a win).
 - **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
 - **2026-07-09** — Fixed the "Movement Since Last Qualification" read path: prior biz-qual is read from `outputs/biz-qual/biz-qual-*.md` (was the customer root, where it's never saved) so the letter-by-letter comparison actually finds the prior scorecard.
 - **2026-07-09** — Every 🔴/🟡 element now requires a paired, owned close-path in Next Actions (`Gap → ask that closes it → by when → owner/TBD`); added explicit score-confidence + `[inferred]` labeling for unconfirmed elements. Next Actions table restructured to make the gap→close-path pairing explicit.
