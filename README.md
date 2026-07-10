@@ -160,29 +160,33 @@ The `airbyte-ops-mcp` server (registry/prod queries, requires GCS creds) powers 
 
 #### Product & connector reference data (availability + entitlements)
 Skills that reason about **connector availability** and **which capabilities gate to which edition** (`connector-feasibility`, `deployment-model-qual`, `objection-handler`, `tech-qual`, `poc-plan`) can ground that reasoning in live product truth instead of memory. Four sources, all optional and configured under `reference_data:` in your `.se-config.yaml`:
-- **Connector registry JSON** (public, no auth) — the source of truth for connector existence, version, support tier (certified/community), release stage, and **Cloud vs. Self-Managed availability** (a connector in the OSS registry but not the Cloud registry is Self-Managed-only). Cached locally (default 24h).
-- **`airbyte-platform`** (public) — the entitlement definitions (SSO, RBAC, PrivateLink, self-managed regions, sync-frequency tiers, mappers/encryption) that map a customer requirement to an edition, plus the `airbyte-data-plane` Helm chart behind the Enterprise Flex story.
-- **`airbyte-enterprise`** (**private** — access varies by teammate) — the enterprise connectors the monorepo doesn't have (Oracle, NetSuite, SAP HANA, Workday, ServiceNow, SharePoint, DB2). Skills degrade cleanly and say so when it's absent.
+- **Connector registry JSON** (public, no auth) — the source of truth for connector existence, version, support tier (certified/community), release stage, and **Cloud vs. Self-Managed availability** (a connector in the OSS registry but not the Cloud registry is Self-Managed-only). **No manual setup** — the skill fetches the two registry files from the public URLs and caches them under `{airbyte_repos_dir}/registry/` (default 24h TTL). You just need to be online the first time (or when the cache is stale); after that it reads the cache. Nothing to clone.
+- **`airbyte-platform`** (public repo — **you clone it**) — the entitlement definitions (SSO, RBAC, PrivateLink, self-managed regions, sync-frequency tiers, mappers/encryption) that map a customer requirement to an edition, plus the `airbyte-data-plane` Helm chart behind the Enterprise Flex story.
+- **`airbyte-enterprise`** (**private repo** — you clone it *if you have access*; access varies by teammate) — the enterprise connectors the monorepo doesn't have (Oracle, NetSuite, SAP HANA, Workday, ServiceNow, SharePoint, DB2). Skills degrade cleanly and say so when it's absent.
 - **`airbyte-connector-models`** (public PyPI, opt-in) — typed Pydantic config models; lowest priority (the registry `spec` already covers most auth/config questions).
 
-To enable, clone the public repo(s) as blobless shallow clones and add the config block (the private `airbyte-enterprise` is optional — leave it out if you don't have access):
+**What you actually have to set up:** only the two repos (the registry is auto-fetched). Clone them as blobless shallow clones into your `airbyte_repos_dir` — the private `airbyte-enterprise` is optional, skip it if you don't have access:
 ```bash
-git clone --filter=blob:none --depth=1 https://github.com/airbytehq/airbyte-platform.git ~/airbyte-work/02-repos/airbyte-platform
+# public — needed by deployment-model-qual / tech-qual / objection-handler (DS2)
+git clone --filter=blob:none --depth=1 https://github.com/airbytehq/airbyte-platform.git   ~/airbyte-work/02-repos/airbyte-platform
+# PRIVATE — needed by connector-feasibility for enterprise-connector detection (DS3); skip if no access
+git clone --filter=blob:none --depth=1 https://github.com/airbytehq/airbyte-enterprise.git ~/airbyte-work/02-repos/airbyte-enterprise
 ```
+Then add the config block (paths are relative to `airbyte_repos_dir`):
 ```yaml
 reference_data:
   registry:
     oss_url:   "https://connectors.airbyte.com/files/registries/v0/oss_registry.json"
     cloud_url: "https://connectors.airbyte.com/files/registries/v0/cloud_registry.json"
-    cache_dir: "registry"          # under airbyte_repos_dir
+    cache_dir: "registry"          # auto-created + auto-populated by the skill (under airbyte_repos_dir)
     cache_ttl_hours: 24
   repos:
-    airbyte_platform:   "airbyte-platform"     # public
-    airbyte_enterprise: "airbyte-enterprise"   # PRIVATE — optional, omit if no access
+    airbyte_platform:   "airbyte-platform"     # public — clone required to use DS2
+    airbyte_enterprise: "airbyte-enterprise"   # PRIVATE — clone if you have access; omit otherwise
   connector_models:
     enabled: false                 # opt-in typed models
 ```
-Skip any source and the consuming skills fall back and report it in Source Coverage — they never assert availability/entitlement facts from data they couldn't reach. Full spec: `_se-playbook.md` → "Product & Connector Reference Data".
+Skip any source and the consuming skills fall back and report it in Source Coverage — they never assert availability/entitlement facts from data they couldn't reach. If `airbyte-enterprise` isn't cloned, `connector-feasibility` still runs and just notes that enterprise-connector coverage wasn't checked. Full spec: `_se-playbook.md` → "Product & Connector Reference Data".
 
 ---
 

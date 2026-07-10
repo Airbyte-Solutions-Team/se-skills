@@ -34,7 +34,8 @@ If user signals brief mode (`--brief`, `quick coverage check`, `coverage summary
 
 This skill reaches for several external tools and skills. **Only the registry lookup is load-bearing; everything else is an optional enhancement that must degrade gracefully.** Never claim coverage from a tool/skill that isn't available — note it as "not available" in Source Coverage instead.
 
-- **Registry (primary):** `airbyte-ops-mcp` (`list_connectors_in_registry`, `get_connector_registry_entry`/`_spec`) — the source of truth for existence/version/spec. Requires that MCP + GCS creds. If absent, fall back to local source (`airbyte_repos_dir`) + published docs and cap confidence, noting it.
+- **Connector reference data (primary):** the cached connector **registry JSON** + the **connector availability lookup** and the private **`airbyte-enterprise` `connector_stubs.json`**, per `_se-playbook.md` → "Product & Connector Reference Data." This is the first-pass source of truth for existence · version · support tier (certified/community) · release stage · sourceType · **Cloud-vs-Self-Managed availability** (the OSS-minus-Cloud set difference) · auth (from the embedded `spec`) · enterprise-variant detection. It's public/no-auth and works on any machine, so it's the load-bearing source; the `airbyte-ops-mcp` registry tools (below) are a **live cross-check / fallback**, not the sole path.
+- **`airbyte-ops-mcp` registry (cross-check / fallback):** (`list_connectors_in_registry`, `get_connector_registry_entry`/`_spec`) — a live confirmation of existence/version/spec when the MCP + GCS creds are present. If both the cached registry AND this MCP are absent, fall back to local source (`airbyte_repos_dir`) + published docs and cap confidence, noting it.
 - **Optional external skills (skip cleanly if not installed — they ship separately from Airbyte's connector-skills marketplace, not with this repo):**
   - `shared-airbyte-skills:connector-type-identification` — connector type → which files matter. If absent, infer type from the on-disk files directly (`manifest.yaml` → manifest-only; `metadata.yaml` `language` field; presence of Python/Java source).
   - `shared-airbyte-skills:connector-health-check` — fleet health. If absent, use `airbyte-ops-mcp` `query_prod_failed_sync_attempts_for_connector` instead.
@@ -49,7 +50,13 @@ When an optional skill/tool is missing, do the fallback named above and **record
 
 For each system the customer needs, go through this chain. "The connector exists" is step 2a, not the answer.
 
-1. **Exists?** — `mcp__airbyte-ops-mcp__list_connectors_in_registry` to find matches. For "Postgres"-type names, confirm the flavor (Postgres CDC vs. standard source).
+**First-pass, for every connector: run the connector availability lookup** (per `_se-playbook.md` → "Product & Connector Reference Data"). From the cached registry JSON, resolve `{ exists, dockerImageTag, supportLevel, releaseStage, sourceType, language, cloud_available, self_managed_only, isEnterprise, auth }`. Two derivations do work the MCP can't:
+- **`cloud_available` vs `self_managed_only`** — a connector present in the OSS registry but **absent from the Cloud registry** is Self-Managed-only (the OSS-minus-Cloud set difference). This is the "which connectors force a non-Cloud deployment" answer — it feeds the new **Availability** column and the deployment-model tie-in.
+- **Enterprise variant** — if the system is a regulated/legacy stack (Oracle, NetSuite, SAP HANA, ServiceNow, SharePoint, Workday, DB2) or the registry marks `ab_internal.isEnterprise`, check the private **`airbyte-enterprise` `connector_stubs.json`** for an enterprise variant. If present, the connector is **available via the enterprise connector** (SME/Flex, entitlement-gated) with a docs `url` — surface that instead of falsely reporting a gap. If `airbyte-enterprise` isn't cloned, note it unavailable and don't infer enterprise availability from memory.
+
+Then continue the per-connector chain:
+
+1. **Exists?** — the availability lookup answers this; use `mcp__airbyte-ops-mcp__list_connectors_in_registry` as a live cross-check when present. For "Postgres"-type names, confirm the flavor (Postgres CDC vs. standard source).
 2. **Capability fit** — `mcp__airbyte-ops-mcp__get_connector_registry_entry` (metadata: version, support level, breaking-change history) and `mcp__airbyte-ops-mcp__get_connector_registry_spec` (the published spec: auth methods, supported streams/objects, sync modes) to pull the connector's actual capabilities. **This is the live source of truth for existence, version, support level, and the published spec** — always trust it over the local checkout for "does it exist / what version / which streams." (These `airbyte-ops-mcp` tools read the GCS registry and require that MCP + GCS credentials; if unavailable, note it and fall back to local source / published docs.) Then **compare against what the customer needs:**
    - **Objects/streams:** do they need a specific object/table the connector doesn't expose? (e.g., a custom Salesforce object, a NetSuite saved search)
    - **Sync mode:** do they need incremental/CDC on a stream that only supports full refresh? This is a frequent silent dealbreaker.
@@ -114,6 +121,7 @@ Document structure follows `_se-playbook.md` → Output Document Format (At-a-Gl
 *Decision card — lead with the judgment (see `_se-playbook.md` → Decision-First Layout).*
 - **Feasibility:** 🟢 All needs covered / 🟡 Covered with gaps to build / 🔴 Hard gap blocks use case — [3–6 word headline]
 - **Coverage:** ==[N of M]== connectors validated · **Gaps:** [count build-needed] · **Open questions:** [count]
+- **Availability:** [count 🟢 Cloud+SM] Cloud · [count 🟦] Self-Managed/Flex-only · [count 🟧] Enterprise · [count 🟥] none — *if any 🟦/🟧, note "constrains deployment model"*
 - **Recommended motion:** [e.g. "Proceed to POC scoping" / "Confirm gaps before committing"]
 - **Primary risk:** [the biggest unvalidated assumption or hard gap — one line]
 - **Source confidence:** [one line — N transcripts + SFDC; "see Source Coverage"]
@@ -125,9 +133,11 @@ Document structure follows `_se-playbook.md` → Output Document Format (At-a-Gl
 ### Fail loud on unavailable tools (per `_se-playbook.md` → Fail loud on missing sources/tools)
 
 This skill's rigor depends on external sources. In Source Coverage, list each as used/unavailable:
-- live connector registry (`get_connector_registry_entry` / `get_connector_registry_spec`) · local connector source checkout · prod failed-sync data · docs MCPs (deepwiki/Kapa) · observability (Sentry/Datadog).
+- **connector registry cache** (`registry/oss_registry.json` + `cloud_registry.json` — report the cache date) · **`airbyte-enterprise` `connector_stubs.json`** (enterprise-variant detection — report available/unavailable + checkout date) · live connector registry MCP (`get_connector_registry_entry` / `get_connector_registry_spec`) · local connector source checkout · prod failed-sync data · docs MCPs (deepwiki/Kapa) · observability (Sentry/Datadog).
 
-If the registry OR local source OR prod-failure data was unavailable, this is NOT a full feasibility verdict. Cap the Feasibility confidence at 🟡 and lead with the caveat:
+If the registry cache was unavailable (no network AND no cached copy) so availability couldn't be derived, mark the **Availability** column `⬜ unverified` and say so in the lead. If `airbyte-enterprise` was unavailable, state "enterprise-connector coverage not checked (repo unavailable)" and cap confidence on any regulated/legacy-stack row — don't infer an enterprise variant from memory.
+
+If the registry (cache or MCP) OR local source OR prod-failure data was unavailable, this is NOT a full feasibility verdict. Cap the Feasibility confidence at 🟡 and lead with the caveat:
 > "Fit assessed from registry metadata only — connector source and prod failure data were unavailable, so pagination/auth/reliability risks are unverified. Treat as a first-pass screen, not a validated verdict."
 
 Also label build-effort ranges as planning estimates: "1–3 wks build is a planning estimate, not a commitment."
@@ -144,11 +154,15 @@ If every needed connector is fully validated, open with a verdict callout:
 > source-salesforce, source-oracle (CDC), and destination-snowflake all support the required objects, sync modes, and volume. No open questions block POC scoping.
 ```
 
-| System | Connector | Exists? | Use-case fit | Confidence | Top risk / gap |
-|--------|-----------|---------|--------------|------------|----------------|
-| Salesforce | source-salesforce | ✅ Certified | 🟢 Validated / 🟡 Likely, needs confirmation / 🔴 Gap | High / Med / Low | [e.g., need to confirm incremental on custom objects] |
-| Oracle (CDC) | source-oracle | ✅ Pro | 🟡 Needs confirmation | Med | LogMiner not confirmed enabled |
-| [System] | — | ❌ Missing | 🔴 Build needed | — | [build path + effort] |
+| System | Connector | Exists? | Availability | Use-case fit | Confidence | Top risk / gap |
+|--------|-----------|---------|--------------|--------------|------------|----------------|
+| Salesforce | source-salesforce | ✅ Certified | 🟢 Cloud + SM | 🟢 Validated / 🟡 Likely, needs confirmation / 🔴 Gap | High / Med / Low | [e.g., need to confirm incremental on custom objects] |
+| Oracle (CDC) | source-oracle | ✅ Pro | 🟢 Cloud + SM | 🟡 Needs confirmation | Med | LogMiner not confirmed enabled |
+| DB2 | source-db2 | ✅ Community | 🟦 Self-Managed / Flex only | 🟡 Needs confirmation | Med | Not on Cloud — forces Flex/SME deployment |
+| Workday | source-workday-enterprise | ✅ Enterprise | 🟧 Enterprise (SME/Flex, entitlement-gated) | 🟡 Needs confirmation | Med | Enterprise connector — not in the Cloud/OSS registry |
+| [System] | — | ❌ Missing | 🟥 No connector | 🔴 Build needed | — | [build path + effort] |
+
+**Availability** is the registry-derived deployment reach (per the availability lookup): 🟢 Cloud + SM (in both registries) · 🟦 Self-Managed / Flex only (OSS-minus-Cloud set difference) · 🟧 Enterprise variant (from `airbyte-enterprise` `connector_stubs.json` — SME/Flex, entitlement-gated) · 🟥 no connector. A 🟦 or 🟧 row **independently constrains the deployment model** regardless of use-case fit — carry it into the deployment-model tie-in and flag it in Constraints. If the registry cache or `airbyte-enterprise` was unavailable, mark the column `⬜ unverified` for affected rows rather than guessing.
 
 **Confidence** reflects how much is *validated* vs. *assumed* — Low confidence means the "Questions to ask" section below has open items for this connector.
 
@@ -231,7 +245,7 @@ For each missing connector, provide:
 - **Be specific.** "source-salesforce v2.x" beats "yes we have Salesforce".
 - **Don't oversell.** If a connector is community-tier or has reliability issues, say so. Surprises in POC are deal-killers.
 - **Build effort estimates should be ranges.** "2–5 days for manifest-only, longer if pagination is unusual."
-- **Flag deployment model implications.** If they need a connector that's only on Cloud (or only Self-Managed), call it out — ties to deployment model qualification.
+- **Flag deployment model implications.** The **Availability** column makes this concrete: any 🟦 Self-Managed/Flex-only or 🟧 Enterprise connector (derived from the registry set-difference / `airbyte-enterprise` stubs) means Cloud alone won't cover the use case — surface it here and carry it into deployment-model qualification, so a deployment constraint is caught now, not at procurement. **Keep the plumbing internal** (per `_se-playbook.md` guardrail): the customer-facing framing is "available on Enterprise Flex / Self-Managed," not "absent from the Cloud registry."
 
 ## After Generating
 
@@ -246,7 +260,7 @@ Append `-v2` etc. for same-day duplicates. User can suppress with `--no-save`.
 
 ### Source Coverage
 
-Include a Source Coverage section at the top reporting: MCP queries run (`list_connectors_in_registry`, `get_connector_registry_entry`/`_spec`, etc.), transcripts referenced for source/dest list, and connectors verified for known issues. **Also report, when used:** which connectors' local source was read (and the `{airbyte_repos_dir}/airbyte` checkout date — so the SE can gauge build-path freshness), any docs queries run (Kapa / deepwiki), and any runtime-observability checks (Sentry / Datadog). If a tool or checkout was unavailable on this machine (e.g. `airbyte_repos_dir` unset, Kapa MCP, Sentry, Datadog not configured), don't list it as consulted — note "not available" rather than implying coverage you didn't have.
+Include a Source Coverage section at the top reporting: **connector registry cache** (which files, the cache date, and whether it was fetched fresh this run or read from cache), **`airbyte-enterprise` `connector_stubs.json`** (available/unavailable + checkout date — the source for enterprise-variant detection), MCP queries run (`list_connectors_in_registry`, `get_connector_registry_entry`/`_spec`, etc.), transcripts referenced for source/dest list, and connectors verified for known issues. **Also report, when used:** which connectors' local source was read (and the `{airbyte_repos_dir}/airbyte` checkout date — so the SE can gauge build-path freshness), any docs queries run (Kapa / deepwiki), and any runtime-observability checks (Sentry / Datadog). If a tool or checkout was unavailable on this machine (e.g. `airbyte_repos_dir` unset, Kapa MCP, Sentry, Datadog not configured), don't list it as consulted — note "not available" rather than implying coverage you didn't have.
 
 ### SE Identity
 
@@ -310,6 +324,7 @@ If a connector is only available on Cloud (or only on Self-Managed), flag it. Th
 
 ## Changelog
 
+- **2026-07-10** — **Connector-registry availability + enterprise detection (P-EXT, first primary consumer).** Wired the connector availability lookup + enterprise stubs from `_se-playbook.md` → "Product & Connector Reference Data" into Step 2 as the first-pass source of truth: existence · version · support tier · release stage · **Cloud-vs-Self-Managed availability** (the OSS-minus-Cloud registry set difference) · auth (from embedded `spec`) · enterprise-variant detection (private `airbyte-enterprise` `connector_stubs.json`). Added a required **Availability** column to the Fit Verdict table (🟢 Cloud+SM · 🟦 Self-Managed/Flex-only · 🟧 Enterprise · 🟥 none) + an Availability line in At-a-Glance; a 🟦/🟧 row now independently flags a deployment-model constraint (regulated/legacy stacks surface as enterprise variants, not gaps). Registry cache + `airbyte-enterprise` availability/checkout dates added to the fail-loud used/unavailable list and Source Coverage; `⬜ unverified` when the cache is absent. `airbyte-ops-mcp` registry demoted from sole source to live cross-check/fallback (the cached public registry is load-bearing and works with no GCS creds). Guardrail: registry set-diffs stay internal — customer-facing framing is "Enterprise Flex / Self-Managed," not "absent from Cloud registry." **Acceptance-tested** (db2 SM-only + salesforce Cloud-certified + Workday enterprise-variant) — see SESSION-LOG.
 - **2026-07-10** — **Portability + MCP fix.** Repointed hardcoded `~/airbyte-work/` output/config paths to the resolver (`{customers_dir}`/`config_file`); local Airbyte repo checkouts now resolve via `{airbyte_repos_dir}` (optional — skill degrades to MCP/registry-only when unset, noted in Source Coverage). **Fixed dead MCP tool names:** `mcp__airbyte-mcp__list_connectors` → `mcp__airbyte-ops-mcp__list_connectors_in_registry`, and `mcp__airbyte-mcp__get_connector_info` → `mcp__airbyte-ops-mcp__get_connector_registry_entry` + `get_connector_registry_spec` (there is no `airbyte-mcp` server; the old names would have failed on every machine). These require the `airbyte-ops-mcp` server + GCS creds; skill notes and falls back if unavailable. Added a **Tool & skill dependencies** section declaring what's required (registry) vs. optional-with-graceful-degradation (`shared-airbyte-skills:*`, `discovering-connectors`, deepwiki/Kapa/Sentry/Datadog, local checkouts) — each with a named fallback, since those skills ship separately from this repo and aren't guaranteed present.
 - **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE" (reframe talk-track note).
 - **2026-07-09** — Fail-loud on unavailable tools: Source Coverage lists each dependency used/unavailable; metadata-only runs are capped at 🟡 with a lead caveat; effort ranges labeled as estimates.
