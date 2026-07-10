@@ -29,7 +29,7 @@ The user will paste or describe a customer concern. Examples:
    - **Connector gap** (we don't have X, or our X is community-tier)
    - **Other** — if it doesn't fit, ask for clarification
 
-2. **Reference the deployment-model guidance** — the `deployment-model-qual` skill (and the workspace CLAUDE.md it mirrors) + `_se-playbook.md` → Airbyte-Specific Application Notes define the **three** shapes Airbyte sells: Cloud Pro, **Enterprise Flex** (hybrid — cloud control plane + customer-hosted data plane in their VPC; sellable to new customers *with caveats*), and Self-Managed Enterprise (separate motion; BYOK/KMS). Most data-isolation objections now resolve to **Flex**, not "park."
+2. **Reference the deployment-model guidance** — the `deployment-model-qual` skill (and the workspace CLAUDE.md it mirrors) + `_se-playbook.md` → Airbyte-Specific Application Notes define the **two** live shapes Airbyte sells: Cloud Pro and **Enterprise Flex** (hybrid — cloud control plane + customer-hosted data plane in their VPC; sellable to new customers *with caveats*). Most data-isolation objections now resolve to **Flex**, not "park." (Self-Managed Enterprise — the historical BYOK/KMS/full-control-plane shape — has been **retired / is not currently offered** (may return); it is a product-capability fact, not a sellable motion. For a genuine Cloud-and-Flex boundary, the honest answer is an upfront park/no-fit today, not a route to SME.)
 
 3. **Produce a structured response.**
 
@@ -84,7 +84,7 @@ NOW the actual answer. Specific, honest, 2-3 sentences max. This is what most SE
 ### If Cloud Pro can't resolve it — route, don't reflexively kill
 If this objection can't be met by Cloud Pro, check whether **Flex** solves it before treating it as a deal-killer:
 - **Data must stay in their VPC / data residency / VPC isolation / "our data can't share compute"** → **Enterprise Flex** (customer-hosted data plane). This is a *route*, not a kill. Confirm current Flex availability/terms for their region.
-- **Customer-managed KMS / BYOK, full control-plane control, or true air-gap** → **Self-Managed Enterprise** (separate motion). Genuine Flex boundary — don't oversell Flex here.
+- **Customer-managed KMS / BYOK, full control-plane-in-VPC, or true air-gap** → genuine Cloud-and-Flex boundary. There is **no currently-offered shape that meets this** — be upfront: this is a **park / no-fit today**. (Self-Managed Enterprise historically covered this but is **not currently offered**; may return.) Don't oversell Flex here, and don't route to a dead motion.
 - **A requirement no shape meets, or Flex unavailable for their region/segment** → park/escalate or disqualify. State it plainly.
 
 ### Related context
@@ -96,7 +96,7 @@ If this objection can't be met by Cloud Pro, check whether **Flex** solves it be
 ## Style
 
 - **Honest over polished.** The SE's voice doesn't hedge. If we lose on this, say we lose on this.
-- **Specific.** "We don't support customer-managed KMS on Cloud — that's a Self-Managed Enterprise capability" beats "we have flexible security options".
+- **Specific.** "We don't support customer-managed KMS on Cloud or Flex today — BYOK was a Self-Managed Enterprise capability, and that shape isn't currently offered" beats "we have flexible security options". State the honest gap; don't dress a retired motion up as a live option.
 - **Anti-spin.** If the customer's concern is valid, agree with it first, then offer the path forward.
 - **Two-way street.** Most objections are surface-level. The follow-up questions matter as much as the answer.
 
@@ -179,12 +179,12 @@ This pre-empts the objections and signals you're not going to dance around them.
 ### Get to "no" — don't push for "yes"
 For objections that are deal-killers (e.g., true air-gap requirement on a Cloud-only sale), the talk track must include a clean off-ramp. Example:
 
-> "If running the data plane in *our* cloud is a hard 'no' for your security team, Cloud isn't the fit — but Enterprise Flex runs the data plane in your own VPC while we manage the control plane, so your data never leaves your environment. Is that the boundary we're actually solving for, or is it deeper — do you need to control the whole platform and your own encryption keys? That's the line between Flex and a self-managed deployment."
+> "If running the data plane in *our* cloud is a hard 'no' for your security team, Cloud isn't the fit — but Enterprise Flex runs the data plane in your own VPC while we manage the control plane, so your data never leaves your environment. Is that the boundary we're actually solving for, or is it deeper — do you need to control the whole platform and your own encryption keys? If it's the latter, I'll be straight with you: we don't have a shape that does that today — the self-managed offering that used to cover it isn't currently available. Better you hear that now than three months in."
 
 Real "no" preserves trust and prevents wasted cycles. Add this when warranted.
 
 ### Honest framing per the deployment-model guidance
-Per the deployment-model guidance: don't spin. If Cloud can't meet their requirement, say so clearly and requalify toward Self-Managed Enterprise. Customers can smell spin.
+Per the deployment-model guidance: don't spin. If Cloud can't meet their requirement, check whether Flex does; if neither Cloud nor Flex meets it (customer-managed KMS/BYOK, full control-plane-in-VPC, true air-gap), say so clearly and treat it as an honest park/no-fit today — the Self-Managed Enterprise shape that historically covered this is not currently offered (may return), so don't route to it as a live motion. Customers can smell spin; the honesty principle now points at an honest park, not an SME rescue.
 
 ### Anti-patterns to avoid in this skill
 - Jumping straight to the substantive answer (skips mirror/label/calibrated steps)
@@ -197,6 +197,7 @@ Per the deployment-model guidance: don't spin. If Cloud can't meet their require
 
 ## Changelog
 
+- **2026-07-10** — **Self-Managed Enterprise retired.** SME is **no longer a sellable/recommended motion** (retired / not currently offered — may return). Deployment objections now resolve to **Enterprise Flex or an honest park** — never "route to SME." For genuine Cloud-and-Flex boundaries (customer-managed KMS/BYOK, full control-plane-in-VPC, true air-gap), the honest answer is now an upfront park/no-fit today, framed retired-may-return. SME is preserved only as a product-capability fact (e.g., "BYOK was an SME capability"), always tagged not-currently-offered, so the SE can be honest ("we don't do that today") without offering a dead motion. Reference table (`_reference/airbyte-objection-reference.md`) rows for KMS/BYOK, multi-tenancy, VPC isolation, and data-flow updated in lockstep.
 - **2026-07-10** — **Flex is back + reference relocated.** Deployment objections (data residency, VPC isolation, BYOC) now resolve to **Enterprise Flex** (customer-hosted data plane, sellable with caveats), not "park until GA"; BYOK/full-control stays SME. Pricing objection reframed to **capacity-based (Pro/Flex, always) vs. consumption-based (Fivetran MAR)** — only Standard is volume-based. Canonical reference moved from `~/airbyte-work/04-notes/` to the repo at `skills/_reference/airbyte-objection-reference.md` (read via `~/.claude/skills/_reference/`), eliminating the special-case `04-notes/` symlink and the drift surface behind the stale-Flex line. Added control-plane-in-US compliance nuance and a Cloud-can't-resolve-it → route-to-Flex-first block.
 - **2026-07-09** — Added product-fact freshness guard (cite reference last-updated date; hedge possibly-stale capabilities; fall back to playbook guidance if the reference is absent). Softened Voss from "always emit 4 steps" to "use the moves that fit" (substantive-last preserved).
 - **2026-06-18** — Severity callout per `_se-playbook.md` → Output Document Format (objection-handler is light-touch: no At-a-Glance/Jump-to). The Severity indicator is now a top-of-output callout — `[!blocker]` for Deal-killer/High, `[!risk]` for Medium, `[!info]` for Low. Enforced Voss 4-step structure unchanged.

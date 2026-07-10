@@ -32,7 +32,7 @@ If zero transcripts exist (local + Gong checked): **REFUSE TO RUN.** Output:
 Read, from `{customers_dir}/<Customer>/outputs/` (per playbook → Workspace Paths):
 - **`outputs/biz-qual/biz-qual-*.md`** — **Paper Process** (legal/procurement/security steps), **Economic Buyer** (who signs), **Decision Process** (how they decide), and the **compelling event** from Decision Process (the timeline anchor).
 - **`outputs/poc-plan/poc-plan-*.md`** — POC end date + exit criteria; the close plan starts where the POC ends.
-- **`outputs/deployment-qual/deployment-qual-*.md`** — deployment model affects the security-review path (Flex/SME touch InfoSec differently than Cloud).
+- **`outputs/deployment-qual/deployment-qual-*.md`** — deployment model affects the security-review path (Flex touches InfoSec differently than Cloud — customer-hosted data plane means their own infra review).
 - **`outputs/roi-business-case/roi-business-case-*.md`** — the business case is what the EB signs off on; note if it's still [confirm]-grade.
 - **Stakeholder map** (from biz-qual, per `_se-playbook.md` → Operating Disciplines) — every close-plan step needs an owner; the map tells you who.
 - Prior call summaries — recent commitments and process signals.

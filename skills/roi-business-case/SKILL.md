@@ -33,7 +33,7 @@ Read, from `{customers_dir}/<Customer>/outputs/` (per playbook → Workspace Pat
 - **`outputs/biz-qual/biz-qual-*.md`** — **Metrics** (the quantified value the customer already stated) and **Identify Pain** (the cost of the status quo) map directly into the current-state baseline.
 - **`outputs/tech-qual/tech-qual-*.md`** — volume/latency/connector-count profile → the capacity basis for the Airbyte-cost projection.
 - **`outputs/connector-feasibility/connector-feasibility-*.md`** — connector count + any custom-build effort (feeds build-vs-buy).
-- **`outputs/deployment-qual/deployment-qual-*.md`** — Cloud vs. Flex vs. SME changes the cost model (capacity-based for Pro/Flex; licensed for SME).
+- **`outputs/deployment-qual/deployment-qual-*.md`** — Cloud vs. Flex changes the cost model (capacity-based for Pro/Flex). (Self-Managed Enterprise's licensed model is retired / not currently offered.)
 - Prior call summaries — recent cost/volume signals.
 
 Cite each source inline. Where a number isn't in any source, mark it a **[confirm]** input, not a guess.
@@ -48,7 +48,7 @@ If user signals brief mode (`--brief`, `just the number`, `one-slide`): produce 
 
 - **Cloud Pro and Enterprise Flex are capacity-based** — priced on Data Workers (compute capacity), **predictable and decoupled from data volume**. This is the differentiator vs. consumption-based competitors.
 - **Airbyte Standard** is volume/credit-based (APIs ~$15/M rows, DBs ~$10/GB).
-- **Self-Managed Enterprise** is licensed.
+- **Self-Managed Enterprise** was licensed — **retired / not currently offered (may return)**; not a live pricing lane today, kept here as historical context only.
 - The core ROI story for most enterprise deals is **predictable capacity-based spend vs. a competitor's consumption bill that spikes with volume** — model the customer's *growth* trajectory, because that's where capacity-based pricing wins. Confirm current pricing specifics before putting exact figures in a customer-facing artifact; ground stated numbers in the objection reference's `Last updated` date.
 
 ## Discovery Inputs (the numbers this skill needs — flag any that are missing)
@@ -81,7 +81,7 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 → 
 - **Payback period:** ==[N] months==
 - **The one number for the EB:** [e.g. "$480K of data-engineering capacity reclaimed over 3 years"]
 - **Confidence:** [Decision-grade / Directional — depends on how many inputs are customer-confirmed vs. [confirm]]
-- **Deployment model priced:** [Cloud Pro (capacity) / Flex (capacity) / SME (licensed)]
+- **Deployment model priced:** [Cloud Pro (capacity) / Flex (capacity)]
 - **Source confidence:** [one line — biz-qual Metrics + transcripts; "see Source Coverage"]
 
 **Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [Current-State Baseline](#current-state-baseline) · [Airbyte Cost Projection](#airbyte-cost-projection) · [3-Year TCO Comparison](#3-year-tco-comparison) · [Payback & Sensitivity](#payback--sensitivity) · [One-Slide Summary](#one-slide-summary-for-the-eb) · [Assumptions & Confirms](#assumptions--confirms)
@@ -203,4 +203,5 @@ Read `config_file` (per playbook → Workspace Paths) for the `[SE name]` field.
 
 ## Changelog
 
+- **2026-07-10** — Dropped SME from the cost model. Self-Managed Enterprise's licensed pricing lane is retired / not currently offered (may return) — removed as a live option from the deployment-qual read, the pricing-model spine, and the At-a-Glance "Deployment model priced" line; cost model is now Cloud Pro / Flex (both capacity-based). SME kept as a historical note, not deleted.
 - **2026-07-10** — Initial creation. Compiles biz-qual Metrics + capacity/volume profile + build-vs-buy into a customer-shareable 3-yr TCO / ROI / payback artifact with a one-slide EB summary. Capacity-based pricing model for Pro/Flex (predictable) vs. consumption-based competitor. Honest-math discipline: every figure sourced or explicitly [confirm]. Requires a transcript; warns without biz-qual. Per playbook → Operating Disciplines (Metrics → the number that unlocks the EB).

@@ -85,7 +85,7 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 | **Destinations** | [where it lands — e.g., Postgres CDR, Snowflake] |
 | **Scale / volume** | ==[rows-or-events/day, # connections]== |
 | **Sync frequency / latency** | [real-time / daily / monthly · latency tolerance] |
-| **Deployment method** | [Cloud Pro / SME / hybrid — verdict from deployment-qual; note any on-prem/residency/VPC constraint] |
+| **Deployment method** | [Cloud Pro / Flex-hybrid — verdict from deployment-qual; note any on-prem/residency/VPC constraint] |
 | **Auth pattern(s)** | [e.g., OAuth2, API key, Entra/Okta SSO — the pattern repeated across sources] |
 | **Pricing & sizing** | [data workers needed (e.g., ==1 + burst==), enterprise-connector add-ons (Hana/Oracle/NetSuite @ +$/yr), capacity-vs-volume preference] |
 
@@ -125,7 +125,7 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 *If `outputs/deployment-qual/deployment-qual-*.md` exists for this customer, summarize its verdict here and reference the doc — don't re-derive. Use this section for technical implications, not for re-qualifying.*
 
 - **Verdict (from deployment-qual):** [🟢 Cloud Pro viable / 🟡 with caveats / 🔴 not viable]
-- **Preferred deployment:** [Airbyte Cloud / Self-Managed Enterprise / Open Source]
+- **Preferred deployment:** [Airbyte Cloud / Enterprise Flex / Open Source]
 - **Cloud provider:** [AWS / GCP / Azure / Multi-cloud]
 - **Region requirements:** [US / EU / APAC / specific region]
 - **Network/VPC requirements:** [VPC peering, private link, etc.]
@@ -140,7 +140,7 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 - **SSO/SAML required:** [Yes / No]
 - **RBAC requirements:** 
 - **Audit logging required:** [Yes / No]
-- **Encryption requirements:** [at rest / in transit / customer-managed keys — note that customer-managed KMS is SME-only, not Cloud]
+- **Encryption requirements:** [at rest / in transit / customer-managed keys — note that customer-managed KMS is not available on any currently-offered shape (was Self-Managed Enterprise — retired, may return); not on Cloud or Flex]
 
 > [!risk] Compliance self-check (mandatory before save)
 > Every certification/security claim must be either:
@@ -232,7 +232,7 @@ Per `_se-playbook.md` ("Source Freshness Check"): if the most-recent local trans
 - Save to `_transcripts/<Customer-Name>-MM.DD.YY.txt` BEFORE using it (per CLAUDE.md)
 
 ### Deployment model FIRST (per the deployment-model guidance)
-Before any other section, confirm: Cloud SaaS / Self-Managed Enterprise / Hybrid. If they have air-gap, data residency, BYOK, or VPC isolation hard requirements, Cloud is not viable — requalify or park. Don't fill out the rest of this doc if deployment model isn't sorted. Flag this as a 🔴 blocker.
+Before any other section, confirm the shape. Two live shapes today: **Cloud Pro** and **Enterprise Flex** (hybrid — cloud control plane + customer-hosted data plane). Data-residency and VPC-isolation requirements often route to **Flex** rather than killing the deal. But customer-managed KMS / BYOK, full control-plane-in-VPC, or a true air-gap with no Flex path is a **park / no-fit** — Self-Managed Enterprise, which covered these, is retired / not currently offered (may return) — **not** a requalify-to-SME. Don't fill out the rest of this doc if deployment model isn't sorted. Flag an unresolved model as a 🔴 blocker.
 
 ### Apply SPIN to technical questions
 Volume, latency, and connector questions should not be flat "what's your volume?" Use the Problem → Implication chain:
@@ -290,6 +290,7 @@ Read `config_file` (per playbook → Workspace Paths) for the `[SE name]` field.
 
 ## Changelog
 
+- **2026-07-10** — SME-retirement phrasing fixes. Deployment method row now Cloud Pro / Flex-hybrid (dropped SME as an option); Preferred deployment now Cloud / Enterprise Flex / Open Source; customer-managed KMS reframed as not available on any currently-offered shape (was SME — retired, may return); deployment-first block now names the two live shapes (Cloud / Flex-hybrid), routes residency/VPC to Flex, and treats BYOK / full-VPC / air-gap-with-no-Flex-path as a park/no-fit rather than requalify-to-SME. Kept SME as a retired-may-return note, not deleted.
 - **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
 - **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE"; "Gary's CLAUDE.md" ref → the deployment-model guidance.
 - **2026-07-09** — Fixed prior-doc read paths: now reads `deployment-qual`/`biz-qual`/`connector-feasibility`/`tech-qual` from `outputs/<skill>/` (was the customer root, where nothing is saved) so the "read prior outputs" chaining actually finds them.

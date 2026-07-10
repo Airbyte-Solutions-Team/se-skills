@@ -52,7 +52,7 @@ For each system the customer needs, go through this chain. "The connector exists
 
 **First-pass, for every connector: run the connector availability lookup** (per `_se-playbook.md` → "Product & Connector Reference Data"). From the cached registry JSON, resolve `{ exists, dockerImageTag, supportLevel, releaseStage, sourceType, language, cloud_available, self_managed_only, isEnterprise, auth }`. Two derivations do work the MCP can't:
 - **`cloud_available` vs `self_managed_only`** — a connector present in the OSS registry but **absent from the Cloud registry** is Self-Managed-only (the OSS-minus-Cloud set difference). This is the "which connectors force a non-Cloud deployment" answer — it feeds the new **Availability** column and the deployment-model tie-in.
-- **Enterprise variant** — if the system is a regulated/legacy stack (Oracle, NetSuite, SAP HANA, ServiceNow, SharePoint, Workday, DB2) or the registry marks `ab_internal.isEnterprise`, check the private **`airbyte-enterprise` `connector_stubs.json`** for an enterprise variant. If present, the connector is **available via the enterprise connector** (SME/Flex, entitlement-gated) with a docs `url` — surface that instead of falsely reporting a gap. If `airbyte-enterprise` isn't cloned, note it unavailable and don't infer enterprise availability from memory.
+- **Enterprise variant** — if the system is a regulated/legacy stack (Oracle, NetSuite, SAP HANA, ServiceNow, SharePoint, Workday, DB2) or the registry marks `ab_internal.isEnterprise`, check the private **`airbyte-enterprise` `connector_stubs.json`** for an enterprise variant. If present, the connector is **available via the enterprise connector** (entitlement-gated on Enterprise Flex) with a docs `url` — surface that instead of falsely reporting a gap. If `airbyte-enterprise` isn't cloned, note it unavailable and don't infer enterprise availability from memory.
 
 Then continue the per-connector chain:
 
@@ -158,11 +158,11 @@ If every needed connector is fully validated, open with a verdict callout:
 |--------|-----------|---------|--------------|--------------|------------|----------------|
 | Salesforce | source-salesforce | ✅ Certified | 🟢 Cloud + SM | 🟢 Validated / 🟡 Likely, needs confirmation / 🔴 Gap | High / Med / Low | [e.g., need to confirm incremental on custom objects] |
 | Oracle (CDC) | source-oracle | ✅ Pro | 🟢 Cloud + SM | 🟡 Needs confirmation | Med | LogMiner not confirmed enabled |
-| DB2 | source-db2 | ✅ Community | 🟦 Self-Managed / Flex only | 🟡 Needs confirmation | Med | Not on Cloud — forces Flex/SME deployment |
-| Workday | source-workday-enterprise | ✅ Enterprise | 🟧 Enterprise (SME/Flex, entitlement-gated) | 🟡 Needs confirmation | Med | Enterprise connector — not in the Cloud/OSS registry |
+| DB2 | source-db2 | ✅ Community | 🟦 Self-Managed / Flex only | 🟡 Needs confirmation | Med | Not on Cloud — forces a Flex (or self-hosted OSS) deployment |
+| Workday | source-workday-enterprise | ✅ Enterprise | 🟧 Enterprise (Flex, entitlement-gated) | 🟡 Needs confirmation | Med | Enterprise connector — not in the Cloud/OSS registry |
 | [System] | — | ❌ Missing | 🟥 No connector | 🔴 Build needed | — | [build path + effort] |
 
-**Availability** is the registry-derived deployment reach (per the availability lookup): 🟢 Cloud + SM (in both registries) · 🟦 Self-Managed / Flex only (OSS-minus-Cloud set difference) · 🟧 Enterprise variant (from `airbyte-enterprise` `connector_stubs.json` — SME/Flex, entitlement-gated) · 🟥 no connector. A 🟦 or 🟧 row **independently constrains the deployment model** regardless of use-case fit — carry it into the deployment-model tie-in and flag it in Constraints. If the registry cache or `airbyte-enterprise` was unavailable, mark the column `⬜ unverified` for affected rows rather than guessing.
+**Availability** is the registry-derived deployment reach (per the availability lookup): 🟢 Cloud + SM (in both registries) · 🟦 Self-Managed / Flex only (OSS-minus-Cloud set difference) · 🟧 Enterprise variant (from `airbyte-enterprise` `connector_stubs.json` — entitlement-gated on Enterprise Flex) · 🟥 no connector. A 🟦 or 🟧 row **independently constrains the deployment model** regardless of use-case fit — carry it into the deployment-model tie-in and flag it in Constraints. If the registry cache or `airbyte-enterprise` was unavailable, mark the column `⬜ unverified` for affected rows rather than guessing.
 
 **Confidence** reflects how much is *validated* vs. *assumed* — Low confidence means the "Questions to ask" section below has open items for this connector.
 
