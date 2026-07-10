@@ -15,7 +15,7 @@ Built by Gary Yang (Solutions Engineer, Airbyte). Designed to be team-shareable.
 | `biz-qual` | MEDDPICC business qualification scorecard | "biz qual", "qualify this deal" |
 | `tech-qual` | Technical fit assessment (sources, volume, security, integration) | "tech qual", "assess their stack" |
 | `full-qual` | Convenience wrapper — runs biz-qual + tech-qual back-to-back (two separate docs) | "full qual", "run both quals" |
-| `deployment-model-qual` | Cloud-vs-Self-Managed gate (the 5 deployment questions) | "deployment qual", "cloud or not" |
+| `deployment-model-qual` | Deployment gate — 3-way verdict (Cloud / Enterprise Flex / park), the 5 deployment questions | "deployment qual", "cloud or flex" |
 | `connector-feasibility` | Checks customer source/dest list vs. Airbyte registry | "connector feasibility", "do we have X" |
 | `poc-plan` | Structured POC plan with mutual commitments + success criteria | "poc plan", "proof of concept" |
 | `deal-assessment` | Honest deal-health read with probability bands | "deal assessment", "is this deal real" |
@@ -55,7 +55,7 @@ prep-call                 ← inherits AE discovery, preps your tech call
         ↓
 post-call                 ← digest the call
         ↓
-deployment-model-qual     ← gate: is Cloud Pro even viable?
+deployment-model-qual     ← gate: Cloud / Flex / park (3-way)
         ↓
 biz-qual + tech-qual      ← qualify business + technical fit
         ↓
