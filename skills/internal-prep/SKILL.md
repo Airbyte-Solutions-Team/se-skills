@@ -53,6 +53,8 @@ Then the forecast table is ~80% pre-filled. The skill's job becomes **comparing 
 
 **`ae-sync` / `exec-readout` / `deal-review` modes (single customer):** Pull the active opp — `StageName`, `Amount`, `CloseDate`, MEDDPICC fields, `SE_Deal_Risks__c`, `Next_Step_Date__c`, `Days_Since_Last_Activity__c` — to ground the deal-by-deal status in CRM truth and surface SFDC-vs-reality gaps.
 
+**Deployment shape at a glance (single-customer modes):** an AE/exec needs to know the deployment model + any connector constraints without asking. When present in `outputs/`, **display the current deployment verdict** (Cloud / Flex / park) from the deployment-qualification doc and any **`self_managed_only` / enterprise-connector flags** from connector-feasibility's Availability column, alongside the deal status. This is **display-only** — read the already-computed verdicts from the saved docs; do NOT pull the connector registry or repos to re-derive them (that's the analytical skills' job, per playbook → Product & Connector Reference Data). If those docs don't exist yet, note "deployment not yet assessed" / "connector availability not yet assessed" — no gate.
+
 If SFDC unavailable, skip per graceful-degradation and ask the user for deal list/amounts as before.
 
 ### Missing inputs are surfaced, not blanked
@@ -295,6 +297,7 @@ Read `config_file` (per playbook → Workspace Paths) for the `[SE name]` and si
 
 ## Changelog
 
+- **2026-07-10** — Single-customer modes (ae-sync / exec-readout / deal-review) now display the deployment shape at a glance for the AE/exec: the current deployment verdict (Cloud / Flex / park) from the deployment-qual doc and any `self_managed_only`/enterprise-connector flags from connector-feasibility's Availability column, when present. Display-only — reads derived verdicts from saved `outputs/`, does NOT pull the registry/repos to re-derive; "not yet assessed" if the docs are absent (no gate).
 - **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
 - **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE"; fixed the corrupted template placeholder `[SE Gary]` → `[SE name]` (header + config-read instruction).
 - **2026-07-09** — Missing SFDC fields / cross-functional inputs now render as explicit "confirm with [owner]" asks rather than blanks or guesses (forecast: "not in CRM — confirm with RevOps" + pre-meeting ask; deal-review Alignment-check: AE/AM columns marked "to confirm live," never guessed, carried into Cross-functional asks).

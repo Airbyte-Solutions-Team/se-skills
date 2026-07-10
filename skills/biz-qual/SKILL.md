@@ -101,6 +101,8 @@ Every 🔴/🟡 MEDDPICC element must produce a Next Actions row: `Gap → the s
 **Gaps / questions to resolve:**
 - [ ] [e.g., Have they quantified the cost of their current approach?]
 
+**Derived-read for tier/capacity (reference-only — no gate):** If a connector-feasibility doc exists (`{customers_dir}/<Customer>/outputs/connector-feasibility/`), you may read its already-computed **Availability column** (🟢 Cloud+SM / 🟦 Self-Managed-Flex-only / 🟧 Enterprise / 🟥 none) and the deployment verdict to inform the pricing-tier / Metrics story — enterprise connectors or gated features (Flex, entitlement-gated) point to a higher edition/capacity tier, which carries plan/capacity implications for the ROI hypothesis. This is a derived read of another skill's output only — do NOT pull registries/repos or recompute. If no such doc exists, proceed exactly as today.
+
 ---
 
 ## Economic Buyer
@@ -373,6 +375,7 @@ Wait for explicit yes/no on Notion / memory before doing those.
 
 ## Changelog
 
+- **2026-07-10** — Metrics section may now do a light **derived-read** of connector-feasibility's Availability column + deployment verdict (from `outputs/connector-feasibility/`) to inform pricing-tier / ROI reasoning — enterprise/gated connectors imply a higher edition/capacity tier. Reference-only (reads another skill's output, no registry/repo pull), no gate — proceeds unchanged if the doc isn't there.
 - **2026-07-10** — Added qual-craft disciplines (per playbook → Operating Disciplines): compelling-event + backward-timeline probe in Decision Process (D2); coach-vs-champion + multi-threading in Champion (D3/D4); a new **Stakeholder Map** section (the reusable artifact); and a **Reasons to walk / deprioritize** read in Deal Risks (D1 — qualifying out as a win).
 - **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
 - **2026-07-09** — Fixed the "Movement Since Last Qualification" read path: prior biz-qual is read from `outputs/biz-qual/biz-qual-*.md` (was the customer root, where it's never saved) so the letter-by-letter comparison actually finds the prior scorecard.

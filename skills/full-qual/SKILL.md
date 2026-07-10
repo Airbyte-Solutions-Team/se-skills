@@ -57,6 +57,8 @@ Two independent documents (or one + a skip note, per above), each auto-saved to 
 > &nbsp;&nbsp;• tech-qual ✓ → `outputs/tech-qual/…`
 > Next up per the workflow: `connector-feasibility`, then `poc-plan`."
 
+In that closing summary, also surface (don't re-derive) the child docs' product-truth so the SE sees it without opening both: the **3-way deployment verdict** (🟢 Cloud / 🟦 Flex / 🔴 park-no-fit) and tech-qual's **entitlement-backed compliance self-check** — including any unverified-compliance flag it raised. Just point at what the children already produced; add no new format or logic.
+
 ## Notes
 
 - This wrapper adds no new analysis. If you find yourself writing MEDDPICC or technical-scope content directly here, stop — that belongs in the underlying skill.
@@ -66,6 +68,7 @@ Two independent documents (or one + a skip note, per above), each auto-saved to 
 
 ## Changelog
 
+- **2026-07-10** — Closing summary now surfaces the children's derived product-truth — the 3-way deployment verdict and tech-qual's entitlement-backed compliance self-check / any unverified-compliance flag — so the SE sees them without opening both docs. Still owns no logic and re-derives nothing; pure pass-through of what the children produced.
 - **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
 - **2026-07-09** — Clarified that the wrapper owns no logic and inherits its child skills' prerequisites/refusals at their current contracts — don't re-implement or override them here; ordering + flag pass-through only.
 - **2026-07-07** — Initial creation. Convenience wrapper that chains biz-qual → tech-qual, producing two separate docs. Added after considering (and rejecting) a hard merge of the two skills — separation preserves distinct frameworks, refusal rules, and audiences (see `_se-playbook.md` Skill Sequencing Rules).
