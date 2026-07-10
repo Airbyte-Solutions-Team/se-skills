@@ -65,12 +65,52 @@ compare "README.md table" "$readme_skills"
 compare "playbook line 3" "$playbook_skills"
 echo ""
 
+# --- 3b. Objection reference exists + is readable (blocking) --------------------
+# objection-handler reads this file at runtime via ~/.claude/skills/_reference/.
+# Its canonical home is skills/_reference/. An accidental move/delete would
+# silently break the skill, so treat a missing reference as drift.
+REF_FILE="skills/_reference/airbyte-objection-reference.md"
+if [[ -f "$REF_FILE" ]]; then
+  echo "✓ objection reference present ($REF_FILE)"
+else
+  echo "✗ objection reference MISSING at $REF_FILE"
+  echo "    objection-handler reads this at runtime — a move/delete breaks it."
+  echo "    Restore it or update objection-handler + install.sh to the new path."
+  fail=1
+fi
+echo ""
+
 if [[ "$fail" -ne 0 ]]; then
   echo "DRIFT DETECTED. Update the file(s) above to match skills/ on disk."
   echo "(The webapp list is auto-derived and not checked.)"
   exit 1
 fi
 echo "All references in sync. ✓"
+
+# --- 3c. Objection reference freshness (warn, non-blocking) --------------------
+# The reference carries product facts (Flex/pricing/regions) that go stale.
+# Its header has a "Last updated: YYYY-MM-DD" line + a quarterly refresh cadence.
+# Warn if it's older than 90 days so the cadence is an actual signal, not a comment.
+if [[ -f "$REF_FILE" ]]; then
+  ref_date="$(grep -m1 -E '^\*\*Last updated:\*\*' "$REF_FILE" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' || true)"
+  if [[ -n "$ref_date" ]]; then
+    # Convert both dates to epoch days; support BSD (macOS) and GNU date.
+    if ref_epoch="$(date -j -f %Y-%m-%d "$ref_date" +%s 2>/dev/null)" \
+       || ref_epoch="$(date -d "$ref_date" +%s 2>/dev/null)"; then
+      now_epoch="$(date +%s)"
+      age_days=$(( (now_epoch - ref_epoch) / 86400 ))
+      if (( age_days > 90 )); then
+        echo ""
+        echo "⚠ objection reference is ${age_days} days old (Last updated: ${ref_date})."
+        echo "  Product facts drift (Flex/pricing/regions/compliance). Per the file's own"
+        echo "  refresh cadence, review it against current docs. (Warning only.)"
+      fi
+    fi
+  else
+    echo ""
+    echo "⚠ could not find a 'Last updated: YYYY-MM-DD' line in $REF_FILE — add one so freshness can be tracked."
+  fi
+fi
 
 # --- 4. SESSION-LOG staleness (staged-files only; skipped when nothing staged)
 # If this commit touches webapp/ or skills/ code, webapp/SESSION-LOG.md should be

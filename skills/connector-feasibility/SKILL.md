@@ -30,6 +30,21 @@ Default = full feasibility doc (coverage summary, per-connector table, gap analy
 
 If user signals brief mode (`--brief`, `quick coverage check`, `coverage summary`): produce just Coverage Summary table (counts by status) + bullet list of gaps with one-line build recommendations. Skip per-connector tables, reframe talk track, TCO callout. See `_se-playbook.md` "Output Mode" for the unified brief-mode rule.
 
+## Tool & skill dependencies (what's required vs. optional)
+
+This skill reaches for several external tools and skills. **Only the registry lookup is load-bearing; everything else is an optional enhancement that must degrade gracefully.** Never claim coverage from a tool/skill that isn't available — note it as "not available" in Source Coverage instead.
+
+- **Registry (primary):** `airbyte-ops-mcp` (`list_connectors_in_registry`, `get_connector_registry_entry`/`_spec`) — the source of truth for existence/version/spec. Requires that MCP + GCS creds. If absent, fall back to local source (`airbyte_repos_dir`) + published docs and cap confidence, noting it.
+- **Optional external skills (skip cleanly if not installed — they ship separately from Airbyte's connector-skills marketplace, not with this repo):**
+  - `shared-airbyte-skills:connector-type-identification` — connector type → which files matter. If absent, infer type from the on-disk files directly (`manifest.yaml` → manifest-only; `metadata.yaml` `language` field; presence of Python/Java source).
+  - `shared-airbyte-skills:connector-health-check` — fleet health. If absent, use `airbyte-ops-mcp` `query_prod_failed_sync_attempts_for_connector` instead.
+  - `shared-airbyte-skills:query-airbyte-docs` — Kapa docs search (internal/Devin env). If absent, browse docs or use deepwiki.
+  - `discovering-connectors` — connector discovery. If absent, use the registry list.
+- **Optional MCPs (skip silently if not connected):** deepwiki (upstream vendor API docs, public/no-auth), Kapa, Sentry, Datadog.
+- **Optional local checkouts:** `airbyte_repos_dir` (see "Reading connector source locally").
+
+When an optional skill/tool is missing, do the fallback named above and **record both the attempt and the fallback in Source Coverage** — the SE should know whether the build-path reasoning came from a first-class tool or a fallback.
+
 ## Step 2 — Validate each connector AGAINST the use case (not just existence)
 
 For each system the customer needs, go through this chain. "The connector exists" is step 2a, not the answer.
@@ -295,7 +310,7 @@ If a connector is only available on Cloud (or only on Self-Managed), flag it. Th
 
 ## Changelog
 
-- **2026-07-10** — **Portability + MCP fix.** Repointed hardcoded `~/airbyte-work/` output/config paths to the resolver (`{customers_dir}`/`config_file`); local Airbyte repo checkouts now resolve via `{airbyte_repos_dir}` (optional — skill degrades to MCP/registry-only when unset, noted in Source Coverage). **Fixed dead MCP tool names:** `mcp__airbyte-mcp__list_connectors` → `mcp__airbyte-ops-mcp__list_connectors_in_registry`, and `mcp__airbyte-mcp__get_connector_info` → `mcp__airbyte-ops-mcp__get_connector_registry_entry` + `get_connector_registry_spec` (there is no `airbyte-mcp` server; the old names would have failed on every machine). These require the `airbyte-ops-mcp` server + GCS creds; skill notes and falls back if unavailable.
+- **2026-07-10** — **Portability + MCP fix.** Repointed hardcoded `~/airbyte-work/` output/config paths to the resolver (`{customers_dir}`/`config_file`); local Airbyte repo checkouts now resolve via `{airbyte_repos_dir}` (optional — skill degrades to MCP/registry-only when unset, noted in Source Coverage). **Fixed dead MCP tool names:** `mcp__airbyte-mcp__list_connectors` → `mcp__airbyte-ops-mcp__list_connectors_in_registry`, and `mcp__airbyte-mcp__get_connector_info` → `mcp__airbyte-ops-mcp__get_connector_registry_entry` + `get_connector_registry_spec` (there is no `airbyte-mcp` server; the old names would have failed on every machine). These require the `airbyte-ops-mcp` server + GCS creds; skill notes and falls back if unavailable. Added a **Tool & skill dependencies** section declaring what's required (registry) vs. optional-with-graceful-degradation (`shared-airbyte-skills:*`, `discovering-connectors`, deepwiki/Kapa/Sentry/Datadog, local checkouts) — each with a named fallback, since those skills ship separately from this repo and aren't guaranteed present.
 - **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE" (reframe talk-track note).
 - **2026-07-09** — Fail-loud on unavailable tools: Source Coverage lists each dependency used/unavailable; metadata-only runs are capped at 🟡 with a lead caveat; effort ranges labeled as estimates.
 - **2026-06-26** — Richer troubleshooting/feasibility kit wired in. Step 2 now reads **local connector source** (`02-repos/airbyte/airbyte-integrations/connectors/<name>/` manifest/metadata/BEHAVIOR + Python/Java CDK) for implementation details the registry spec doesn't expose (pagination, cursors, sub-streams, quirks) — the MCPs serve metadata, not code. Added a **freshness guard**: check the checkout's age and `git pull --ff-only` if >~14 days stale before relying on it; live registry (`get_connector_info`) stays the source of truth for existence/version/streams, never overridden by a stale checkout. Added **deepwiki MCP** for upstream vendor-API/library docs (public, no auth) and referenced **Kapa Docs MCP** (internal/Devin) + **Sentry/Datadog** for runtime observability — all guarded as "skip silently / note 'not available' if not configured on this machine." Source Coverage now reports local-source-read + checkout date + which docs/observability tools were (un)available.

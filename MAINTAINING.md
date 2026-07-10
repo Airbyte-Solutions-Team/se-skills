@@ -38,7 +38,7 @@ Then run `./scripts/check-sync.sh` (or just commit — the hook runs it).
 ### When you change a skill's BEHAVIOR (not the set)
 - The skill's own **`## Changelog`** — append a dated entry. Always.
 - **`_se-playbook.md` "Salesforce Enrichment"** field map — if SFDC fields change
-- **`reference/airbyte-objection-reference.md`** — if Airbyte product positioning changes
+- **`skills/_reference/airbyte-objection-reference.md`** — if Airbyte product positioning changes. Bump its `**Last updated:**` date when you do — the drift check warns if it's >90 days old.
 - Memory (`~/.claude/projects/.../memory/`) — if MCP setup or active-engagement facts change
 
 ### When you change the WEB APP
@@ -47,8 +47,13 @@ Then run `./scripts/check-sync.sh` (or just commit — the hook runs it).
 
 ## The drift check
 
-`scripts/check-sync.sh` compares the skill folders on disk against the README
-table and the playbook line, and exits non-zero if they diverge. It runs:
+`scripts/check-sync.sh` guards against silent drift. It:
+- compares skill folders on disk against the README table + playbook line (**blocking** — exits non-zero if they diverge)
+- verifies `skills/_reference/airbyte-objection-reference.md` exists (**blocking** — objection-handler reads it at runtime; a move/delete would silently break the skill)
+- warns if that reference is >90 days stale (**non-blocking** — product facts drift)
+- nudges if `webapp/`/`skills/` code is staged without a SESSION-LOG update (**non-blocking**)
+
+It runs:
 - **on demand:** `./scripts/check-sync.sh`
 - **automatically:** as a pre-commit hook (installed via `install-hooks.sh`)
 
