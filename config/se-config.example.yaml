@@ -32,6 +32,23 @@ workspace_root: "~/.se-skills"
 # Unset → the skill uses MCP/registry data only. See README → "Optional enhancements".
 # airbyte_repos_dir: "~/airbyte-work/02-repos"
 
+# Optional — product & connector reference data: grounds connector availability +
+# entitlement reasoning in live product truth (connector-feasibility, deployment-model-qual,
+# objection-handler, tech-qual, poc-plan). Repo paths are relative to airbyte_repos_dir.
+# All sources degrade gracefully; enterprise repo is PRIVATE (omit if no access).
+# See README → "Optional enhancements" and _se-playbook.md → "Product & Connector Reference Data".
+# reference_data:
+#   registry:
+#     oss_url:   "https://connectors.airbyte.com/files/registries/v0/oss_registry.json"
+#     cloud_url: "https://connectors.airbyte.com/files/registries/v0/cloud_registry.json"
+#     cache_dir: "registry"
+#     cache_ttl_hours: 24
+#   repos:
+#     airbyte_platform:   "airbyte-platform"     # public
+#     airbyte_enterprise: "airbyte-enterprise"   # PRIVATE — optional
+#   connector_models:
+#     enabled: false
+
 # ── SE identity ────────────────────────────────────────────────────────────────
 name: "Your Name"
 email: "you@airbyte.io"

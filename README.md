@@ -113,6 +113,12 @@ role: "Solutions Engineer"
 aliases: ["Nickname"]
 ae_pairings: [{ name: "Your AE", role: "AE" }]
 salesforce: { org_alias: "airbyte-prod", query_directory: "~/.se-skills", enabled: true }
+# Optional — grounds connector availability + entitlement reasoning in live product truth
+# (see README → "Optional enhancements" and _se-playbook.md → "Product & Connector Reference Data"):
+# reference_data:
+#   registry: { oss_url: "...oss_registry.json", cloud_url: "...cloud_registry.json", cache_dir: "registry", cache_ttl_hours: 24 }
+#   repos:    { airbyte_platform: "airbyte-platform", airbyte_enterprise: "airbyte-enterprise" }  # enterprise is private/optional
+#   connector_models: { enabled: false }
 ```
 Skills read this for the workspace paths, `[SE name]` placeholder, call attribution, email signatures, and SFDC org alias. **No skill hardcodes a workspace path** — everything resolves from `workspace_root` (see `_se-playbook.md` → "Workspace Paths"). If you already have a bespoke tree (e.g. `~/airbyte-work/01-customers`), just point `workspace_root` + a `layout:` block at it — no file migration needed.
 
@@ -151,6 +157,32 @@ airbyte_repos_dir: "~/airbyte-work/02-repos"
 `connector-feasibility` also draws on a few externally-distributed skills when present — `discovering-connectors` and the `shared-airbyte-skills:*` family (`connector-type-identification`, `connector-health-check`, `query-airbyte-docs`). These ship separately (Airbyte's connector-skills marketplace), not with this repo; the skill degrades if they're absent.
 
 The `airbyte-ops-mcp` server (registry/prod queries, requires GCS creds) powers the connector existence/spec lookups. Without it, `connector-feasibility` falls back to local source + published docs and says so in Source Coverage.
+
+#### Product & connector reference data (availability + entitlements)
+Skills that reason about **connector availability** and **which capabilities gate to which edition** (`connector-feasibility`, `deployment-model-qual`, `objection-handler`, `tech-qual`, `poc-plan`) can ground that reasoning in live product truth instead of memory. Four sources, all optional and configured under `reference_data:` in your `.se-config.yaml`:
+- **Connector registry JSON** (public, no auth) — the source of truth for connector existence, version, support tier (certified/community), release stage, and **Cloud vs. Self-Managed availability** (a connector in the OSS registry but not the Cloud registry is Self-Managed-only). Cached locally (default 24h).
+- **`airbyte-platform`** (public) — the entitlement definitions (SSO, RBAC, PrivateLink, self-managed regions, sync-frequency tiers, mappers/encryption) that map a customer requirement to an edition, plus the `airbyte-data-plane` Helm chart behind the Enterprise Flex story.
+- **`airbyte-enterprise`** (**private** — access varies by teammate) — the enterprise connectors the monorepo doesn't have (Oracle, NetSuite, SAP HANA, Workday, ServiceNow, SharePoint, DB2). Skills degrade cleanly and say so when it's absent.
+- **`airbyte-connector-models`** (public PyPI, opt-in) — typed Pydantic config models; lowest priority (the registry `spec` already covers most auth/config questions).
+
+To enable, clone the public repo(s) as blobless shallow clones and add the config block (the private `airbyte-enterprise` is optional — leave it out if you don't have access):
+```bash
+git clone --filter=blob:none --depth=1 https://github.com/airbytehq/airbyte-platform.git ~/airbyte-work/02-repos/airbyte-platform
+```
+```yaml
+reference_data:
+  registry:
+    oss_url:   "https://connectors.airbyte.com/files/registries/v0/oss_registry.json"
+    cloud_url: "https://connectors.airbyte.com/files/registries/v0/cloud_registry.json"
+    cache_dir: "registry"          # under airbyte_repos_dir
+    cache_ttl_hours: 24
+  repos:
+    airbyte_platform:   "airbyte-platform"     # public
+    airbyte_enterprise: "airbyte-enterprise"   # PRIVATE — optional, omit if no access
+  connector_models:
+    enabled: false                 # opt-in typed models
+```
+Skip any source and the consuming skills fall back and report it in Source Coverage — they never assert availability/entitlement facts from data they couldn't reach. Full spec: `_se-playbook.md` → "Product & Connector Reference Data".
 
 ---
 

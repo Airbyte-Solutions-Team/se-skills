@@ -764,6 +764,45 @@ When a skill uses SFDC, the Source Coverage section must report: the opp(s) quer
 
 ---
 
+## Product & Connector Reference Data (Shared Machinery)
+
+Several skills reason about **connector availability** and **which capabilities gate to which edition/plan**. Historically they did this from memory, which is how the product model goes stale (e.g. "Flex not GA → park the deal," binary Cloud-or-bust deployment verdicts). This section is the canonical "how" — skills reference it and add only their skill-specific consumption, exactly like "Salesforce Enrichment" above.
+
+The data comes from four sources, configured under `reference_data:` in `config_file` (resolved per "Workspace Paths"). All repo paths there are relative to `airbyte_repos_dir` unless absolute. **Every source degrades loudly** (see "Graceful degradation" below) — a skill never proceeds as if it had data it couldn't reach.
+
+### The four sources
+
+- **DS1 — Connector Registry JSON** (public HTTPS, no auth). The authoritative, machine-readable registry of every connector, as two files (`registry.oss_url`, `registry.cloud_url`). Top-level `{ "sources": [...], "destinations": [...] }`. Per-connector fields that matter to SE work: `name`, `dockerRepository`, `dockerImageTag` (version), `supportLevel` (`certified` vs `community` — the reliability signal), `releaseStage` (`alpha`/`beta`/`generally_available`), `sourceType` (`api`/`database`/`file` — drives CDC-eligibility), `language` (drives build-path reasoning for gaps), `ab_internal.isEnterprise`, `supportsFileTransfer`/`supportsDataActivation`, and the full `spec` (including `advanced_auth` and `connectionSpecification` — **auth model and config surface are derivable from the registry directly, no source read needed**). This is *more current* than the local monorepo checkout for existence/version/tier/availability. This is the source of truth for those four; the `airbyte` monorepo source read (see `airbyte_repos_dir`) is only for *implementation detail* (pagination, cursors, quirks).
+- **DS2 — `airbytehq/airbyte-platform`** (public; `repos.airbyte_platform`). Blobless shallow clone; skills read only two areas:
+  - **Helm charts — `charts/v2/`:** `charts/v2/airbyte` (full control plane) and `charts/v2/airbyte-data-plane` — **the Enterprise Flex / Hybrid self-managed data-plane chart** (its `values.yaml` confirms the topology: `airbyteUrl` + `dataPlane.controlPlaneAuthEndpoint` + `clientId`/`clientSecret` + a `region` field + a PrivateLink data-plane mode). This chart *is* the concrete artifact behind the "cloud control plane + your data plane" story.
+  - **Entitlements — `airbyte-commons-entitlements/.../models/EntitlementDefinitions.kt`:** the source of truth for which capabilities are gated behind an edition/license. Includes the ones SEs qualify on constantly: `feature-sso`, `feature-rbac-roles`, `feature-groups` (identity/governance); `feature-self-managed-regions`, `feature-privatelink` (+`feature-privatelink-limit`) (data residency / network isolation); `feature-15-minute-sync-frequency`, `feature-faster-sync-frequency` (latency tier); `feature-mappers` (row filtering/hashing/encryption), `feature-rejected-records-storage`; `feature-multiple-workspaces`, `feature-orchestration`, `feature-destination-object-storage`, `feature-ai-copilot`, `feature-embedded`; plus enterprise **connector** entitlements (NetSuite, Oracle, SAP HANA, ServiceNow, SharePoint(+Lists), Workday, DB2, destination-salesforce). Each feature-id maps to a deployment/compliance question — presence tells you the edition (Cloud vs Flex vs SME).
+- **DS3 — `airbytehq/airbyte-enterprise`** (**PRIVATE**; `repos.airbyte_enterprise`, optional). The enterprise connectors the monorepo doesn't have (`source-oracle-enterprise`, `source-netsuite-enterprise`, `source-sap-hana-enterprise`, `source-service-now`, `source-sharepoint(-lists)-enterprise`, `source-workday(-rest)`, `source-db2-enterprise`, `destination-salesforce`). Read `connector_stubs.json` at the repo root — a compact `{ id, name, label, url (docs), type, definitionId }` list — plus a connector's `metadata.yaml`/docs. **Access varies by teammate.** When absent, do not infer enterprise availability from memory — state it unavailable and cap confidence.
+- **DS4 — `airbyte-connector-models`** (public PyPI, optional; `connector_models.enabled`). Auto-generated Pydantic config/spec models, regenerated nightly. Lets a skill enumerate a connector's required config/auth fields programmatically. **Lowest priority** — DS1's embedded `spec` already answers most auth/config questions; DS4 is a typed convenience layer, opt-in.
+
+### The two derived lookups (use these — don't each re-implement the set logic)
+
+1. **Connector availability lookup** — given a connector name, return:
+   `{ exists, dockerImageTag, supportLevel, releaseStage, sourceType, language, cloud_available, self_managed_only, isEnterprise, auth }`.
+   - `cloud_available` = present in the **cloud** registry. `self_managed_only` = present in **oss** but **absent from cloud** (the OSS-minus-Cloud set difference — this is the "which connectors force a non-Cloud deployment" answer). Today that's ~20 sources (e.g. `source-db2`, `source-kafka`, `source-teradata`, `source-singlestore`).
+   - `isEnterprise` = `ab_internal.isEnterprise` in the registry, cross-checked against DS3 `connector_stubs.json`.
+   - `auth` derived from the registry `spec` (`advanced_auth` / `connectionSpecification`).
+2. **Entitlement → edition lookup** — given a capability the customer needs (SSO, RBAC, self-managed regions, PrivateLink, 15-min sync, mappers/encryption), return the entitlement feature-id (from DS2) and the deployment implication (which edition it points to — Cloud / Flex-Hybrid / SME).
+
+### Freshness & caching
+
+- **Registry (DS1):** fetch live, then **cache for `registry.cache_ttl_hours` (default 24h)** in `registry.cache_dir` (the files are ~4.5 MB each — don't re-download every invocation). On fetch failure, fall back to the cached copy and **report the cache date** in Source Coverage. Never assert availability from a cache older than ~7 days without flagging it. Never fall back silently.
+- **Repos (DS2/DS3):** same freshness guard the monorepo already uses — if the checkout is more than ~14 days old, `git pull --ff-only`; on failure, read as-is and **report the checkout date** in Source Coverage.
+
+### Graceful degradation (fail loud — ties to Source Coverage Transparency)
+
+If a source is unavailable (no network, private repo not cloned, config flag off, pip package missing), the skill **states it explicitly** in Source Coverage as `unavailable` (never omits it), **caps confidence** (an availability/entitlement claim built on a missing source is never High), and says so in the lead in one clause — e.g. "enterprise connectors not checked (repo unavailable), so regulated-stack feasibility is unverified." It does **not** proceed as if the data were present. When live sources disagree with the static `airbyte-objection-reference.md`, **live wins** and the discrepancy is noted (the static file is then a candidate for update).
+
+### Guardrail — don't surface the plumbing to customers
+
+Registry set-diffs, entitlement feature-ids, and Helm chart names are *internal reasoning*. Customer-facing artifacts (emails, talk tracks) say "available on Enterprise Flex," not "gated behind `feature-privatelink`." Keep this internal-only.
+
+---
+
 ## Cross-Transcript Analysis
 
 When synthesizing across multiple transcripts, notes, or memory records for a customer (e.g., during deal-assessment, post-call referencing prior calls, prep-call reviewing history, biz-qual scoring MEDDPICC over time):
@@ -845,6 +884,7 @@ If/when built, this should be a separate skill (not a mode flag on biz-qual/deal
 
 ## Changelog
 
+- **2026-07-10** — Added the **"Product & Connector Reference Data" (Shared Machinery)** section (sibling to Salesforce Enrichment) — the foundation for grounding connector-availability and entitlement reasoning in real product truth instead of memory. Defines four sources (DS1 connector registry JSON, DS2 `airbyte-platform` entitlements + `airbyte-data-plane` Helm chart, DS3 private `airbyte-enterprise` connector stubs, DS4 optional typed models), two derived lookups (connector-availability incl. the Cloud-vs-Self-Managed OSS-minus-Cloud set difference; entitlement→edition), freshness/caching rules (registry 24h cache; repos 14-day pull guard), fail-loud graceful degradation (ties to Source Coverage Transparency), and the don't-surface-plumbing-to-customers guardrail. Paired with new `reference_data:` keys in `.se-config.yaml`. Per-skill consumers (connector-feasibility, deployment-model-qual, objection-handler, tech-qual, poc-plan) will reference this section — this entry lands the shared convention first.
 - **2026-07-10** — Added the "Operating Disciplines" section (D1 disqualification bar / qualify-out; D2 compelling event + backward-planned mutual timeline; D3 coach-vs-champion + power pressure-test; D4 multi-threading), plus the reusable **stakeholder map** artifact. Cross-cutting rules that `biz-qual`, `deal-assessment`, `poc-plan`, `full-qual`, `internal-prep`, `coverage-handoff` reference rather than reinvent.
 - **2026-07-10** — **Portability: workspace base-path resolver.** Added the "Workspace Paths (Multi-User Support)" section — no skill hardcodes `~/airbyte-work/` anymore. `workspace_root` resolves `$SE_WORKSPACE` → `.se-config.yaml: workspace_root` → `~/.se-skills` default; derived `customers_dir` / `transcripts_dir` / `notes_dir` / `config_file` / `memory_dir` / `airbyte_repos_dir`. Default layout drops numeric folder prefixes; a `layout:` config block lets an existing `~/airbyte-work/01-customers` setup keep working with no migration. **Fixed the memory path** (previously hardcoded to username `gary-yang`) → now `memory_dir` from config, skipped gracefully if unset. `airbyte_repos_dir` optional (connector-feasibility degrades to MCP/registry-only when absent).
 - **2026-07-09** — Genericized hardcoded SE name: "Gary"/"Gary's" prose → "the SE"/"the SE's"; "Gary's CLAUDE.md" doctrine refs → "the workspace CLAUDE.md" / the now-inlined skill+playbook guidance. Repo no longer bakes in one operator's name (multi-user via `.se-config.yaml`). (OS-username memory paths left as-is — not config-derivable.)
