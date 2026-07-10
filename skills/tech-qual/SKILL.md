@@ -148,7 +148,22 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 > (b) written as "believed — SE to verify with [team] before customer confirmation."
 > Never state a certification (SOC 2, HIPAA, region availability, etc.) as fact from memory. Separate `[customer requires]` from `[Airbyte supports — verified]` from `[Airbyte supports — unverified]`. If any compliance line is unverified, note it in the At-a-Glance ("compliance claims pending verification").
 >
-> This is a save gate, not a suggestion: if a compliance row is neither cited nor marked "verify with [team]," fix it before the doc is written.
+> **Ground each security/compliance requirement in a NAMED entitlement (DS2), not memory.** Per `_se-playbook.md` → "Product & Connector Reference Data" (DS2 = `reference_data.repos.airbyte_platform`), the source of truth is the real `airbyte-commons-entitlements/src/main/kotlin/io/airbyte/commons/entitlements/models/EntitlementDefinitions.kt` — reading it is how you verify a capability exists. Map each requirement to its `feature-*` entitlement when one exists:
+> - SSO / identity federation → `feature-sso`
+> - RBAC / roles / groups → `feature-rbac-roles`, `feature-groups`
+> - In-pipeline row filtering / hashing / field encryption → `feature-mappers`
+> - Network isolation / PrivateLink → `feature-privatelink`
+> - Data residency / customer-VPC data plane → `feature-self-managed-regions`
+> - Sub-hourly / 15-min sync latency → `feature-15-minute-sync-frequency`
+>
+> OR — if the requirement is **customer-managed KMS / BYOK, full control-plane-in-VPC, or true air-gap** — flag it as "**no entitlement on any currently-offered shape → not supported today** (was Self-Managed Enterprise, retired / may return)." This is a no-fit boundary, not a capability to position; both Cloud and Flex use Airbyte-managed secrets. Route it to deployment-model-qual for the verdict.
+>
+> Per `_se-playbook.md` graceful-degradation: if the `airbyte-platform` checkout isn't available, mark the claim "believed — verify with [team]" and cap confidence — don't assert an entitlement you couldn't read.
+>
+> This is a save gate, not a suggestion: if a compliance row is neither cited (or entitlement-grounded) nor marked "verify with [team]," fix it before the doc is written.
+
+> [!info] Keep entitlement feature-ids INTERNAL
+> The `feature-*` ids are internal reasoning only (guardrail per `_se-playbook.md`). Customer-facing prose says "available on Enterprise Flex" — never "gated behind `feature-privatelink`." Use the entitlement to ground your own verification; translate to plan/edition language for the customer.
 
 ## Current Stack & Integration Context
 - **Current ETL/ELT tools:** [Fivetran / Stitch / custom / dbt / etc.]
@@ -196,6 +211,8 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 
 ## Source Coverage
 *Audit trail — last content section (progressive disclosure per `_se-playbook.md`).* [Transcripts read with line counts, prior qual docs consulted, MCP queries run, certification claims marked "needs verification" — see After Generating.]
+
+**DS2 product-truth (per `_se-playbook.md` → fail-loud):** report whether the `airbyte-platform` checkout (`reference_data.repos.airbyte_platform`) was used to verify entitlement claims in Security & Compliance — with the checkout date — e.g. "entitlement claims grounded in `EntitlementDefinitions.kt`, airbyte-platform checkout [date]"; or "airbyte-platform not available — compliance/entitlement claims reasoned from memory and marked 'verify with [team]', confidence capped." Never assert an entitlement you couldn't verify against the file.
 
 ---
 
@@ -290,6 +307,7 @@ Read `config_file` (per playbook → Workspace Paths) for the `[SE name]` field.
 
 ## Changelog
 
+- **2026-07-10** — **DS2 entitlement grounding of the compliance self-check.** The Security & Compliance self-check now maps each customer security/compliance requirement to a NAMED `feature-*` entitlement from the real `EntitlementDefinitions.kt` (DS2 = `reference_data.repos.airbyte_platform`, per `_se-playbook.md` → "Product & Connector Reference Data") rather than asserting capabilities from memory: SSO → `feature-sso`, RBAC/groups → `feature-rbac-roles`/`feature-groups`, in-pipeline row filtering/hashing/encryption → `feature-mappers`, PrivateLink/network isolation → `feature-privatelink`, data residency → `feature-self-managed-regions`, sub-hourly latency → `feature-15-minute-sync-frequency`. Made the customer-managed KMS/BYOK / full-control-plane-in-VPC / air-gap boundary concrete: no entitlement on any currently-offered shape → not supported today (was SME, retired/may return), a no-fit rather than a positionable capability. Feature-ids kept internal per guardrail (customer-facing = "available on Enterprise Flex," never the feature-id). Source Coverage now reports whether the airbyte-platform checkout was used (+ date) or unavailable, with capped confidence and "verify with [team]" degradation. Additive — refusal rule, transcript prerequisite, and section order unchanged.
 - **2026-07-10** — SME-retirement phrasing fixes. Deployment method row now Cloud Pro / Flex-hybrid (dropped SME as an option); Preferred deployment now Cloud / Enterprise Flex / Open Source; customer-managed KMS reframed as not available on any currently-offered shape (was SME — retired, may return); deployment-first block now names the two live shapes (Cloud / Flex-hybrid), routes residency/VPC to Flex, and treats BYOK / full-VPC / air-gap-with-no-Flex-path as a park/no-fit rather than requalify-to-SME. Kept SME as a retired-may-return note, not deleted.
 - **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
 - **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE"; "Gary's CLAUDE.md" ref → the deployment-model guidance.
