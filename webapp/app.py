@@ -51,6 +51,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from typing import Any, Literal
 
+import orchestrator
 import output_schema
 import persistence
 import security
@@ -1730,6 +1731,7 @@ class InvokeBody(BaseModel):
     opp_slug: str | None = Field(default=None, max_length=120)   # opp folder slug
     extra: str | None = Field(default=None, max_length=10_000)      # free-text appended to the prompt
     freeform: str | None = Field(default=None, max_length=20_000) # full free-text instruction (instead of a dropdown skill)
+    override_prerequisites: bool = Field(default=False)             # allow running when the planner reports missing prerequisites
 
 
 # ---------------------------------------------------------------------------
@@ -1894,6 +1896,22 @@ async def _run_job(job_id: str, prompt: str, meta: dict):
         pass  # job-state persistence is best-effort
 
 
+@app.get("/api/plan")
+def api_plan(account: str, skill: str, opp_slug: str | None = None):
+    """Return the prerequisite plan for a proposed skill invocation.
+
+    The planner uses structured sidecars (STRUCT-003) to check whether the
+    selected skill has the transcripts and valid upstream outputs it needs.
+    The result always includes `can_override: true` so the UI can offer a
+    "Run anyway" path.
+    """
+    account = _safe(account)
+    if skill not in SKILL_IDS:
+        raise HTTPException(400, f"Unknown skill: {skill}")
+    plan = orchestrator.check_prerequisites(skill, account, _safe(opp_slug) if opp_slug else None, CUSTOMERS_DIR)
+    return plan.model_dump()
+
+
 @app.post("/api/invoke")
 async def api_invoke(body: InvokeBody):
     account = _safe(body.account)
@@ -1907,6 +1925,13 @@ async def api_invoke(body: InvokeBody):
 
     if not body.freeform and body.skill not in SKILL_IDS:
         raise HTTPException(400, f"Unknown skill: {body.skill}")
+
+    # Deterministic prerequisite check. Free-form instructions and explicit
+    # overrides skip the planner.
+    if not body.freeform and not body.override_prerequisites and body.skill in SKILL_IDS:
+        plan = orchestrator.check_prerequisites(body.skill, account, opp_slug, CUSTOMERS_DIR)
+        if not plan.ready:
+            return JSONResponse({"prerequisites": plan.model_dump(), "blocked": True})
 
     prompt = _build_prompt(body, account, out_dir)
 
