@@ -323,7 +323,7 @@ async function pollJob(jobId, onTick) {
     const job = await api(`/api/jobs/${encodeURIComponent(jobId)}`).catch(() => null);
     if (!job) return null;
     if (job.persistence_warning) warnPersistence(`job:${jobId}`, job.persistence_warning);
-    if (onTick) onTick(job);
+    if (onTick) await onTick(job);
     if (job.status !== "running") return job;
     await new Promise((r) => setTimeout(r, 2000));
   }
@@ -409,112 +409,66 @@ function showToast(message, kind = "ok") {
   setTimeout(close, 8000);
 }
 
-// Minimal, dependency-free Markdown → HTML for rendering skill outputs nicely.
-// Handles: headings, bold/italic, inline code, code fences, tables, blockquotes,
-// hr, ordered/unordered lists (incl. [ ] checkboxes), paragraphs.
-// `toc` (optional) collects {level, text, id} for an auto-generated index.
-function mdToHtml(md, toc) {
-  const lines = (md || "").replace(/\r\n/g, "\n").split("\n");
-  let html = "", i = 0;
-  const seenIds = {};  // de-dupe heading ids within this render
-  const inline = (t) => esc(t)
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
-    .replace(/==([^=]+)==/g, '<mark class="md-key">$1</mark>')
-    // Bold first, non-greedy over ANY inner chars so a nested *italic* inside
-    // **bold** doesn't break the match (was `[^*]+`, which stopped at the inner
-    // `*`). The italic pass then runs on the inner text (incl. inside the strong).
-    .replace(/\*\*([\s\S]+?)\*\*/g, "<strong>$1</strong>")
-    .replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>")
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, text, href) =>
-      `<a href="${esc(safeHref(href))}" target="_blank" rel="noopener">${text}</a>`);
+// Shared Markdown -> HTML renderer. The server uses `md_render.py` to produce
+// identical, sanitized HTML for the web reader, PDF export, and internal HTML
+// export. The browser calls `POST /api/output/render` and then applies the
+// presentation-only `.md-*` / `.callout-*` classes the reader CSS expects.
 
-  while (i < lines.length) {
-    const ln = lines[i];
+async function renderMarkdown(md) {
+  const res = await api("/api/output/render", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ md: md || "" }),
+  });
+  return res.html;
+}
 
-    // code fence
-    if (/^```/.test(ln)) {
-      let buf = []; i++;
-      while (i < lines.length && !/^```/.test(lines[i])) { buf.push(lines[i]); i++; }
-      i++; html += `<pre class="md-pre"><code>${esc(buf.join("\n"))}</code></pre>`; continue;
-    }
-    // table (header row + --- separator)
-    if (/\|/.test(ln) && i + 1 < lines.length && /^\s*\|?[\s:-]+\|[\s:|-]*$/.test(lines[i + 1])) {
-      const row = (r) => r.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|").map((c) => c.trim());
-      const head = row(ln);
-      i += 2; const body = [];
-      while (i < lines.length && /\|/.test(lines[i]) && lines[i].trim()) { body.push(row(lines[i])); i++; }
-      html += `<table class="md-table"><thead><tr>${head.map((c) => `<th>${inline(c)}</th>`).join("")}</tr></thead><tbody>${
-        body.map((r) => `<tr>${r.map((c) => `<td>${inline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
-      continue;
-    }
-    // heading — emit a slug id and (optionally) collect into the TOC
-    const h = ln.match(/^(#{1,6})\s+(.*)$/);
-    if (h) {
-      const lvl = h[1].length;
-      let id = slugify(h[2]) || "section";
-      if (seenIds[id] != null) { seenIds[id]++; id = `${id}-${seenIds[id]}`; } else { seenIds[id] = 0; }
-      if (toc) toc.push({ level: lvl, text: stripInline(h[2]), id });
-      html += `<h${lvl} id="${id}" class="md-h md-h${lvl}">${inline(h[2])}</h${lvl}>`;
-      i++; continue;
-    }
-    // hr
-    if (/^\s*---\s*$/.test(ln)) { html += "<hr class='md-hr'/>"; i++; continue; }
-    // callout — GitHub-style admonition: > [!verdict|risk|blocker|info] title
-    // MUST come before the generic blockquote branch (which would swallow it).
-    const cm = ln.match(/^>\s*\[!(verdict|risk|blocker|info)\]\s*(.*)$/i);
-    if (cm) {
-      const type = cm[1].toLowerCase();
-      const title = cm[2].trim();
-      let buf = []; i++;
-      while (i < lines.length && /^>\s?/.test(lines[i]) && !/^>\s*\[!/.test(lines[i])) {
-        buf.push(lines[i].replace(/^>\s?/, "")); i++;
-      }
-      const body = buf.filter((l) => l.trim()).map((l) => inline(l)).join("<br>");
-      html += `<div class="callout callout-${type}">`
-        + (title ? `<div class="callout-title">${inline(title)}</div>` : "")
-        + (body ? `<div class="callout-body">${body}</div>` : "")
-        + `</div>`;
-      continue;
-    }
-    // blockquote (plain — no [!type] marker)
-    if (/^>\s?/.test(ln)) {
-      let buf = [];
-      while (i < lines.length && /^>\s?/.test(lines[i])) { buf.push(lines[i].replace(/^>\s?/, "")); i++; }
-      html += `<blockquote class="md-quote">${inline(buf.join(" "))}</blockquote>`; continue;
-    }
-    // lists
-    if (/^\s*([-*]|\d+\.)\s+/.test(ln)) {
-      const ordered = /^\s*\d+\.\s+/.test(ln);
-      let buf = [];
-      while (i < lines.length && /^\s*([-*]|\d+\.)\s+/.test(lines[i])) {
-        let item = lines[i].replace(/^\s*([-*]|\d+\.)\s+/, "");
-        // GFM checkbox items render a styled checkbox affordance (not a raw ☐/☑
-        // glyph, which reads as a broken square bullet). The list marker is
-        // suppressed via .md-check so there's no disc + box double bullet. The
-        // checkbox is built OUTSIDE inline() so its markup isn't escaped.
-        const checkM = item.match(/^\[( |[xX])\]\s*/);
-        if (checkM) {
-          const done = checkM[1].toLowerCase() === "x";
-          const rest = inline(item.replace(/^\[( |[xX])\]\s*/, ""));
-          buf.push(`<li class="md-check"><span class="md-cbox${done ? " done" : ""}" aria-hidden="true">${done ? "✓" : ""}</span><span class="md-check-text">${rest}</span></li>`);
-        } else {
-          buf.push(`<li>${inline(item)}</li>`);
-        }
-        i++;
-      }
-      html += ordered ? `<ol class="md-list">${buf.join("")}</ol>` : `<ul class="md-list">${buf.join("")}</ul>`;
-      continue;
-    }
-    // blank
-    if (!ln.trim()) { i++; continue; }
-    // paragraph (gather consecutive non-empty, non-special lines)
-    let buf = [ln]; i++;
-    while (i < lines.length && lines[i].trim() && !/^(#{1,6}\s|>|\s*([-*]|\d+\.)\s|```|\s*---\s*$)/.test(lines[i]) && !/\|/.test(lines[i])) {
-      buf.push(lines[i]); i++;
-    }
-    html += `<p class="md-p">${inline(buf.join(" "))}</p>`;
-  }
+// Add the CSS classes the web reader DOM restructuring expects, plus safe
+// link targets. Keep this in sync with `md_render.py` output.
+function addMdClasses(html) {
+  // Admonitions from the backend are `<div class="admon admon-{type}">`;
+  // the reader needs `.callout*` classes for styling and risk extraction.
+  html = html.replace(
+    /<div class="admon admon-(\w+)"><div class="admon-label">([\s\S]*?)<\/div><div class="admon-body">([\s\S]*?)<\/div><\/div>/g,
+    '<div class="admon callout callout-$1 admon-$1"><div class="admon-label callout-title">$2</div><div class="admon-body callout-body">$3</div></div>'
+  );
+  // Headings: preserve id from the shared renderer and add reader classes.
+  html = html.replace(/<h([1-6])([^>]*)>/g, '<h$1 class="md-h md-h$1"$2>');
+  // Paragraphs, lists, tables, code blocks, hr.
+  html = html.replace(/<p>/g, '<p class="md-p">');
+  html = html.replace(/<ul>/g, '<ul class="md-list">');
+  html = html.replace(/<ol>/g, '<ol class="md-list">');
+  html = html.replace(/<table>/g, '<table class="md-table">');
+  html = html.replace(/<pre>/g, '<pre class="md-pre">');
+  html = html.replace(/<hr\s*\/?>/g, '<hr class="md-hr" />');
+  // Highlights and checkbox lists.
+  html = html.replace(/<mark>/g, '<mark class="md-key">');
+  html = html.replace(/<li>(☐|☑)\s+([\s\S]*?)<\/li>/g, (m, box, text) => {
+    const done = box === '☑';
+    return `<li class="md-check"><span class="md-cbox${done ? ' done' : ''}" aria-hidden="true">${done ? '✓' : ''}</span><span class="md-check-text">${text}</span></li>`;
+  });
+  // Open external (and relative anchor) links in a new tab safely.
+  html = html.replace(/<a href="([^"]*)"([^>]*)>/g, (m, href, rest) => {
+    if (rest.includes('target=')) return m;
+    if (rest.includes('rel=')) return `<a href="${href}"${rest} target="_blank">`;
+    return `<a href="${href}"${rest} target="_blank" rel="noopener">`;
+  });
   return html;
+}
+
+// Markdown -> HTML for the output reader. The optional `toc` array is populated
+// from the rendered headings so the sidebar and in-doc links stay in sync.
+async function mdToHtml(md, toc) {
+  const body = addMdClasses(await renderMarkdown(md));
+  if (toc && Array.isArray(toc)) {
+    const tmp = document.createElement("div");
+    tmp.innerHTML = body;
+    toc.length = 0;
+    tmp.querySelectorAll("h1, h2, h3, h4, h5, h6").forEach((h) => {
+      toc.push({ level: parseInt(h.tagName[1]), text: h.textContent.trim(), id: h.id });
+    });
+  }
+  return body;
 }
 
 let SKILLS = [];
@@ -1827,7 +1781,7 @@ async function openOutput(path, title, ctx) {
   if (meta) outputMeta[decodedPath] = meta;
   const text = await api("/api/output?path=" + encodeURIComponent(decodedPath));
   const toc = [];
-  const bodyHtml = mdToHtml(text, toc);
+  const bodyHtml = await mdToHtml(text, toc);
 
   // Build the body DOM, then restructure: use the H1 as the page title, wrap
   // each H2 section in its own bordered card, and drop the inline "Jump to"
@@ -2373,11 +2327,11 @@ async function askThread(threadEl, q, endpoint, payload) {
     if (data.mode === "deep") {
       tag.textContent = "🔧"; bodyEl.innerHTML = `<span class="muted">searching codebase &amp; skills…</span>`;
       if (data.persistence_warning) warnPersistence(`job:${data.job_id}`, data.persistence_warning);
-      await pollJob(data.job_id, (job) => {
+      await pollJob(data.job_id, async (job) => {
         if (job.status !== "running") {
           const md = job.stdout || job.stderr || "(no output)";
           item.dataset.answerMd = md;   // raw md for "Download with Q&A"
-          bodyEl.innerHTML = mdToHtml(md);
+          bodyEl.innerHTML = await mdToHtml(md);
         }
       });
     } else {
@@ -2399,7 +2353,7 @@ async function askThread(threadEl, q, endpoint, payload) {
     for (const ev of events) {
       const m = ev.match(/^event: (\w+)\ndata: (.*)$/ms);
       if (!m) continue;
-      if (m[1] === "token") { acc += JSON.parse(m[2]).text; item.dataset.answerMd = acc; bodyEl.innerHTML = mdToHtml(acc); }
+      if (m[1] === "token") { const payload = JSON.parse(m[2]); acc += payload.text; item.dataset.answerMd = acc; bodyEl.innerHTML = addMdClasses(payload.html); }
       else if (m[1] === "error") { bodyEl.innerHTML = `<span class="muted">Error: ${esc(JSON.parse(m[2]).error)}</span>`; }
     }
   }
@@ -2748,9 +2702,9 @@ async function pageLive(account, slug, oppName) {
       if (data.mode === "deep") {           // claude -p job → poll
         tag.textContent = "🔧"; bodyEl.innerHTML = `<span class="muted">searching codebase &amp; skills…</span>`;
         if (data.persistence_warning) warnPersistence(`job:${data.job_id}`, data.persistence_warning);
-        await pollJob(data.job_id, (job) => {
+        await pollJob(data.job_id, async (job) => {
           if (job.status !== "running") {
-            bodyEl.innerHTML = mdToHtml(job.stdout || job.stderr || "(no output)");
+            bodyEl.innerHTML = await mdToHtml(job.stdout || job.stderr || "(no output)");
             threadEl.scrollTop = threadEl.scrollHeight;
           }
         });
@@ -2774,7 +2728,7 @@ async function pageLive(account, slug, oppName) {
         for (const ev of events) {
           const m = ev.match(/^event: (\w+)\ndata: (.*)$/ms);
           if (!m) continue;
-          if (m[1] === "token") { acc += JSON.parse(m[2]).text; bodyEl.innerHTML = mdToHtml(acc); threadEl.scrollTop = threadEl.scrollHeight; }
+          if (m[1] === "token") { const payload = JSON.parse(m[2]); acc += payload.text; bodyEl.innerHTML = addMdClasses(payload.html); threadEl.scrollTop = threadEl.scrollHeight; }
           else if (m[1] === "error") { gotError = true; tag.textContent = "⚠️"; bodyEl.innerHTML = `<span class="muted">Error: ${esc(JSON.parse(m[2]).error)}</span>`; }
         }
       }

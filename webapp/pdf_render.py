@@ -8,11 +8,8 @@ chrome (the "about:blank" + timestamp + filename junk). This module controls
 page breaks (each H2 section starts a new page; table rows never split) and emits
 a clean page-number footer only.
 
-Handles the non-standard markdown the skills emit:
-  - ==highlight==                       -> <mark>
-  - GitHub admonitions > [!info|risk|blocker|warning]
-  - GFM task-list checkboxes - [ ] / - [x]
-  - status emoji dots (🟢 🟡 🔴 …) wrapped for consistent sizing
+The core Markdown -> HTML body conversion now lives in `md_render.py` and is
+shared with the web reader and the internal.airbyte.ai HTML export.
 """
 from __future__ import annotations
 
@@ -22,8 +19,7 @@ import shutil
 import subprocess
 import tempfile
 
-import markdown
-import nh3
+from md_render import markdown_to_body_html
 
 # Chrome/Chromium candidates, in preference order (macOS first, then Linux).
 _CHROME_CANDIDATES = [
@@ -34,14 +30,6 @@ _CHROME_CANDIDATES = [
     "chromium",
     "chromium-browser",
 ]
-
-_ADMON_LABELS = {
-    "info": ("Note", "admon-info"),
-    "risk": ("Risk", "admon-risk"),
-    "blocker": ("Blocker", "admon-blocker"),
-    "warning": ("Warning", "admon-warning"),
-    "verdict": ("Verdict", "admon-info"),
-}
 
 _CSS = """
 @page {
@@ -122,47 +110,6 @@ blockquote p:last-child { margin-bottom: 0; }
 em { color: #333; }
 """
 
-# HTML sanitizer configuration for exported Markdown. Keep this in sync with the
-# tags/attributes the skills emit and python-markdown produces.
-_ALLOWED_TAGS = {
-    "h1", "h2", "h3", "h4", "h5", "h6",
-    "p", "br", "hr",
-    "blockquote", "ol", "ul", "li", "dl", "dt", "dd",
-    "div", "pre", "code",
-    "em", "strong", "a", "img",
-    "table", "thead", "tbody", "tr", "th", "td", "caption", "col", "colgroup",
-    "sub", "sup", "span", "mark", "abbr", "acronym", "del", "s", "nav",
-}
-
-_ALLOWED_ATTRIBUTES = {
-    "*": {"class", "id"},
-    "a": {"href", "title", "target"},
-    "img": {"src", "alt", "title"},
-    "th": {"style", "colspan", "rowspan", "align"},
-    "td": {"style", "colspan", "rowspan", "align"},
-}
-
-_ALLOWED_URL_SCHEMES = {"http", "https", "mailto", "tel"}
-
-_ALLOWED_STYLE_PROPERTIES = {"text-align"}
-
-
-def _sanitize_html(html: str) -> str:
-    """Remove unsafe tags, attributes, and URL schemes from an HTML fragment.
-
-    Preserves the structural and styling tags used by skill output while
-    stripping `<script>`, inline event handlers, `javascript:` links, and
-    unsupported URL schemes.
-    """
-    return nh3.clean(
-        html,
-        tags=_ALLOWED_TAGS,
-        attributes=_ALLOWED_ATTRIBUTES,
-        url_schemes=_ALLOWED_URL_SCHEMES,
-        link_rel="noopener noreferrer",
-        filter_style_properties=_ALLOWED_STYLE_PROPERTIES,
-    )
-
 
 def find_chrome() -> str | None:
     """Return a usable Chrome/Chromium executable path, or None."""
@@ -173,79 +120,6 @@ def find_chrome() -> str | None:
         if os.path.isfile(cand) or shutil.which(cand):
             return cand
     return None
-
-
-def markdown_to_body_html(md_text: str) -> str:
-    """Convert skill-output markdown (with the non-standard extras) to an HTML
-    body FRAGMENT (no <html>/<style> wrapper).
-
-    Shared by both the PDF path and the internal.airbyte.ai HTML export so the
-    non-standard markdown the skills emit — admonitions, ==highlight==, GFM
-    checkboxes, status dots, the tables/lists blank-line fixup — is handled in
-    exactly one place."""
-    raw = md_text
-
-    # GitHub-style admonitions: a blockquote whose first line is "> [!type] title".
-    lines = raw.split("\n")
-    out: list[str] = []
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        m = re.match(r"^>\s*\[!(\w+)\]\s*(.*)$", line)
-        if m:
-            kind = m.group(1).lower()
-            title = m.group(2).strip()
-            label, cls = _ADMON_LABELS.get(kind, ("Note", "admon-info"))
-            body: list[str] = [title] if title else []
-            i += 1
-            while i < len(lines) and lines[i].startswith(">"):
-                body.append(re.sub(r"^>\s?", "", lines[i]))
-                i += 1
-            body_html = markdown.markdown("\n".join(body).strip(), extensions=["extra"])
-            out.append(
-                f'<div class="admon {cls}"><div class="admon-label">{label}</div>'
-                f'<div class="admon-body">{body_html}</div></div>'
-            )
-            continue
-        out.append(line)
-        i += 1
-    raw = "\n".join(out)
-
-    # ==highlight== -> <mark> (before the parser so it survives table cells)
-    raw = re.sub(r"==(.+?)==", r"<mark>\1</mark>", raw)
-
-    # python-markdown's tables/sane_lists need a blank line between a preceding
-    # paragraph and the block; the skills omit it. Insert the missing blank line.
-    fixed: list[str] = []
-    prev = ""
-    for ln in raw.split("\n"):
-        stripped = ln.lstrip()
-        starts_table = stripped.startswith("|")
-        starts_list = bool(re.match(r"^(\s*[-*+]\s|\s*\d+\.\s)", ln))
-        prev_is_block = (
-            prev.strip() != ""
-            and not prev.lstrip().startswith("|")
-            and not re.match(r"^(\s*[-*+]\s|\s*\d+\.\s)", prev)
-            and not prev.lstrip().startswith("#")
-            and not prev.lstrip().startswith(">")
-            and not prev.lstrip().startswith("<")
-        )
-        if (starts_table or starts_list) and prev_is_block:
-            fixed.append("")
-        fixed.append(ln)
-        prev = ln
-    raw = "\n".join(fixed)
-
-    # GFM task-list checkboxes -> a box glyph (extra doesn't render them).
-    raw = re.sub(r"^(\s*)[-*+]\s+\[ \]\s+", r"\1- ☐ ", raw, flags=re.MULTILINE)
-    raw = re.sub(r"^(\s*)[-*+]\s+\[[xX]\]\s+", r"\1- ☑ ", raw, flags=re.MULTILINE)
-
-    body = markdown.markdown(raw, extensions=["extra", "sane_lists", "toc"])
-
-    for dot in ["🟢", "🟡", "🔴", "⚠️", "❌", "✅", "⭐", "★"]:
-        body = body.replace(dot, f'<span class="dot">{dot}</span>')
-
-    return _sanitize_html(body)
 
 
 def markdown_to_html(md_text: str) -> str:
