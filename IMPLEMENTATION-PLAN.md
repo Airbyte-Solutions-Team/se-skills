@@ -105,7 +105,7 @@ The current implementation is thoughtful but carries several high-risk gaps:
 | UX-001 | UX and learning loop | Add output review/approval/correction workflow and persist corrections to memory or golden fixtures. | SEs have no structured way to give feedback on generated docs. | `webapp/static/app.js` output reader; `skills/_se-playbook.md:605-616` Memory Check | confirmed | Medium | High | Medium | EVAL-001, EVAL-002 | Medium | UI buttons to approve/edit/comment; corrections feed `memory/` or `eval/golden/` | Manual test + fixture growth | Proposed | Keep corrections per-user |
 | UX-002 | UX and learning loop | Add deal-health diff/trend view across repeated `deal-assessment` outputs. | Dated files exist but UI groups by day with no comparison. | `webapp/static/app.js:1100-1123` | confirmed | Low | Medium | Medium | UX-001 | Low | New view shows what changed between two assessments | UI smoke test | Proposed | Use existing dated files |
 | UX-003 | UX and learning loop | Integrate action items with calendar/task tools (optional). | Action items live only in Markdown. | `skills/post-call/SKILL.md` Action Items | hypothesis | Low | Large | Large | None | High | Design doc for Salesforce task / calendar integration | Review | Proposed | Deferred; not a daily blocker |
-| UX-004 | UX and learning loop | Improve discoverability of `roi-business-case` and `mutual-close-plan` in the webapp (they are currently "Anytime" despite logical late-workflow placement). | UI tiering may cause SEs to miss them. | `webapp/app.py:87-106` `SKILL_PRESENTATION` | confirmed | Low | Low | Small | None | Low | Add a "Late-stage" tier or contextual prompt after `poc-plan` | UI review | Proposed | Pure UI change |
+| UX-004 | UX and learning loop | Improve discoverability of `roi-business-case` and `mutual-close-plan` in the webapp (they were previously ungrouped / hidden in "Anytime" despite logical late-workflow placement). | UI tiering may cause SEs to miss them. | `webapp/app.py:87-113` `SKILL_PRESENTATION` | confirmed | Low | Low | Small | None | Low | Add a "Late-stage" tier or contextual prompt after `poc-plan` | `pytest` + UI review | Completed | `TIER_LATE` added with steps 8-9; tests in `eval/tests/test_webapp_skill_tiers.py` |
 | UX-005 | UX and learning loop | Improve live-transcribe session recovery and add per-speaker labels. | Session is lost on restart; speaker diarization is absent. | `webapp/app.py:1797-2205`; `webapp/LIVE-TRANSCRIBE.md` | hypothesis | Low | Medium | Medium | ARCH-004 | Medium | Restart resumes last session; manual speaker labels possible | Manual test | Proposed | Requires audio-input research |
 
 ---
@@ -368,7 +368,7 @@ Scope:
 - ORCH-003: `next-move` evidence requirements.
 - UX-001: output review, corrections, and golden-case capture.
 - UX-002: deal-health diff/trend view.
-- UX-004: better `roi-business-case` / `mutual-close-plan` discoverability.
+- UX-004: better `roi-business-case` / `mutual-close-plan` discoverability. *(Completed — `TIER_LATE` added in `webapp/app.py` with `pytest` coverage.)*
 
 Entry criteria:
 - Phase 3 complete.

@@ -84,6 +84,7 @@ SKILLS_DIRS = [
 # `order` drives the overall sort. This is presentation only — folder names and the
 # `name:` frontmatter are untouched, so skill discovery/triggering never changes.
 TIER_WORKFLOW = "Workflow — run in order"
+TIER_LATE     = "Late-stage — after POC"
 TIER_ANYTIME  = "Anytime — as needed"
 TIER_META     = "When you're not sure"
 
@@ -97,6 +98,9 @@ SKILL_PRESENTATION = {
     "full-qual":             {"label": "Full Qual (biz + tech)","blurb": "Shortcut: runs biz-qual + tech-qual back-to-back (two separate docs)","tier": TIER_WORKFLOW, "step": None, "order": 5.5},
     "connector-feasibility": {"label": "Connector Feasibility", "blurb": "Source/dest coverage check",                                         "tier": TIER_WORKFLOW, "step": 6, "order": 6},
     "poc-plan":              {"label": "POC Plan",              "blurb": "Scope a POC (needs biz-qual + tech-qual — will offer to run them)",  "tier": TIER_WORKFLOW, "step": 7, "order": 7},
+    # ── Late-stage / closing (numbered, but only after POC data exists) ──────
+    "roi-business-case":     {"label": "ROI Business Case",     "blurb": "Compile the economic buyer's TCO/ROI number",                      "tier": TIER_LATE, "step": 8, "order": 8},
+    "mutual-close-plan":     {"label": "Mutual Close Plan",     "blurb": "Path from POC-success to signature (owners + dates)",              "tier": TIER_LATE, "step": 9, "order": 9},
     # ── Anytime / as-needed (unnumbered) ───────────────────────────────────
     "deal-assessment":       {"label": "Deal Assessment",       "blurb": "Honest deal-health read (run every ~2 weeks)",     "tier": TIER_ANYTIME, "step": None, "order": 20},
     "account-refresher":     {"label": "Account Refresher",     "blurb": "Fast catch-me-up briefing before a touchpoint",    "tier": TIER_ANYTIME, "step": None, "order": 21},
