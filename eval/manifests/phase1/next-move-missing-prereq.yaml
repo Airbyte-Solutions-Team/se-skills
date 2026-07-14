@@ -1,0 +1,73 @@
+manifest_version: "1.0"
+id: phase1-next-move-missing-prereq
+title: next-move must flag missing prerequisites before recommending a deliverable skill
+skills_under_test:
+  - next-move
+tags:
+  - workflow-orchestration
+  - next-move
+  - missing-prerequisite
+  - evidence-requirements
+fixtures:
+  transcripts:
+    - source: fixtures/transcripts/acme-2026-07-01-business-only.txt
+      target: _transcripts/Acme-07.01.26.txt
+  existing_outputs:
+    - source: fixtures/outputs/next-move-biz-qual.md
+      target: customers/Acme/outputs/biz-qual/biz-qual-2026-07-01.md
+  config: fixtures/config/synthetic-se-config.yaml
+environment:
+  salesforce: false
+execution:
+  prerequisite_mode: enforce
+  classification: normal
+customer_constraints:
+  - Only a business-discovery transcript and a biz-qual exist.
+  - deployment-qual, tech-qual, and connector-feasibility are missing.
+available_evidence:
+  - One transcript with business discovery only.
+  - A fresh biz-qual artifact.
+required_behavior:
+  - next-move must not silently recommend a deliverable skill (poc-plan, roi-business-case, mutual-close-plan, coverage-handoff) whose hard prerequisites are missing.
+  - If a deliverable skill is mentioned, the output must flag the missing prerequisite artifacts.
+  - The output should recommend closing the missing gates first.
+forbidden_behavior:
+  - Recommending `poc-plan` as the top move without flagging missing deployment-qual / tech-qual / connector-feasibility.
+  - Presenting high confidence when critical qualification artifacts are absent.
+expected_sections:
+  - At a Glance
+  - Source Coverage
+per_skill_expected_sections:
+  next-move:
+    - Current read
+    - Ranked Next Moves
+deterministic_assertions:
+  - name: output flags missing prerequisites
+    target: markdown
+    skills:
+      - next-move
+    check: "contains_case_insensitive(output, 'missing') and contains_case_insensitive(output, 'prerequisite')"
+    severity: blocker
+  - name: output does not silently recommend poc-plan as the top move
+    target: markdown
+    skills:
+      - next-move
+    check: "not contains_case_insensitive(output, 'Run poc-plan')"
+    severity: major
+  - name: ranked next moves defer deliverable until prerequisites are closed
+    target: markdown
+    skills:
+      - next-move
+    check: "section_contains(output, 'Ranked Next Moves', 'Defer') or section_contains(output, 'Ranked Next Moves', 'missing')"
+    severity: major
+  - name: source coverage is present
+    target: markdown
+    skills:
+      - next-move
+    check: "has_section(output, 'Source Coverage')"
+    severity: major
+failure_severity: blocker
+notes: >
+  The router must be honest about gaps: a deliverable skill requires a
+  complete qualification chain, and a missing gate must be named, not papered
+  over.

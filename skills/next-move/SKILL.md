@@ -61,6 +61,16 @@ Before recommending any skill, check whether a fresh, relevant artifact already 
 - The next move should be the **next logical downstream step** (e.g., if deployment-qual + biz-qual + tech-qual exist, move toward `connector-feasibility` or `poc-plan`) or a **gap-closing action** (prep-call, account-refresher, Gong check) if the existing artifacts are thin.
 - If the user explicitly asks to refresh an existing artifact, honor the request and note that it is a refresh.
 
+### Missing-prerequisite flag
+A deliverable skill (`poc-plan`, `roi-business-case`, `mutual-close-plan`, `coverage-handoff`) may only be the top recommendation when the artifact chain supports it. If you are recommending one anyway — for example, because the user explicitly asked for it or because SFDC/local signals strongly demand it — you must **flag the missing prerequisites**:
+
+1. **At-a-Glance confidence line** must name the missing artifact(s): e.g., "Medium — `poc-plan` is conditional on completing `tech-qual` and `connector-feasibility`."
+2. **Why This Move / Rationale** must state that the recommendation is conditional and that the missing artifact(s) must be completed first.
+3. **Don't do yet** must list the premature skill(s) and the missing gate(s).
+4. If confidence is actually low (thin evidence, stale artifacts, conflicting signals), default to the **evidence-gathering recommendation** instead of a conditional deliverable.
+
+**Never silently route to a skill whose hard prerequisites are absent.** A missing gate is a finding, not something to paper over.
+
 ### 2. Transcripts
 Check `{transcripts_dir}/` for files matching the customer. Note:
 - Total count
@@ -351,6 +361,7 @@ Avoid "run follow-up-email because it's been a while" without a substantive trig
 
 ## Changelog
 
+- **2026-07-14** — **Missing-prerequisite flag.** When a deliverable skill (`poc-plan`, `roi-business-case`, `mutual-close-plan`, `coverage-handoff`) is recommended while hard prerequisites are missing, the `At-a-Glance` confidence line, `Why This Move` rationale, and `Don't do yet` section must explicitly flag the missing artifact(s). Defaults to evidence-gathering when confidence is actually low.
 - **2026-07-14** — **Phase 3 guardrails: no repeat recommendations; low-confidence → gather evidence.** Added an "Already-completed action guard" so the router does not recommend a qualification skill whose fresh artifact already exists without a new trigger. Added a "Low-confidence default" that prefers evidence-gathering actions over deliverable skills when the artifact chain is thin or signals conflict.
 - **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
 - **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE" (routing prose, inputs-needed field).
