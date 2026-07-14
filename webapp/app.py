@@ -1514,11 +1514,15 @@ def api_skills():
 
 @app.post("/api/reload")
 def api_reload_skills():
-    """Re-discover skills from disk without restarting the server.
+    """Re-discover skills and app config from disk without restarting the server.
 
-    Updates the in-memory skill list and SKILL_IDS used for validation.
+    Clears the cached `.se-config.yaml` so model/config changes take effect,
+    then updates the in-memory skill list and SKILL_IDS used for validation.
     The help endpoint is stateless, so it picks up the new list on the next call."""
     global SKILLS, SKILL_IDS
+    _se_config_clear()
+    # Eagerly reload so malformed config surfaces as early as possible.
+    _se_config()
     SKILLS = discover_skills()
     SKILL_IDS = {s["id"] for s in SKILLS}
     _ALL_SKILL_IDS.update(SKILL_IDS)

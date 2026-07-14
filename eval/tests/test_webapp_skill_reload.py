@@ -1,7 +1,7 @@
 """Deterministic tests for ARCH-007 runtime skill discovery refresh."""
 
 import webapp.app as app
-from webapp.app import api_reload_skills, discover_skills
+from webapp.app import api_reload_skills, discover_skills, _model_for, _se_config_clear
 
 
 def test_discover_skills_finds_new_skill_folder(monkeypatch, tmp_path) -> None:
@@ -14,6 +14,23 @@ def test_discover_skills_finds_new_skill_folder(monkeypatch, tmp_path) -> None:
     found = discover_skills()
     ids = [s["id"] for s in found]
     assert "new-skill" in ids
+
+
+def test_api_reload_clears_config_cache(monkeypatch, tmp_path) -> None:
+    """POST /api/reload picks up a changed .se-config.yaml (model config)."""
+    cfg = tmp_path / ".se-config.yaml"
+    cfg.write_text("models:\n  default: claude-sonnet-4-6\n")
+    monkeypatch.setattr(app, "SE_CONFIG", cfg)
+    _se_config_clear()
+    assert _model_for("quick-ask") == "claude-sonnet-4-6"
+
+    cfg.write_text("models:\n  default: claude-haiku-4-5\n")
+    # Simulate a stale cached config.
+    app._se_config._cache = {"models": {"default": "stale"}}
+    assert _model_for("quick-ask") == "stale"
+
+    api_reload_skills()
+    assert _model_for("quick-ask") == "claude-haiku-4-5"
 
 
 def test_api_reload_updates_globals(monkeypatch, tmp_path) -> None:

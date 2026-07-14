@@ -70,7 +70,7 @@ The ask-bars (follow-up chat in an output, and the Live Transcribe copilot) rout
    ```
 3. Restart the app. (Treat the key like a password; rotate it in the Console if it leaks.)
 
-**Model configuration:** you can override which Claude model the app uses for quick-ask, live-ask, deep skill runs, or any individual skill by adding a `models:` block to your `.se-config.yaml` (see `config/se-config.example.yaml`). Missing keys fall back to `default`, then to the app default `claude-sonnet-4-6`.
+**Model configuration:** you can override which Claude model the app uses for quick-ask, live-ask, deep skill runs, or any individual skill by adding a `models:` block to your `.se-config.yaml` (see `config/se-config.example.yaml`). Missing keys fall back to `default`, then to the app default `claude-sonnet-4-6`. Example values currently supported by the Claude API: `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-haiku-4-5`.
 
 ## Live Transcribe — one-time audio setup
 

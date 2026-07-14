@@ -57,8 +57,8 @@ workspace_root: "~/.se-skills"
 #   default: "claude-sonnet-4-6"
 #   quick-ask: "claude-sonnet-4-6"
 #   live-ask: "claude-sonnet-4-6"
-#   deal-assessment: "claude-sonnet-4-6"
-#   roi-business-case: "claude-sonnet-4-6"
+#   deal-assessment: "claude-opus-4-6"
+#   roi-business-case: "claude-opus-4-6"
 
 # ── SE identity ────────────────────────────────────────────────────────────────
 name: "Your Name"
