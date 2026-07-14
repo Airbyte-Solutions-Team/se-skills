@@ -2,7 +2,7 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`, mine = `gyairbyte/SE-Workflow`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: July 14, 2026 — UX-001/EVAL-002: golden fixture promotion and regression tests to close the feedback loop._
+_Last updated: July 14, 2026 — golden promotion now requires an editable preview, synthetic confirmation, and an active manifest scenario._
 
 ## What the app is
 Local FastAPI + vanilla-JS UI (no build step) over the SE skills suite. `cd webapp && uv run app.py` → http://127.0.0.1:8787 (needs `CPATH/LIBRARY_PATH` for portaudio on this Mac — see "Run" below). Browse team → member's accounts → an account's opportunities → generated outputs; invoke skills; ask follow-ups on outputs; Live Transcribe a Zoom call with an AI copilot.
@@ -16,6 +16,15 @@ uv run --python 3.11 app.py    # port 8787
 ```
 
 ## Built this session (newest first — see `git log`)
+- **Golden promotion review fixes (July 14).** The **Golden** button now opens an editable Markdown preview so the SE can review and correct the fixture text before saving. It requires an explicit "this content is synthetic and contains no customer or confidential data" confirmation, and it only allows saving to a Phase 1 manifest scenario actually exercised by `test_skill_regression.py`. `GET /api/golden/manifests` returns the active scenarios for a skill; `POST /api/output/golden` validates `confirm_synthetic`, the selected `scenario`, and accepts an edited `text` body.
+  - `webapp/static/app.js`: new `openGoldenModal` with a warning banner, editable textarea, scenario `<select>`, and synthetic-confirmation checkbox.
+  - `webapp/static/style.css`: golden-modal layout and warning styles.
+  - `webapp/app.py`: `OutputGolden` now requires `confirm_synthetic` and accepts `text`; new `GET /api/golden/manifests`; `POST /api/output/golden` validates the scenario against `golden.manifest_scenarios`.
+  - `webapp/golden.py`: new `manifest_scenarios(skill)` helper that reads `eval/manifests/phase1/*.yaml`.
+  - `eval/tests/test_webapp_output_golden.py`: updated to test active-fixture writing, edited-text saving, synthetic-confirmation rejection, untested-scenario rejection, and bad-path rejection.
+  - `webapp/static/index.html`: bumped `app.js?v=` cache-bust.
+  - `webapp/README.md` and this log: documented the corrected workflow.
+
 - **UX-001/EVAL-002: golden fixture promotion and regression tests to close the feedback loop (July 14).** Added `eval/golden.py` and `webapp/golden.py` to store canonical Markdown outputs for each skill/scenario, a **Promote to golden fixture** action in the output review panel, and `POST /api/output/golden` to copy a corrected/approved output into `eval/golden/{skill}/{scenario}.md`. Added `eval/tests/test_skill_regression.py` plus a `--update-golden` pytest flag; the test runs every Phase 1 manifest with the mock executor and diffs each generated skill output against the committed golden fixture, failing on unexpected drift. Missing fixtures can be seeded by running the regression test with `--update-golden`. Updated `webapp/README.md` and `IMPLEMENTATION-PLAN.md` to mark the feedback loop complete.
   - `eval/golden.py`: new golden fixture store used by the regression suite.
   - `webapp/golden.py`: webapp-side golden store so the API endpoint can write fixtures without depending on `eval` being on the runtime PYTHONPATH.
