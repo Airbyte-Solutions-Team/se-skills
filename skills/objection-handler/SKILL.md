@@ -114,9 +114,18 @@ The reference doc is the canonical source for Airbyte positioning on common obje
 
 ### Product-fact freshness (anti-stale)
 
-Ground every product claim in the objection reference above and note that file's `Last updated` date in the output. If the objection turns on a capability that may have changed since then (GA status, supported regions, pricing terms), do NOT assert it — write: "confirm current product state before using this line." A confidently-wrong product fact costs more trust than a hedge.
+Ground every product claim in `~/.claude/skills/_reference/airbyte-objection-reference.md` (and `_se-playbook.md` → Product & Connector Reference Data). Before generating the response:
 
-If the reference file is absent (fresh machine, new teammate), fall back to `_se-playbook.md` → Airbyte-Specific Application Notes + the deployment-model guidance, and note in the output that the canonical reference wasn't available — don't invent positioning.
+1. Check the **reference data freshness** for the objection reference. Use `_se-playbook.md` → Reference data freshness line in Source Coverage for the exact format.
+2. If the objection reference is **older than 7 days**, **missing**, or the issue turns on a capability that may have changed (GA status, supported regions, pricing terms), add a `[!warning]` callout: "The objection reference is `N` days old / unavailable. Confirm current product state before using this talk track."
+3. If the canonical reference is absent, fall back to `_se-playbook.md` → Airbyte-Specific Application Notes + the deployment-model guidance, and note in the output that the canonical reference wasn't available — don't invent positioning.
+
+The routing in this skill must match the `deployment-model-qual` taxonomy exactly:
+- **Cloud Pro** is the default shape.
+- **Enterprise Flex** (cloud control plane + customer-hosted data plane in their VPC) is the route for data residency, VPC isolation, and "our data can't share compute" objections.
+- **Park / no-fit today** is the honest answer for customer-managed KMS / BYOK, full control-plane-in-VPC, or true air-gap. Self-Managed Enterprise historically covered this but **is not currently offered**.
+
+A confidently-wrong product fact costs more trust than a hedge.
 
 ## After Generating
 

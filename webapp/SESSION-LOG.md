@@ -2,7 +2,7 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`, mine = `gyairbyte/SE-Workflow`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: July 14, 2026 — STRUCT-002 unified Markdown renderer for web/PDF/internal HTML; HEAD 9d5c52f._
+_Last updated: July 15, 2026 — SKILL-002 + SKILL-003 reference-data freshness and objection-handler reality; HEAD d3a24c6._
 
 ## What the app is
 Local FastAPI + vanilla-JS UI (no build step) over the SE skills suite. `cd webapp && uv run app.py` → http://127.0.0.1:8787 (needs `CPATH/LIBRARY_PATH` for portaudio on this Mac — see "Run" below). Browse team → member's accounts → an account's opportunities → generated outputs; invoke skills; ask follow-ups on outputs; Live Transcribe a Zoom call with an AI copilot.
@@ -16,6 +16,17 @@ uv run --python 3.11 app.py    # port 8787
 ```
 
 ## Built this session (newest first — see `git log`)
+- **SKILL-002 + SKILL-003: reference-data freshness warnings and objection-handler reality check (July 14).** Added `webapp/reference_freshness.py` to compute the freshness of product/connector reference sources from filesystem mtimes (connector registry cache, `airbyte-platform`/`airbyte-enterprise` repo checkouts, and `skills/_reference/airbyte-objection-reference.md`). `OutputMetadata` now carries a `reference_freshness` list; `webapp/app.py` populates it when writing/listing/reading sidecars and exposes it through the existing `/api/output/meta` and `/api/accounts/{account}/outputs` endpoints. The output list and the output reader now show a yellow `⚠` warning when any reference source is stale or missing, with the source name and age in days. Updated `skills/_se-playbook.md` → Product & Connector Reference Data to require a "Reference data freshness" line in `## Source Coverage` when a skill consumes DS1–DS4 or the objection reference. Updated `skills/objection-handler/SKILL.md` to align its Cloud Pro / Enterprise Flex / park-no-fit routing with `deployment-model-qual`, require the reference-freshness check, and warn when the objection reference is stale.
+  - `webapp/reference_freshness.py`: new `ReferenceFreshness` Pydantic model and `compute_reference_freshness`.
+  - `webapp/output_schema.py`: added `reference_freshness` field to `OutputMetadata`.
+  - `webapp/app.py`: populates/list/reader sidecars with reference freshness; `GET /api/output/meta` recomputes freshness at read time.
+  - `webapp/static/app.js`: renders stale-reference warning in the output list and output reader.
+  - `webapp/static/index.html`: bumped `app.js?v=` cache-bust.
+  - `skills/_se-playbook.md` and `skills/objection-handler/SKILL.md`: updated freshness and routing guidance.
+  - `eval/tests/test_reference_freshness.py`: tests for `compute_reference_freshness` and sidecar round-trip; `eval/tests/test_webapp_reference_freshness.py`: tests for `/api/output/meta` and `list_outputs` wiring.
+  - `IMPLEMENTATION-PLAN.md`: marked SKILL-002 and SKILL-003 completed.
+  - Validation: `uv run --extra dev pytest eval/ -v` passes; `node --check webapp/static/app.js` passes; `./scripts/check-sync.sh` passes.
+
 - **STRUCT-002: one shared Markdown renderer for web reader, PDF, and internal HTML (July 14).** Created `webapp/md_render.py` as the single source of truth for skill-output Markdown → HTML. It handles admonitions, `==highlight==`, GFM task-list checkboxes, status emoji dots, and table/list blank-line fixup, then runs the result through `nh3` with an allowlist. `pdf_render.py` and `internal_html.py` now import `markdown_to_body_html` from `md_render.py`; `webapp/app.py` exposes `POST /api/output/render` so the browser can render Markdown with the same sanitized parser. `webapp/static/app.js` replaced the client-side `mdToHtml` parser with `renderMarkdown` + `addMdClasses`: the browser fetches the shared renderer and applies presentation-only CSS classes. SSE streams for output ask and live ask now emit pre-rendered `html` alongside `text`, so streaming also uses the shared renderer. The PDF and internal HTML exports continue to use the same backend function, ensuring the same Markdown fixture produces identical, safe HTML across all three surfaces.
   - `webapp/md_render.py`: new shared `markdown_to_body_html` and sanitizer.
   - `webapp/pdf_render.py`: imports `markdown_to_body_html` from `md_render`.
