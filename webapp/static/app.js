@@ -8,7 +8,35 @@ const api = async (path, opts) => {
   return r.headers.get("content-type")?.includes("application/json") ? r.json() : r.text();
 };
 const esc = (s) => (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-let outputMeta = {};  // path -> { valid, validation_errors, missing_sections }
+let outputMeta = {};
+
+// Ask the planner whether a skill invocation is ready. If it is not, show a
+// browser confirm dialog with the missing prerequisites and a "Run anyway" path.
+// Free-form instructions bypass the planner entirely.
+async function invokeWithPlan(payload, alreadyConfirmed = false) {
+  if (!payload.freeform && !alreadyConfirmed && payload.skill) {
+    try {
+      const qs = new URLSearchParams({ account: payload.account, skill: payload.skill });
+      if (payload.opp_slug) qs.set("opp_slug", payload.opp_slug);
+      const plan = await api(`/api/plan?${qs.toString()}`);
+      if (!plan.ready) {
+        const lines = ["This skill is missing prerequisites:"].concat(plan.missing.map((m) => "• " + m));
+        if (!confirm(lines.join("\n") + "\n\nRun anyway?")) {
+          throw new Error("Cancelled");
+        }
+        return invokeWithPlan({ ...payload, override_prerequisites: true }, true);
+      }
+    } catch (e) {
+      if (e.message === "Cancelled") throw e;
+      // Planner unavailable — proceed to invoke so a local/network glitch doesn't
+      // block the SE; the backend still validates the skill id.
+    }
+  }
+  return api("/api/invoke", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
 
 // Only allow a small set of link schemes in the markdown reader. `javascript:`,
 // `data:`, `blob:`, and other arbitrary protocols are replaced with `#` so user
@@ -1236,10 +1264,8 @@ async function pickNewBusinessOpp(account) {
 
 // Fire a coverage-handoff run for one account+opp. Returns the job id (or throws).
 async function invokeCoverageHandoff(account, oppName, oppSlug, extraText) {
-  const res = await api("/api/invoke", {
-    method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ account, opportunity: oppName, opp_slug: oppSlug, skill: "coverage-handoff", extra: extraText }),
-  });
+  const payload = { account, opportunity: oppName, opp_slug: oppSlug, skill: "coverage-handoff", extra: extraText };
+  const res = await invokeWithPlan(payload);
   return res.job_id;
 }
 
@@ -1536,10 +1562,7 @@ async function pageOpportunity(account, slug, oppName) {
       ? { account, opportunity: oppName, opp_slug: slug, skill, extra: free || null }
       : { account, opportunity: oppName, opp_slug: slug, freeform: free };
     try {
-      const res = await api("/api/invoke", {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      const res = await invokeWithPlan(payload);
       if (res.persistence_warning) warnPersistence(`job:${res.job_id}`, res.persistence_warning);
       // Re-key the pending row to the real job id so watch() updates it in place.
       rows.delete(tmpKey); rows.set(res.job_id, row);
@@ -1563,10 +1586,8 @@ async function pageOpportunity(account, slug, oppName) {
     row.className = "status running";
     row.innerHTML = `<span class="run-head"><span class="spinner"></span>Generating coverage handoff…</span>`;
     try {
-      const res = await api("/api/invoke", {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ account, opportunity: oppName, opp_slug: slug, skill: "coverage-handoff", extra: extraText }),
-      });
+      const payload = { account, opportunity: oppName, opp_slug: slug, skill: "coverage-handoff", extra: extraText };
+      const res = await invokeWithPlan(payload);
       if (res.persistence_warning) warnPersistence(`job:${res.job_id}`, res.persistence_warning);
       rows.delete(tmpKey); rows.set(res.job_id, row);
       trackJob(res.job_id, { account, slug, oppName, skill: "coverage-handoff" });
@@ -2406,10 +2427,8 @@ async function pollInvokeJob(card, jobId, skillId, ctx) {
 async function invokeFromChat(threadEl, q, skill, ctx) {
   const card = appendInvokeCard(threadEl, q, skill.id, ctx.oppName);
   try {
-    const res = await api("/api/invoke", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ account: ctx.account, opportunity: ctx.oppName, opp_slug: ctx.slug, skill: skill.id }),
-    });
+    const payload = { account: ctx.account, opportunity: ctx.oppName, opp_slug: ctx.slug, skill: skill.id };
+    const res = await invokeWithPlan(payload);
     if (res.persistence_warning) warnPersistence(`job:${res.job_id}`, res.persistence_warning);
     trackJob(res.job_id, { ...ctx, skill: skill.id });  // global toast when it finishes
     await pollInvokeJob(card, res.job_id, skill.id, ctx);
@@ -2860,10 +2879,7 @@ function openInvoke(account, opp = null) {
     status.innerHTML = `<span class="run-head"><span class="spinner"></span>Starting…</span>`;
     runBtn.disabled = true;
     try {
-      await api("/api/invoke", {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      await invokeWithPlan(payload);
       // Close the modal immediately and let the opportunity page take over —
       // re-rendering it re-attaches to the now-running job and shows the live
       // status + result inline (same place freebar results land).

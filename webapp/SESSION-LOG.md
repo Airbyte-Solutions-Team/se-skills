@@ -2,7 +2,7 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`, mine = `gyairbyte/SE-Workflow`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: July 14, 2026 — STRUCT-001/STRUCT-003: output schemas, sidecar metadata, and validation warnings._
+_Last updated: July 14, 2026 — ORCH-001: deterministic prerequisite planner for skill sequencing._
 
 ## What the app is
 Local FastAPI + vanilla-JS UI (no build step) over the SE skills suite. `cd webapp && uv run app.py` → http://127.0.0.1:8787 (needs `CPATH/LIBRARY_PATH` for portaudio on this Mac — see "Run" below). Browse team → member's accounts → an account's opportunities → generated outputs; invoke skills; ask follow-ups on outputs; Live Transcribe a Zoom call with an AI copilot.
@@ -16,6 +16,15 @@ uv run --python 3.11 app.py    # port 8787
 ```
 
 ## Built this session (newest first — see `git log`)
+- **ORCH-001: deterministic prerequisite planner for skill sequencing (July 14).** Added `webapp/orchestrator.py` with `check_prerequisites` and wired it into the invoke flow. The planner reads the structured output sidecars (STRUCT-003) to verify that a skill has the required transcripts and valid upstream outputs before it runs. `GET /api/plan` returns a `ready`/`missing` result with `can_override: true`; `POST /api/invoke` now blocks on missing prerequisites unless `override_prerequisites=true` is sent. The frontend `invokeWithPlan` helper calls `/api/plan`, lists missing items in a browser `confirm`, and resends with the override flag if the SE chooses "Run anyway." Free-form instructions bypass the planner. Rules cover the workflow chain (`prep-call` → `post-call` → `biz-qual` → `tech-qual` → `connector-feasibility` → `poc-plan`) and late-stage skills (`roi-business-case`, `mutual-close-plan`), with transcript gates for `biz-qual`, `deal-assessment`, `post-call`, etc.
+  - `webapp/orchestrator.py`: new `PlanResult` / `UpstreamStatus` models; `SKILL_PREREQUISITES` mapping; helpers to find the latest output and read its sidecar; transcript presence check.
+  - `webapp/app.py`: new `GET /api/plan` route; `InvokeBody.override_prerequisites` field; `api_invoke` checks prerequisites before starting a job.
+  - `webapp/static/app.js`: `invokeWithPlan` helper used by `openInvoke`, `invokeFromChat`, and `invokeCoverageHandoff`; bumped `app.js?v=`.
+  - `webapp/static/index.html`: bumped `app.js?v=` cache-bust.
+  - `webapp/README.md` and `IMPLEMENTATION-PLAN.md`: documented the planner and marked ORCH-001 completed.
+  - `eval/tests/test_webapp_orchestrator.py`: deterministic tests for prerequisite checks, `GET /api/plan`, and `POST /api/invoke` blocking/override behavior.
+  - Validation: `uv run --extra dev pytest eval/ -v` passes; mock suite passes; `./scripts/check-sync.sh` passes; `node --check webapp/static/app.js` passes.
+
 - **STRUCT-001 + STRUCT-003: output schemas, sidecars, and validation warnings (July 14).** Added Pydantic schemas for the five high-risk skill outputs and runtime validation. Each sidecar now carries a `schema_version` and a `validation_status` of `valid`, `invalid`, or `unvalidated`. `invalid` is reserved for outputs that clearly follow the current format but are missing a required section (e.g. `Source Coverage`); `unvalidated` is used for older outputs that lack current-format markers (e.g. no `At a Glance` block) so they are not presented as broken. The webapp writes the `.md.json` sidecar immediately after each skill run and regenerates it lazily when an output is listed if the Markdown is newer or the sidecar is missing/stale. The output list shows `⚠` for invalid outputs and `?` for unvalidated ones; the reader shows a matching banner. Legacy `.md` files remain the source of truth and render normally.
   - `webapp/output_schema.py`: new `SkillOutputSchema` and `OutputMetadata` models with `schema_version` and `validation_status`; Markdown parser for title, date, `At a Glance` key/value pairs, H2 sections, and fuzzy section-name matching.
   - `webapp/app.py`: `_write_output_sidecar` called after each skill run; `list_outputs` exposes `valid`, `validation_status`, `validation_errors`, and `missing_sections`; new `GET /api/output/meta` endpoint returns sidecar metadata on demand.
