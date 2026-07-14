@@ -51,7 +51,7 @@ If user signals brief mode (`--brief`, `just the number`, `one-slide`): produce 
 - **Self-Managed Enterprise** was licensed — **retired / not currently offered (may return)**; not a live pricing lane today, kept here as historical context only.
 - The core ROI story for most enterprise deals is **predictable capacity-based spend vs. a competitor's consumption bill that spikes with volume** — model the customer's *growth* trajectory, because that's where capacity-based pricing wins. Confirm current pricing specifics before putting exact figures in a customer-facing artifact; ground stated numbers in the objection reference's `Last updated` date.
 
-**Primary scenario discipline:** The customer's stated operating model (Cloud Pro or Flex, with their requested sync frequency, scope, concurrency, and volume) is the **primary scenario**. Do not lower sync frequency, reduce scope, or change concurrency assumptions in the primary estimate unless the customer explicitly approves that change. If you model an alternative (e.g., daily instead of hourly, fewer connections, lower concurrency), label it clearly as an **optimization alternative**, explain the trade-off, and show that it differs from the customer's baseline. Never silently substitute an optimization for the requested baseline.
+**Primary scenario discipline:** The customer's stated operating model (Cloud Pro or Flex, with their requested **capacity sizing, sync frequency, concurrency, throughput, and volume**) is the **primary scenario** (see `_se-playbook.md` → Operating Discipline D5). Do not lower capacity sizing, sync frequency, concurrency, throughput, scope, or volume assumptions in the primary estimate unless the customer explicitly approves that change. If you model an alternative (e.g., daily instead of hourly, fewer connections, lower concurrency, smaller volume, a shorter timeline), label it clearly as an **optimization alternative**, explain the trade-off, and show that it differs from the customer's baseline. Never silently substitute an optimization for the requested baseline. If a missing input would force you to assume a lower number, treat it as `[confirm]` and ask permission rather than choosing the more favorable value.
 
 ## Discovery Inputs (the numbers this skill needs — flag any that are missing)
 
@@ -172,8 +172,9 @@ Per `_se-playbook.md`: if the most-recent local transcript is >14 days old, chec
 
 ### Anti-patterns to avoid in this skill
 - Inventing inputs to fill the table (the cardinal sin — mark [confirm] instead)
-- Lowering the customer's requested sync frequency, scope, or concurrency in the primary estimate without explicit approval
+- Lowering the customer's requested capacity sizing, sync frequency, concurrency, throughput, scope, or volume in the primary estimate without explicit approval
 - Presenting an optimization alternative as the baseline
+- Assuming a lower number because the real value is unconfirmed
 - A case that only works under best-case assumptions, presented as if it's certain
 - Hiding Airbyte's switching/ramp cost
 - Jargon in the one-slide summary (the EB isn't technical)
@@ -211,5 +212,6 @@ Read `config_file` (per playbook → Workspace Paths) for the `[SE name]` field.
 ## Changelog
 
 - **2026-07-14** — **Phase 3 guardrails: primary scenario discipline and explicit missing-input impact.** Added a "Primary scenario discipline" rule that the customer's stated operating model is the baseline; sync frequency, scope, and concurrency may not be lowered in the primary estimate without explicit approval, and optimization alternatives must be clearly labeled. Added a "Missing inputs that materially affect the result" line to Assumptions & Confirms plus an explicit "Avoid false precision" callout.
+- **2026-07-14** — **SKILL-004: expanded customer-constraint preservation.** Primary scenario discipline now explicitly calls out capacity sizing, sync frequency, concurrency, throughput, and volume, and references Operating Discipline D5 in `_se-playbook.md`. Anti-patterns updated to cover assuming a lower number because the real value is unconfirmed.
 - **2026-07-10** — Dropped SME from the cost model. Self-Managed Enterprise's licensed pricing lane is retired / not currently offered (may return) — removed as a live option from the deployment-qual read, the pricing-model spine, and the At-a-Glance "Deployment model priced" line; cost model is now Cloud Pro / Flex (both capacity-based). SME kept as a historical note, not deleted.
 - **2026-07-10** — Initial creation. Compiles biz-qual Metrics + capacity/volume profile + build-vs-buy into a customer-shareable 3-yr TCO / ROI / payback artifact with a one-slide EB summary. Capacity-based pricing model for Pro/Flex (predictable) vs. consumption-based competitor. Honest-math discipline: every figure sourced or explicitly [confirm]. Requires a transcript; warns without biz-qual. Per playbook → Operating Disciplines (Metrics → the number that unlocks the EB).

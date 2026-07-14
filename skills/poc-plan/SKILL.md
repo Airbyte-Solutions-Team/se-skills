@@ -119,7 +119,7 @@ These are the specific, measurable outcomes that define a successful POC. **Both
 
 **POC passes if:** All must-have criteria are met. **Pre-agreed with:** [name + role who signed off on these criteria, and date] — if this is blank, the criteria aren't really agreed yet; flag it.
 
-**Preserve the customer's stated success criteria.** Do not remove a difficult success criterion merely to make the POC easier to complete. If a criterion is genuinely out of scope for the POC, move it to **Optional stretch scope** or **Production requirements** below and explain the rationale; do not silently drop it. The customer's baseline requirement stays the baseline.
+**Preserve the customer's stated success criteria, including capacity sizing, sync frequency, concurrency, and throughput targets.** Do not remove a difficult success criterion or shrink the schedule merely to make the POC easier to complete (see `_se-playbook.md` → Operating Discipline D5). If a criterion is genuinely out of scope for the POC window, move it to **Optional stretch scope** or **Production requirements** below and explain the rationale and proxy validation; do not silently drop it. The customer's baseline requirement stays the baseline.
 
 ## Scope
 
@@ -282,7 +282,7 @@ When designing the POC, identify the *story* the data will tell at the results r
 
 ### Anti-patterns to avoid in this skill
 - Vague success criteria ("data looks correct", "performance is acceptable")
-- Removing a difficult success criterion just to make the POC easier to complete
+- Removing a difficult success criterion or shrinking capacity, sync frequency, concurrency, throughput, or the POC schedule just to make the POC easier to complete
 - POC scope that grows without renegotiating timeline or commercial commitment
 - No named decision-maker for "did the POC pass?" — scoring becomes political
 - 6-week POCs without milestone check-ins — they always drift to 10 weeks
@@ -316,6 +316,7 @@ Read `config_file` (per playbook → Workspace Paths) for the `[SE name]` field 
 ## Changelog
 
 - **2026-07-14** — **Phase 3 guardrails: preserve success criteria and separate POC scope tiers.** Added an explicit rule that the customer's stated success criteria must be preserved — a difficult criterion cannot be silently removed to make the POC easier. Added a "Scope tiers" subsection separating minimum viable POC scope, optional stretch scope, production requirements, and POC-specific simplifications so the customer sees what is proven now vs. deferred.
+- **2026-07-14** — **SKILL-004: explicit customer-constraint preservation.** Expanded the success-criteria preservation rule and anti-patterns to call out capacity sizing, sync frequency, concurrency, throughput, and POC schedule. References Operating Discipline D5 in `_se-playbook.md`.
 - **2026-07-10** — **Light DS1/DS3 connector-availability validation of POC scope (secondary consumer of "Product & Connector Reference Data").** When the POC names connectors, validate each against the registry — existence, `supportLevel` tier, and Cloud-vs-Self-Managed availability (the OSS-minus-Cloud set difference) + enterprise-variant detection (private `airbyte-enterprise` `connector_stubs.json`) — so a POC isn't scoped on a community-tier or non-Cloud connector by surprise. A `self_managed_only` or enterprise-variant connector now flags a POC-shape risk: it forces Enterprise Flex (hybrid) or self-hosted OSS rather than a Cloud trial, changing prerequisites/timeline. Prefers to reuse connector-feasibility's already-computed Availability column (no re-derive); hits the registry directly only if no connector-feasibility doc exists; degrades loud ("availability not verified against registry") when the cache/enterprise repo is unreachable. Surfaced as a Scope bullet + a Risks-table row + a Source Coverage note — no new section, refusal rules unchanged.
 - **2026-07-10** — Success criteria now must tie each criterion to a MEDDPICC Decision Criterion + record who pre-agreed them in writing (per playbook → Operating Disciplines); POC timeline anchored to the customer's compelling event (D2) with backward-planning to signature.
 - **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.

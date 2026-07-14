@@ -2,7 +2,7 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`, mine = `gyairbyte/SE-Workflow`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: July 14, 2026 — ARCH-005 + ARCH-007 per-skill model config and runtime skill discovery._
+_Last updated: July 14, 2026 — SKILL-004 customer-constraint preservation in ROI and POC skills._
 
 ## What the app is
 Local FastAPI + vanilla-JS UI (no build step) over the SE skills suite. `cd webapp && uv run app.py` → http://127.0.0.1:8787 (needs `CPATH/LIBRARY_PATH` for portaudio on this Mac — see "Run" below). Browse team → member's accounts → an account's opportunities → generated outputs; invoke skills; ask follow-ups on outputs; Live Transcribe a Zoom call with an AI copilot.
@@ -16,6 +16,14 @@ uv run --python 3.11 app.py    # port 8787
 ```
 
 ## Built this session (newest first — see `git log`)
+- **SKILL-004 customer-constraint preservation (July 14).** Centralized the guardrail as Operating Discipline D5 in `skills/_se-playbook.md` and referenced it from `skills/roi-business-case/SKILL.md` and `skills/poc-plan/SKILL.md`. The primary scenario discipline now explicitly calls out capacity sizing, sync frequency, concurrency, throughput, and volume, and asks for explicit customer permission before lowering them. POC success-criteria preservation now explicitly covers capacity, sync frequency, concurrency, throughput, and POC schedule, and requires proxy validation + rationale when a hard criterion moves to stretch scope or production requirements. Added `eval/tests/test_skill_constraint_preservation.py` to keep the prompt language from regressing.
+  - `skills/_se-playbook.md`: added D5 "Customer-constraint preservation".
+  - `skills/roi-business-case/SKILL.md`: expanded primary scenario discipline and anti-patterns.
+  - `skills/poc-plan/SKILL.md`: expanded success-criteria preservation and anti-patterns.
+  - `eval/tests/test_skill_constraint_preservation.py`: deterministic prompt-regression tests.
+  - `IMPLEMENTATION-PLAN.md`: marked SKILL-004 completed.
+  - Validation: `uv run --extra dev pytest eval/ -v` passes; mock suite passes.
+
 - **ARCH-005 + ARCH-007 model config and runtime skill discovery (July 14).** Added per-skill/per-use Claude model configuration via `.se-config.yaml` `models:` block, and a `POST /api/reload` endpoint + ↻ button in the invoke modal to pick up new/renamed skills without restarting the server.
   - `webapp/app.py`: `_se_config()` cache, `_model_for(use)` helper, `--model` passed to `claude -p` in `_run_job`, `_model_for("quick-ask")` / `_model_for("live-ask")` for the Anthropic API quick paths, and `POST /api/reload` to refresh `SKILLS`/`SKILL_IDS` from disk.
   - `webapp/static/app.js`: invoke-modal refresh button fetches `/api/reload`, `/api/skills`, and `/api/skills/help`, then re-renders the picker while preserving the current selection.
