@@ -127,7 +127,7 @@ Requires `ANTHROPIC_API_KEY`. The deterministic suite never needs an API key.
 
 ## Fast CI vs optional model-dependent tests
 
-What runs on every PR and every push to `main`:
+What runs on every PR and every push to `main` (`.github/workflows/eval-deterministic.yml`):
 
 - `uv run --extra dev pytest eval/ -v` (all deterministic tests).
 - `uv run python -m eval.runner run-suite --manifest-dir eval/manifests/phase1 --executor mock` (mock suite).
@@ -138,9 +138,11 @@ What does **not** run automatically:
 - Any test that needs `ANTHROPIC_API_KEY`.
 - Any test that writes to or reads from a real customer workspace.
 
-Optional model-dependent runs can be enabled later via
-`.github/workflows/eval-model-dependent.yml` (`workflow_dispatch` only) or
-through the `pytest --run-skills` and `--run-model-judge` flags locally.
+Optional model-dependent runs are defined in
+`.github/workflows/eval-model-dependent.yml` and can only be triggered
+manually from the GitHub UI (`workflow_dispatch`). They require the
+`ANTHROPIC_API_KEY` repository secret and run with a 90-minute timeout and
+`max-parallel: 1` concurrency control.
 
 ## Reproduce CI locally
 

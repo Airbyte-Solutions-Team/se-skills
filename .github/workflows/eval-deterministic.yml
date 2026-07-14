@@ -1,0 +1,46 @@
+name: Deterministic evaluation suite
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  eval:
+    name: Run deterministic evaluation tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Run pytest
+        run: uv run --extra dev pytest eval/ -v
+
+      - name: Run mock evaluation suite
+        run: uv run python -m eval.runner run-suite --manifest-dir eval/manifests/phase1 --executor mock
+
+      - name: Upload evaluation reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-reports-${{ github.run_id }}-${{ github.run_attempt }}
+          path: eval/results/
+          if-no-files-found: ignore
