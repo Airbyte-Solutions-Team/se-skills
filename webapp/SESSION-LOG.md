@@ -26,6 +26,7 @@ uv run --python 3.11 app.py    # port 8787
   - `eval/tests/test_skill_regression.py`: parametrized test that runs each Phase 1 manifest and compares mock output to `eval/golden/{skill}/{manifest_id}.md`.
   - `eval/tests/test_webapp_output_golden.py`: tests for the promotion endpoint and path-traversal rejection.
   - `eval/golden/`: populated with baseline fixtures for the 12 Phase 1 scenarios.
+  - `.gitignore`: added `!eval/golden/**/*.md` so fixture files containing `-transcript` are not ignored.
   - `webapp/SESSION-LOG.md` and `webapp/README.md`: documented the new action.
   - `IMPLEMENTATION-PLAN.md`: marked UX-001 fully completed and EVAL-002 completed.
   - Validation: `uv run --extra dev pytest eval/ -v` passes; mock suite passes; `./scripts/check-sync.sh` passes; `node --check webapp/static/app.js` passes.
