@@ -30,6 +30,63 @@ from eval.assertions import SafeExpressionEvaluator
 from eval.schemas.manifest import Manifest
 
 
+# Upstream documents a downstream skill may require before it can produce output.
+_UPSTREAM_REQUIREMENTS: Dict[str, List[str]] = {
+    "poc-plan": ["biz-qual", "deployment-qual", "tech-qual", "connector-feasibility"],
+    "mutual-close-plan": ["biz-qual", "deployment-qual", "tech-qual", "connector-feasibility"],
+    "roi-business-case": ["biz-qual", "deployment-qual", "tech-qual", "connector-feasibility"],
+    "deal-assessment": ["biz-qual", "tech-qual"],
+}
+
+
+def _is_within(child: Path, parent: Path) -> bool:
+    """Return True when `child` is inside `parent`, compatible with Python <3.9."""
+    try:
+        child.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def _approved_temp_roots() -> List[Path]:
+    """Return directories considered safe for evaluation workspaces."""
+    roots = [Path(tempfile.gettempdir()).resolve()]
+    for env in ("TMPDIR", "TEMP", "TMP"):
+        value = os.environ.get(env)
+        if value:
+            roots.append(Path(value).resolve())
+    override = os.environ.get("SE_EVAL_TMP_ROOT")
+    if override:
+        roots.append(Path(override).resolve())
+    return roots
+
+
+def _is_approved_temp_dir(path: Path) -> bool:
+    """Fail closed: only allow temp dirs under an approved temporary root."""
+    resolved = path.resolve()
+    # Explicitly exclude the configured real customer workspace paths.
+    for forbidden in (Path.home() / ".se-skills", Path.home() / "airbyte-work"):
+        if _is_within(resolved, forbidden):
+            return False
+    return any(_is_within(resolved, root) for root in _approved_temp_roots())
+
+
+def _safe_join(base: Path, rel: str) -> Path:
+    """Resolve `base / rel` and reject absolute paths or escapes.
+
+    The returned path is guaranteed to be inside `base`.
+    """
+    if os.path.isabs(rel):
+        raise ValueError(f"absolute paths are not allowed: {rel!r}")
+    if ".." in Path(rel).parts:
+        raise ValueError(f"path traversal is not allowed: {rel!r}")
+    resolved_base = base.resolve()
+    target = (resolved_base / rel).resolve()
+    if not _is_within(target, resolved_base):
+        raise ValueError(f"path escapes the approved directory: {rel!r}")
+    return target
+
+
 @dataclasses.dataclass
 class SkillResult:
     """Result of invoking a single skill."""
@@ -60,6 +117,7 @@ class SkillEvaluationResult:
     structural_failures: List[str] = dataclasses.field(default_factory=list)
     invariant_failures: List[str] = dataclasses.field(default_factory=list)
     semantic_results: List[Dict[str, Any]] = dataclasses.field(default_factory=list)
+    prerequisite_override_used: bool = False
 
     @property
     def output_excerpt(self) -> str:
@@ -77,6 +135,9 @@ class ManifestResult:
     skill_results: List[SkillEvaluationResult]
     failures: List[str]
     report_path: Optional[Path]
+    prerequisite_mode: str = "enforce"
+    classification: str = "normal"
+    override_used: bool = False
 
 
 class SkillExecutor(abc.ABC):
@@ -116,6 +177,11 @@ class WorkspaceBuilder:
 
     def build(self) -> Workspace:
         """Create the workspace, copy fixtures, and return a `Workspace`."""
+        if not _is_approved_temp_dir(self.tmp_dir):
+            raise ValueError(
+                f"Refusing to build a workspace in {self.tmp_dir}: not under an approved temporary root."
+            )
+
         workspace_root = self.tmp_dir / "workspace"
         workspace_root.mkdir(parents=True, exist_ok=True)
         customers_dir = workspace_root / "customers"
@@ -130,12 +196,13 @@ class WorkspaceBuilder:
         self._install_config(workspace_root)
         self._copy_transcripts(workspace_root)
         self._copy_existing_outputs(workspace_root)
+        self._provide_upstream_outputs(workspace_root)
 
         env = self._derive_env()
         return Workspace(root=workspace_root, account=self.manifest.fixtures.account, env=env)
 
     def _install_config(self, workspace_root: Path) -> None:
-        config_source = self.eval_root / self.manifest.fixtures.config
+        config_source = _safe_join(self.eval_root, self.manifest.fixtures.config)
         if not config_source.exists():
             raise FileNotFoundError(f"Config fixture not found: {config_source}")
         raw = config_source.read_text(encoding="utf-8")
@@ -146,8 +213,8 @@ class WorkspaceBuilder:
 
     def _copy_transcripts(self, workspace_root: Path) -> None:
         for item in self.manifest.fixtures.transcripts:
-            source = self.eval_root / item.source
-            target = workspace_root / item.target
+            source = _safe_join(self.eval_root, item.source)
+            target = _safe_join(workspace_root, item.target)
             if not source.exists():
                 raise FileNotFoundError(f"Transcript fixture not found: {source}")
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -155,12 +222,36 @@ class WorkspaceBuilder:
 
     def _copy_existing_outputs(self, workspace_root: Path) -> None:
         for item in self.manifest.fixtures.existing_outputs:
-            source = self.eval_root / item.source
-            target = workspace_root / item.target
+            source = _safe_join(self.eval_root, item.source)
+            target = _safe_join(workspace_root, item.target)
             if not source.exists():
                 raise FileNotFoundError(f"Existing output fixture not found: {source}")
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
+
+    def _provide_upstream_outputs(self, workspace_root: Path) -> None:
+        """For `provide_fixtures` mode, synthesize upstream docs needed by downstream skills.
+
+        If `fixtures.existing_outputs` already provides a document, it is preferred and
+        will not be overwritten.
+        """
+        if self.manifest.execution.prerequisite_mode != "provide_fixtures":
+            return
+
+        account = self.manifest.fixtures.account
+        outputs_dir = workspace_root / "customers" / account / "outputs"
+        for skill in self.manifest.skills_under_test:
+            for upstream in _UPSTREAM_REQUIREMENTS.get(skill, []):
+                existing = sorted((outputs_dir / upstream).glob(f"{upstream}-*.md"))
+                if existing:
+                    continue
+                doc = _synthetic_upstream_doc(upstream, self.manifest)
+                if doc is None:
+                    continue
+                dest_dir = outputs_dir / upstream
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                dest_path = dest_dir / f"{upstream}-{datetime.date.today().isoformat()}.md"
+                dest_path.write_text(doc, encoding="utf-8")
 
     def _derive_env(self) -> Dict[str, Any]:
         """Return a flat dict of booleans that assertion expressions can read."""
@@ -180,6 +271,100 @@ class WorkspaceBuilder:
         }
 
 
+def _has_hard_constraint(manifest: Manifest, *needles: str) -> bool:
+    """Return True when every `needle` appears in the customer constraints."""
+    combined = "\n".join(manifest.customer_constraints).lower()
+    return all(needle.lower() in combined for needle in needles)
+
+
+def _synthetic_upstream_doc(skill: str, manifest: Manifest) -> Optional[str]:
+    """Generate a minimal but plausible upstream document for `skill`."""
+    account = manifest.fixtures.account
+    today = datetime.date.today().isoformat()
+    hourly = _has_hard_constraint(manifest, "hourly") or "hourly" in manifest.id
+    byok = _has_hard_constraint(manifest, "byok", "kms")
+    unverified = "unverified-connector" in manifest.id
+
+    if skill == "biz-qual":
+        return (
+            f"# {account} — biz-qual: viable with standard caveats\n\n"
+            f"**Date:** {today} · **Skill:** biz-qual\n\n"
+            "## MEDDPICC Scorecard\n"
+            "| Letter | Status | Evidence |\n"
+            "|---|---|---|\n"
+            "| Metrics | 🟢 quantified | Engineering pipeline maintenance cost stated |\n"
+            "| Economic Buyer | 🟡 suspected | Engineering leadership mentioned |\n"
+            "| Decision Criteria | 🟡 early | Hourly sync, Cloud/SaaS preferred |\n"
+            "| Decision Process | 🟡 early | POC driven |\n\n"
+            "## Gaps\n"
+            "- Confirm economic buyer.\n"
+            "- Validate exact source systems and row volumes.\n\n"
+            "## Next Actions\n"
+            "- Run deployment-model-qual if VPC/BYOK is a concern.\n"
+        )
+    if skill == "deployment-qual":
+        return (
+            f"# {account} — deployment-model-qual: Cloud viable\n\n"
+            f"**Date:** {today} · **Skill:** deployment-model-qual\n\n"
+            "## The Five Qualifying Questions\n"
+            "| Question | Answer | Implication |\n"
+            "|---|---|---|\n"
+            f"| Deployment preference | {'VPC/Self-hosted' if byok else 'Cloud/SaaS'} | {'No fit on current Cloud' if byok else 'Cloud viable'} |\n"
+            "| Data residency | None | No dedicated region required |\n"
+            "| Multi-tenancy | None | Cloud viable |\n"
+            f"| BYOK/KMS | {'Hard requirement' if byok else 'Not required'} | {'Park until verified' if byok else 'Cloud acceptable'} |\n"
+            "| VPC isolation | None | Cloud viable |\n\n"
+            "## Verdict\n"
+            f"**{'🔴 park / no fit today' if byok else '🟢 Cloud viable'}**\n\n"
+            "## Recommended Next Action\n"
+            "- Proceed to tech-qual and connector-feasibility.\n"
+        )
+    if skill == "tech-qual":
+        return (
+            f"# {account} — tech-qual: viable with standard caveats\n\n"
+            f"**Date:** {today} · **Skill:** tech-qual\n\n"
+            "## Technical Fit Summary\n"
+            "- Airbyte Cloud is technically viable for the described sources and destinations.\n\n"
+            "## Data Sources & Destinations\n"
+            "- Postgres, Salesforce, Snowflake.\n\n"
+            "## Data Volume & Scale\n"
+            f"- **Sync frequency:** {'hourly' if hourly else 'daily or as required'}.\n"
+            "- **Volume:** ~2M rows/day, business-hours skew.\n"
+            "- **Capacity implication:** sized for the stated cadence; no frequency reduction assumed.\n\n"
+            "## Deployment Model\n"
+            f"- {'No BYOK/KMS requirement.' if not byok else 'BYOK/KMS is a hard requirement; confirm entitlement.'}\n\n"
+            "## Recommended Next Actions\n"
+            "- Run connector-feasibility, then poc-plan.\n"
+        )
+    if skill == "connector-feasibility":
+        connector_list = (
+            "- `source-foo-bar` could not be verified.\n"
+            "- `source-postgres`, `source-salesforce`, `destination-snowflake` are available.\n"
+            if unverified
+            else "- `source-postgres`, `source-salesforce`, `destination-snowflake` are available.\n"
+        )
+        return (
+            f"# {account} — connector-feasibility: viable with caveats\n\n"
+            f"**Date:** {today} · **Skill:** connector-feasibility\n\n"
+            "## Connector Coverage\n"
+            f"{connector_list}"
+            "- Availability is based on registry metadata and labeled accordingly.\n\n"
+            "## Fit Verdict\n"
+            f"{'🟡 cannot verify availability' if unverified else '🟢 viable with standard caveats'}\n\n"
+            "## Recommended Next Actions\n"
+            "- Validate any unverified connectors before committing to the customer.\n"
+        )
+    return None
+
+
+def _rmtree_surfacing(path: Path) -> None:
+    """Remove a directory tree and raise RuntimeError if cleanup fails."""
+    try:
+        shutil.rmtree(path)
+    except OSError as exc:
+        raise RuntimeError(f"failed to remove temporary workspace {path}: {exc}") from exc
+
+
 class _ClaudeHome:
     """Prepare an isolated `$HOME` for the `claude` CLI."""
 
@@ -191,7 +376,7 @@ class _ClaudeHome:
     def prepare(self) -> Path:
         """Create an isolated home with a copy of the skills and stub external tools."""
         if self.home.exists():
-            shutil.rmtree(self.home, ignore_errors=True)
+            _rmtree_surfacing(self.home)
         self.home.mkdir(parents=True, exist_ok=True)
         claude_dir = self.home / ".claude"
         claude_dir.mkdir(exist_ok=True)
@@ -272,14 +457,9 @@ class ClaudeExecutor(SkillExecutor):
             "Bash(git push *)",
             "Bash(git clone *)",
         ]
-        cmd.extend(["--disallowed-tools", " ".join(disallowed)])
+        cmd.extend(["--disallowed-tools"] + disallowed)
 
-        env = os.environ.copy()
-        env["HOME"] = str(claude_home)
-        env["XDG_CONFIG_HOME"] = str(claude_home / ".config")
-        env["XDG_CACHE_HOME"] = str(claude_home / ".cache")
-        env["SE_WORKSPACE"] = str(workspace_root)
-        env["PATH"] = f"{claude_home / 'bin'}{os.pathsep}{env.get('PATH', '')}"
+        env = self._isolated_env(claude_home, workspace_root)
 
         try:
             proc = subprocess.run(
@@ -292,6 +472,13 @@ class ClaudeExecutor(SkillExecutor):
             )
         except FileNotFoundError as exc:
             raise RuntimeError("claude CLI is not installed or not on PATH") from exc
+        except subprocess.TimeoutExpired as exc:
+            proc = subprocess.CompletedProcess(
+                args=cmd,
+                returncode=-1,
+                stdout="",
+                stderr=f"claude subprocess timed out after {self.timeout}s",
+            )
 
         return self._parse_result(skill, proc, output_dir)
 
@@ -337,6 +524,33 @@ class ClaudeExecutor(SkillExecutor):
                 "cannot run",
             ]
         )
+
+    @staticmethod
+    def _isolated_env(claude_home: Path, workspace_root: Path) -> Dict[str, str]:
+        """Return a minimal, isolated environment for the `claude` subprocess.
+
+        Only well-known safe variables are inherited; secrets such as GitHub or
+        cloud tokens are kept out of the child process where practical.
+        """
+        allowed = {
+            "ANTHROPIC_API_KEY",
+            "HOME",
+            "LANG",
+            "LC_ALL",
+            "PATH",
+            "PYTHONPATH",
+            "SE_WORKSPACE",
+            "TERM",
+            "XDG_CACHE_HOME",
+            "XDG_CONFIG_HOME",
+        }
+        env = {k: v for k, v in os.environ.items() if k in allowed}
+        env["HOME"] = str(claude_home)
+        env["XDG_CONFIG_HOME"] = str(claude_home / ".config")
+        env["XDG_CACHE_HOME"] = str(claude_home / ".cache")
+        env["SE_WORKSPACE"] = str(workspace_root)
+        env["PATH"] = f"{claude_home / 'bin'}{os.pathsep}{env.get('PATH', '')}"
+        return env
 
 
 class MockOutputBuilder:
@@ -663,7 +877,7 @@ class SemanticEvaluator:
     requested, so deterministic tests remain fast and free.
     """
 
-    def __init__(self, timeout: int = 300, permission_mode: str = "readOnly", bare: bool = True) -> None:
+    def __init__(self, timeout: int = 300, permission_mode: str = "auto", bare: bool = True) -> None:
         self.timeout = timeout
         self.permission_mode = permission_mode
         self.bare = bare
@@ -728,11 +942,9 @@ class SemanticEvaluator:
         if self.permission_mode:
             cmd.extend(["--permission-mode", self.permission_mode])
 
-        env = os.environ.copy()
         home = Path(tempfile.mkdtemp(prefix="claude-semantic-"))
-        env["HOME"] = str(home)
-        env["XDG_CONFIG_HOME"] = str(home / ".config")
-        env["XDG_CACHE_HOME"] = str(home / ".cache")
+        # Keep the judge environment minimal so secrets do not leak to logs.
+        env = ClaudeExecutor._isolated_env(home, home)
 
         try:
             return subprocess.run(
@@ -743,7 +955,7 @@ class SemanticEvaluator:
                 env=env,
             )
         finally:
-            shutil.rmtree(home, ignore_errors=True)
+            _rmtree_surfacing(home)
 
     def _parse_result(self, proc: subprocess.CompletedProcess, rubric: List[str]) -> List[Dict[str, Any]]:
         text = proc.stdout or ""
@@ -818,24 +1030,24 @@ class ManifestEvaluator:
         """Run every skill in the manifest and check deterministic assertions."""
         skill_results: List[SkillEvaluationResult] = []
         all_failures: List[str] = []
+        override_used = False
 
+        extra_prompt = self._extra_prompt_for_mode()
         for skill in self.manifest.skills_under_test:
             output_dir = workspace.customer_dir / "outputs"
             result = self.executor.run(
                 skill=skill,
                 workspace_root=workspace.root,
                 account=workspace.account,
-                extra_prompt=(
-                    "This is a synthetic evaluation run. Do not use real customer data. "
-                    "If the skill offers to skip missing upstream qualification docs, choose the 'skip' option "
-                    "and produce the requested output with appropriate flags. Do not chain into other skills."
-                ),
+                extra_prompt=extra_prompt,
                 output_dir=output_dir,
                 manifest=self.manifest,
             )
             evaluation = self._evaluate_skill(skill, result, env=workspace.env)
             skill_results.append(evaluation)
             all_failures.extend(evaluation.failures)
+            if evaluation.prerequisite_override_used:
+                override_used = True
 
         passed = not all_failures
         return ManifestResult(
@@ -846,7 +1058,24 @@ class ManifestEvaluator:
             skill_results=skill_results,
             failures=all_failures,
             report_path=None,
+            prerequisite_mode=self.manifest.execution.prerequisite_mode,
+            classification=self.manifest.execution.classification,
+            override_used=override_used,
         )
+
+    def _extra_prompt_for_mode(self) -> str:
+        """Return a scenario-specific prompt based on prerequisite handling."""
+        mode = self.manifest.execution.prerequisite_mode
+        base = "This is a synthetic evaluation run. Do not use real customer data. Do not chain into other skills."
+        if mode == "explicit_override":
+            return (
+                base
+                + " If the skill offers to skip missing upstream qualification docs, choose the 'skip' option "
+                "and produce the requested output with appropriate flags."
+            )
+        if mode == "provide_fixtures":
+            return base + " Upstream qualification documents have been synthesized for this scenario."
+        return base
 
     def _evaluate_skill(
         self, skill: str, result: SkillResult, env: Dict[str, Any]
@@ -945,6 +1174,7 @@ class ManifestEvaluator:
             structural_failures=structural_failures,
             invariant_failures=invariant_failures,
             semantic_results=semantic_results,
+            prerequisite_override_used=self.manifest.execution.prerequisite_mode == "explicit_override",
         )
 
     @staticmethod
@@ -981,6 +1211,11 @@ class EvaluationReport:
             "manifest_id": result.manifest_id,
             "title": result.title,
             "status": result.status,
+            "execution": {
+                "prerequisite_mode": result.prerequisite_mode,
+                "classification": result.classification,
+                "override_used": result.override_used,
+            },
             "categories": {
                 "invocation": {"passed": not invocation, "failures": invocation},
                 "structural": {"passed": not structural, "failures": structural},
@@ -1025,6 +1260,11 @@ class EvaluationReport:
                     "title": r.title,
                     "status": r.status,
                     "report_path": str(r.report_path) if r.report_path else None,
+                    "execution": {
+                        "prerequisite_mode": r.prerequisite_mode,
+                        "classification": r.classification,
+                        "override_used": r.override_used,
+                    },
                 }
                 for r in results
             ],
@@ -1074,7 +1314,7 @@ def _run_manifest(
     if retain_workspace and not quiet:
         print(f"Retained workspace: {workspace.root}")
     elif created_by_runner:
-        shutil.rmtree(work_dir, ignore_errors=True)
+        _rmtree_surfacing(work_dir)
 
     return result
 
@@ -1112,7 +1352,7 @@ def _run_suite(
             results.append(result)
 
             if result.passed and not retain_failures:
-                shutil.rmtree(manifest_work_dir, ignore_errors=True)
+                _rmtree_surfacing(manifest_work_dir)
 
             print(f"{result.manifest_id}: {result.status}")
             if result.failures:
@@ -1122,11 +1362,53 @@ def _run_suite(
         EvaluationReport.write_combined(results, report_dir=report_dir)
     finally:
         if not retain_failures or all(r.passed for r in results):
-            shutil.rmtree(suite_root, ignore_errors=True)
+            _rmtree_surfacing(suite_root)
         else:
             print(f"\nRetained failed workspaces in: {suite_root}")
 
     return results
+
+
+def _dispatch(args: argparse.Namespace, repo_root: Path) -> int:
+    """Execute the CLI command selected by the user."""
+    if args.command == "list":
+        manifest_dir = args.manifest_dir or repo_root / "eval" / "manifests" / "phase1"
+        if not manifest_dir.exists():
+            raise FileNotFoundError(f"manifest directory not found: {manifest_dir}")
+        for path in sorted(manifest_dir.glob("*.yaml")):
+            manifest = Manifest.from_yaml(path)
+            print(f"{path.stem}: {manifest.title}")
+        return 0
+
+    if args.command == "run":
+        result = _run_manifest(
+            manifest_path=args.manifest,
+            repo_root=repo_root,
+            executor_name=args.executor,
+            retain_workspace=args.retain_workspace,
+            semantic=args.semantic,
+            report_dir=args.report_dir,
+        )
+        print(f"\n{result.manifest_id}: {result.status}")
+        if result.failures:
+            for failure in result.failures:
+                print(f"  - {failure}")
+        print(f"Report: {result.report_path}")
+        return 0 if result.passed else 1
+
+    if args.command == "run-suite":
+        results = _run_suite(
+            manifest_dir=args.manifest_dir,
+            repo_root=repo_root,
+            executor_name=args.executor,
+            retain_failures=args.retain_failures,
+            semantic=args.semantic,
+            report_dir=args.report_dir,
+        )
+        print(f"\nCombined status: {'passed' if all(r.passed for r in results) else 'failed'}")
+        return 0 if all(r.passed for r in results) else 1
+
+    return 2
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -1175,42 +1457,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parser.parse_args(argv)
     repo_root = Path(__file__).parent.parent
 
-    if args.command == "list":
-        manifest_dir = args.manifest_dir or repo_root / "eval" / "manifests" / "phase1"
-        for path in sorted(manifest_dir.glob("*.yaml")):
-            manifest = Manifest.from_yaml(path)
-            print(f"{path.stem}: {manifest.title}")
-        return 0
-
-    if args.command == "run":
-        result = _run_manifest(
-            manifest_path=args.manifest,
-            repo_root=repo_root,
-            executor_name=args.executor,
-            retain_workspace=args.retain_workspace,
-            semantic=args.semantic,
-            report_dir=args.report_dir,
-        )
-        print(f"\n{result.manifest_id}: {result.status}")
-        if result.failures:
-            for failure in result.failures:
-                print(f"  - {failure}")
-        print(f"Report: {result.report_path}")
-        return 0 if result.passed else 1
-
-    if args.command == "run-suite":
-        results = _run_suite(
-            manifest_dir=args.manifest_dir,
-            repo_root=repo_root,
-            executor_name=args.executor,
-            retain_failures=args.retain_failures,
-            semantic=args.semantic,
-            report_dir=args.report_dir,
-        )
-        print(f"\nCombined status: {'passed' if all(r.passed for r in results) else 'failed'}")
-        return 0 if all(r.passed for r in results) else 1
-
-    return 2
+    try:
+        return _dispatch(args, repo_root)
+    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

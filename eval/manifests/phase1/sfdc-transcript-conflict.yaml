@@ -19,6 +19,9 @@ environment:
     stage: Closed-Won
     close_date: "2026-07-21"
     amount: 100000
+execution:
+  prerequisite_mode: enforce
+  classification: normal
 customer_constraints:
   - Still evaluating options.
   - Procurement wants to see a POC before committing.

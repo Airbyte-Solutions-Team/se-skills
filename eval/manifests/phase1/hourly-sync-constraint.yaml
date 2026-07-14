@@ -12,9 +12,19 @@ fixtures:
   transcripts:
     - source: fixtures/transcripts/acme-2026-07-01-hourly.txt
       target: _transcripts/Acme-07.01.26.txt
+  existing_outputs:
+    - source: fixtures/outputs/hourly-biz-qual.md
+      target: customers/Acme/outputs/biz-qual/biz-qual-2026-07-01.md
+    - source: fixtures/outputs/hourly-deployment-qual.md
+      target: customers/Acme/outputs/deployment-qual/deployment-qual-2026-07-01.md
+    - source: fixtures/outputs/hourly-connector-feasibility.md
+      target: customers/Acme/outputs/connector-feasibility/connector-feasibility-2026-07-01.md
   config: fixtures/config/synthetic-se-config.yaml
 environment:
   salesforce: false
+execution:
+  prerequisite_mode: provide_fixtures
+  classification: normal
 customer_constraints:
   - Hourly synchronization is required for the sales pipeline.
   - About 2M rows per day, mostly during US business hours.

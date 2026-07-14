@@ -15,6 +15,9 @@ fixtures:
   config: fixtures/config/synthetic-se-config.yaml
 environment:
   salesforce: false
+execution:
+  prerequisite_mode: enforce
+  classification: normal
 customer_constraints:
   - Move data from an internal system called FooBar using a source-foo-bar connector.
   - Load data into Snowflake.

@@ -19,6 +19,9 @@ environment:
   salesforce: false
   reference_data:
     repos: {}
+execution:
+  prerequisite_mode: provide_fixtures
+  classification: normal
 customer_constraints:
   - Customer-managed KMS keys for all data in transit and at rest.
   - BYOK model required.
@@ -44,9 +47,9 @@ per_skill_expected_sections:
     - Deployment Model
     - Security & Compliance
   poc-plan:
-    - POC Scope
+    - Scope
     - Success Criteria
-    - Risks & Blockers
+    - Risks & Mitigations
 deterministic_assertions:
   - name: does not claim BYOK or customer-managed KMS is supported
     target: markdown

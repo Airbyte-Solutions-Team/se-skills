@@ -65,6 +65,19 @@ class Environment(BaseModel):
     )
 
 
+class Execution(BaseModel):
+    """Controls how the runner prepares the scenario and handles skill prerequisites."""
+
+    prerequisite_mode: Literal["enforce", "provide_fixtures", "explicit_override"] = Field(
+        "enforce",
+        description="How to handle missing upstream qualification documents.",
+    )
+    classification: Literal["normal", "missing_input", "degraded"] = Field(
+        "normal",
+        description="Whether this scenario tests normal production behavior, missing-input handling, or degraded behavior.",
+    )
+
+
 class Manifest(BaseModel):
     """A complete evaluation scenario."""
 
@@ -76,6 +89,7 @@ class Manifest(BaseModel):
     tags: List[str] = Field(default_factory=list)
     fixtures: Fixtures = Field(default_factory=Fixtures)
     environment: Environment = Field(default_factory=Environment)
+    execution: Execution = Field(default_factory=Execution)
     customer_constraints: List[str] = Field(default_factory=list)
     available_evidence: List[str] = Field(default_factory=list)
     required_behavior: List[str] = Field(default_factory=list)

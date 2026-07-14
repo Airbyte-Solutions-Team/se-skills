@@ -14,6 +14,9 @@ fixtures:
   config: fixtures/config/synthetic-se-config.yaml
 environment:
   salesforce: false
+execution:
+  prerequisite_mode: enforce
+  classification: normal
 customer_constraints:
   - Interested in Airbyte.
   - Early in evaluation.

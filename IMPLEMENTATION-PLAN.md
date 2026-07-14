@@ -762,4 +762,5 @@ Record durable architecture and product decisions here. Only record decisions su
 |---|---|---|---|
 | 2026-07-14 | Created `IMPLEMENTATION-PLAN.md` | Devin | Phase 0 complete; all backlog items `Proposed`. |
 | 2026-07-14 | Completed Phase 1: `eval/` framework, manifest schema, runner, 6 synthetic scenarios, and baseline report | Devin | All deterministic tests pass; model-dependent and real-skill invocation are optional. `skills/` and `webapp/` were not modified. |
+| 2026-07-14 | Hardened Phase 1B runner and prerequisite handling | Devin | Added `eval/tests/test_runner.py`; `execution.prerequisite_mode` and `classification`; synthetic upstream fixtures for `hourly-sync-constraint`; fail-closed workspace isolation; explicit-override reporting. `skills/` and `webapp/` were not modified. |
 | 2026-07-14 | Completed Phase 1B: real-skill evaluation runner, isolated `claude` execution, categorized reporting, semantic evaluator scaffold | Devin | Hourly-sync-constraint and next-move-low-evidence validated against real `claude` output in isolated temp workspaces. `sfdc-transcript-conflict.yaml` gitignore fix staged. `skills/` and `webapp/` were not modified. |
