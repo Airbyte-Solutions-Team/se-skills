@@ -2,7 +2,7 @@
 
 > Source of truth for planned improvements to the SE Skills Suite.
 > Created from the repository assessment dated 2026-07-14.
-> Status: Phase 1 merged (#1, 2026-07-14). Phase 1B implemented as real-skill evaluation harness. Phase 2 security quick wins in progress.
+> Status: Phase 1 merged (#1, 2026-07-14). Phase 1B implemented as real-skill evaluation harness. Phase 2 security quick wins implemented (PR #4, draft).
 
 ---
 
