@@ -19,6 +19,8 @@ from pydantic import BaseModel, Field, model_validator
 
 logger = logging.getLogger(__name__)
 
+SCHEMA_VERSION = 1
+
 
 class SkillOutputSchema(BaseModel):
     """Schema definition for one skill's Markdown output."""
@@ -40,6 +42,8 @@ class OutputMetadata(BaseModel):
     missing_sections: list[str] = Field(default_factory=list)
     validation_errors: list[str] = Field(default_factory=list)
     valid: bool = True
+    schema_version: int = SCHEMA_VERSION
+    validation_status: str = "unvalidated"  # "valid" | "invalid" | "unvalidated"
 
 
 # ---------------------------------------------------------------------------
@@ -216,8 +220,20 @@ def parse_output(skill: str, text: str) -> OutputMetadata:
     """Parse a generated Markdown output and validate it against the skill schema.
 
     Returns an `OutputMetadata` object with extracted fields, missing required
-    sections, and a `valid` flag. The parser is defensive: malformed or
-    non-conforming documents are reported rather than raised.
+    sections, a `valid` flag, and a `validation_status`. The parser is defensive:
+    malformed or non-conforming documents are reported rather than raised.
+
+    `validation_status` can be:
+    - `"valid"` — the output follows the current contract and no required
+      sections are missing.
+    - `"invalid"` — the output follows the current contract but is missing
+      one or more required sections (including a missing `**Date:**` line or
+      `Source Coverage`).
+    - `"unvalidated"` — the output does not have enough current-format markers
+      (title, At a Glance, and at least one non-source-coverage required
+      section) for us to confidently validate it. This is used for legacy
+      outputs that predate the current required-section contract so they are not
+      presented as definitively broken.
     """
     schema = _SKILL_SCHEMAS.get(skill)
     title = _extract_title(text)
@@ -225,18 +241,59 @@ def parse_output(skill: str, text: str) -> OutputMetadata:
     at_a_glance = _extract_at_a_glance(text)
     sections = _extract_sections(text)
 
-    required = list(schema.required_sections) if schema else []
+    required: list[str] = list(schema.required_sections) if schema else []
 
-    def _section_present(required: str) -> bool:
+    def _section_present(required_key: str) -> bool:
         """A required section is present if a heading or At a Glance label covers it."""
-        parts = set(required.split("-"))
+        parts = set(required_key.split("-"))
         if any(parts <= set(found.split("-")) for found in sections):
             return True
         if any(parts <= set(label.split("-")) for label in at_a_glance):
             return True
         return False
 
+    # If we have no schema for this skill, we cannot validate it.
+    if schema is None:
+        return OutputMetadata(
+            skill=skill,
+            title=title,
+            date=date,
+            at_a_glance=at_a_glance,
+            sections={k: v[:5000] for k, v in sections.items()},
+            required_sections=[],
+            missing_sections=[],
+            validation_errors=[],
+            valid=True,
+            schema_version=SCHEMA_VERSION,
+            validation_status="unvalidated",
+        )
+
     missing: list[str] = [s for s in required if not _section_present(s)]
+
+    # A document must have enough current-format markers for us to confidently
+    # say it is incomplete. Legacy outputs may use older headings; without a
+    # title, At a Glance block, and at least one non-source-coverage required
+    # section, we treat the result as "unvalidated" rather than "invalid". A
+    # missing **Date:** line, by contrast, is a concrete validation error once
+    # we have recognized the current format.
+    non_source_required = [s for s in required if s != "source-coverage"]
+    has_non_source_required = any(_section_present(s) for s in non_source_required)
+    has_current_markers = bool(title and at_a_glance and has_non_source_required)
+
+    if not has_current_markers:
+        return OutputMetadata(
+            skill=skill,
+            title=title,
+            date=date,
+            at_a_glance=at_a_glance,
+            sections={k: v[:5000] for k, v in sections.items()},
+            required_sections=required,
+            missing_sections=[],
+            validation_errors=[],
+            valid=True,
+            schema_version=SCHEMA_VERSION,
+            validation_status="unvalidated",
+        )
 
     errors: list[str] = []
     if missing:
@@ -247,6 +304,7 @@ def parse_output(skill: str, text: str) -> OutputMetadata:
         errors.append("Missing Source Coverage section.")
 
     valid = not errors
+    validation_status = "valid" if valid else "invalid"
 
     return OutputMetadata(
         skill=skill,
@@ -258,6 +316,8 @@ def parse_output(skill: str, text: str) -> OutputMetadata:
         missing_sections=missing,
         validation_errors=errors,
         valid=valid,
+        schema_version=SCHEMA_VERSION,
+        validation_status=validation_status,
     )
 
 
@@ -276,7 +336,9 @@ def read_or_parse_sidecar(md_path: Path, skill: str) -> OutputMetadata:
             sc_mtime = sidecar.stat().st_mtime
             if sc_mtime >= md_mtime:
                 data = json.loads(sidecar.read_text(encoding="utf-8"))
-                return OutputMetadata(**data)
+                if data.get("schema_version") == SCHEMA_VERSION:
+                    return OutputMetadata(**data)
+                logger.info("Sidecar schema version %s != %s; reparsing", data.get("schema_version"), SCHEMA_VERSION)
         except (OSError, ValueError, TypeError):
             logger.warning("Failed to read sidecar %s; reparsing", sidecar)
 

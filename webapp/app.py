@@ -379,6 +379,7 @@ def list_outputs(account: str, opp: str | None = None) -> list[dict]:
                 try:
                     meta = output_schema.read_or_parse_sidecar(f, skill)
                     entry["valid"] = meta.valid
+                    entry["validation_status"] = meta.validation_status
                     entry["validation_errors"] = meta.validation_errors
                     entry["missing_sections"] = meta.missing_sections
                 except (OSError, ValueError, TypeError):

@@ -28,6 +28,8 @@ def test_parse_output_valid_for_known_skill(skill: str, filename: str, repo_root
     meta = output_schema.parse_output(skill, text)
     assert meta.skill == skill
     assert meta.valid is True
+    assert meta.validation_status == "valid"
+    assert meta.schema_version == output_schema.SCHEMA_VERSION
     assert meta.title
     assert meta.date
     assert "source-coverage" in meta.sections
@@ -49,12 +51,16 @@ def test_parse_output_flags_missing_required_sections() -> None:
 """
     meta = output_schema.parse_output("biz-qual", text)
     assert meta.valid is False
+    assert meta.validation_status == "invalid"
     assert any("source-coverage" in e for e in meta.validation_errors)
     assert meta.missing_sections == ["source-coverage"]
 
 
 def test_parse_output_flags_missing_date() -> None:
     text = """# Biz Qual
+
+## At a Glance
+- **Verdict:** qualified
 
 ## MEDDPICC Scorecard
 ok
@@ -64,6 +70,7 @@ ok
 """
     meta = output_schema.parse_output("biz-qual", text)
     assert meta.valid is False
+    assert meta.validation_status == "invalid"
     assert any("Date" in e for e in meta.validation_errors)
 
 
@@ -76,6 +83,9 @@ def test_parse_output_extracts_at_a_glance_kv_pairs() -> None:
 - **Verdict:** qualified · **Confidence:** Medium
 - **Recommended Motion:** run tech-qual
 
+## MEDDPICC Scorecard
+ok
+
 ## Source Coverage
 - synthetic
 """
@@ -83,12 +93,16 @@ def test_parse_output_extracts_at_a_glance_kv_pairs() -> None:
     assert meta.at_a_glance["verdict"] == "qualified"
     assert meta.at_a_glance["confidence"] == "Medium"
     assert meta.at_a_glance["recommended-motion"] == "run tech-qual"
+    assert meta.validation_status == "valid"
 
 
 def test_write_and_read_sidecar(tmp_path: Path) -> None:
     text = """# Test
 
 **Date:** 2026-07-01
+
+## At a Glance
+- **Feasibility:** viable
 
 ## Fit Verdict
 - viable
@@ -108,6 +122,8 @@ def test_write_and_read_sidecar(tmp_path: Path) -> None:
     data = json.loads(sidecar.read_text(encoding="utf-8"))
     assert data["skill"] == "connector-feasibility"
     assert data["valid"] is True
+    assert data["schema_version"] == output_schema.SCHEMA_VERSION
+    assert data["validation_status"] == "valid"
 
     reloaded = output_schema.read_or_parse_sidecar(md_path, "connector-feasibility")
     assert reloaded.valid == meta.valid
@@ -141,6 +157,9 @@ def test_parse_output_fuzzy_matches_section_headings() -> None:
 
 **Date:** 2026-07-01
 
+## At a Glance
+- **Verdict:** qualified
+
 ## MEDDPICC Pre-Scorecard
 ok
 
@@ -149,3 +168,41 @@ ok
 """
     meta = output_schema.parse_output("biz-qual", text)
     assert meta.valid is True
+    assert meta.validation_status == "valid"
+
+
+def test_parse_output_treats_legacy_format_as_unvalidated() -> None:
+    """A document with title/date but no At a Glance and an older heading name
+    should not be flagged as definitively broken."""
+    text = """# Acme — Biz Qual: qualified
+
+**Date:** 2026-07-01
+
+## Business Qualification
+- Metrics: quantified
+
+## Source Coverage
+- transcript
+"""
+    meta = output_schema.parse_output("biz-qual", text)
+    assert meta.validation_status == "unvalidated"
+    assert meta.valid is True
+    assert not meta.validation_errors
+    assert not meta.missing_sections
+
+
+def test_read_or_parse_sidecar_reparses_on_schema_version_mismatch(tmp_path: Path) -> None:
+    md_path = tmp_path / "biz-qual" / "out.md"
+    md_path.parent.mkdir(parents=True)
+    md_path.write_text(
+        "# Title\n\n**Date:** 2026-07-01\n\n## At a Glance\n- **Verdict:** qualified\n\n## MEDDPICC Scorecard\nok\n\n## Source Coverage\n- x\n",
+        encoding="utf-8",
+    )
+
+    sidecar = md_path.with_suffix(md_path.suffix + ".json")
+    # Simulate an old-format sidecar with a stale schema version.
+    sidecar.write_text(json.dumps({"schema_version": 0, "skill": "biz-qual"}), encoding="utf-8")
+
+    reloaded = output_schema.read_or_parse_sidecar(md_path, "biz-qual")
+    assert reloaded.schema_version == output_schema.SCHEMA_VERSION
+    assert reloaded.validation_status == "valid"

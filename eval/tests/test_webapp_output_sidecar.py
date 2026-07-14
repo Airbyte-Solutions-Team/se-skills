@@ -6,6 +6,7 @@ monkeypatched `CUSTOMERS_DIR` so they do not touch the real workspace.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -47,6 +48,7 @@ def test_list_outputs_exposes_validation_metadata(monkeypatch, tmp_path) -> None
     outputs = app.list_outputs("Acme", "intro")
     assert len(outputs) == 1
     assert outputs[0]["valid"] is True
+    assert outputs[0]["validation_status"] == "valid"
     assert outputs[0]["validation_errors"] == []
     assert outputs[0]["missing_sections"] == []
 
@@ -58,6 +60,9 @@ def test_list_outputs_flags_invalid_output(monkeypatch, tmp_path) -> None:
 
 **Date:** 2026-07-01
 
+## At a Glance
+- **Verdict:** qualified
+
 ## MEDDPICC Scorecard
 ok
 """
@@ -65,6 +70,7 @@ ok
 
     outputs = app.list_outputs("Acme", "intro")
     assert outputs[0]["valid"] is False
+    assert outputs[0]["validation_status"] == "invalid"
     assert any("source-coverage" in e for e in outputs[0]["validation_errors"])
 
 
@@ -76,6 +82,9 @@ def test_list_outputs_writes_sidecar(monkeypatch, tmp_path) -> None:
     app.list_outputs("Acme", "intro")
     sidecar = md.with_suffix(md.suffix + ".json")
     assert sidecar.exists()
+    data = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert data["schema_version"] == app.output_schema.SCHEMA_VERSION
+    assert data["validation_status"] == "valid"
 
 
 def test_api_output_meta_returns_validation(monkeypatch, tmp_path) -> None:
@@ -87,6 +96,8 @@ def test_api_output_meta_returns_validation(monkeypatch, tmp_path) -> None:
     data = app.api_output_meta(path=rel)
     assert data["skill"] == "biz-qual"
     assert data["valid"] is True
+    assert data["validation_status"] == "valid"
+    assert data["schema_version"] == app.output_schema.SCHEMA_VERSION
 
 
 def test_api_output_meta_404_outside_customers_dir(monkeypatch, tmp_path) -> None:
