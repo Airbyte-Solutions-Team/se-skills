@@ -3070,7 +3070,6 @@ async function loadFeedbackPanel(path) {
         <button class="ghost small feedback-toggle" data-action="approve">✓ Approve</button>
         <button class="ghost small feedback-toggle" data-action="comment">💬 Comment</button>
         <button class="ghost small feedback-toggle" data-action="correct">✎ Correct</button>
-        <button class="ghost small golden-promote" title="Use this output as the regression baseline">★ Golden</button>
       </div>
     </div>
     ${renderForm("")}
@@ -3119,86 +3118,6 @@ async function loadFeedbackPanel(path) {
     }
   };
 
-  const goldenBtn = panel.querySelector(".golden-promote");
-  if (goldenBtn) goldenBtn.onclick = async () => {
-    try {
-      const text = await api("/api/output?path=" + safePath);
-      const meta = await api("/api/output/meta?path=" + safePath).catch(() => ({}));
-      const skill = meta.skill || "";
-      const manifests = skill ? await api("/api/golden/manifests?skill=" + encodeURIComponent(skill)) : { scenarios: [] };
-      openGoldenModal(path, text, skill, manifests.scenarios || []);
-    } catch (e) {
-      showToast("Could not load output for golden promotion: " + e.message, "err");
-    }
-  };
-}
-
-// ── Golden fixture promotion modal (UX-001 + EVAL-002) ───────────────────
-// Opens an editable preview of the Markdown, requires the SE to confirm the
-// content is synthetic, and only allows saving to a scenario exercised by a
-// Phase 1 manifest. This ensures the fixture is actually tested by CI.
-function openGoldenModal(path, text, skill, scenarios) {
-  const overlay = document.createElement("div");
-  overlay.className = "modal-overlay";
-  const defaultScenario = scenarios[0] || "";
-  const scenarioOptions = scenarios.length
-    ? scenarios.map((s) => `<option value="${esc(s)}"${s === defaultScenario ? " selected" : ""}>${esc(s)}</option>`).join("")
-    : `<option value="">(no manifest scenario)</option>`;
-  overlay.innerHTML = `
-    <div class="modal golden-modal">
-      <div class="modal-head"><h2>Promote to active golden fixture</h2><button class="modal-close">✕</button></div>
-      <div class="golden-warning">
-        <strong>Golden fixtures are committed to this public Git repository.</strong><br>
-        Only promote <em>synthetic</em> outputs that contain no real customer or confidential data. Review and edit the Markdown before saving.
-      </div>
-      <label class="golden-label">Scenario (must be exercised by a Phase 1 manifest)
-        <select id="golden-scenario" class="golden-scenario" ${scenarios.length ? "" : "disabled"}>${scenarioOptions}</select>
-      </label>
-      <textarea id="golden-text" class="golden-text" rows="14">${esc(text)}</textarea>
-      <div class="golden-confirm-row">
-        <label><input type="checkbox" id="golden-confirm" /> I confirm this content is synthetic and contains no customer or confidential data.</label>
-      </div>
-      <div class="modal-foot">
-        <span class="muted" id="golden-hint">${scenarios.length ? "Confirm to enable saving." : "No Phase 1 manifest tests this skill; create a manifest first."}</span>
-        <button class="ghost small modal-cancel">Cancel</button>
-        <button class="primary small" id="golden-save" disabled>Save active fixture</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector(".modal-close").onclick = close;
-  overlay.querySelector(".modal-cancel").onclick = close;
-  overlay.onclick = (e) => { if (e.target === overlay) close(); };
-
-  const confirmBox = overlay.querySelector("#golden-confirm");
-  const saveBtn = overlay.querySelector("#golden-save");
-  const hint = overlay.querySelector("#golden-hint");
-  const scenarioSelect = overlay.querySelector("#golden-scenario");
-
-  confirmBox.onchange = () => {
-    saveBtn.disabled = !confirmBox.checked || !scenarioSelect.value;
-    hint.textContent = confirmBox.checked ? "Ready to save." : "Confirm to enable saving.";
-  };
-
-  saveBtn.onclick = async () => {
-    const scenario = scenarioSelect.value;
-    if (!scenario) { alert("Select a scenario exercised by a manifest."); return; }
-    const editedText = overlay.querySelector("#golden-text").value;
-    saveBtn.disabled = true; saveBtn.textContent = "Saving…";
-    try {
-      const result = await api("/api/output/golden", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: decodeURIComponent(path), scenario: scenario.trim(), text: editedText, confirm_synthetic: true }),
-      });
-      showToast(`Saved active golden fixture: ${result.golden_path}`, "ok");
-      close();
-    } catch (e) {
-      showToast("Golden fixture failed: " + e.message, "err");
-      saveBtn.disabled = false; saveBtn.textContent = "Save active fixture";
-    }
-  };
 }
 
 // ── Deal-assessment diff / trend view (UX-002) ───────────────────────────
