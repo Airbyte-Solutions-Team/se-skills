@@ -11,7 +11,9 @@ config/se-config.yaml
 # (guard against accidental copies)
 **/01-customers/
 **/_transcripts/
-*-transcript*
+**/*-transcript*
+!eval/manifests/**/*.yaml
+!eval/manifests/**/*.yml
 
 # Web app local runtime
 webapp/__pycache__/

@@ -13,6 +13,9 @@ fixtures:
   config: fixtures/config/synthetic-se-config.yaml
 environment:
   salesforce: false
+execution:
+  prerequisite_mode: enforce
+  classification: missing_input
 customer_constraints:
   - Reduce engineering cost.
   - Understand business impact.

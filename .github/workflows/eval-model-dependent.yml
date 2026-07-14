@@ -1,0 +1,55 @@
+name: Optional model-dependent evaluation
+
+# This workflow is disabled by default. It only runs when a maintainer explicitly
+# triggers it via the GitHub UI and when the ANTHROPIC_API_KEY repository secret
+# is configured.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: eval-model-dependent
+  cancel-in-progress: false
+
+jobs:
+  eval-claude:
+    name: Run model-dependent evaluation suite with Claude
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Verify Anthropic API key is present
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "ANTHROPIC_API_KEY is not configured. Configure the repository secret to enable model-dependent runs."
+            exit 1
+          fi
+
+      - name: Run Phase 1 suite against claude
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: uv run python -m eval.runner run-suite --manifest-dir eval/manifests/phase1 --executor claude
+
+      - name: Upload model-dependent reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-model-reports-${{ github.run_id }}-${{ github.run_attempt }}
+          path: eval/results/
+          if-no-files-found: ignore

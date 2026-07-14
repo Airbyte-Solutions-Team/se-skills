@@ -52,6 +52,7 @@ class Fixtures(BaseModel):
     transcripts: List[FixtureItem] = Field(default_factory=list)
     existing_outputs: List[FixtureItem] = Field(default_factory=list)
     config: str = Field("fixtures/config/synthetic-se-config.yaml", description="Path to the SE config fixture.")
+    account: str = Field("Acme", description="Synthetic account name used in the scenario.")
 
 
 class Environment(BaseModel):
@@ -61,6 +62,19 @@ class Environment(BaseModel):
     salesforce: Union[bool, Dict[str, Any]] = Field(
         False,
         description="Whether Salesforce enrichment is available, or a dict of simulated SFDC values.",
+    )
+
+
+class Execution(BaseModel):
+    """Controls how the runner prepares the scenario and handles skill prerequisites."""
+
+    prerequisite_mode: Literal["enforce", "provide_fixtures", "explicit_override"] = Field(
+        "enforce",
+        description="How to handle missing upstream qualification documents.",
+    )
+    classification: Literal["normal", "missing_input", "degraded"] = Field(
+        "normal",
+        description="Whether this scenario tests normal production behavior, missing-input handling, or degraded behavior.",
     )
 
 
@@ -75,6 +89,7 @@ class Manifest(BaseModel):
     tags: List[str] = Field(default_factory=list)
     fixtures: Fixtures = Field(default_factory=Fixtures)
     environment: Environment = Field(default_factory=Environment)
+    execution: Execution = Field(default_factory=Execution)
     customer_constraints: List[str] = Field(default_factory=list)
     available_evidence: List[str] = Field(default_factory=list)
     required_behavior: List[str] = Field(default_factory=list)
