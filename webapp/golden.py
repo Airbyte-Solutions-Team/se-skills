@@ -9,7 +9,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import yaml
+
 _GOLDEN_DIR = Path(__file__).resolve().parent.parent / "eval" / "golden"
+_MANIFEST_DIR = Path(__file__).resolve().parent.parent / "eval" / "manifests" / "phase1"
 
 
 def golden_path(skill: str, scenario: str) -> Path:
@@ -46,3 +49,22 @@ def list_golden_scenarios(skill: str | None = None) -> dict[str, list[str]]:
     for sk in result:
         result[sk].sort()
     return result
+
+
+def manifest_scenarios(skill: str) -> list[str]:
+    """Return the Phase 1 manifest IDs that exercise `skill`.
+
+    Only fixtures tied to a manifest scenario are exercised by the deterministic
+    regression suite. A scenario with no matching manifest is not protected by CI.
+    """
+    result: list[str] = []
+    if not _MANIFEST_DIR.exists():
+        return result
+    for p in sorted(_MANIFEST_DIR.glob("*.yaml")):
+        try:
+            data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        except Exception:
+            continue
+        if skill in data.get("skills_under_test", []):
+            result.append(data["id"])
+    return sorted(set(result))
