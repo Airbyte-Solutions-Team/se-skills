@@ -10,10 +10,6 @@ tags:
   - byok
   - park
   - deployment-model
-dependencies:
-  - deployment-model-qual
-  - tech-qual
-  - poc-plan
 fixtures:
   transcripts:
     - source: fixtures/transcripts/acme-2026-07-01-byok.txt
