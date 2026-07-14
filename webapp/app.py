@@ -49,8 +49,9 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from typing import Literal
+from typing import Any, Literal
 
+import output_schema
 import persistence
 import security
 import soql
@@ -349,7 +350,11 @@ def _slug(name: str) -> str:
 def list_outputs(account: str, opp: str | None = None) -> list[dict]:
     """Saved skill outputs, newest first. If `opp` given, scope to that
     opportunity's outputs; otherwise the account-level outputs folder
-    (legacy / account-wide)."""
+    (legacy / account-wide).
+
+    Each Markdown output gets a `.json` sidecar with parsed metadata and
+    validation results; the list exposes `valid` / `validation_errors` so the UI
+    can warn the SE when an output looks incomplete."""
     base = (CUSTOMERS_DIR / account / "opportunities" / opp / "outputs") if opp \
         else (CUSTOMERS_DIR / account / "outputs")
     if not base.exists():
@@ -358,17 +363,27 @@ def list_outputs(account: str, opp: str | None = None) -> list[dict]:
     for skill_dir in sorted(base.iterdir()):
         if not skill_dir.is_dir() or skill_dir.name.startswith("."):
             continue  # skip hidden dirs like .runs (internal run-result cache)
+        skill = skill_dir.name
         for f in sorted([*skill_dir.glob("*.md"), *skill_dir.glob("*.html")]):
             st = f.stat()
-            items.append({
-                "skill": skill_dir.name,
+            entry: dict[str, Any] = {
+                "skill": skill,
                 "filename": f.name,
                 "path": str(f.relative_to(CUSTOMERS_DIR)),
                 "ext": f.suffix.lstrip("."),  # "md" or "html" — UI uses this for the View action
                 "mtime": st.st_mtime,
                 "modified": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).strftime("%Y-%m-%d %H:%M"),
                 "size": st.st_size,
-            })
+            }
+            if f.suffix == ".md" and output_schema.skill_has_schema(skill):
+                try:
+                    meta = output_schema.read_or_parse_sidecar(f, skill)
+                    entry["valid"] = meta.valid
+                    entry["validation_errors"] = meta.validation_errors
+                    entry["missing_sections"] = meta.missing_sections
+                except (OSError, ValueError, TypeError):
+                    logger.warning("Could not parse sidecar for %s", f)
+            items.append(entry)
     items.sort(key=lambda x: x["mtime"], reverse=True)
     return items
 
@@ -992,6 +1007,22 @@ def api_output_content(path: str):
     if not str(target).startswith(str(CUSTOMERS_DIR.resolve())) or not target.is_file():
         raise HTTPException(404, "Not found")
     return target.read_text()
+
+
+@app.get("/api/output/meta")
+def api_output_meta(path: str):
+    """Return parsed metadata and schema-validation results for a Markdown output."""
+    target = (CUSTOMERS_DIR / path).resolve()
+    if not str(target).startswith(str(CUSTOMERS_DIR.resolve())) or not target.is_file():
+        raise HTTPException(404, "Not found")
+    skill = target.parent.name
+    if not output_schema.skill_has_schema(skill):
+        return {"skill": skill, "valid": None, "validation_errors": [], "missing_sections": []}
+    try:
+        meta = output_schema.read_or_parse_sidecar(target, skill)
+        return meta.model_dump()
+    except (OSError, ValueError, TypeError) as e:
+        raise HTTPException(500, f"Could not parse output metadata: {e}")
 
 
 @app.get("/api/output/html", response_class=HTMLResponse)
@@ -1757,6 +1788,18 @@ def _runs_dir(account: str, opp_slug: str | None) -> Path | None:
     return CUSTOMERS_DIR / account / "opportunities" / opp_slug / "outputs" / ".runs"
 
 
+def _output_dir(account: str, opp_slug: str | None, skill: str) -> Path | None:
+    """Directory where a skill's Markdown output files are saved."""
+    if not opp_slug:
+        return None
+    return CUSTOMERS_DIR / account / "opportunities" / opp_slug / "outputs" / skill
+
+
+def _sidecar_for_md(md_path: Path) -> Path:
+    """Sidecar JSON path for a Markdown output file."""
+    return md_path.with_suffix(md_path.suffix + ".json")
+
+
 def _persist_run(account: str, opp_slug: str | None, skill: str, record: dict) -> None:
     d = _runs_dir(account, opp_slug)
     if not d:
@@ -1765,6 +1808,28 @@ def _persist_run(account: str, opp_slug: str | None, skill: str, record: dict) -
     # one file per skill id — overwrite on re-run
     safe_skill = re.sub(r"[^A-Za-z0-9._-]", "-", skill or "freeform")
     (d / f"{safe_skill}.json").write_text(json.dumps(record))
+    _write_output_sidecar(account, opp_slug, skill)
+
+
+def _write_output_sidecar(account: str, opp_slug: str | None, skill: str) -> None:
+    """Parse the most recent Markdown output for this run and write its `.json` sidecar."""
+    out_dir = _output_dir(account, opp_slug, skill)
+    if not out_dir or not out_dir.exists():
+        return
+    md_files = [f for f in out_dir.glob("*.md") if f.is_file()]
+    if not md_files:
+        return
+    newest = max(md_files, key=lambda p: p.stat().st_mtime)
+    try:
+        text = newest.read_text(encoding="utf-8")
+    except OSError:
+        logger.warning("Could not read output %s for sidecar", newest)
+        return
+    metadata = output_schema.parse_output(skill, text)
+    try:
+        output_schema.write_sidecar(newest, metadata)
+    except OSError:
+        logger.warning("Could not write sidecar for %s", newest)
 
 
 def _latest_run(account: str, opp_slug: str | None) -> dict | None:

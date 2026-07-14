@@ -8,6 +8,7 @@ const api = async (path, opts) => {
   return r.headers.get("content-type")?.includes("application/json") ? r.json() : r.text();
 };
 const esc = (s) => (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+let outputMeta = {};  // path -> { valid, validation_errors, missing_sections }
 
 // Only allow a small set of link schemes in the markdown reader. `javascript:`,
 // `data:`, `blob:`, and other arbitrary protocols are replaced with `#` so user
@@ -1150,10 +1151,13 @@ function renderOutputGroups(outputs) {
       <div class="out-group-items">
         ${groups[day].map((o) => {
           const isHtml = o.ext === "html";
+          const warn = o.valid === false && o.validation_errors?.length;
+          const warnTitle = warn ? esc(o.validation_errors.slice(0, 2).join(" ")) : "";
           return `
-          <div class="out-item${isHtml ? " is-html" : ""}" data-path="${encodeURIComponent(o.path)}" data-ext="${esc(o.ext || "md")}" data-title="${esc(prettySkill(o.skill))} — ${esc(o.filename)}">
+          <div class="out-item${isHtml ? " is-html" : ""}${warn ? " out-item-warn" : ""}" data-path="${encodeURIComponent(o.path)}" data-ext="${esc(o.ext || "md")}" data-title="${esc(prettySkill(o.skill))} — ${esc(o.filename)}">
             <div><div class="skill">${esc(prettySkill(o.skill))}${isHtml ? ' <span class="badge">HTML</span>' : ""}</div><div class="when" title="${esc(o.filename)}">${esc(conciseOutputName(o.filename, o.skill))}</div></div>
             <div class="out-item-right">
+              ${warn ? `<span class="out-warn" title="${warnTitle}">⚠</span>` : ""}
               <span class="when">${esc((o.modified || "").slice(11))} UTC</span>
               ${isHtml ? `<button class="ghost small out-view" data-path="${encodeURIComponent(o.path)}">View</button><button class="ghost small out-copy-path" data-path="${encodeURIComponent(o.path)}">Copy repo path</button><button class="ghost small out-push-repo" data-path="${encodeURIComponent(o.path)}">Push to repo</button>` : ""}
               ${downloadMenuHtml(encodeURIComponent(o.path), "dl-menu-row")}
@@ -1404,6 +1408,7 @@ function showPushError(account, message) {
 async function pageOpportunity(account, slug, oppName) {
   setCrumbs([...(await accountCrumbs(account)), { label: account, href: `#/account/${encodeURIComponent(account)}` }, { label: oppName }]);
   const outputs = await api(`/api/accounts/${encodeURIComponent(account)}/outputs?opp=${encodeURIComponent(slug)}`);
+  outputMeta = Object.fromEntries(outputs.map((o) => [o.path, { valid: o.valid, validation_errors: o.validation_errors || [], missing_sections: o.missing_sections || [] }]));
   // Resolve the owning member's display name (for the handoff repo-path). Owner
   // is a member id on the account; map to its name. Empty is fine (endpoint
   // falls back to a placeholder slug).
@@ -1451,6 +1456,7 @@ async function pageOpportunity(account, slug, oppName) {
   // Re-fetch the Generated Outputs list (after a run produces a new file).
   const refreshOutputs = async () => {
     const outs = await api(`/api/accounts/${encodeURIComponent(account)}/outputs?opp=${encodeURIComponent(slug)}`).catch(() => []);
+    outputMeta = Object.fromEntries(outs.map((o) => [o.path, { valid: o.valid, validation_errors: o.validation_errors || [], missing_sections: o.missing_sections || [] }]));
     const el = document.getElementById("outputs");
     if (!el) return;
     el.innerHTML = outs.length ? renderOutputGroups(outs) : `<div class="empty">No outputs yet for this opportunity. Invoke a skill to generate one.</div>`;
@@ -1777,7 +1783,10 @@ function navOpenOutput(path, title, ctx) {
 }
 
 async function openOutput(path, title, ctx) {
-  const text = await api("/api/output?path=" + encodeURIComponent(decodeURIComponent(path)));
+  const decodedPath = decodeURIComponent(path);
+  const meta = outputMeta[decodedPath] || await api("/api/output/meta?path=" + encodeURIComponent(decodedPath)).catch(() => null);
+  if (meta) outputMeta[decodedPath] = meta;
+  const text = await api("/api/output?path=" + encodeURIComponent(decodedPath));
   const toc = [];
   const bodyHtml = mdToHtml(text, toc);
 
@@ -2064,17 +2073,21 @@ async function openOutput(path, title, ctx) {
   const backHref = ctx
     ? `#/opp/${encodeURIComponent(ctx.account)}/${encodeURIComponent(ctx.slug)}/${encodeURIComponent(ctx.oppName)}`
     : null;
-  const skill = path.split("/").slice(-2, -1)[0] || "";
+  const skill = decodedPath.split("/").slice(-2, -1)[0] || "";
   const compareBtn = skill === "deal-assessment" && ctx
     ? `<button class="ghost" id="doc-compare" title="Compare this deal assessment with a previous one">↔ Compare</button>` : "";
+  const validationBanner = meta && meta.valid === false
+    ? `<div class="validation-banner"><strong>⚠ This output may be incomplete.</strong> ${esc((meta.validation_errors || []).slice(0, 3).join(" "))}</div>`
+    : "";
   view.innerHTML = `
     <div class="row"><h1>${esc(docTitle)}</h1>
       <div class="row-actions">
         ${compareBtn}
         <button class="ghost" id="doc-chat-toggle" title="Ask a follow-up or run a skill on this doc">💬 Chat</button>
-        ${downloadMenuHtml(encodeURIComponent(decodeURIComponent(path)), "dl-menu-doc", "Export")}
+        ${downloadMenuHtml(encodeURIComponent(decodedPath), "dl-menu-doc", "Export")}
         <button class="ghost" id="doc-back">← Back</button>
       </div></div>
+    ${validationBanner}
     <div class="doc-layout" id="doc-layout">
       ${tocHtml ? `<aside class="doc-toc"><div class="doc-toc-head">On this page</div>${tocHtml}</aside>` : ""}
       <article class="md-body">
@@ -2126,7 +2139,7 @@ async function openOutput(path, title, ctx) {
   wireDownloadMenus(view, goBack);
 
   const compareBtnEl = document.getElementById("doc-compare");
-  if (compareBtnEl && ctx) compareBtnEl.onclick = () => openDealDiffModal(ctx, path);
+  if (compareBtnEl && ctx) compareBtnEl.onclick = () => openDealDiffModal(ctx, decodedPath);
 
   // Collapsible sections — clicking the H2 band toggles its body. Ignore clicks
   // on links inside the heading (there are none today, but stay safe).

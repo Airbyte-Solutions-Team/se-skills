@@ -2,7 +2,7 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`, mine = `gyairbyte/SE-Workflow`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: July 14, 2026 — ARCH-004/UX-005 follow-up: persistence-failure warnings and clearer 'job record only' durability wording._
+_Last updated: July 14, 2026 — STRUCT-001/STRUCT-003: output schemas, sidecar metadata, and validation warnings._
 
 ## What the app is
 Local FastAPI + vanilla-JS UI (no build step) over the SE skills suite. `cd webapp && uv run app.py` → http://127.0.0.1:8787 (needs `CPATH/LIBRARY_PATH` for portaudio on this Mac — see "Run" below). Browse team → member's accounts → an account's opportunities → generated outputs; invoke skills; ask follow-ups on outputs; Live Transcribe a Zoom call with an AI copilot.
@@ -16,6 +16,17 @@ uv run --python 3.11 app.py    # port 8787
 ```
 
 ## Built this session (newest first — see `git log`)
+- **STRUCT-001 + STRUCT-003: output schemas, sidecars, and validation warnings (July 14).** Added Pydantic schemas for the five high-risk skill outputs and runtime validation that surfaces missing required sections or a missing `Source Coverage` section. The webapp now writes an optional `.md.json` sidecar next to each Markdown output, so downstream skills and the UI can read structured metadata without re-parsing the document. The output list shows a warning icon for outputs that fail validation, and the output reader displays a banner explaining what is incomplete. Legacy `.md` files are still fully supported; sidecars are generated lazily and refreshed when the markdown changes.
+  - `webapp/output_schema.py`: new `SkillOutputSchema` and `OutputMetadata` models; Markdown parser for title, date, `At a Glance` key/value pairs, H2 sections, and fuzzy section-name matching.
+  - `webapp/app.py`: `_write_output_sidecar` called after each skill run; `list_outputs` exposes `valid`, `validation_errors`, and `missing_sections`; new `GET /api/output/meta` endpoint returns sidecar metadata on demand.
+  - `webapp/static/app.js`: warning icon in the output list; validation banner in the output reader; `outputMeta` cache populated from `api/outputs` and `api/output/meta`.
+  - `webapp/static/style.css`: `.out-item-warn`, `.out-warn`, and `.validation-banner` styles.
+  - `webapp/static/index.html`: bumped `app.js?v=` cache-bust.
+  - `webapp/README.md`: documented output sidecars and validation warnings.
+  - `IMPLEMENTATION-PLAN.md`: marked STRUCT-001 and STRUCT-003 completed; updated Phase 4 status.
+  - `eval/tests/test_output_schema.py` and `eval/tests/test_webapp_output_sidecar.py`: deterministic tests for schema parsing, validation, sidecar round-trips, `list_outputs` metadata, and `GET /api/output/meta`.
+  - Validation: `uv run --extra dev pytest eval/ -v` passes; mock suite passes; `./scripts/check-sync.sh` passes; `node --check webapp/static/app.js` passes.
+
 - **ARCH-004/UX-005 follow-up: persistence-failure warnings + clearer durability wording (July 14).** Made `webapp/persistence.py` return `False` on write failures instead of raising, and log a safe generic message. `webapp/app.py` now surfaces a `persistence_warning` on job responses (`/api/invoke`, `/api/output/ask`, `/api/transcribe/ask`) and live-transcribe responses (`/api/transcribe/start`, `/api/transcribe/active`, `/api/transcribe/stop`), and clears it on the next successful snapshot. `webapp/static/app.js` shows these as warning toasts (de-duplicated by job/session id). Documentation (`README.md`, `LIVE-TRANSCRIBE.md`, `IMPLEMENTATION-PLAN.md`) now explicitly states that *job records* and *transcripts* survive a restart, not the running child process or audio capture. Added tests for persistence failure paths.
 
 - **ARCH-004 + UX-005 durable jobs/live-transcribe sessions and custom speaker labels (July 14).** Added disk persistence for background state and live-transcribe sessions so the app survives restarts without losing work. Child process jobs that were running at restart are marked lost with a clear re-run message; live sessions are recovered as read-only transcripts with a **Save recovered transcript** button. Live-transcribe setup now exposes editable `mic-label` and `call-label` inputs, which are embedded in saved transcripts and rendered with speaker-specific styling. Also fixed a pre-existing JS duplicate `const compareBtn` in `static/app.js`.
