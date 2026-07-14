@@ -639,6 +639,7 @@ class MockOutputBuilder:
             "hourly-sync-constraint",
             "sfdc-transcript-conflict",
             "next-move-low-evidence",
+            "next-move-missing-prereq",
             "missing-technical-input",
             "full-qual-partial-failure",
         ):
@@ -673,6 +674,8 @@ class MockOutputBuilder:
             return "🟡 cannot verify availability"
         if scenario == "next-move-low-evidence":
             return "🟡 Low confidence — gather more evidence"
+        if scenario == "next-move-missing-prereq" and self.skill == "next-move":
+            return "🟡 not ready for deliverable — missing prerequisites"
         if scenario == "sfdc-transcript-conflict" and self.skill == "deal-assessment":
             return "🟡 SFDC stage conflicts with transcript"
         if scenario == "full-qual-partial-failure" and self.skill == "full-qual":
@@ -683,7 +686,7 @@ class MockOutputBuilder:
         scenario = self._scenario()
         if scenario in {"next-move-low-evidence", "unverified-connector", "unverified-entitlement", "connector-cdc-unverified"}:
             return "Low"
-        if scenario in {"sfdc-transcript-conflict", "tech-qual-missing-critical"}:
+        if scenario in {"sfdc-transcript-conflict", "tech-qual-missing-critical", "next-move-missing-prereq"}:
             return "Medium-Low"
         if scenario == "next-move-no-repeat":
             return "Medium"
@@ -881,6 +884,11 @@ class MockOutputBuilder:
                 "Only one old intro transcript exists and no qualification docs are available. "
                 "We are too early to recommend POC/ROI motion; next step is discovery."
             )
+        if scenario == "next-move-missing-prereq":
+            return (
+                "A `biz-qual` exists but `deployment-qual`, `tech-qual`, and `connector-feasibility` are missing. "
+                "Recommending `poc-plan` now would require completing those gates first."
+            )
         if scenario == "sfdc-transcript-conflict":
             return (
                 "SFDC says Closed-Won next week while the transcript says still evaluating with no EB and Q4. "
@@ -901,6 +909,12 @@ class MockOutputBuilder:
                 "1. **Run `account-refresher`** — catch up on full account context.\n"
                 "2. **Plan a discovery call with `prep-call`** — gather technical/business requirements.\n"
                 "3. **Defer proof-of-concept work** until a qualification doc exists."
+            )
+        if scenario == "next-move-missing-prereq":
+            return (
+                "1. **Run `deployment-model-qual`** — missing deployment gate before technical scoping.\n"
+                "2. **Run `biz-qual` / `tech-qual` on the next call** — business and technical discovery are needed.\n"
+                "3. **Defer `poc-plan`** until `deployment-qual`, `tech-qual`, and `connector-feasibility` are complete."
             )
         if scenario == "sfdc-transcript-conflict":
             return (

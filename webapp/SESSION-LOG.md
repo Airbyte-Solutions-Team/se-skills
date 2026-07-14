@@ -2,7 +2,7 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`, mine = `gyairbyte/SE-Workflow`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: July 14, 2026 — ORCH-002 full-qual partial-failure handling._
+_Last updated: July 14, 2026 — ORCH-003 next-move missing-prerequisite flag._
 
 ## What the app is
 Local FastAPI + vanilla-JS UI (no build step) over the SE skills suite. `cd webapp && uv run app.py` → http://127.0.0.1:8787 (needs `CPATH/LIBRARY_PATH` for portaudio on this Mac — see "Run" below). Browse team → member's accounts → an account's opportunities → generated outputs; invoke skills; ask follow-ups on outputs; Live Transcribe a Zoom call with an AI copilot.
@@ -16,6 +16,11 @@ uv run --python 3.11 app.py    # port 8787
 ```
 
 ## Built this session (newest first — see `git log`)
+- **ORCH-003 next-move missing-prerequisite flag (July 14).** Added a guardrail requiring `next-move` to explicitly flag missing prerequisite artifacts when a deliverable skill (`poc-plan`, `roi-business-case`, `mutual-close-plan`, `coverage-handoff`) is recommended, and to default to evidence-gathering when confidence is low.
+  - `skills/next-move/SKILL.md`: new **Missing-prerequisite flag** section and changelog entry.
+  - `eval/runner.py`: added `next-move-missing-prereq` scenario support to the mock output builder.
+  - New `eval/manifests/phase1/next-move-missing-prereq.yaml` with deterministic assertions for the missing-prerequisite behavior.
+  - Validation: `uv run --extra dev pytest eval/ -v` passes; mock suite passes.
 - **ORCH-002 full-qual partial-failure handling (July 14).** Tightened the `full-qual` wrapper contract so it reports which child skill completed and which refused, with a one-line reason, and does not leave a partial/stale doc or claim "full qualification complete" when one half is missing.
   - `skills/full-qual/SKILL.md`: added explicit partial-failure / atomic-completion section and `✓ produced` / `✗ refused` / `✗ failed` status markers in the closing summary.
   - `skills/_se-playbook.md`: updated the `full-qual` shortcut description to include partial-failure reporting.
