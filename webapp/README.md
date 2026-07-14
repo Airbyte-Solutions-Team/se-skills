@@ -89,7 +89,7 @@ It captures your **Mac's audio**, so it needs a one-time setup:
 3. **In the Live Transcribe page:**
    - **Your mic** → pick your microphone, then set a label (default "You").
    - **Call audio (everyone else)** → pick **BlackHole 2ch** (or the Aggregate) and set a label (default "Call"). Leave it on "none" for a single unlabeled stream (mic only).
-4. Press **Start**, run your Zoom call, ask the copilot anything; **Stop & Save** writes the transcript to `01-customers/_transcripts/<Customer>-MM.DD.YY.txt` — which `post-call` then consumes. If the app restarts mid-call, reopen the opportunity and the recovered session appears with a **Save recovered transcript** button.
+4. Press **Start**, run your Zoom call, ask the copilot anything; **Stop & Save** writes the transcript to `01-customers/_transcripts/<Customer>-MM.DD.YY.txt` — which `post-call` then consumes. If the app restarts mid-call, reopen the opportunity and the recovered transcript appears with a **Save recovered transcript** button. (Audio capture cannot survive a process restart.)
 
 Notes:
 - Transcription is **local** (faster-whisper, CPU). Set `SE_WHISPER_MODEL` (tiny/base/small/medium, default `small`) to trade speed for accuracy.
@@ -104,8 +104,8 @@ Notes:
 - **Account / opportunity page** — every saved skill output (newest first, concise titles), plus **⚡ Invoke Skill** to run any skill. The invoke picker is grouped into tiers (Workflow 1–7 / Late-stage 8–9 / Anytime / When unsure) reflecting real dependency order, and has a **↻ refresh** button to pick up new or renamed skills without restarting the app.
 - **Output reader** — a rich document view of any saved skill output: decision-first layout (exec card + tiles), top-risks strip, collapsible audit sections, grouped TOC, a **follow-up chat bar** (ask questions about the doc, or launch another skill from the chat), an **output review panel** to approve, comment on, or correct a generated doc, and a **deal-assessment compare view** to see what changed between two saved deal assessments.
 - **Export & share** — from a **3-dots options menu** on any output: download **PDF** (server-rendered, paginated) or **MD**, or **Export to internal HTML** (a self-contained rs-group page for internal.airbyte.ai). Coverage-handoff outputs additionally support **push-to-repo** — a one-click PR to internal.airbyte.ai with open-PR detection.
-- **Live Transcribe** — transcribe a live call with an AI copilot ask-bar. Sessions are persisted to disk, so an app restart mid-call recovers the transcript; you can also name the mic and call channels (e.g. "You" / "Customer") instead of the default labels.
-- **Durable background jobs** — skill runs and live copilot deep-asks are persisted while in progress, so a server restart leaves them recoverable (or clearly marked as lost) rather than silently disappearing.
+- **Live Transcribe** — transcribe a live call with an AI copilot ask-bar. Sessions are persisted to disk, so an app restart mid-call recovers the transcript; you can also name the mic and call channels (e.g. "You" / "Customer") instead of the default labels. If state cannot be written, a warning toast tells you the transcript may not survive a restart.
+- **Durable background jobs** — skill runs and live copilot deep-asks are persisted while in progress, so a server restart leaves the *job record* recoverable (or clearly marked as lost) rather than silently disappearing. The running child process cannot be reattached; persistence failures surface a warning toast.
 - **Skill-completion toasts** — run a skill, navigate away, and a top-right banner tells you when it's ready with an Open deep-link.
 
 Invoking a skill shells out to Claude Code headless:

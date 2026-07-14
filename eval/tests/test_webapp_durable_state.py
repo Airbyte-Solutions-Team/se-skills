@@ -4,21 +4,27 @@ These tests call the persistence layer and FastAPI route functions directly so
 they do not need an HTTP client or a running event loop. They verify that:
 - job state is persisted and running jobs are marked lost on restart;
 - live sessions are persisted, loaded as recovered, and deleted after stop;
-- saved transcripts carry mic/call labels and can be parsed back correctly.
+- saved transcripts carry mic/call labels and can be parsed back correctly;
+- persistence write failures return False, log safely, and surface UI warnings.
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
+import os
+import stat
 from datetime import datetime, timezone
 
 import pytest
 
+import persistence
 import webapp.app as app
-from webapp import persistence
 from webapp.app import (
     LiveSession,
     StartLive,
     _parse_saved_transcript,
+    api_job,
     api_load_transcript,
     api_transcribe_active,
     api_transcribe_stop,
@@ -46,6 +52,54 @@ def test_persistence_roundtrips_jobs_and_marks_running_as_lost(tmp_path) -> None
     assert "re-run" in loaded["def456"]["stderr"].lower()
     assert loaded["def456"]["sig"] == ("a", "b", "c", 2)
     assert (tmp_path / ".state" / "jobs.json").exists()
+
+
+def test_persistence_filters_transient_fields_from_jobs_snapshot(tmp_path) -> None:
+    jobs = {
+        "j1": {
+            "status": "running", "ok": None, "stdout": "", "stderr": "",
+            "skill": "next-move", "account": "Acme", "sig": ("a", "b"),
+            "persistence_warning": "should not be saved",
+            "task": "<asyncio.Task>",
+            "proc": "<subprocess.Popen>",
+        },
+    }
+    persistence.save_jobs(jobs, tmp_path)
+    raw = (tmp_path / ".state" / "jobs.json").read_text()
+    assert "persistence_warning" not in raw
+    assert "<asyncio.Task>" not in raw
+    assert "<subprocess.Popen>" not in raw
+
+
+def test_save_jobs_returns_false_on_write_failure(tmp_path) -> None:
+    # A file where a directory is expected causes mkdir to fail with an OSError.
+    blocked = tmp_path / "blocked"
+    blocked.write_text("not a directory")
+    assert persistence.save_jobs({"j1": {"status": "running"}}, blocked) is False
+
+
+def test_save_session_returns_false_on_write_failure(tmp_path) -> None:
+    blocked = tmp_path / "blocked"
+    blocked.write_text("not a directory")
+    data = {
+        "session_id": "s1", "account": "Acme", "mic_device": 0, "call_device": None,
+        "labeled": False, "recovered": False, "ended": False,
+        "started_at": datetime.now(timezone.utc).timestamp(), "segments": [],
+    }
+    assert persistence.save_session(data, blocked) is False
+
+
+def test_delete_session_returns_false_on_failure(tmp_path) -> None:
+    d = tmp_path / ".state" / "sessions"
+    d.mkdir(parents=True)
+    f = d / "s1.json"
+    f.write_text("{}")
+    # Remove write permission from the directory so unlink fails.
+    os.chmod(d, stat.S_IRUSR | stat.S_IXUSR)
+    try:
+        assert persistence.delete_session("s1", tmp_path) is False
+    finally:
+        os.chmod(d, stat.S_IRWXU)
 
 
 def test_persistence_roundtrips_sessions(tmp_path) -> None:
@@ -93,6 +147,19 @@ def test_livesession_roundtrip_and_transcript_labels(tmp_path, monkeypatch) -> N
     assert parsed["segments"] == [{"t": "12:00:00", "speaker": "Gary", "text": "hello"}]
 
 
+def test_livesession_persist_sets_warning_on_failure(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(app, "WORKSPACE", tmp_path)
+    monkeypatch.setattr(persistence, "save_session", lambda data, ws: False)
+    sess = LiveSession(
+        account="Acme", opp_slug="op1", mic_device=0, call_device=None,
+        mic_label="You", call_label="Call", opportunity="Big Deal",
+        recovered=True, session_id="s1",
+    )
+    sess._persist()
+    assert sess.persistence_warning is not None
+    assert "will not survive" in sess.persistence_warning.lower()
+
+
 def test_parse_saved_transcript_protects_unknown_colon_prefixes() -> None:
     text = (
         "# Live transcript — Acme — July 14, 2026 12:00\n"
@@ -128,6 +195,34 @@ def test_start_live_model_rejects_long_labels() -> None:
         StartLive(account="Acme", mic_device=0, mic_label="x" * 81)
 
 
+def test_api_job_returns_persistence_warning() -> None:
+    app.JOBS = {"j1": {"status": "running", "persistence_warning": "warn text"}}
+    try:
+        resp = api_job("j1")
+        assert resp["persistence_warning"] == "warn text"
+    finally:
+        app.JOBS = {}
+
+
+def test_save_jobs_snapshot_warns_and_clears(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(app, "WORKSPACE", tmp_path)
+    app.JOBS = {"j1": {"status": "running"}}
+    try:
+        # Failure path: returns warning and attaches it to the job.
+        monkeypatch.setattr(persistence, "save_jobs", lambda jobs, ws: False)
+        warn = asyncio.run(app._save_jobs_snapshot("j1"))
+        assert warn is not None
+        assert app.JOBS["j1"].get("persistence_warning") == warn
+
+        # Success path: clears the warning and returns None.
+        monkeypatch.setattr(persistence, "save_jobs", lambda jobs, ws: True)
+        cleared = asyncio.run(app._save_jobs_snapshot("j1"))
+        assert cleared is None
+        assert "persistence_warning" not in app.JOBS["j1"]
+    finally:
+        app.JOBS = {}
+
+
 def test_api_transcribe_active_returns_labels_and_recovered(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(app, "WORKSPACE", tmp_path)
     monkeypatch.setattr(app, "CUSTOMERS_DIR", tmp_path / "customers")
@@ -138,12 +233,38 @@ def test_api_transcribe_active_returns_labels_and_recovered(tmp_path, monkeypatc
         segments=[{"t": "12:00:00", "speaker": "Gary", "text": "hello"}],
         session_id="recovered1",
     )
+    sess.persistence_warning = "transcript persistence failed"
     monkeypatch.setattr(app, "SESSIONS", {"recovered1": sess})
     resp = api_transcribe_active(account="Acme", opp_slug="op1")
     assert resp["mic_label"] == "Gary"
     assert resp["call_label"] == "Call"
     assert resp["recovered"] is True
     assert resp["segments"] == [{"t": "12:00:00", "speaker": "Gary", "text": "hello"}]
+    assert resp["persistence_warning"] == "transcript persistence failed"
+
+
+def test_api_transcribe_start_returns_persistence_warning(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(app, "WORKSPACE", tmp_path)
+    monkeypatch.setattr(persistence, "save_session", lambda data, ws: False)
+
+    class FakeLiveSession:
+        def __init__(self, *args, **kwargs):
+            self.session_id = None
+            self.labeled = False
+            self.mic_label = "You"
+            self.call_label = "Call"
+            self.persistence_warning = None
+
+        def start(self):
+            pass
+
+        def to_dict(self):
+            return {"session_id": self.session_id}
+
+    monkeypatch.setattr(app, "LiveSession", FakeLiveSession)
+    body = StartLive(account="Acme", mic_device=0)
+    resp = asyncio.run(app.api_transcribe_start(body))
+    assert resp["persistence_warning"] == "Live transcript will not survive a server restart because state could not be saved."
 
 
 def test_api_transcribe_stop_saves_transcript_and_deletes_session_file(tmp_path, monkeypatch) -> None:
@@ -172,6 +293,26 @@ def test_api_transcribe_stop_saves_transcript_and_deletes_session_file(tmp_path,
     assert "# mic-label: Gary" in content
     assert "[12:00:00] Gary: hello" in content
     assert not (tmp_path / ".state" / "sessions" / "stop1.json").exists()
+
+
+def test_api_transcribe_stop_returns_warning_when_delete_fails(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(app, "WORKSPACE", tmp_path)
+    customers = tmp_path / "customers"
+    monkeypatch.setattr(app, "CUSTOMERS_DIR", customers)
+    started = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
+    sess = LiveSession(
+        account="Acme", opp_slug="op1", mic_device=0, call_device=None,
+        mic_label="You", call_label="Call", opportunity="Big Deal",
+        recovered=True,
+        segments=[{"t": "12:00:00", "speaker": "You", "text": "hello"}],
+        started_at=started,
+        session_id="stopfail",
+    )
+    monkeypatch.setattr(app, "SESSIONS", {"stopfail": sess})
+    monkeypatch.setattr(persistence, "delete_session", lambda sid, ws: False)
+    resp = api_transcribe_stop("stopfail")
+    assert "persistence_warning" in resp
+    assert "could not be removed" in resp["persistence_warning"]
 
 
 def test_api_load_transcript_returns_labels(tmp_path, monkeypatch) -> None:

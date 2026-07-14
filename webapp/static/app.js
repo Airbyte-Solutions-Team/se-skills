@@ -261,6 +261,15 @@ function relTime(epochSec) {
   return `${Math.floor(diff / 86400)} d ago`;
 }
 
+// De-duplicate persistence-warning toasts across polls and pages.
+const _persistWarningsShown = new Set();
+
+function warnPersistence(id, message) {
+  if (!message || _persistWarningsShown.has(id)) return;
+  _persistWarningsShown.add(id);
+  showToast(message, "warn");
+}
+
 // Poll a background job until it finishes. `onTick` gets the job snapshot each
 // poll; resolves with the final job. Polling is independent of any page — if
 // you navigate away and the element is gone, onTick simply no-ops.
@@ -268,6 +277,7 @@ async function pollJob(jobId, onTick) {
   while (true) {
     const job = await api(`/api/jobs/${encodeURIComponent(jobId)}`).catch(() => null);
     if (!job) return null;
+    if (job.persistence_warning) warnPersistence(`job:${jobId}`, job.persistence_warning);
     if (onTick) onTick(job);
     if (job.status !== "running") return job;
     await new Promise((r) => setTimeout(r, 2000));
@@ -1522,6 +1532,7 @@ async function pageOpportunity(account, slug, oppName) {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify(payload),
       });
+      if (res.persistence_warning) warnPersistence(`job:${res.job_id}`, res.persistence_warning);
       // Re-key the pending row to the real job id so watch() updates it in place.
       rows.delete(tmpKey); rows.set(res.job_id, row);
       // Global toast when it finishes (fires even if you navigate away); the
@@ -1548,6 +1559,7 @@ async function pageOpportunity(account, slug, oppName) {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ account, opportunity: oppName, opp_slug: slug, skill: "coverage-handoff", extra: extraText }),
       });
+      if (res.persistence_warning) warnPersistence(`job:${res.job_id}`, res.persistence_warning);
       rows.delete(tmpKey); rows.set(res.job_id, row);
       trackJob(res.job_id, { account, slug, oppName, skill: "coverage-handoff" });
       await watch(res.job_id);
@@ -2306,6 +2318,7 @@ async function askThread(threadEl, q, endpoint, payload) {
     const data = await res.json();
     if (data.mode === "deep") {
       tag.textContent = "🔧"; bodyEl.innerHTML = `<span class="muted">searching codebase &amp; skills…</span>`;
+      if (data.persistence_warning) warnPersistence(`job:${data.job_id}`, data.persistence_warning);
       await pollJob(data.job_id, (job) => {
         if (job.status !== "running") {
           const md = job.stdout || job.stderr || "(no output)";
@@ -2380,6 +2393,7 @@ async function invokeFromChat(threadEl, q, skill, ctx) {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ account: ctx.account, opportunity: ctx.oppName, opp_slug: ctx.slug, skill: skill.id }),
     });
+    if (res.persistence_warning) warnPersistence(`job:${res.job_id}`, res.persistence_warning);
     trackJob(res.job_id, { ...ctx, skill: skill.id });  // global toast when it finishes
     await pollInvokeJob(card, res.job_id, skill.id, ctx);
   } catch (e) {
@@ -2615,6 +2629,7 @@ async function pageLive(account, slug, oppName) {
                                mic_label: micLabel, call_label: callLabel }),
       });
       enterRecording(res.session_id, Date.now(), { micLabel: res.mic_label, callLabel: res.call_label });
+      if (res.persistence_warning) warnPersistence(`live:${res.session_id}`, res.persistence_warning);
     } catch (e) {
       alert("Could not start: " + e.message); startBtn.disabled = false;
     }
@@ -2628,6 +2643,7 @@ async function pageLive(account, slug, oppName) {
       if (_liveState.sse) _liveState.sse.close();
       if (_liveState.timer) clearInterval(_liveState.timer);
       timerEl.classList.remove("rec");
+      if (res.persistence_warning) warnPersistence(`live:stop:${_liveState.sessionId}`, res.persistence_warning);
       const savedName = res.saved_to.split("/").slice(-1)[0];
       segsEl.insertAdjacentHTML("beforeend",
         `<div class="callout callout-verdict"><div class="callout-title">Saved (${res.segments} segments)</div>
@@ -2679,6 +2695,7 @@ async function pageLive(account, slug, oppName) {
       const data = await res.json();
       if (data.mode === "deep") {           // claude -p job → poll
         tag.textContent = "🔧"; bodyEl.innerHTML = `<span class="muted">searching codebase &amp; skills…</span>`;
+        if (data.persistence_warning) warnPersistence(`job:${data.job_id}`, data.persistence_warning);
         await pollJob(data.job_id, (job) => {
           if (job.status !== "running") {
             bodyEl.innerHTML = mdToHtml(job.stdout || job.stderr || "(no output)");
@@ -2744,6 +2761,7 @@ async function pageLive(account, slug, oppName) {
       enterRecording(active.session_id, (active.started_at || 0) * 1000,
                     { micLabel: active.mic_label, callLabel: active.call_label });
     }
+    if (active.persistence_warning) warnPersistence(`live:${active.session_id}`, active.persistence_warning);
   }
 }
 

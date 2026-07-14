@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import queue
 import re
@@ -53,6 +54,8 @@ from typing import Literal
 import persistence
 import security
 import soql
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Paths — everything is relative to the airbyte-work workspace
@@ -1351,10 +1354,11 @@ async def api_output_ask(body: OutputAsk):
         JOBS[job_id] = {"status": "running", "ok": None, "stdout": "", "stderr": "",
                         "skill": "output-ask", "account": acct, "opportunity": body.opportunity,
                         "opp_slug": None, "sig": ("output-ask", body.path, q[:60])}
-        await asyncio.to_thread(persistence.save_jobs, JOBS, WORKSPACE)
+        persist_warn = await _save_jobs_snapshot(job_id)
         meta = {"account": acct or "?", "opp_slug": None, "skill": "output-ask", "opportunity": body.opportunity}
         asyncio.create_task(_run_job(job_id, prompt, meta))
-        return {"mode": "deep", "job_id": job_id}
+        return {"mode": "deep", "job_id": job_id,
+                **({"persistence_warning": persist_warn} if persist_warn else {})}
 
     api_key = os.environ.get("ANTHROPIC_API_KEY") or _anthropic_key_from_mcp()
     if not api_key:
@@ -1707,6 +1711,24 @@ class InvokeBody(BaseModel):
 JOBS: dict[str, dict] = persistence.load_jobs(WORKSPACE)
 
 
+_PERSISTENCE_WARNING = "This job will not survive a server restart because state could not be saved."
+
+
+async def _save_jobs_snapshot(source_job_id: str | None = None) -> str | None:
+    """Persist the jobs snapshot and, on success, clear any in-memory persistence
+    warnings. On failure, attach a warning to the originating job (if known) so
+    the UI can tell the SE that restart recovery is unavailable for this run."""
+    ok = await asyncio.to_thread(persistence.save_jobs, JOBS, WORKSPACE)
+    if ok:
+        for job in JOBS.values():
+            job.pop("persistence_warning", None)
+        return None
+    logger.warning("Jobs snapshot persistence failed for %s", source_job_id or "unknown")
+    if source_job_id and source_job_id in JOBS:
+        JOBS[source_job_id]["persistence_warning"] = _PERSISTENCE_WARNING
+    return _PERSISTENCE_WARNING
+
+
 def _build_prompt(body: InvokeBody, account: str, out_dir) -> str:
     if body.freeform:
         prompt = body.freeform.strip() + f" (for the account {account}"
@@ -1797,9 +1819,11 @@ async def _run_job(job_id: str, prompt: str, meta: dict):
     except Exception:
         pass  # persistence is best-effort; the in-memory job still works
 
-    # Persist the full jobs snapshot so status survives a restart.
+    # Persist the full jobs snapshot so the job record survives a restart.
+    # The child process itself cannot be reattached; the recovered record will
+    # be marked lost with a clear re-run message.
     try:
-        await asyncio.to_thread(persistence.save_jobs, JOBS, WORKSPACE)
+        await _save_jobs_snapshot(job_id)
     except Exception:
         pass  # job-state persistence is best-effort
 
@@ -1825,7 +1849,10 @@ async def api_invoke(body: InvokeBody):
     sig = (account, opp_slug, body.skill or "freeform", (body.freeform or body.extra or "")[:80])
     for jid, j in JOBS.items():
         if j.get("sig") == sig and j.get("status") == "running":
-            return JSONResponse({"job_id": jid, "status": "running", "reused": True})
+            reused_resp = {"job_id": jid, "status": "running", "reused": True}
+            if j.get("persistence_warning"):
+                reused_resp["persistence_warning"] = j["persistence_warning"]
+            return JSONResponse(reused_resp)
 
     job_id = uuid.uuid4().hex[:12]
     skill_id = body.skill or "freeform"
@@ -1834,10 +1861,13 @@ async def api_invoke(body: InvokeBody):
         "skill": skill_id, "account": account,
         "opportunity": body.opportunity, "opp_slug": opp_slug, "sig": sig,
     }
-    await asyncio.to_thread(persistence.save_jobs, JOBS, WORKSPACE)
+    persist_warn = await _save_jobs_snapshot(job_id)
     meta = {"account": account, "opp_slug": opp_slug, "skill": skill_id, "opportunity": body.opportunity}
     asyncio.create_task(_run_job(job_id, prompt, meta))
-    return JSONResponse({"job_id": job_id, "status": "running", "reused": False})
+    new_resp = {"job_id": job_id, "status": "running", "reused": False}
+    if persist_warn:
+        new_resp["persistence_warning"] = persist_warn
+    return JSONResponse(new_resp)
 
 
 @app.get("/api/accounts/{account}/last-run")
@@ -1999,6 +2029,7 @@ class LiveSession:
         self.recovered = recovered
         self.ended = recovered  # recovered sessions are no longer capturing audio
         self.started_at = started_at or datetime.now(timezone.utc)
+        self.persistence_warning: str | None = None
         self.segments: list[dict] = list(segments or [])
         self.queue: asyncio.Queue = asyncio.Queue()
         self._lock = threading.Lock()
@@ -2022,7 +2053,11 @@ class LiveSession:
 
     def _persist(self):
         if self.session_id:
-            persistence.save_session(self.to_dict(), WORKSPACE)
+            ok = persistence.save_session(self.to_dict(), WORKSPACE)
+            if ok:
+                self.persistence_warning = None
+            else:
+                self.persistence_warning = "Live transcript will not survive a server restart because state could not be saved."
 
     def _flush_pending_you(self, now):
         """Emit any held mic segments older than the hold window that were not
@@ -2170,9 +2205,12 @@ async def api_transcribe_start(body: StartLive):
     sid = uuid.uuid4().hex[:12]
     sess.session_id = sid
     SESSIONS[sid] = sess
-    await asyncio.to_thread(persistence.save_session, sess.to_dict(), WORKSPACE)
+    session_ok = await asyncio.to_thread(persistence.save_session, sess.to_dict(), WORKSPACE)
+    if not session_ok:
+        sess.persistence_warning = "Live transcript will not survive a server restart because state could not be saved."
     return {"session_id": sid, "labeled": sess.labeled,
-            "mic_label": sess.mic_label, "call_label": sess.call_label}
+            "mic_label": sess.mic_label, "call_label": sess.call_label,
+            **({"persistence_warning": sess.persistence_warning} if sess.persistence_warning else {})}
 
 
 @app.get("/api/transcribe/active")
@@ -2187,7 +2225,8 @@ def api_transcribe_active(account: str, opp_slug: str | None = None):
                     "started_at": sess.started_at.timestamp(),
                     "segments": list(sess.segments),
                     "mic_label": sess.mic_label, "call_label": sess.call_label,
-                    "recovered": sess.recovered}
+                    "recovered": sess.recovered,
+                    **({"persistence_warning": sess.persistence_warning} if sess.persistence_warning else {})}
     # 204 No Content must have an EMPTY body — a serialized `null` (4 bytes)
     # trips Starlette's "content longer than Content-Length" check.
     return Response(status_code=204)
@@ -2370,11 +2409,12 @@ async def api_transcribe_ask(session_id: str, body: AskLive):
                         "skill": "live-ask", "account": account,
                         "opportunity": opportunity,
                         "opp_slug": opp_slug, "sig": ("live", session_id, q[:60])}
-        await asyncio.to_thread(persistence.save_jobs, JOBS, WORKSPACE)
+        persist_warn = await _save_jobs_snapshot(job_id)
         meta = {"account": account, "opp_slug": None, "skill": "live-ask",
                 "opportunity": opportunity}
         asyncio.create_task(_run_job(job_id, prompt, meta))
-        return {"mode": "deep", "job_id": job_id}
+        return {"mode": "deep", "job_id": job_id,
+                **({"persistence_warning": persist_warn} if persist_warn else {})}
 
     # Quick path → Claude API streaming (SSE).
     api_key = os.environ.get("ANTHROPIC_API_KEY") or _anthropic_key_from_mcp()
@@ -2463,9 +2503,12 @@ def api_transcribe_stop(session_id: str):
     while path.exists():
         path = transcripts_dir / f"{base}-v{n}.txt"; n += 1
     path.write_text(text)
-    persistence.delete_session(session_id, WORKSPACE)
-    return {"saved_to": str(path), "segments": len(sess.segments),
-            "chars": len(text), "transcript": text}
+    delete_ok = persistence.delete_session(session_id, WORKSPACE)
+    result = {"saved_to": str(path), "segments": len(sess.segments),
+              "chars": len(text), "transcript": text}
+    if not delete_ok:
+        result["persistence_warning"] = "The saved transcript was written, but the session state file could not be removed; it may reappear on restart."
+    return result
 
 
 # Favicon: inline SVG (also linked in index.html <head>). Serving it here too
