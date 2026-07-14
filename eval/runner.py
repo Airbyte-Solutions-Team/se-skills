@@ -572,7 +572,14 @@ class MockOutputBuilder:
         "full-qual": ["Business Qual Summary", "Technical Qual Summary"],
         "connector-feasibility": ["Connector Coverage", "Fit Verdict", "Recommended Next Actions"],
         "poc-plan": ["Scope", "Success Criteria", "Timeline", "Risks & Mitigations"],
-        "roi-business-case": ["At a Glance", "One-Slide Summary", "TCO Comparison", "Assumptions"],
+        "roi-business-case": [
+            "Current-State Baseline",
+            "Airbyte Cost Projection",
+            "3-Year TCO Comparison",
+            "Payback & Sensitivity",
+            "One-Slide Summary",
+            "Assumptions & Confirms",
+        ],
         "mutual-close-plan": ["Mutual Action Plan", "Owners & Dates", "Risk Mitigation"],
         "follow-up-email": ["Email"],
         "objection-handler": ["Objection", "Talk Track"],
@@ -623,6 +630,10 @@ class MockOutputBuilder:
     def _scenario(self) -> str:
         """Return the scenario keyword embedded in the manifest id."""
         for key in (
+            "connector-cdc-unverified",
+            "poc-difficult-criterion",
+            "tech-qual-missing-critical",
+            "next-move-no-repeat",
             "unverified-connector",
             "unverified-entitlement",
             "hourly-sync-constraint",
@@ -649,6 +660,14 @@ class MockOutputBuilder:
         scenario = self._scenario()
         if scenario == "unverified-entitlement" or self._constraints_contain("byok", "kms"):
             return "🔴 park / no fit today"
+        if scenario == "connector-cdc-unverified" and self.skill == "connector-feasibility":
+            return "🟡 cannot verify full use-case fit — CDC/sync mode unverified"
+        if scenario == "poc-difficult-criterion" and self.skill == "poc-plan":
+            return "🟡 viable with a hard success criterion"
+        if scenario == "tech-qual-missing-critical" and self.skill == "tech-qual":
+            return "🟡 Moderate — missing a critical requirement"
+        if scenario == "next-move-no-repeat" and self.skill == "next-move":
+            return "🟢 ready to move forward — do not re-run existing quals"
         if scenario == "unverified-connector":
             return "🟡 cannot verify availability"
         if scenario == "next-move-low-evidence":
@@ -659,10 +678,12 @@ class MockOutputBuilder:
 
     def _confidence(self) -> str:
         scenario = self._scenario()
-        if scenario in {"next-move-low-evidence", "unverified-connector", "unverified-entitlement"}:
+        if scenario in {"next-move-low-evidence", "unverified-connector", "unverified-entitlement", "connector-cdc-unverified"}:
             return "Low"
-        if scenario == "sfdc-transcript-conflict":
+        if scenario in {"sfdc-transcript-conflict", "tech-qual-missing-critical"}:
             return "Medium-Low"
+        if scenario == "next-move-no-repeat":
+            return "Medium"
         return "Medium"
 
     def _constraints_contain(self, *needles: str) -> bool:
@@ -678,6 +699,8 @@ class MockOutputBuilder:
             return self._poc_scope_body()
         if section == "Connector Coverage":
             return self._connector_coverage_body()
+        if section == "Fit Verdict":
+            return self._fit_verdict_body()
         if section == "The Five Qualifying Questions":
             return self._five_questions_body()
         if section == "Verdict":
@@ -694,6 +717,18 @@ class MockOutputBuilder:
             return self._deployment_model_body()
         if section == "Security & Compliance":
             return self._security_body()
+        if section == "Current-State Baseline":
+            return self._roi_current_state_body()
+        if section == "Airbyte Cost Projection":
+            return self._roi_cost_projection_body()
+        if section == "3-Year TCO Comparison":
+            return self._roi_tco_body()
+        if section == "Payback & Sensitivity":
+            return self._roi_payback_body()
+        if section == "One-Slide Summary":
+            return self._roi_summary_body()
+        if section == "Assumptions & Confirms":
+            return self._roi_assumptions_body()
         return f"*Section content for {section}."
 
     def _data_volume_body(self) -> str:
@@ -713,6 +748,12 @@ class MockOutputBuilder:
                 "- POC cannot proceed until the BYOK/KMS requirement is waived or resolved.\n"
                 "- If waived, success criteria will map to a Metric from biz-qual."
             )
+        if scenario == "poc-difficult-criterion":
+            return (
+                "- **Must-have:** Sync 50M rows end-to-end within 5 minutes. This is a hard, customer-stated requirement and is preserved as a must-have success criterion.\n"
+                "- **Must-have:** Demonstrate incremental sync for the Postgres transactions table.\n"
+                "- **Nice-to-have:** SE can configure the connector without engineering support."
+            )
         if scenario == "hourly-sync-constraint" or "hourly" in "\n".join(self.manifest.customer_constraints).lower():
             return (
                 "- Demonstrate hourly sync for the full 2M rows/day volume within business-hours skew.\n"
@@ -723,9 +764,22 @@ class MockOutputBuilder:
     def _poc_scope_body(self) -> str:
         if self._scenario() == "unverified-entitlement" or self._constraints_contain("byok", "kms"):
             return "POC scope is **blocked** pending resolution of the BYOK/KMS requirement."
+        if self._scenario() == "poc-difficult-criterion":
+            return (
+                "- **Minimum viable POC scope:** Postgres transactions → Snowflake incremental sync; validate schema, auth, and basic throughput.\n"
+                "- **Optional stretch scope:** Increase volume test to 50M rows if time permits.\n"
+                "- **Production requirements:** 50M rows end-to-end within 5 minutes remains a production requirement if not fully proven in the POC.\n"
+                "- **POC-specific simplifications:** Test uses a representative subset with agreed proxy validation; full 50M at-scale validation is out of POC scope unless stretch scope is reached."
+            )
         return "POC scope is bounded to the sources and destinations named in the transcript."
 
     def _connector_coverage_body(self) -> str:
+        if self._scenario() == "connector-cdc-unverified":
+            return (
+                "- `source-postgres` exists in the registry.\n"
+                "- The customer needs CDC on the transactions table. Whether Postgres CDC (WAL / Debezium) is enabled on their database is **unverified**.\n"
+                "- Without confirmed CDC, the use-case fit is **🟡 Unverified** — do not present it as native/full support."
+            )
         if self._scenario() == "unverified-connector":
             return (
                 "- `source-foo-bar` could not be verified against the public registry or product sources.\n"
@@ -733,6 +787,16 @@ class MockOutputBuilder:
                 "- **Availability for `source-foo-bar` is flagged as unverified; do not commit to the customer.**"
             )
         return "- Connector coverage is based on registry metadata and labeled accordingly."
+
+    def _fit_verdict_body(self) -> str:
+        scenario = self._scenario()
+        if scenario == "connector-cdc-unverified":
+            return (
+                "| System | Connector | Availability | Use-case fit | Confidence | Top risk / gap |\n"
+                "|---|---|---|---|---|---|\n"
+                "| Postgres | source-postgres | 🟢 Cloud + SM | 🟡 Unverified — CDC not confirmed | Low | Confirm Postgres WAL/Debezium is enabled and replication slot privileges are granted |"
+            )
+        return "- Connector fit is based on registry metadata and the customer's stated requirements."
 
     def _five_questions_body(self) -> str:
         return (
@@ -775,6 +839,11 @@ class MockOutputBuilder:
 
     def _current_read_body(self) -> str:
         scenario = self._scenario()
+        if scenario == "next-move-no-repeat":
+            return (
+                "Fresh `biz-qual`, `deployment-qual`, `tech-qual`, and `connector-feasibility` artifacts already exist. "
+                "No new signal has appeared that would justify re-running them. The next logical step is to scope the POC, not to repeat the qualification cycle."
+            )
         if scenario == "next-move-low-evidence":
             return (
                 "Only one old intro transcript exists and no qualification docs are available. "
@@ -789,6 +858,12 @@ class MockOutputBuilder:
 
     def _ranked_moves_body(self) -> str:
         scenario = self._scenario()
+        if scenario == "next-move-no-repeat":
+            return (
+                "1. **Run `poc-plan`** — all qualification docs are fresh; time to contract the POC scope, not re-qualify.\n"
+                "2. **Do not repeat `deployment-model-qual`, `biz-qual`, `tech-qual`, or `connector-feasibility`** unless a new transcript, objection, or blocker has appeared.\n"
+                "3. **Prepare the POC kickoff** using `prep-call` once success criteria are drafted."
+            )
         if scenario == "next-move-low-evidence":
             return (
                 "1. **Run `account-refresher`** — catch up on full account context.\n"
@@ -819,6 +894,60 @@ class MockOutputBuilder:
                 "this claim is marked **believed — verify with [team]** and confidence is capped."
             )
         return "Security and compliance requirements are mapped to named entitlements where available."
+
+    def _roi_current_state_body(self) -> str:
+        return (
+            "- Estimated current-state engineering cost: $[X] per year (derived from customer-stated FTE burden).\n"
+            "- Maintenance / on-call burden: labeled as `[confirm]` if not quantified."
+        )
+
+    def _roi_cost_projection_body(self) -> str:
+        scenario = self._scenario()
+        if scenario == "hourly-sync-constraint" or "hourly" in "\n".join(self.manifest.customer_constraints).lower():
+            return (
+                "- **Primary scenario:** Customer's requested operating model with **hourly sync**, full stated scope, and concurrency assumptions.\n"
+                "- Data-worker estimate is sized for hourly cadence; no silent reduction in frequency or scope.\n"
+                "- If an optimization is modeled, it is labeled as an **alternative scenario** and the trade-off is shown."
+            )
+        return (
+            "- Airbyte cost estimate uses the customer's requested operating model as the primary scenario.\n"
+            "- Frequency, scope, and concurrency assumptions are shown explicitly and not silently reduced."
+        )
+
+    def _roi_tco_body(self) -> str:
+        return (
+            "| Year | Current-state cost | Airbyte cost | Switching/ramp cost | Net savings |\n"
+            "|------|-------------------:|-------------:|--------------------:|------------:|\n"
+            "| 1 | $[X] | $[Y] | $[Z] | $[X-Y-Z] |\n"
+            "| 2 | $[X] | $[Y] | — | $[X-Y] |\n"
+            "| 3 | $[X] | $[Y] | — | $[X-Y] |"
+        )
+
+    def _roi_payback_body(self) -> str:
+        return (
+            "- **Payback period:** [N] months (range: [N-M]–[N+M] months) — directional until data-worker pricing is confirmed.\n"
+            "- **Inputs that swing the case most:** true concurrency target, exact data-worker pricing, volume growth rate."
+        )
+
+    def _roi_summary_body(self) -> str:
+        return (
+            "> **One-slide summary:** [X]-month payback, $[A] 3-yr savings vs current state, based on hourly sync and customer-stated FTE burden. "
+            "Assumptions are labeled; missing inputs are listed."
+        )
+
+    def _roi_assumptions_body(self) -> str:
+        scenario = self._scenario()
+        base = (
+            "- **Customer-confirmed inputs:** [list]\n"
+            "- **[confirm] inputs (SE must validate):** [list]\n"
+        )
+        if scenario == "hourly-sync-constraint" or "hourly" in "\n".join(self.manifest.customer_constraints).lower():
+            return (
+                base
+                + "- **Missing inputs that materially affect the result:** true concurrency, data-worker pricing, exact volume growth. "
+                "Hourly sync and 2M rows/day are the baseline; lowering frequency would materially change the worker estimate."
+            )
+        return base + "- **Missing inputs that materially affect the result:** [list and sensitivity]"
 
     def _refusal_output(self) -> str:
         reason = "the transcript does not contain the required customer voice"

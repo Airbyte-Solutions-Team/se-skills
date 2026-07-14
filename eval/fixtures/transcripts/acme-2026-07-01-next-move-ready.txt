@@ -1,0 +1,5 @@
+Acme Corp - Qualification Catch-up - 2026-07-01
+
+John (Acme): We have alignment across the team. Business pain is clear, deployment model is Cloud Pro, technical fit looks good for Postgres and Salesforce, and the connectors check out.
+Gary (Airbyte): Great — sounds like we are ready to scope the POC.
+John (Acme): Yes. Let's define the POC success criteria and timeline next.

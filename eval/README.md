@@ -64,17 +64,21 @@ result is not presented as normal production behavior.
 
 ## Scenario classifications
 
-All six Phase 1 manifests are classified in their `execution.classification`
+All Phase 1 manifests are classified in their `execution.classification`
 field:
 
 | Manifest | Classification | Prerequisite mode | Rationale |
 |---|---|---|---|
-| `hourly-sync-constraint` | `normal` | `provide_fixtures` | Synthetic `biz-qual`, `deployment-qual`, and `connector-feasibility` fixtures are provided so `poc-plan` can run normally; the test is whether it preserves hourly sync. |
+| `hourly-sync-constraint` | `normal` | `provide_fixtures` | Synthetic `biz-qual`, `deployment-qual`, and `connector-feasibility` fixtures are provided; `poc-plan` and `roi-business-case` are tested for preserving hourly sync as the primary sizing baseline. |
 | `missing-technical-input` | `missing_input` | `enforce` | The transcript contains only business discovery, so `tech-qual` is expected to refuse. |
 | `next-move-low-evidence` | `normal` | `enforce` | No upstream docs are required; the test is whether `next-move` expresses low confidence and recommends early-stage actions. |
 | `sfdc-transcript-conflict` | `normal` | `enforce` | No upstream docs are required; the test is whether `deal-assessment` and `next-move` flag the SFDC vs transcript conflict. |
 | `unverified-connector` | `normal` | `enforce` | `connector-feasibility` and `tech-qual` can run from the transcript alone; the test is unverified-connector handling. |
 | `unverified-entitlement` | `normal` | `provide_fixtures` | `poc-plan` needs upstream qualification docs; the runner synthesizes them so the test can verify BYOK/KMS entitlement handling. |
+| `connector-cdc-unverified` | `normal` | `enforce` | `connector-feasibility` must not treat connector existence as proof that CDC/incremental is natively supported. |
+| `poc-difficult-criterion` | `normal` | `provide_fixtures` | `poc-plan` must preserve a difficult customer success criterion and separate scope tiers. |
+| `tech-qual-missing-critical` | `normal` | `enforce` | `tech-qual` must not mark the deal `🟢 Strong` when a critical requirement is missing. |
+| `next-move-no-repeat` | `normal` | `enforce` | Fresh qualification artifacts exist; `next-move` must recommend a downstream step, not repeat the qualifications. |
 
 ## Run against real skills with pytest
 
@@ -254,6 +258,9 @@ deterministic checks:
 - Missing inputs result in uncertainty or a request for validation.
 - Salesforce data does not override a transcript without acknowledging the conflict.
 - `next-move` does not invent a definitive action without evidence.
+- `next-move` does not recommend repeating an already completed qualification step.
+- Difficult customer success criteria are not silently removed from a POC plan.
+- Connector existence is not treated as proof that the full customer use case is supported.
 - Source Coverage and recommendation rationale are present.
 
 When a check cannot be expressed safely with the assertion language, mark the

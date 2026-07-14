@@ -2,7 +2,7 @@
 
 > Source of truth for planned improvements to the SE Skills Suite.
 > Created from the repository assessment dated 2026-07-14.
-> Status: Phase 1 merged (#1, 2026-07-14). Phase 1B implemented as real-skill evaluation harness. Phase 2 security quick wins implemented (PR #4, draft).
+> Status: Phase 1 merged (#1, 2026-07-14). Phase 1B implemented as real-skill evaluation harness. Phase 2 security quick wins merged. Phase 3 skill-behavior guardrails in progress.
 
 ---
 
@@ -335,25 +335,30 @@ Exit criteria:
 - All four security quick wins merged with regression tests.
 - `acceptEdits` decision documented and gated.
 
-### Phase 3: Skill guardrails and structured validation
+### Phase 3: Skill-behavior guardrails (narrow, 2026-07-14)
 
-Scope:
-- SKILL-001: centralize shared prompt/output fragments.
-- SKILL-002: reference-data freshness warnings.
-- SKILL-003: `objection-handler` product-reality verification.
-- SKILL-004: customer-constraint preservation prompts and tests.
-- STRUCT-001: Pydantic schemas for the five Phase 1 skills.
-- STRUCT-002: unified safe Markdown renderer.
-- STRUCT-003 (optional): sidecar metadata.
+In-scope skills: `connector-feasibility`, `deployment-model-qual`, `tech-qual`, `poc-plan`, `next-move`, and the capacity/cost portions of `roi-business-case`.
 
-Entry criteria:
-- Phase 2 complete.
-- Evaluation framework proves it can detect prompt drift.
+Completed guardrails:
+- **Preserve customer requirements** as the baseline; alternatives must be labeled with trade-offs and never silently substituted.
+- `connector-feasibility`: explicit five-dimension distinction (availability · supported sync · auth/network · full use-case · native vs workaround).
+- `deployment-model-qual`: recommendation separates technical fit, verified entitlement/packaging, security preference, commercial dependency, and still-to-validate items.
+- `tech-qual`: no `🟢 Strong` fit when a critical requirement is unknown/unverified; four-bucket classification (confirmed fit · solvable risk · critical blocker · open validation item).
+- `poc-plan`: preserve customer success criteria; separate minimum viable POC scope, optional stretch, production requirements, and POC-specific simplifications.
+- `next-move`: already-completed action guard + low-confidence → gather evidence; recommend downstream actions, not repeat existing qualifications.
+- `roi-business-case`: requested operating model is the primary scenario; label optimization alternatives; show missing inputs that materially affect the result; avoid false precision.
+
+Evaluation coverage:
+- Five targeted deterministic scenarios added/updated: hourly sync baseline, connector-CDC unverified, POC difficult criterion, tech-qual missing critical requirement, next-move no-repeat.
+- No new generalized semantic-evaluation platform, JSON/Pydantic conversion, or webapp changes.
 
 Exit criteria:
-- Phase 1 skills have schemas and deterministic validators.
-- Shared prompt fragments reduce per-skill duplication without changing behavior.
-- Renderer tests pass with identical output across webapp, PDF, and internal HTML.
+- Targeted skills include concise guardrail instructions in `SKILL.md`.
+- Deterministic evaluation manifests exercise each core behavior.
+- `uv run --extra dev pytest eval/ -v` and the mock suite pass.
+
+Deferred from Phase 3:
+- SKILL-001 (centralize shared fragments), SKILL-002 (reference-data freshness warnings), SKILL-003 (`objection-handler` verification), STRUCT-001/002/003 — moved to Phase 4 / backlog unless a future task narrows them.
 
 ### Phase 4: Orchestration and feedback loop
 

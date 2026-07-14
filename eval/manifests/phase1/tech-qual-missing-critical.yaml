@@ -1,0 +1,69 @@
+manifest_version: "1.0"
+id: phase1-tech-qual-missing-critical
+title: Missing critical deployment requirement prevents definitive technical qualification
+skills_under_test:
+  - tech-qual
+tags:
+  - tech-qual
+  - missing-input
+  - deployment-model
+  - blocker
+fixtures:
+  transcripts:
+    - source: fixtures/transcripts/acme-2026-07-01-tech-missing-deployment.txt
+      target: _transcripts/Acme-07.01.26.txt
+  config: fixtures/config/synthetic-se-config.yaml
+environment:
+  salesforce: false
+execution:
+  prerequisite_mode: enforce
+  classification: normal
+customer_constraints:
+  - "Sources are Postgres transactions and Salesforce opportunities."
+  - "Destination is Snowflake."
+  - "Latency is sub-hourly for the sales pipeline."
+  - "Deployment model is undecided; the security team is still reviewing options."
+  - "Volume is approximately 2M rows per day."
+available_evidence:
+  - One transcript with technical sources, volume, and latency but no confirmed deployment model.
+required_behavior:
+  - Do not mark the overall technical fit as Strong while the deployment model is undecided.
+  - Classify the missing deployment model as an Open validation item or Critical blocker.
+  - Make any forward recommendation conditional on resolving the deployment model.
+forbidden_behavior:
+  - Marking the deal `🟢 Strong` while a critical requirement is unknown or unverified.
+  - Proceeding as if Cloud Pro is confirmed without deployment-model validation.
+expected_sections:
+  - At a Glance
+  - Source Coverage
+per_skill_expected_sections:
+  tech-qual:
+    - Technical Fit Summary
+    - Technical Risks & Open Items
+deterministic_assertions:
+  - name: does not claim strong fit
+    target: markdown
+    skills:
+      - tech-qual
+    check: "not section_contains(output, 'At a Glance', '🟢 Strong')"
+    severity: blocker
+  - name: overall fit is moderate or lower
+    target: markdown
+    skills:
+      - tech-qual
+    check: "section_contains(output, 'At a Glance', '🟡') or section_contains(output, 'At a Glance', 'Moderate') or contains_case_insensitive(output, 'insufficient info')"
+    severity: major
+  - name: missing deployment model is flagged
+    target: markdown
+    skills:
+      - tech-qual
+    check: "contains_case_insensitive(output, 'deployment') and (contains_case_insensitive(output, 'unknown') or contains_case_insensitive(output, 'unverified') or contains_case_insensitive(output, 'open'))"
+    severity: major
+  - name: source coverage is present
+    target: markdown
+    check: "has_section(output, 'Source Coverage')"
+    severity: blocker
+failure_severity: blocker
+notes: >
+  The core invariant is that a definitive technical qualification cannot be
+  issued while a critical requirement (deployment model) remains unknown.
