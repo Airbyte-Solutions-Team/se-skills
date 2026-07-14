@@ -47,7 +47,10 @@ import yaml
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+import security
+import soql
 
 # ---------------------------------------------------------------------------
 # Paths — everything is relative to the airbyte-work workspace
@@ -255,9 +258,9 @@ def _sfdc_like_prefix(account: str) -> str:
     like 'Octus (fka Reorg Research)'."""
     real = _read_sfdc_name(account)
     if real:
-        return real.replace("'", r"\'")
+        return soql.soql_like_prefix(real)
     first = next((p for p in re.split(r"[^A-Za-z0-9]+", account) if p), account)
-    return first.replace("'", r"\'")
+    return soql.soql_like_prefix(first)
 
 
 # ---------------------------------------------------------------------------
@@ -438,11 +441,13 @@ async def _run_cmd(args: list[str], cwd: Path, timeout: int = 120) -> tuple[int,
         )
         out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except FileNotFoundError:
-        raise HTTPException(500, f"`{args[0]}` not found on PATH")
+        raise HTTPException(500, security.redact_sensitive(f"`{args[0]}` not found on PATH"))
     except asyncio.TimeoutError:
-        raise HTTPException(504, f"`{' '.join(args[:2])}` timed out after {timeout}s")
+        raise HTTPException(504, security.redact_sensitive(f"`{' '.join(args[:2])}` timed out after {timeout}s"))
     rc = proc.returncode or 0
     so, se = out.decode(errors="replace"), err.decode(errors="replace")
+    so = security.redact_sensitive(so)
+    se = security.redact_sensitive(se)
     if rc != 0:
         raise HTTPException(500, f"`{' '.join(args[:2])}` failed: {se.strip() or so.strip()}")
     return rc, so, se
@@ -550,9 +555,8 @@ async def _sf_query(soql: str) -> list[dict] | None:
 
 
 def _sf_quote(value: str) -> str:
-    """Strip single quotes to keep values safe inside a SOQL literal, matching
-    the existing .replace(chr(39), '') convention."""
-    return (value or "").replace("'", "")
+    """Escape `value` for use as a SOQL single-quoted string literal."""
+    return soql.soql_string_literal(value or "")
 
 
 async def sfdc_list_aes(member_id: str) -> list[str]:
@@ -986,11 +990,11 @@ def api_output_repo_path(account: str, member: str = ""):
 # inserts/replaces the member's handover.html card, commits, pushes, opens a PR.
 # ---------------------------------------------------------------------------
 class PushToRepo(BaseModel):
-    path: str               # output .html, relative to CUSTOMERS_DIR (from the row)
-    account: str            # account name (for slug + card text)
-    member: str = ""        # owner member display name (for the member-slug folder)
-    description: str = ""   # card description (optional; server derives if blank)
-    meta: str = ""          # card meta line (optional; server derives if blank)
+    path: str = Field(max_length=500)                  # output .html, relative to CUSTOMERS_DIR
+    account: str = Field(max_length=120)               # account name (for slug + card text)
+    member: str = Field(default="", max_length=120)    # owner member display name (for the member-slug folder)
+    description: str = Field(default="", max_length=2_000)  # card description (optional; server derives if blank)
+    meta: str = Field(default="", max_length=1_000)      # card meta line (optional; server derives if blank)
 
 
 def _html_escape(s: str) -> str:
@@ -1039,7 +1043,8 @@ def _upsert_handover_card(handover_html: str, account: str, account_slug: str,
     otherwise inserts a new card as the first child of `<div class="nav-grid">`."""
     acct_e = _html_escape(account)
     desc_e = _html_escape(description) or f"Coverage handoff for {acct_e}."
-    meta_inner = f'<span class="badge">Active</span>' + (f" &nbsp; {meta}" if meta else "")
+    meta_e = _html_escape(meta) if meta else ""
+    meta_inner = f'<span class="badge">Active</span>' + (f" &nbsp; {meta_e}" if meta_e else "")
     card = (
         f'    <a href="accounts/{account_slug}/" class="nav-card">\n'
         f'      <div class="accent-bar"></div>\n'
@@ -1192,9 +1197,9 @@ def api_output_pdf(path: str):
         text = target.read_text()
         data = pdf_render.render_html_pdf(text) if target.suffix == ".html" else pdf_render.render_pdf(text)
     except RuntimeError as e:        # Chrome missing
-        raise HTTPException(503, str(e))
+        raise HTTPException(503, security.redact_sensitive(str(e)))
     except subprocess.SubprocessError as e:
-        raise HTTPException(500, f"PDF render failed: {e}")
+        raise HTTPException(500, security.redact_sensitive(f"PDF render failed: {e}"))
     fname = target.stem + ".pdf"
     return Response(
         content=data,
@@ -1222,7 +1227,7 @@ def api_output_internal_html(path: str):
     try:
         doc = internal_html.render_internal_html(target.read_text(), customer=customer)
     except Exception as e:  # best-effort render; surface rather than 500 silently
-        raise HTTPException(500, f"Internal HTML render failed: {e}")
+        raise HTTPException(500, security.redact_sensitive(f"Internal HTML render failed: {e}"))
     return Response(
         content=doc,
         media_type="text/html; charset=utf-8",
@@ -1231,8 +1236,8 @@ def api_output_internal_html(path: str):
 
 
 class OutputPdf(BaseModel):
-    path: str               # output file, relative to CUSTOMERS_DIR
-    append_md: str = ""     # extra markdown appended below the doc (follow-up Q&A)
+    path: str = Field(max_length=500)              # output file, relative to CUSTOMERS_DIR
+    append_md: str = Field(default="", max_length=20_000)  # extra markdown appended below the doc (follow-up Q&A)
 
 
 @app.post("/api/output/pdf")
@@ -1249,9 +1254,9 @@ def api_output_pdf_post(body: OutputPdf):
     try:
         data = pdf_render.render_pdf(md)
     except RuntimeError as e:        # Chrome missing
-        raise HTTPException(503, str(e))
+        raise HTTPException(503, security.redact_sensitive(str(e)))
     except subprocess.SubprocessError as e:
-        raise HTTPException(500, f"PDF render failed: {e}")
+        raise HTTPException(500, security.redact_sensitive(f"PDF render failed: {e}"))
     return Response(
         content=data,
         media_type="application/pdf",
@@ -1281,10 +1286,10 @@ def api_delete_output(path: str):
 
 
 class OutputAsk(BaseModel):
-    path: str                       # output file, relative to CUSTOMERS_DIR
-    question: str
-    account: str | None = None
-    opportunity: str | None = None
+    path: str = Field(max_length=500)             # output file, relative to CUSTOMERS_DIR
+    question: str = Field(max_length=5_000)
+    account: str | None = Field(default=None, max_length=120)
+    opportunity: str | None = Field(default=None, max_length=200)
 
 
 @app.post("/api/output/ask")
@@ -1341,7 +1346,7 @@ async def api_output_ask(body: OutputAsk):
                     yield {"event": "token", "data": json.dumps({"text": text})}
             yield {"event": "done", "data": "{}"}
         except Exception as e:  # noqa: BLE001
-            yield {"event": "error", "data": json.dumps({"error": str(e)})}
+            yield {"event": "error", "data": json.dumps({"error": security.redact_sensitive(str(e))})}
 
     return EventSourceResponse(gen())
 
@@ -1508,12 +1513,12 @@ def api_skills_help():
 
 
 class InvokeBody(BaseModel):
-    account: str
-    skill: str | None = None        # a known skill id (dropdown)
-    opportunity: str | None = None  # opp name (for context + output scoping)
-    opp_slug: str | None = None     # opp folder slug
-    extra: str | None = None        # free-text appended to the prompt
-    freeform: str | None = None     # full free-text instruction (instead of a dropdown skill)
+    account: str = Field(max_length=120)
+    skill: str | None = Field(default=None, max_length=80)       # a known skill id (dropdown)
+    opportunity: str | None = Field(default=None, max_length=200)  # opp name (for context + output scoping)
+    opp_slug: str | None = Field(default=None, max_length=120)   # opp folder slug
+    extra: str | None = Field(default=None, max_length=10_000)      # free-text appended to the prompt
+    freeform: str | None = Field(default=None, max_length=20_000) # full free-text instruction (instead of a dropdown skill)
 
 
 # ---------------------------------------------------------------------------
@@ -1593,17 +1598,18 @@ async def _run_job(job_id: str, prompt: str, meta: dict):
         )
         job["pid"] = proc.pid
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
+        stdout = security.redact_sensitive(stdout.decode(errors="replace"))
+        stderr = security.redact_sensitive(stderr.decode(errors="replace"))
         job.update(status="done", ok=proc.returncode == 0,
-                   stdout=stdout.decode(errors="replace"),
-                   stderr=stderr.decode(errors="replace"))
+                   stdout=stdout, stderr=stderr)
     except FileNotFoundError:
         job.update(status="error", ok=False, stdout="",
-                   stderr="`claude` CLI not found on PATH — is Claude Code installed?")
+                   stderr=security.redact_sensitive("`claude` CLI not found on PATH — is Claude Code installed?"))
     except asyncio.TimeoutError:
         job.update(status="error", ok=False, stdout="",
-                   stderr="Skill run timed out after 10 minutes.")
+                   stderr=security.redact_sensitive("Skill run timed out after 10 minutes."))
     except Exception as e:  # noqa: BLE001 — surface any launch failure to the UI
-        job.update(status="error", ok=False, stdout="", stderr=f"{type(e).__name__}: {e}")
+        job.update(status="error", ok=False, stdout="", stderr=security.redact_sensitive(f"{type(e).__name__}: {e}"))
 
     # Persist the finished result to disk (one file per skill, overwritten).
     try:
@@ -1880,7 +1886,7 @@ def api_audio_devices():
     try:
         import sounddevice as sd
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(500, f"Audio capture unavailable: {e}. Run `brew install portaudio` and reinstall deps.")
+        raise HTTPException(500, security.redact_sensitive(f"Audio capture unavailable: {e}. Run `brew install portaudio` and reinstall deps."))
     devices, has_blackhole = [], False
     for i, d in enumerate(sd.query_devices()):
         if d["max_input_channels"] > 0:
@@ -1894,9 +1900,9 @@ def api_audio_devices():
 
 
 class StartLive(BaseModel):
-    account: str
-    opp_slug: str | None = None
-    opportunity: str | None = None
+    account: str = Field(max_length=120)
+    opp_slug: str | None = Field(default=None, max_length=120)
+    opportunity: str | None = Field(default=None, max_length=200)
     mic_device: int
     call_device: int | None = None
 
@@ -1910,7 +1916,7 @@ async def api_transcribe_start(body: StartLive):
         sess.opportunity = body.opportunity
         sess.start()
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(500, f"Could not start capture: {e}")
+        raise HTTPException(500, security.redact_sensitive(f"Could not start capture: {e}"))
     sid = uuid.uuid4().hex[:12]
     SESSIONS[sid] = sess
     return {"session_id": sid, "labeled": sess.labeled}
@@ -2026,13 +2032,13 @@ _DEEP_HINTS = ("codebase", "connector", "feasib", "troubleshoot", "schema", "api
 
 
 class AskLive(BaseModel):
-    question: str
+    question: str = Field(max_length=5_000)
     # File-backed ask: when the session_id is the "file" sentinel, the page is
     # querying a SAVED transcript (reopened), not a live recording. The client
     # passes the transcript name + account so the server loads it from disk.
-    transcript_name: str | None = None
-    account: str | None = None
-    opportunity: str | None = None
+    transcript_name: str | None = Field(default=None, max_length=500)
+    account: str | None = Field(default=None, max_length=120)
+    opportunity: str | None = Field(default=None, max_length=200)
 
 
 @app.post("/api/transcribe/{session_id}/ask")
@@ -2124,7 +2130,7 @@ async def api_transcribe_ask(session_id: str, body: AskLive):
                     yield _frame("token", {"text": text})
             yield _frame("done", {})
         except Exception as e:  # noqa: BLE001
-            yield _frame("error", {"error": str(e)})
+            yield _frame("error", {"error": security.redact_sensitive(str(e))})
 
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"cache-control": "no-store", "x-accel-buffering": "no"})

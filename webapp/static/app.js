@@ -9,6 +9,18 @@ const api = async (path, opts) => {
 };
 const esc = (s) => (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
+// Only allow a small set of link schemes in the markdown reader. `javascript:`,
+// `data:`, `blob:`, and other arbitrary protocols are replaced with `#` so user
+// content cannot execute in the browser. Relative paths pass through.
+const safeHref = (url) => {
+  if (!url) return "#";
+  try {
+    const proto = new URL(url, "http://x.invalid").protocol;
+    if (proto && !["http:", "https:", "mailto:", "tel:"].includes(proto)) return "#";
+    return url;
+  } catch { return "#"; }
+};
+
 // "prep-call" → "PREP CALL", "deal-assessment" → "DEAL ASSESSMENT"
 const prettySkill = (id) => (id || "").replace(/[-_]/g, " ").toUpperCase();
 
@@ -341,7 +353,8 @@ function mdToHtml(md, toc) {
     // `*`). The italic pass then runs on the inner text (incl. inside the strong).
     .replace(/\*\*([\s\S]+?)\*\*/g, "<strong>$1</strong>")
     .replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>")
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, text, href) =>
+      `<a href="${esc(safeHref(href))}" target="_blank" rel="noopener">${text}</a>`);
 
   while (i < lines.length) {
     const ln = lines[i];

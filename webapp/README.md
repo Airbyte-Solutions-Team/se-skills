@@ -113,6 +113,17 @@ run from `~/airbyte-work` so your skills, MCPs, and files all resolve exactly as
 do in the terminal. The skill auto-saves its output to
 `01-customers/<Account>/outputs/<skill>/`, which then shows up in the UI.
 
+## Security notes
+
+The app is **local only**, runs as you, and keeps customer data in `~/airbyte-work` outside the repo. The Phase 2 hardening added small, deterministic protections around inputs and outputs:
+
+- **Salesforce queries** escape account-name characters (`'`, `"`, `\`, `%`, `_`) before they reach SOQL, so names like `O'Reilly` or `50% Acme` are searched literally and cannot change query semantics.
+- **Exported PDF / internal HTML** run through `nh3` HTML sanitization. `<script>` tags, inline event handlers (`onclick`), `javascript:` links, and unsupported URL schemes are stripped, while normal Markdown (headings, tables, lists, code blocks, admonitions, highlights, status dots) still renders.
+- **Markdown reader links** (`webapp/static/app.js::mdToHtml`) only allow `http:`, `https:`, `mailto:`, `tel:`, and relative URLs. `javascript:`, `data:`, `blob:`, and other arbitrary schemes are replaced with `#`.
+- **Secrets in errors** are redacted by `webapp/security.py` before they appear in subprocess output, exception messages, or the UI. Covered patterns include `Authorization: Bearer/Token/...` headers, Anthropic/GitHub tokens, credentials in URLs, and `*_KEY` / `*_TOKEN` / `*_SECRET` / `*_PASSWORD` environment-style assignments.
+- **Input boundaries** are enforced by Pydantic `max_length` on `PushToRepo`, `OutputPdf`, `OutputAsk`, `InvokeBody`, `StartLive`, and `AskLive`; `_safe` blocks path metacharacters in names; `_html_escape` is applied to handover-card `meta`/description/account text.
+- **Claude Code permissions** are unchanged in this phase. Skills are invoked with `claude -p ... --permission-mode acceptEdits` because the skills need (a) write access to save markdown under `01-customers/`, (b) shell + git access for the `coverage-handoff` push-to-repo flow, and (c) MCP access for Salesforce/Gong enrichment. A stricter mode would break these flows. `IMPLEMENTATION-PLAN.md` SEC-007 tracks the future work to design per-skill permission profiles or an explicit approval gate.
+
 ## How accounts map to the filesystem
 
 - An "account" = a folder in `~/airbyte-work/01-customers/<Account>/`
