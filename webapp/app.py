@@ -51,6 +51,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from typing import Any, Literal
 
+import golden
 import orchestrator
 import output_schema
 import persistence
@@ -1480,6 +1481,45 @@ def api_output_feedback_post(body: OutputFeedback):
     with fb.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
     return {"path": body.path, "entry": entry, "feedback_file": str(fb.relative_to(root))}
+
+
+class OutputGolden(BaseModel):
+    path: str = Field(max_length=500)      # output Markdown file, relative to CUSTOMERS_DIR
+    scenario: str = Field(default="", max_length=100)
+
+
+@app.post("/api/output/golden")
+def api_output_golden_post(body: OutputGolden):
+    """Promote a generated output to a golden regression fixture.
+
+    The Markdown is copied into `eval/golden/{skill}/{scenario}.md` so the
+    deterministic regression suite can diff future mock outputs against it.
+    """
+    target = (CUSTOMERS_DIR / body.path).resolve()
+    root = CUSTOMERS_DIR.resolve()
+    if not str(target).startswith(str(root)) or not target.is_file() or target.suffix != ".md":
+        raise HTTPException(404, "Not found")
+
+    meta = output_schema.read_or_parse_sidecar(target, target.parent.name)
+    skill = (meta.skill or target.parent.name) if meta else target.parent.name
+    scenario = (body.scenario or meta.title if meta and meta.title else target.stem).strip()
+    if not scenario:
+        scenario = target.stem
+    # Sanitize scenario to a safe filename.
+    scenario = re.sub(r"[^\w\-]+", "_", scenario).strip("_").lower()[:100] or target.stem
+
+    text = target.read_text(encoding="utf-8")
+    golden_path = golden.save_golden(skill, scenario, text)
+    try:
+        golden_rel = str(golden_path.relative_to(Path(__file__).resolve().parent.parent))
+    except ValueError:
+        golden_rel = str(golden_path)
+    return {
+        "path": body.path,
+        "skill": skill,
+        "scenario": scenario,
+        "golden_path": golden_rel,
+    }
 
 
 class OutputDiff(BaseModel):

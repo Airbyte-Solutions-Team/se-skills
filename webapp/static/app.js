@@ -3070,6 +3070,7 @@ async function loadFeedbackPanel(path) {
         <button class="ghost small feedback-toggle" data-action="approve">✓ Approve</button>
         <button class="ghost small feedback-toggle" data-action="comment">💬 Comment</button>
         <button class="ghost small feedback-toggle" data-action="correct">✎ Correct</button>
+        <button class="ghost small golden-promote" title="Use this output as the regression baseline">★ Golden</button>
       </div>
     </div>
     ${renderForm("")}
@@ -3115,6 +3116,22 @@ async function loadFeedbackPanel(path) {
       await loadFeedbackPanel(path);
     } catch (e) {
       showToast("Feedback failed: " + e.message, "err");
+    }
+  };
+
+  const goldenBtn = panel.querySelector(".golden-promote");
+  if (goldenBtn) goldenBtn.onclick = async () => {
+    const scenario = prompt("Scenario name for this golden fixture (optional):", "");
+    if (scenario === null) return; // cancelled
+    try {
+      const result = await api("/api/output/golden", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: decodeURIComponent(path), scenario: scenario.trim() }),
+      });
+      showToast(`Saved golden fixture: ${result.golden_path}`, "ok");
+    } catch (e) {
+      showToast("Golden fixture failed: " + e.message, "err");
     }
   };
 }
