@@ -2,7 +2,7 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`, mine = `gyairbyte/SE-Workflow`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: July 14, 2026 — SEC-001 permission approval gates for skill invocation; HEAD 6668ac3._
+_Last updated: July 14, 2026 — STRUCT-002 unified Markdown renderer for web/PDF/internal HTML; HEAD 2ef01e5._
 
 ## What the app is
 Local FastAPI + vanilla-JS UI (no build step) over the SE skills suite. `cd webapp && uv run app.py` → http://127.0.0.1:8787 (needs `CPATH/LIBRARY_PATH` for portaudio on this Mac — see "Run" below). Browse team → member's accounts → an account's opportunities → generated outputs; invoke skills; ask follow-ups on outputs; Live Transcribe a Zoom call with an AI copilot.
@@ -16,6 +16,18 @@ uv run --python 3.11 app.py    # port 8787
 ```
 
 ## Built this session (newest first — see `git log`)
+- **STRUCT-002: one shared Markdown renderer for web reader, PDF, and internal HTML (July 14).** Created `webapp/md_render.py` as the single source of truth for skill-output Markdown → HTML. It handles admonitions, `==highlight==`, GFM task-list checkboxes, status emoji dots, and table/list blank-line fixup, then runs the result through `nh3` with an allowlist. `pdf_render.py` and `internal_html.py` now import `markdown_to_body_html` from `md_render.py`; `webapp/app.py` exposes `POST /api/output/render` so the browser can render Markdown with the same sanitized parser. `webapp/static/app.js` replaced the client-side `mdToHtml` parser with `renderMarkdown` + `addMdClasses`: the browser fetches the shared renderer and applies presentation-only CSS classes. SSE streams for output ask and live ask now emit pre-rendered `html` alongside `text`, so streaming also uses the shared renderer. The PDF and internal HTML exports continue to use the same backend function, ensuring the same Markdown fixture produces identical, safe HTML across all three surfaces.
+  - `webapp/md_render.py`: new shared `markdown_to_body_html` and sanitizer.
+  - `webapp/pdf_render.py`: imports `markdown_to_body_html` from `md_render`.
+  - `webapp/internal_html.py`: imports `markdown_to_body_html` from `md_render`.
+  - `webapp/app.py`: new `POST /api/output/render`; SSE token frames in `/api/output/ask` and `/api/transcribe/{session_id}/ask` now include `html`.
+  - `webapp/static/app.js`: `renderMarkdown`, `addMdClasses`, async `mdToHtml`; streaming uses `payload.html`; `pollJob` awaits async `onTick` callbacks.
+  - `webapp/static/index.html`: bumped `app.js?v=` cache-bust.
+  - `eval/tests/test_md_render.py`: tests that PDF, web endpoint, and internal HTML export share the same renderer and that the endpoint sanitizes input and enforces max length.
+  - `eval/tests/test_webapp_export_sanitization.py`: import updated to `webapp.md_render`.
+  - `webapp/SESSION-LOG.md` and `IMPLEMENTATION-PLAN.md`: updated.
+  - Validation: `uv run --extra dev pytest eval/ -v` passes; `node --check webapp/static/app.js` passes; `./scripts/check-sync.sh` passes.
+
 - **SEC-001: permission approval gates for skill invocation (July 14).** The webapp still invokes `claude -p` with `--permission-mode acceptEdits` because the skills need file write access (and some need shell/git access), but the SE must now explicitly approve the required permissions before each run. `GET /api/permissions` returns the classified profile for a skill or freeform instruction; `POST /api/invoke` blocks without an `approve_permissions` flag and returns the permission summary. The invoke modal shows a yellow banner listing what the selected skill will do (write a file, run shell commands, run git commands) and the frontend confirms via a browser dialog before retrying. All skills default to write-only; `connector-feasibility` is flagged shell+git because its prompt instructs Claude to run `git` commands against local source checkouts; freeform instructions get the broadest profile.
   - `webapp/app.py`: added `PermissionProfile`, `SKILL_PERMISSIONS`, `_permission_profile`, `GET /api/permissions`, `approve_permissions` on `InvokeBody`, and the permission gate in `POST /api/invoke`.
   - `webapp/static/app.js`: `invokeWithPlan` handles the permission block and retry; `openInvoke` renders a permission banner from the skill metadata; added `permissionSummary` helper.
