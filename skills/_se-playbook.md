@@ -805,6 +805,16 @@ The data comes from four sources, configured under `reference_data:` in `config_
 - **Registry (DS1):** fetch live, then **cache for `registry.cache_ttl_hours` (default 24h)** in `registry.cache_dir` (the files are ~4.5 MB each — don't re-download every invocation). On fetch failure, fall back to the cached copy and **report the cache date** in Source Coverage. Never assert availability from a cache older than ~7 days without flagging it. Never fall back silently.
 - **Repos (DS2/DS3):** same freshness guard the monorepo already uses — if the checkout is more than ~14 days old, `git pull --ff-only`; on failure, read as-is and **report the checkout date** in Source Coverage.
 
+### Reference data freshness line in Source Coverage
+
+When a skill consumes DS1–DS4 or the objection reference, include a single bullet under `## Source Coverage` that lists each product/connector source consulted, its last-refresh date, and whether it is inside the freshness window. Use this format:
+
+> - **Reference data freshness:** connector registry cache 2026-07-08 (6 days old, fresh); airbyte-platform repo 2026-07-01 (13 days old, stale); objection reference 2026-07-14 (0 days old, fresh).
+
+If any source is **stale** (older than its threshold) or **missing**, add a `[!warning]` callout in `## At a Glance` or `## Source Coverage` stating: "Product reference data is stale or unavailable; verify current availability, entitlements, and positioning before relying on these product claims." Cap the At-a-Glance confidence accordingly — a recommendation built on stale product data is never High confidence.
+
+The webapp will also compute freshness from file mtimes and show its own banner, but the skill must still be transparent in the document it produces.
+
 ### Graceful degradation (fail loud — ties to Source Coverage Transparency)
 
 If a source is unavailable (no network, private repo not cloned, config flag off, pip package missing), the skill **states it explicitly** in Source Coverage as `unavailable` (never omits it), **caps confidence** (an availability/entitlement claim built on a missing source is never High), and says so in the lead in one clause — e.g. "enterprise connectors not checked (repo unavailable), so regulated-stack feasibility is unverified." It does **not** proceed as if the data were present. When live sources disagree with the static `airbyte-objection-reference.md`, **live wins** and the discrepancy is noted (the static file is then a candidate for update).

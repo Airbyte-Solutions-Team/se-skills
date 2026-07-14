@@ -17,6 +17,8 @@ from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field, model_validator
 
+from reference_freshness import ReferenceFreshness, compute_reference_freshness
+
 logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 1
@@ -44,6 +46,7 @@ class OutputMetadata(BaseModel):
     valid: bool = True
     schema_version: int = SCHEMA_VERSION
     validation_status: str = "unvalidated"  # "valid" | "invalid" | "unvalidated"
+    reference_freshness: list[ReferenceFreshness] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -216,7 +219,11 @@ def _extract_sections(text: str) -> dict[str, str]:
 # Public API
 # ---------------------------------------------------------------------------
 
-def parse_output(skill: str, text: str) -> OutputMetadata:
+def parse_output(
+    skill: str,
+    text: str,
+    reference_freshness: list[ReferenceFreshness] | None = None,
+) -> OutputMetadata:
     """Parse a generated Markdown output and validate it against the skill schema.
 
     Returns an `OutputMetadata` object with extracted fields, missing required
@@ -266,6 +273,7 @@ def parse_output(skill: str, text: str) -> OutputMetadata:
             valid=True,
             schema_version=SCHEMA_VERSION,
             validation_status="unvalidated",
+            reference_freshness=reference_freshness or [],
         )
 
     missing: list[str] = [s for s in required if not _section_present(s)]
@@ -293,6 +301,7 @@ def parse_output(skill: str, text: str) -> OutputMetadata:
             valid=True,
             schema_version=SCHEMA_VERSION,
             validation_status="unvalidated",
+            reference_freshness=reference_freshness or [],
         )
 
     errors: list[str] = []
@@ -318,6 +327,7 @@ def parse_output(skill: str, text: str) -> OutputMetadata:
         valid=valid,
         schema_version=SCHEMA_VERSION,
         validation_status=validation_status,
+        reference_freshness=reference_freshness or [],
     )
 
 
