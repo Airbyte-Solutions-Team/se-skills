@@ -46,16 +46,31 @@ So a legitimate outcome of full-qual is **one doc, not two**:
   > "Ran biz-qual ✓. Skipped tech-qual — this call had no technical discovery to qualify against. Run `tech-qual` after a technical call."
 - If the call was purely technical with no business signal, the reverse can happen (rare — biz-qual is more permissive).
 
+### Partial-failure / atomic completion
+
+A wrapper that chains two skills can end in a **partial completion** even when the transcript is mixed. Handle it as an honest pass-through, not a silent success:
+
+1. **Run the first child to completion before starting the second.** Do not start `tech-qual` until `biz-qual` has produced a saved output. If `biz-qual` refuses, stop the chain and explain why — do not proceed to `tech-qual` with a missing business context.
+2. **If a child refuses or exits with an error, do not leave an incomplete/stale document for that child.** If `tech-qual` refuses, the `tech-qual` output folder must not contain a partial or empty file. The wrapper's own summary is the record for the skipped child.
+3. **State exactly which child produced output and which did not.** The closing summary must list each child with a status (`✓ produced`, `✗ refused`, or `✗ failed`) and a one-line reason. Do not use an aggregate "full qualification complete" message unless both children actually completed.
+4. **Surface the reason from the child, not from memory.** If `tech-qual` refused because the transcript lacked technical discovery, say that — do not invent a different reason. If `biz-qual` refused because the transcript was empty or too thin, say that.
+
+**Plain examples:**
+- "Ran biz-qual ✓ → `outputs/biz-qual/…`. Skipped tech-qual — transcript has no technical discovery."
+- "Skipped biz-qual — no usable transcript. Did not attempt tech-qual."
+
 **Never fabricate qualification to fill a doc.** A missing half is a finding, not a gap to paper over.
 
 ## Output
 
-Two independent documents (or one + a skip note, per above), each auto-saved to its own `outputs/<skill>/` folder exactly as the standalone skills do. After both run, give a one-line summary of what was produced and where:
+Two independent documents (or one + a skip note, per above), each auto-saved to its own `outputs/<skill>/` folder exactly as the standalone skills do. After both run, give a closing summary of what was produced and where — with explicit status for each child:
 
 > "Full qualification for [Customer]:
-> &nbsp;&nbsp;• biz-qual ✓ → `outputs/biz-qual/…`
-> &nbsp;&nbsp;• tech-qual ✓ → `outputs/tech-qual/…`
+> &nbsp;&nbsp;• biz-qual ✓ produced → `outputs/biz-qual/…`
+> &nbsp;&nbsp;• tech-qual ✗ refused — transcript has no technical discovery. Run `tech-qual` after a technical call.
 > Next up per the workflow: `connector-feasibility`, then `poc-plan`."
+
+Use `✓ produced`, `✗ refused`, or `✗ failed` so a reader can see at a glance which child completed. Only use an aggregate "full qualification complete" message if **both** children produced a document.
 
 In that closing summary, also surface (don't re-derive) the child docs' product-truth so the SE sees it without opening both: the **3-way deployment verdict** (🟢 Cloud / 🟦 Flex / 🔴 park-no-fit) and tech-qual's **entitlement-backed compliance self-check** — including any unverified-compliance flag it raised. Just point at what the children already produced; add no new format or logic.
 
@@ -68,6 +83,7 @@ In that closing summary, also surface (don't re-derive) the child docs' product-
 
 ## Changelog
 
+- **2026-07-14** — Added explicit partial-failure / atomic-completion handling: run `biz-qual` before `tech-qual`, never leave a partial/stale doc for a refused child, and list each child with `✓ produced`, `✗ refused`, or `✗ failed` plus a one-line reason in the closing summary. No new analysis or logic; still a pure pass-through wrapper.
 - **2026-07-10** — Closing summary now surfaces the children's derived product-truth — the 3-way deployment verdict and tech-qual's entitlement-backed compliance self-check / any unverified-compliance flag — so the SE sees them without opening both docs. Still owns no logic and re-derives nothing; pure pass-through of what the children produced.
 - **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
 - **2026-07-09** — Clarified that the wrapper owns no logic and inherits its child skills' prerequisites/refusals at their current contracts — don't re-implement or override them here; ordering + flag pass-through only.

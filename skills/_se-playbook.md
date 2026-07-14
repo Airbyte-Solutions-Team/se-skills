@@ -233,7 +233,7 @@ NEW PROSPECT
   objection-handler / coverage-handoff as needed; next-move when unsure ]
 ```
 
-**Shortcut:** `full-qual` runs steps 4 + 5 (biz-qual then tech-qual) in one invocation, producing two separate docs. It's a convenience wrapper, not a merged skill — the two remain independently runnable, with their own frameworks and refusal rules. (A hard merge was considered and rejected: biz-qual and tech-qual serve different readers/data needs, and merging would force half-empty output after a one-sided call.)
+**Shortcut:** `full-qual` runs steps 4 + 5 (biz-qual then tech-qual) in one invocation, producing two separate docs. It's a convenience wrapper, not a merged skill — the two remain independently runnable, with their own frameworks and refusal rules. (A hard merge was considered and rejected: biz-qual and tech-qual serve different readers/data needs, and merging would force half-empty output after a one-sided call.) If one child refuses — for example, the call has no technical discovery for `tech-qual` — `full-qual` must report which child produced output and which was skipped/refused, with a one-line reason, and must not leave a partial doc for the skipped child or claim "full qualification complete" when one half is missing.
 
 The webapp's Invoke picker mirrors this: skills are grouped into **Workflow — run in order** (numbered 1–7, with full-qual as a 4+5 shortcut), **Late-stage — after POC** (8–9: `roi-business-case`, then `mutual-close-plan`), **Anytime — as needed**, and **When you're not sure** (next-move). The numbers are a suggested sequence, not a hard gate — the refusal rules below are what actually enforce dependencies.
 

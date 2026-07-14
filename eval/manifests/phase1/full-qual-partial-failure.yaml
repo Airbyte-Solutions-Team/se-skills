@@ -1,0 +1,83 @@
+manifest_version: "1.0"
+id: phase1-full-qual-partial-failure
+title: full-qual must report which child refused and why, and not claim full completion
+skills_under_test:
+  - full-qual
+tags:
+  - workflow-orchestration
+  - partial-failure
+  - full-qual
+  - atomic-completion
+fixtures:
+  transcripts:
+    - source: fixtures/transcripts/acme-2026-07-01-business-only.txt
+      target: _transcripts/Acme-07.01.26.txt
+  config: fixtures/config/synthetic-se-config.yaml
+environment:
+  salesforce: false
+execution:
+  prerequisite_mode: enforce
+  classification: normal
+customer_constraints:
+  - The transcript is a pure business/exec discovery call with no technical discovery.
+available_evidence:
+  - One transcript covering business pain, cost, and buying process only.
+required_behavior:
+  - biz-qual is allowed to run because it needs any transcript.
+  - tech-qual correctly refuses because the transcript contains no technical discovery.
+  - full-qual must report which child produced output and which was skipped/refused, with a one-line reason.
+  - full-qual must not use an aggregate "full qualification complete" message when one child refused.
+forbidden_behavior:
+  - Forcing tech-qual to produce a hollow document.
+  - Presenting the run as fully successful when only one child produced output.
+  - Leaving a partial or empty tech-qual output file.
+expected_sections:
+  - At a Glance
+  - Source Coverage
+per_skill_expected_sections:
+  full-qual:
+    - Business Qual Summary
+    - Technical Qual Summary
+    - Closing Summary
+deterministic_assertions:
+  - name: closing summary lists biz-qual as produced
+    target: markdown
+    skills:
+      - full-qual
+    check: "contains_case_insensitive(output, 'biz-qual') and contains_any_case_insensitive(output, ['produced', 'ran', 'completed'])"
+    severity: blocker
+  - name: closing summary lists tech-qual as refused or skipped
+    target: markdown
+    skills:
+      - full-qual
+    check: "contains_case_insensitive(output, 'tech-qual') and contains_any_case_insensitive(output, ['refused', 'skipped', 'not run'])"
+    severity: blocker
+  - name: output states the reason for tech-qual refusal
+    target: markdown
+    skills:
+      - full-qual
+    check: "contains_any_case_insensitive(output, ['no technical discovery', 'technical discovery'])"
+    severity: blocker
+  - name: output does not claim full qualification complete
+    target: markdown
+    skills:
+      - full-qual
+    check: "not contains_case_insensitive(output, 'full qualification complete')"
+    severity: major
+  - name: closing summary uses explicit child status markers
+    target: markdown
+    skills:
+      - full-qual
+    check: "contains_case_insensitive(output, '✓ produced') and contains_any_case_insensitive(output, ['✗ refused', '✗ failed'])"
+    severity: major
+  - name: source coverage is present
+    target: markdown
+    skills:
+      - full-qual
+    check: "has_section(output, 'Source Coverage')"
+    severity: major
+failure_severity: blocker
+notes: >
+  The wrapper must pass through the child's refusal honestly and atomically:
+  produce one clean biz-qual doc, skip tech-qual without a partial file, and
+  clearly report the reason.
