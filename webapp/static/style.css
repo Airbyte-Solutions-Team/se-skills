@@ -832,3 +832,38 @@ a.live-btn { text-decoration: none; display: inline-flex; align-items: center; }
   background: var(--danger); color: #fff; border: 1px solid var(--danger);
 }
 .push-modal .modal-foot .danger:hover { filter: brightness(1.08); }
+
+/* ── Output review / feedback panel ─────────────────────────────────────── */
+.feedback-panel {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  padding: 14px 16px; margin: 0 0 18px 0;
+}
+.feedback-panel .feedback-head {
+  display: flex; align-items: center; gap: 10px; justify-content: space-between;
+  margin-bottom: 10px;
+}
+.feedback-panel .feedback-title { font-weight: 600; }
+.feedback-panel .feedback-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.feedback-panel .feedback-form { display: none; gap: 10px; flex-direction: column; margin-top: 10px; }
+.feedback-panel .feedback-form.show { display: flex; }
+.feedback-panel .feedback-form textarea {
+  font: inherit; font-size: 13px; background: var(--panel2); color: var(--text);
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-height: 70px; resize: vertical;
+}
+.feedback-panel .feedback-form input {
+  font: inherit; font-size: 13px; background: var(--panel2); color: var(--text);
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; width: min(260px, 100%);
+}
+.feedback-panel .feedback-form-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.feedback-panel .feedback-entries { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.feedback-panel .feedback-entry {
+  border-left: 3px solid var(--line-strong); padding: 10px 12px; border-radius: 0 8px 8px 0;
+  background: var(--panel2);
+}
+.feedback-panel .feedback-entry.approve { border-left-color: var(--accent2); }
+.feedback-panel .feedback-entry.correct { border-left-color: var(--warn); }
+.feedback-panel .feedback-entry.comment { border-left-color: var(--accent); }
+.feedback-panel .feedback-entry .feedback-meta { color: var(--faint); font-size: 12px; margin-bottom: 6px; }
+.feedback-panel .feedback-entry .feedback-body { font-size: 14px; line-height: 1.55; white-space: pre-wrap; }
+.feedback-panel .feedback-empty { color: var(--muted); font-size: 13px; margin-top: 8px; }
+.feedback-panel .feedback-toggle.active { border-color: var(--accent); color: var(--accent); }

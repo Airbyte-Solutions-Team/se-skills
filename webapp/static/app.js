@@ -337,6 +337,23 @@ function showSkillToast(job, ctx) {
   timer = setTimeout(close, 10000);
 }
 
+// Generic message toast — used for inline UI confirmations (e.g. feedback saved).
+function showToast(message, kind = "ok") {
+  const wrap = document.getElementById("toast-container");
+  if (!wrap) return;
+  const el = document.createElement("div");
+  el.className = `toast ${kind === "err" ? "err" : "ok"}`;
+  el.innerHTML =
+    `<span class="toast-icon">${kind === "err" ? "✕" : "✓"}</span>`
+    + `<div class="toast-body"><div class="toast-title">${esc(message)}</div></div>`
+    + `<button class="toast-x" aria-label="Dismiss">✕</button>`;
+  wrap.appendChild(el);
+  requestAnimationFrame(() => el.classList.add("show"));
+  const close = () => { el.classList.remove("show"); setTimeout(() => el.remove(), 250); };
+  el.querySelector(".toast-x").onclick = close;
+  setTimeout(close, 8000);
+}
+
 // Minimal, dependency-free Markdown → HTML for rendering skill outputs nicely.
 // Handles: headings, bold/italic, inline code, code fences, tables, blockquotes,
 // hr, ordered/unordered lists (incl. [ ] checkboxes), paragraphs.
@@ -2047,6 +2064,7 @@ async function openOutput(path, title, ctx) {
       <article class="md-body">
         ${execCardHtml}
         ${riskStripHtml}
+        <div id="feedback-panel"></div>
         <div class="doc-sheet">${sheetHtml}</div>
       </article>
       <aside class="doc-chat">
@@ -2075,6 +2093,9 @@ async function openOutput(path, title, ctx) {
                       { label: ctx.oppName, href: backHref },
                       { label: "output" }]);
   else setCrumbs([{ label: "Team", href: "#/" }, { label: "output" }]);
+
+  await loadFeedbackPanel(path);
+
   // Deterministic Back — go to the opp page in one step. The reader is now its
   // own route (#/output/…), so the hardware Back button already pops here to the
   // opp page. This in-app button mirrors that: setting the hash fires a normal
@@ -2871,6 +2892,104 @@ document.addEventListener("click", (e) => {
   }
 });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeAllDropdowns(); });
+
+// ── Output review/feedback panel (UX-001) ────────────────────────────────
+// Loads and records SE approval / comments / corrections on a generated output.
+// Feedback is stored server-side in a sidecar JSONL file so it persists with the doc.
+async function loadFeedbackPanel(path) {
+  const panel = document.getElementById("feedback-panel");
+  if (!panel) return;
+
+  const safePath = encodeURIComponent(decodeURIComponent(path));
+  let entries = [];
+  try {
+    const data = await api("/api/output/feedback?path=" + safePath);
+    entries = data.entries || [];
+  } catch (e) {
+    panel.innerHTML = `<div class="feedback-empty">Could not load feedback: ${esc(e.message)}</div>`;
+    return;
+  }
+
+  const actionLabels = { approve: "Approve", comment: "Comment", correct: "Correct" };
+  const actionIcons = { approve: "✓", comment: "💬", correct: "✎" };
+
+  function renderForm(selectedAction) {
+    return `
+      <div class="feedback-form${selectedAction ? " show" : ""}" id="feedback-form">
+        <textarea id="feedback-comment" placeholder="What would you change? What did the model get right or wrong?" rows="3"></textarea>
+        <div class="feedback-form-row">
+          <input type="text" id="feedback-author" placeholder="Your name (optional)" />
+          <button class="primary small" id="feedback-submit" data-action="${selectedAction || "comment"}">${actionLabels[selectedAction || "comment"]}</button>
+          <button class="ghost small" id="feedback-cancel">Cancel</button>
+        </div>
+      </div>`;
+  }
+
+  function renderEntries() {
+    if (!entries.length) return `<div class="feedback-empty">No feedback yet. Approve, comment, or correct this output.</div>`;
+    return `<div class="feedback-entries">` + entries.map((e) => `
+      <div class="feedback-entry ${esc(e.action)}">
+        <div class="feedback-meta">${actionIcons[e.action] || "•"} ${actionLabels[e.action] || esc(e.action)} ${e.author ? `by ${esc(e.author)}` : ""} · ${e.timestamp ? new Date(e.timestamp).toLocaleString() : ""}</div>
+        ${e.comment ? `<div class="feedback-body">${esc(e.comment)}</div>` : ""}
+      </div>
+    `).join("") + `</div>`;
+  }
+
+  panel.innerHTML = `
+    <div class="feedback-head">
+      <div class="feedback-title">Output review</div>
+      <div class="feedback-actions">
+        <button class="ghost small feedback-toggle" data-action="approve">✓ Approve</button>
+        <button class="ghost small feedback-toggle" data-action="comment">💬 Comment</button>
+        <button class="ghost small feedback-toggle" data-action="correct">✎ Correct</button>
+      </div>
+    </div>
+    ${renderForm("")}
+    <div id="feedback-entries">${renderEntries()}</div>
+  `;
+
+  const form = document.getElementById("feedback-form");
+  const toggles = panel.querySelectorAll(".feedback-toggle");
+  let currentAction = "";
+
+  toggles.forEach((btn) => {
+    btn.onclick = () => {
+      const a = btn.dataset.action;
+      currentAction = currentAction === a ? "" : a;
+      toggles.forEach((b) => b.classList.toggle("active", b.dataset.action === currentAction));
+      form.classList.toggle("show", !!currentAction);
+      const submit = document.getElementById("feedback-submit");
+      if (submit) {
+        submit.textContent = actionLabels[currentAction] || "Save";
+        submit.dataset.action = currentAction;
+      }
+    };
+  });
+
+  const cancel = document.getElementById("feedback-cancel");
+  if (cancel) cancel.onclick = () => {
+    currentAction = "";
+    toggles.forEach((b) => b.classList.remove("active"));
+    form.classList.remove("show");
+  };
+
+  const submit = document.getElementById("feedback-submit");
+  if (submit) submit.onclick = async () => {
+    const action = submit.dataset.action || currentAction || "comment";
+    const comment = document.getElementById("feedback-comment").value || "";
+    const author = document.getElementById("feedback-author").value || "";
+    try {
+      await api("/api/output/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: decodeURIComponent(path), action, comment: comment.trim(), author: author.trim() }),
+      });
+      await loadFeedbackPanel(path);
+    } catch (e) {
+      showToast("Feedback failed: " + e.message, "err");
+    }
+  };
+}
 
 (async function init() {
   initTheme();
