@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import queue
 import re
@@ -50,8 +51,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from typing import Literal
 
+import persistence
 import security
 import soql
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Paths — everything is relative to the airbyte-work workspace
@@ -1350,9 +1354,11 @@ async def api_output_ask(body: OutputAsk):
         JOBS[job_id] = {"status": "running", "ok": None, "stdout": "", "stderr": "",
                         "skill": "output-ask", "account": acct, "opportunity": body.opportunity,
                         "opp_slug": None, "sig": ("output-ask", body.path, q[:60])}
+        persist_warn = await _save_jobs_snapshot(job_id)
         meta = {"account": acct or "?", "opp_slug": None, "skill": "output-ask", "opportunity": body.opportunity}
         asyncio.create_task(_run_job(job_id, prompt, meta))
-        return {"mode": "deep", "job_id": job_id}
+        return {"mode": "deep", "job_id": job_id,
+                **({"persistence_warning": persist_warn} if persist_warn else {})}
 
     api_key = os.environ.get("ANTHROPIC_API_KEY") or _anthropic_key_from_mcp()
     if not api_key:
@@ -1702,7 +1708,25 @@ class InvokeBody(BaseModel):
 # Now: POST /api/invoke starts the job + returns a job_id; the run continues
 # server-side even if you navigate away; GET /api/jobs/{id} polls for status.
 # ---------------------------------------------------------------------------
-JOBS: dict[str, dict] = {}
+JOBS: dict[str, dict] = persistence.load_jobs(WORKSPACE)
+
+
+_PERSISTENCE_WARNING = "This job will not survive a server restart because state could not be saved."
+
+
+async def _save_jobs_snapshot(source_job_id: str | None = None) -> str | None:
+    """Persist the jobs snapshot and, on success, clear any in-memory persistence
+    warnings. On failure, attach a warning to the originating job (if known) so
+    the UI can tell the SE that restart recovery is unavailable for this run."""
+    ok = await asyncio.to_thread(persistence.save_jobs, JOBS, WORKSPACE)
+    if ok:
+        for job in JOBS.values():
+            job.pop("persistence_warning", None)
+        return None
+    logger.warning("Jobs snapshot persistence failed for %s", source_job_id or "unknown")
+    if source_job_id and source_job_id in JOBS:
+        JOBS[source_job_id]["persistence_warning"] = _PERSISTENCE_WARNING
+    return _PERSISTENCE_WARNING
 
 
 def _build_prompt(body: InvokeBody, account: str, out_dir) -> str:
@@ -1795,6 +1819,14 @@ async def _run_job(job_id: str, prompt: str, meta: dict):
     except Exception:
         pass  # persistence is best-effort; the in-memory job still works
 
+    # Persist the full jobs snapshot so the job record survives a restart.
+    # The child process itself cannot be reattached; the recovered record will
+    # be marked lost with a clear re-run message.
+    try:
+        await _save_jobs_snapshot(job_id)
+    except Exception:
+        pass  # job-state persistence is best-effort
+
 
 @app.post("/api/invoke")
 async def api_invoke(body: InvokeBody):
@@ -1817,7 +1849,10 @@ async def api_invoke(body: InvokeBody):
     sig = (account, opp_slug, body.skill or "freeform", (body.freeform or body.extra or "")[:80])
     for jid, j in JOBS.items():
         if j.get("sig") == sig and j.get("status") == "running":
-            return JSONResponse({"job_id": jid, "status": "running", "reused": True})
+            reused_resp = {"job_id": jid, "status": "running", "reused": True}
+            if j.get("persistence_warning"):
+                reused_resp["persistence_warning"] = j["persistence_warning"]
+            return JSONResponse(reused_resp)
 
     job_id = uuid.uuid4().hex[:12]
     skill_id = body.skill or "freeform"
@@ -1826,9 +1861,13 @@ async def api_invoke(body: InvokeBody):
         "skill": skill_id, "account": account,
         "opportunity": body.opportunity, "opp_slug": opp_slug, "sig": sig,
     }
+    persist_warn = await _save_jobs_snapshot(job_id)
     meta = {"account": account, "opp_slug": opp_slug, "skill": skill_id, "opportunity": body.opportunity}
     asyncio.create_task(_run_job(job_id, prompt, meta))
-    return JSONResponse({"job_id": job_id, "status": "running", "reused": False})
+    new_resp = {"job_id": job_id, "status": "running", "reused": False}
+    if persist_warn:
+        new_resp["persistence_warning"] = persist_warn
+    return JSONResponse(new_resp)
 
 
 @app.get("/api/accounts/{account}/last-run")
@@ -1975,27 +2014,54 @@ def _text_similarity(a: str, b: str) -> float:
 
 
 class LiveSession:
-    def __init__(self, account, opp_slug, mic_device, call_device):
+    def __init__(self, account, opp_slug, mic_device, call_device,
+                 mic_label="You", call_label="Call", opportunity=None,
+                 recovered=False, segments=None, started_at=None, session_id=None):
+        self.session_id = session_id
         self.account = account
         self.opp_slug = opp_slug
-        self.started_at = datetime.now(timezone.utc)
-        self.segments: list[dict] = []          # {t, speaker, text}
-        self.queue: "asyncio.Queue" = asyncio.Queue()
-        self.loop = asyncio.get_running_loop()
+        self.opportunity = opportunity
+        self.mic_device = mic_device
+        self.call_device = call_device
+        self.mic_label = (mic_label or "You").strip() or "You"
+        self.call_label = (call_label or "Call").strip() or "Call"
         self.labeled = call_device is not None
-        self.channels: list[_Channel] = []
+        self.recovered = recovered
+        self.ended = recovered  # recovered sessions are no longer capturing audio
+        self.started_at = started_at or datetime.now(timezone.utc)
+        self.persistence_warning: str | None = None
+        self.segments: list[dict] = list(segments or [])
+        self.queue: asyncio.Queue = asyncio.Queue()
         self._lock = threading.Lock()
-        self._recent_call = deque(maxlen=12)   # (monotonic_ts, text) for echo matching
-        self._pending_you = []                  # held You segs awaiting echo check
-        self.__post_channels(mic_device, call_device)
+        self._recent_call: deque = deque(maxlen=12)   # (monotonic_ts, text) for echo matching
+        self._pending_you: list = []                  # held mic segs awaiting echo check
+        self.channels: list[_Channel] = []
+        if recovered:
+            try:
+                self.loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self.loop = None
+        else:
+            self.loop = asyncio.get_running_loop()
+            self.__post_channels(mic_device, call_device)
 
     def _emit(self, seg):
         self.segments.append(seg)
-        self.loop.call_soon_threadsafe(self.queue.put_nowait, seg)
+        if self.loop is not None:
+            self.loop.call_soon_threadsafe(self.queue.put_nowait, seg)
+        self._persist()
+
+    def _persist(self):
+        if self.session_id:
+            ok = persistence.save_session(self.to_dict(), WORKSPACE)
+            if ok:
+                self.persistence_warning = None
+            else:
+                self.persistence_warning = "Live transcript will not survive a server restart because state could not be saved."
 
     def _flush_pending_you(self, now):
-        """Emit any held 'You' segments older than the hold window that were not
-        matched by a 'Call' echo."""
+        """Emit any held mic segments older than the hold window that were not
+        matched by a call echo."""
         still = []
         for ts, seg in self._pending_you:
             if now - ts >= ECHO_HOLD_SEC:
@@ -2012,15 +2078,15 @@ class LiveSession:
             self._flush_pending_you(now)
             if not self.labeled:
                 self._emit(seg); return
-            if label == "Call":
-                # drop any held 'You' that this 'Call' line echoes
+            if label == self.call_label:
+                # drop any held mic segment that this call line echoes
                 self._pending_you = [
                     (ts, s) for (ts, s) in self._pending_you
                     if _text_similarity(s["text"], text) < ECHO_SIM
                 ]
                 self._recent_call.append((now, text))
                 self._emit(seg)
-            else:  # "You" — suppress if it echoes a recent 'Call'; else hold briefly
+            else:  # mic label — suppress if it echoes a recent call; else hold briefly
                 if any(now - cts <= ECHO_HOLD_SEC and _text_similarity(text, ctext) >= ECHO_SIM
                        for cts, ctext in self._recent_call):
                     return  # echo of the call audio — drop
@@ -2028,10 +2094,10 @@ class LiveSession:
 
     def __post_channels(self, mic_device, call_device):
         if self.labeled:
-            self.channels.append(_Channel(mic_device, "You", self._on_segment))
-            self.channels.append(_Channel(call_device, "Call", self._on_segment))
+            self.channels.append(_Channel(mic_device, self.mic_label, self._on_segment))
+            self.channels.append(_Channel(call_device, self.call_label, self._on_segment))
         else:
-            self.channels.append(_Channel(mic_device, "", self._on_segment))
+            self.channels.append(_Channel(mic_device, self.mic_label, self._on_segment))
 
     def start(self):
         for c in self.channels:
@@ -2040,18 +2106,57 @@ class LiveSession:
     def stop(self):
         for c in self.channels:
             c.stop()
-        # flush any held 'You' segments that never got an echo match
+        # flush any held mic segments that never got an echo match
         with self._lock:
             for _ts, seg in self._pending_you:
                 self._emit(seg)
             self._pending_you = []
 
     def transcript_text(self) -> str:
+        header = f"# Live transcript — {self.account} — {self.started_at.astimezone().strftime('%B %d, %Y %H:%M')}\n"
+        header += f"# mic-label: {self.mic_label}\n"
+        if self.labeled:
+            header += f"# call-label: {self.call_label}\n"
+        header += "\n"
         lines = []
         for s in self.segments:
             who = f"{s['speaker']}: " if s["speaker"] else ""
             lines.append(f"[{s['t']}] {who}{s['text']}")
-        return "\n".join(lines)
+        return header + "\n".join(lines) + "\n"
+
+    def to_dict(self) -> dict:
+        return {
+            "session_id": self.session_id,
+            "account": self.account,
+            "opp_slug": self.opp_slug,
+            "opportunity": self.opportunity,
+            "mic_device": self.mic_device,
+            "call_device": self.call_device,
+            "mic_label": self.mic_label,
+            "call_label": self.call_label,
+            "labeled": self.labeled,
+            "recovered": self.recovered,
+            "ended": self.ended,
+            "started_at": self.started_at.timestamp(),
+            "segments": list(self.segments),
+        }
+
+    @classmethod
+    def from_state(cls, data: dict) -> "LiveSession":
+        started_at = datetime.fromtimestamp(data["started_at"], tz=timezone.utc)
+        return cls(
+            account=data["account"],
+            opp_slug=data.get("opp_slug"),
+            mic_device=data.get("mic_device", 0),
+            call_device=data.get("call_device"),
+            mic_label=data.get("mic_label", "You"),
+            call_label=data.get("call_label", "Call"),
+            opportunity=data.get("opportunity"),
+            recovered=True,
+            segments=data.get("segments", []),
+            started_at=started_at,
+            session_id=data.get("session_id"),
+        )
 
 
 @app.get("/api/audio-devices")
@@ -2079,6 +2184,8 @@ class StartLive(BaseModel):
     opportunity: str | None = Field(default=None, max_length=200)
     mic_device: int
     call_device: int | None = None
+    mic_label: str | None = Field(default="You", max_length=80)
+    call_label: str | None = Field(default="Call", max_length=80)
 
 
 @app.post("/api/transcribe/start")
@@ -2086,50 +2193,84 @@ async def api_transcribe_start(body: StartLive):
     account = _safe(body.account)
     opp_slug = _safe(body.opp_slug) if body.opp_slug else None
     try:
-        sess = LiveSession(account, opp_slug, body.mic_device, body.call_device)
-        sess.opportunity = body.opportunity
+        sess = LiveSession(
+            account, opp_slug, body.mic_device, body.call_device,
+            mic_label=body.mic_label or "You",
+            call_label=body.call_label or "Call",
+            opportunity=body.opportunity,
+        )
         sess.start()
     except Exception as e:  # noqa: BLE001
         raise HTTPException(500, security.redact_sensitive(f"Could not start capture: {e}"))
     sid = uuid.uuid4().hex[:12]
+    sess.session_id = sid
     SESSIONS[sid] = sess
-    return {"session_id": sid, "labeled": sess.labeled}
+    session_ok = await asyncio.to_thread(persistence.save_session, sess.to_dict(), WORKSPACE)
+    if not session_ok:
+        sess.persistence_warning = "Live transcript will not survive a server restart because state could not be saved."
+    return {"session_id": sid, "labeled": sess.labeled,
+            "mic_label": sess.mic_label, "call_label": sess.call_label,
+            **({"persistence_warning": sess.persistence_warning} if sess.persistence_warning else {})}
 
 
 @app.get("/api/transcribe/active")
 def api_transcribe_active(account: str, opp_slug: str | None = None):
-    """If a live session is still recording for this opportunity, return it so
-    the page can reconnect (segments replay over the stream). 204 if none."""
+    """If a live session is active or recovered for this opportunity, return it
+    so the page can reconnect or save it. 204 if none."""
     account = _safe(account)
     opp_slug = _safe(opp_slug) if opp_slug else None
     for sid, sess in SESSIONS.items():
         if sess.account == account and sess.opp_slug == opp_slug:
             return {"session_id": sid, "labeled": sess.labeled,
                     "started_at": sess.started_at.timestamp(),
-                    "segments": list(sess.segments)}
+                    "segments": list(sess.segments),
+                    "mic_label": sess.mic_label, "call_label": sess.call_label,
+                    "recovered": sess.recovered,
+                    **({"persistence_warning": sess.persistence_warning} if sess.persistence_warning else {})}
     # 204 No Content must have an EMPTY body — a serialized `null` (4 bytes)
     # trips Starlette's "content longer than Content-Length" check.
     return Response(status_code=204)
 
 
-def _parse_saved_transcript(text: str) -> list[dict]:
-    """Parse a saved transcript file back into {t, speaker, text} segments.
+def _parse_saved_transcript(text: str) -> dict:
+    """Parse a saved transcript file back into segments and speaker labels.
 
-    Saved format (one per line): `[HH:MM:SS] Speaker: text`. A leading `#`
-    header line and blanks are skipped. Lines that don't match the pattern are
-    appended to the previous segment (whisper sometimes wraps long utterances).
+    Saved format (one per line): `[HH:MM:SS] Speaker: text`. Leading `#` header
+    lines are skipped; `# mic-label:` and `# call-label:` set the expected
+    speaker names (falling back to `You` / `Call`). Lines that don't match the
+    pattern are appended to the previous segment (whisper sometimes wraps long
+    utterances). A colon in the body text is protected by only accepting a known
+    speaker label as the prefix.
     """
+    mic_label, call_label = "You", "Call"
     segs: list[dict] = []
-    line_re = re.compile(r"^\[(\d{2}:\d{2}:\d{2})\]\s*(?:(You|Call):\s*)?(.*)$")
-    for line in text.splitlines():
-        if not line.strip() or line.startswith("#"):
+    line_re = re.compile(r"^\[(\d{2}:\d{2}:\d{2})\]\s*(?:([^\n:]+?):\s)?(.*)$")
+    label_re = re.compile(r"^#\s*(mic-label|call-label):\s*(.+)$", re.IGNORECASE)
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("#"):
+            m = label_re.match(line)
+            if m:
+                value = m.group(2).strip()
+                if m.group(1).lower() == "mic-label":
+                    mic_label = value or mic_label
+                else:
+                    call_label = value or call_label
             continue
         m = line_re.match(line)
         if m:
-            segs.append({"t": m.group(1), "speaker": m.group(2) or "", "text": m.group(3)})
+            speaker = (m.group(2) or "").strip()
+            body = m.group(3)
+            if speaker and speaker not in {mic_label, call_label}:
+                # the prefix was text, not a speaker label
+                body = f"{speaker}: {body}"
+                speaker = ""
+            segs.append({"t": m.group(1), "speaker": speaker, "text": body})
         elif segs:
-            segs[-1]["text"] += " " + line.strip()
-    return segs
+            segs[-1]["text"] += " " + line
+    return {"segments": segs, "mic_label": mic_label, "call_label": call_label}
 
 
 def _transcript_path(account: str, name: str) -> Path:
@@ -2175,7 +2316,9 @@ def api_load_transcript(name: str, account: str):
     if not path.exists():
         raise HTTPException(404, "Transcript not found")
     text = path.read_text()
-    return {"name": name, "segments": _parse_saved_transcript(text), "transcript": text}
+    parsed = _parse_saved_transcript(text)
+    return {"name": name, "segments": parsed["segments"], "transcript": text,
+            "mic_label": parsed["mic_label"], "call_label": parsed["call_label"]}
 
 
 @app.get("/api/transcribe/{session_id}/stream")
@@ -2189,6 +2332,9 @@ async def api_transcribe_stream(session_id: str):
         # replay any segments already captured (e.g. reconnect)
         for seg in list(sess.segments):
             yield {"event": "segment", "data": json.dumps(seg)}
+        if sess.recovered:
+            # Audio capture is gone after a restart; don't hold the connection open.
+            return
         while session_id in SESSIONS:
             try:
                 seg = await asyncio.wait_for(sess.queue.get(), timeout=15)
@@ -2263,10 +2409,12 @@ async def api_transcribe_ask(session_id: str, body: AskLive):
                         "skill": "live-ask", "account": account,
                         "opportunity": opportunity,
                         "opp_slug": opp_slug, "sig": ("live", session_id, q[:60])}
+        persist_warn = await _save_jobs_snapshot(job_id)
         meta = {"account": account, "opp_slug": None, "skill": "live-ask",
                 "opportunity": opportunity}
         asyncio.create_task(_run_job(job_id, prompt, meta))
-        return {"mode": "deep", "job_id": job_id}
+        return {"mode": "deep", "job_id": job_id,
+                **({"persistence_warning": persist_warn} if persist_warn else {})}
 
     # Quick path → Claude API streaming (SSE).
     api_key = os.environ.get("ANTHROPIC_API_KEY") or _anthropic_key_from_mcp()
@@ -2354,10 +2502,13 @@ def api_transcribe_stop(session_id: str):
     n = 2
     while path.exists():
         path = transcripts_dir / f"{base}-v{n}.txt"; n += 1
-    header = f"# Live transcript — {sess.account} — {sess.started_at.astimezone().strftime('%B %d, %Y %H:%M')}\n\n"
-    path.write_text(header + text + "\n")
-    return {"saved_to": str(path), "segments": len(sess.segments),
-            "chars": len(text), "transcript": text}
+    path.write_text(text)
+    delete_ok = persistence.delete_session(session_id, WORKSPACE)
+    result = {"saved_to": str(path), "segments": len(sess.segments),
+              "chars": len(text), "transcript": text}
+    if not delete_ok:
+        result["persistence_warning"] = "The saved transcript was written, but the session state file could not be removed; it may reappear on restart."
+    return result
 
 
 # Favicon: inline SVG (also linked in index.html <head>). Serving it here too
@@ -2378,6 +2529,17 @@ async def favicon() -> Response:
 
 # Serve the static frontend at root
 app.mount("/", StaticFiles(directory=str(WEBAPP_DIR / "static"), html=True), name="static")
+
+
+# Recover any live-transcribe sessions that were persisted before a restart.
+# Done at module load so the recovered sessions are available immediately.
+for _sess_data in persistence.load_sessions(WORKSPACE):
+    try:
+        _recovered = LiveSession.from_state(_sess_data)
+        if _recovered.session_id:
+            SESSIONS[_recovered.session_id] = _recovered
+    except Exception:
+        pass  # corrupted session file — ignore and continue
 
 
 if __name__ == "__main__":
