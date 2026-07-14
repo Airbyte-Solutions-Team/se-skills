@@ -107,7 +107,7 @@ def _latest_output(
     account: str,
     skill: str,
     opp_slug: str | None = None,
-) -> output_schema.OutputMetadata | None:
+) -> tuple[Path | None, output_schema.OutputMetadata | None]:
     """Return the parsed sidecar metadata for the most recent Markdown output.
 
     Checks both account-level and opportunity-level outputs.
@@ -118,13 +118,13 @@ def _latest_output(
         if d:
             candidates.extend(d.glob("*.md"))
     if not candidates:
-        return None
+        return None, None
     latest = max(candidates, key=lambda p: p.stat().st_mtime)
     try:
-        return output_schema.read_or_parse_sidecar(latest, skill)
+        return latest, output_schema.read_or_parse_sidecar(latest, skill)
     except (OSError, ValueError, TypeError):
         logger.warning("Failed to parse sidecar for %s", latest)
-        return None
+        return latest, None
 
 
 def _has_transcript(customers_dir: Path, account: str) -> bool:
@@ -151,14 +151,15 @@ def _check_upstream(
     `require` is currently always "valid" — we keep the parameter so future
     rules can accept "present" if needed.
     """
-    meta = _latest_output(customers_dir, account, skill, opp_slug)
+    latest, meta = _latest_output(customers_dir, account, skill, opp_slug)
     if meta is None:
         return False, [f"Missing upstream `{skill}` output."], None
 
     status = UpstreamStatus(
         skill=skill,
         status=meta.validation_status,
-        path=meta.title,
+        path=str(latest) if latest else None,
+        mtime=latest.stat().st_mtime if latest else None,
         validation_errors=meta.validation_errors,
         validation_status=meta.validation_status,
     )
