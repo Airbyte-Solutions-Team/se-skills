@@ -32,10 +32,26 @@ async function invokeWithPlan(payload, alreadyConfirmed = false) {
       // block the SE; the backend still validates the skill id.
     }
   }
-  return api("/api/invoke", {
+  const res = await api("/api/invoke", {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
   });
+  if (res.blocked && res.permissions) {
+    const summary = permissionSummary(res.permissions);
+    if (!confirm(`This skill requires the following permissions:\n${summary}\n\nProceed?`)) {
+      throw new Error("Cancelled");
+    }
+    return invokeWithPlan({ ...payload, approve_permissions: true }, alreadyConfirmed);
+  }
+  return res;
+}
+
+function permissionSummary(perms) {
+  const parts = [];
+  if (perms.write) parts.push("writes a file to the customer workspace");
+  if (perms.git) parts.push("runs git commands");
+  if (perms.shell) parts.push("runs shell commands");
+  return parts.length ? "• " + parts.join("\n• ") : "• performs this action";
 }
 
 // Only allow a small set of link schemes in the markdown reader. `javascript:`,
@@ -2831,6 +2847,7 @@ function openInvoke(account, opp = null) {
   const sel = document.getElementById("skill-select");
   sel.innerHTML = skillOptionsGrouped();
   const blurb = document.getElementById("skill-blurb");
+  const perm = document.getElementById("skill-perm");
   const setBlurb = () => {
     const h = SKILLS_HELP[sel.value] || {};
     const base = SKILLS.find((s) => s.id === sel.value) || {};
@@ -2841,7 +2858,22 @@ function openInvoke(account, opp = null) {
       ${h.output_location ? `<div class="hint-line"><b>Saves to:</b> <span class="muted">${esc(h.output_location)}</span></div>` : ""}
       ${trig ? `<div class="hint-line"><b>Triggers:</b> ${trig}</div>` : ""}`;
   };
-  sel.onchange = setBlurb; setBlurb();
+  const setPermissions = () => {
+    const base = SKILLS.find((s) => s.id === sel.value) || {};
+    const p = base.permissions || {};
+    if (p.requires_approval) {
+      const parts = [];
+      if (p.write) parts.push("writes a file to the customer workspace");
+      if (p.git) parts.push("runs git commands");
+      if (p.shell) parts.push("runs shell commands");
+      perm.innerHTML = `<strong>Permissions required:</strong> this skill ${parts.join("; ")}. It runs with <code>--permission-mode acceptEdits</code>; proceed only if you trust the prompt.`;
+      perm.classList.remove("hidden");
+    } else {
+      perm.classList.add("hidden");
+    }
+  };
+  sel.onchange = () => { setBlurb(); setPermissions(); };
+  setBlurb(); setPermissions();
   document.getElementById("skill-extra").value = "";
 
   // Runtime skill discovery — reload skills from disk without restarting the app.

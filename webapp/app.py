@@ -121,6 +121,57 @@ SKILL_PRESENTATION = {
     "next-move":             {"label": "Next Move",             "blurb": "Not sure what to run? This inspects the deal and tells you", "tier": TIER_META, "step": None, "order": 30},
 }
 
+# Permission profiles for each skill. The webapp invokes `claude -p` with
+# `--permission-mode acceptEdits`, which grants broad file/shell/MCP access.
+# This classification is used to surface an explicit SE approval step before
+# launching a skill that writes files, runs shell commands, or runs git commands.
+class PermissionProfile(BaseModel):
+    write: bool = True
+    shell: bool = False
+    git: bool = False
+
+    def requires_approval(self) -> bool:
+        return self.write or self.shell or self.git
+
+    def summary(self) -> str:
+        caps = []
+        if self.write:
+            caps.append("writes a file to the customer workspace")
+        if self.git:
+            caps.append("runs git commands")
+        if self.shell:
+            caps.append("runs shell commands")
+        return "; ".join(caps) if caps else "performs this action"
+
+
+# Known skill permission overrides. Unknown skills default to write-only, which
+# is the common case because every SE skill auto-saves its Markdown output.
+SKILL_PERMISSIONS: dict[str, PermissionProfile] = {
+    "connector-feasibility": PermissionProfile(write=True, shell=True, git=True),
+    "freeform": PermissionProfile(write=True, shell=True, git=True),
+}
+
+
+def _permission_profile(skill_id: str | None, freeform: bool = False) -> dict[str, Any]:
+    """Return the permission profile for a skill invocation.
+
+    Free-form instructions always get the broadest profile because their content
+    is uncontrolled. Known skills get the profile from SKILL_PERMISSIONS, with
+    a safe write-only default for skills that only auto-save a Markdown output.
+    """
+    if freeform or not skill_id:
+        profile = SKILL_PERMISSIONS["freeform"]
+    else:
+        profile = SKILL_PERMISSIONS.get(skill_id, PermissionProfile(write=True))
+    return {
+        "write": profile.write,
+        "shell": profile.shell,
+        "git": profile.git,
+        "requires_approval": profile.requires_approval(),
+        "summary": profile.summary(),
+    }
+
+
 # Source of truth for WHICH skills belong to this suite: the repo's own
 # skills/ folder (a sibling of webapp/). This scopes the app to the SE suite
 # and deliberately excludes other skills the user may have in ~/.claude/skills/
@@ -156,7 +207,8 @@ def discover_skills() -> list[dict]:
         found = [{"id": k, **v} for k, v in SKILL_PRESENTATION.items()]
     found.sort(key=lambda s: (s.get("order", 999), s["label"]))
     return [{"id": s["id"], "label": s["label"], "blurb": s["blurb"],
-             "tier": s.get("tier", "Other"), "step": s.get("step")} for s in found]
+             "tier": s.get("tier", "Other"), "step": s.get("step"),
+             "permissions": _permission_profile(s["id"])} for s in found]
 
 
 SKILLS = discover_skills()
@@ -1801,6 +1853,7 @@ class InvokeBody(BaseModel):
     extra: str | None = Field(default=None, max_length=10_000)      # free-text appended to the prompt
     freeform: str | None = Field(default=None, max_length=20_000) # full free-text instruction (instead of a dropdown skill)
     override_prerequisites: bool = Field(default=False)             # allow running when the planner reports missing prerequisites
+    approve_permissions: bool = Field(default=False)                  # explicit SE approval for write/shell/git actions
 
 
 # ---------------------------------------------------------------------------
@@ -2002,6 +2055,14 @@ async def api_invoke(body: InvokeBody):
         if not plan.ready:
             return JSONResponse({"prerequisites": plan.model_dump(), "blocked": True})
 
+    # Permission approval check. Free-form instructions always require approval
+    # because their capabilities are unbounded; known skills are classified by
+    # write/shell/git needs and must be explicitly approved before we launch
+    # Claude with --permission-mode acceptEdits.
+    profile = _permission_profile(body.skill, freeform=bool(body.freeform))
+    if profile["requires_approval"] and not body.approve_permissions:
+        return JSONResponse({"permissions": profile, "blocked": True})
+
     prompt = _build_prompt(body, account, out_dir)
 
     # Reuse an already-running job for the same (account, opp, skill/freeform)
@@ -2028,6 +2089,21 @@ async def api_invoke(body: InvokeBody):
     if persist_warn:
         new_resp["persistence_warning"] = persist_warn
     return JSONResponse(new_resp)
+
+
+@app.get("/api/permissions")
+def api_permissions(skill: str | None = None, freeform: bool = False):
+    """Return the permission profile for a proposed skill invocation.
+
+    Free-form instructions get the broadest profile because their content is
+    uncontrolled. Known skills return their SKILL_PERMISSIONS classification;
+    unknown skills default to write-only, which is the safe common case.
+    """
+    if freeform or not skill:
+        return _permission_profile(None, freeform=True)
+    if skill not in SKILL_IDS:
+        raise HTTPException(400, f"Unknown skill: {skill}")
+    return _permission_profile(skill)
 
 
 @app.get("/api/accounts/{account}/last-run")

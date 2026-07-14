@@ -2,7 +2,7 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`, mine = `gyairbyte/SE-Workflow`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: July 14, 2026 — golden fixture promotion removed from product UI; regression tests remain as deterministic mock-baseline developer infrastructure._
+_Last updated: July 14, 2026 — SEC-001 permission approval gates for skill invocation._
 
 ## What the app is
 Local FastAPI + vanilla-JS UI (no build step) over the SE skills suite. `cd webapp && uv run app.py` → http://127.0.0.1:8787 (needs `CPATH/LIBRARY_PATH` for portaudio on this Mac — see "Run" below). Browse team → member's accounts → an account's opportunities → generated outputs; invoke skills; ask follow-ups on outputs; Live Transcribe a Zoom call with an AI copilot.
@@ -16,6 +16,15 @@ uv run --python 3.11 app.py    # port 8787
 ```
 
 ## Built this session (newest first — see `git log`)
+- **SEC-001: permission approval gates for skill invocation (July 14).** The webapp still invokes `claude -p` with `--permission-mode acceptEdits` because the skills need file write access (and some need shell/git access), but the SE must now explicitly approve the required permissions before each run. `GET /api/permissions` returns the classified profile for a skill or freeform instruction; `POST /api/invoke` blocks without an `approve_permissions` flag and returns the permission summary. The invoke modal shows a yellow banner listing what the selected skill will do (write a file, run shell commands, run git commands) and the frontend confirms via a browser dialog before retrying. All skills default to write-only; `connector-feasibility` is flagged shell+git because its prompt instructs Claude to run `git` commands against local source checkouts; freeform instructions get the broadest profile.
+  - `webapp/app.py`: added `PermissionProfile`, `SKILL_PERMISSIONS`, `_permission_profile`, `GET /api/permissions`, `approve_permissions` on `InvokeBody`, and the permission gate in `POST /api/invoke`.
+  - `webapp/static/app.js`: `invokeWithPlan` handles the permission block and retry; `openInvoke` renders a permission banner from the skill metadata; added `permissionSummary` helper.
+  - `webapp/static/index.html`: added `#skill-perm` banner and bumped the `app.js` cache-bust.
+  - `webapp/static/style.css`: added `#skill-perm` margin.
+  - `webapp/README.md` and this log: documented the permission gate and why `acceptEdits` remains the underlying mode.
+  - `IMPLEMENTATION-PLAN.md`: marked SEC-001 and SEC-007 completed.
+  - `eval/tests/test_webapp_permissions.py`: tests for profile classification, `GET /api/permissions`, and the `POST /api/invoke` block/allow flow.
+
 - **Golden fixture promotion removed from product UI (July 14).** The **Golden** button was removed from the output review panel because the regression test runs `MockExecutor`, which builds outputs from hardcoded Python templates rather than `SKILL.md`/Claude instructions. Promoting an SE-corrected output therefore does not make real skill runs follow that correction, and a promoted fixture that differs from the canned mock output would cause CI to fail for the wrong reason. The backend `POST /api/output/golden` and `GET /api/golden/manifests` endpoints, `webapp/golden.py:manifest_scenarios`, and the `eval/` regression harness remain as developer infrastructure for deterministic mock-baseline tests.
   - `webapp/static/app.js`: removed the **Golden** button and `openGoldenModal`.
   - `webapp/static/style.css`: removed golden-modal styles.
