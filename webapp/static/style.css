@@ -287,6 +287,25 @@ button:disabled { opacity: .5; cursor: default; }
 .out-item .skill { font-weight: 700; letter-spacing: .4px; font-size: 13px; }
 .out-item .when { color: var(--muted); font-size: 13px; }
 .out-item-right { display: flex; align-items: center; gap: 8px; }
+.out-item.out-item-warn { border-left: 3px solid var(--warn); }
+.out-item.out-item-unvalidated { border-left: 3px solid var(--muted); }
+.out-item .out-warn { color: var(--warn); font-size: 14px; cursor: help; }
+.out-item .out-unvalidated { color: var(--muted); font-size: 14px; cursor: help; }
+.validation-banner {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid var(--warn);
+  border-radius: 10px;
+  color: var(--text);
+  padding: 12px 16px;
+  margin: 0 0 16px;
+  font-size: 14px;
+}
+.validation-banner strong { color: var(--warn); }
+.validation-banner.validation-banner-unvalidated {
+  background: rgba(148, 163, 184, 0.12);
+  border-color: var(--muted);
+}
+.validation-banner.validation-banner-unvalidated strong { color: var(--muted); }
 
 /* ⬇ download control + PDF/MD popup (reuses .dropdown-menu / .menu-item look) */
 .dl-menu { position: relative; display: inline-flex; }
