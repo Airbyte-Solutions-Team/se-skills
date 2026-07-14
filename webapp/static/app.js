@@ -3117,6 +3117,7 @@ async function loadFeedbackPanel(path) {
       showToast("Feedback failed: " + e.message, "err");
     }
   };
+
 }
 
 // ── Deal-assessment diff / trend view (UX-002) ───────────────────────────

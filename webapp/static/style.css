@@ -920,3 +920,4 @@ a.live-btn { text-decoration: none; display: inline-flex; align-items: center; }
 .diff-row.insert .diff-right { background: rgba(34, 197, 94, .12); color: var(--accent2); }
 .diff-row.replace .diff-left { background: rgba(245, 158, 11, .12); color: var(--warn); }
 .diff-row.replace .diff-right { background: rgba(245, 158, 11, .12); color: var(--warn); }
+

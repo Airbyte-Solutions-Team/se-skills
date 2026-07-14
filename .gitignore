@@ -14,6 +14,7 @@ config/se-config.yaml
 **/*-transcript*
 !eval/manifests/**/*.yaml
 !eval/manifests/**/*.yml
+!eval/golden/**/*.md
 
 # Web app local runtime
 webapp/__pycache__/

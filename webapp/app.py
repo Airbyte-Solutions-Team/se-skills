@@ -51,6 +51,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from typing import Any, Literal
 
+import golden
 import orchestrator
 import output_schema
 import persistence
@@ -1480,6 +1481,74 @@ def api_output_feedback_post(body: OutputFeedback):
     with fb.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
     return {"path": body.path, "entry": entry, "feedback_file": str(fb.relative_to(root))}
+
+
+class OutputGolden(BaseModel):
+    path: str = Field(max_length=500)      # output Markdown file, relative to CUSTOMERS_DIR
+    scenario: str = Field(default="", max_length=100)
+    text: str | None = Field(default=None, max_length=2_000_000)
+    confirm_synthetic: bool = Field(default=False)
+
+
+@app.get("/api/golden/manifests")
+def api_golden_manifests(skill: str):
+    """Return the Phase 1 manifest scenarios that exercise a given skill.
+
+    Only fixtures saved under one of these scenario IDs are exercised by the
+    deterministic regression suite.
+    """
+    return {"skill": skill, "scenarios": golden.manifest_scenarios(skill)}
+
+
+@app.post("/api/output/golden")
+def api_output_golden_post(body: OutputGolden):
+    """Promote a generated output to an active golden regression fixture.
+
+    The SE reviews and edits the Markdown in a modal, confirms the content is
+    synthetic, and selects a manifest scenario. The fixture is only saved when
+    the scenario is exercised by a Phase 1 manifest, so CI actually diffs it.
+    """
+    target = (CUSTOMERS_DIR / body.path).resolve()
+    root = CUSTOMERS_DIR.resolve()
+    if not str(target).startswith(str(root)) or not target.is_file() or target.suffix != ".md":
+        raise HTTPException(404, "Not found")
+
+    if not body.confirm_synthetic:
+        raise HTTPException(
+            400,
+            "Confirm that this content is synthetic and contains no customer or confidential data.",
+        )
+
+    meta = output_schema.read_or_parse_sidecar(target, target.parent.name)
+    skill = (meta.skill or target.parent.name) if meta else target.parent.name
+
+    scenario = (body.scenario or target.stem).strip()
+    if not scenario:
+        scenario = target.stem
+    # Sanitize scenario to a safe filename.
+    scenario = re.sub(r"[^\w\-]+", "_", scenario).strip("_").lower()[:100] or target.stem
+
+    active_scenarios = golden.manifest_scenarios(skill)
+    if scenario not in active_scenarios:
+        raise HTTPException(
+            400,
+            f"Scenario '{scenario}' is not exercised by a Phase 1 manifest for skill '{skill}'. "
+            f"Choose one of: {', '.join(active_scenarios) or 'none'}.",
+        )
+
+    text = body.text if body.text is not None else target.read_text(encoding="utf-8")
+    golden_path = golden.save_golden(skill, scenario, text)
+    try:
+        golden_rel = str(golden_path.relative_to(Path(__file__).resolve().parent.parent))
+    except ValueError:
+        golden_rel = str(golden_path)
+    return {
+        "path": body.path,
+        "skill": skill,
+        "scenario": scenario,
+        "golden_path": golden_rel,
+        "active": True,
+    }
 
 
 class OutputDiff(BaseModel):

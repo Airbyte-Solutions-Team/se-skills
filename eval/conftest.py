@@ -30,6 +30,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Run the optional LLM-as-judge assertions (requires ANTHROPIC_API_KEY).",
     )
+    parser.addoption(
+        "--update-golden",
+        action="store_true",
+        default=False,
+        help="Write or overwrite eval/golden/ fixtures from the current mock outputs.",
+    )
 
 
 def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:

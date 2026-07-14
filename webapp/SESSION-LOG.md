@@ -2,7 +2,7 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`, mine = `gyairbyte/SE-Workflow`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: July 14, 2026 — ORCH-001: deterministic prerequisite planner for skill sequencing._
+_Last updated: July 14, 2026 — golden fixture promotion removed from product UI; regression tests remain as deterministic mock-baseline developer infrastructure._
 
 ## What the app is
 Local FastAPI + vanilla-JS UI (no build step) over the SE skills suite. `cd webapp && uv run app.py` → http://127.0.0.1:8787 (needs `CPATH/LIBRARY_PATH` for portaudio on this Mac — see "Run" below). Browse team → member's accounts → an account's opportunities → generated outputs; invoke skills; ask follow-ups on outputs; Live Transcribe a Zoom call with an AI copilot.
@@ -16,6 +16,36 @@ uv run --python 3.11 app.py    # port 8787
 ```
 
 ## Built this session (newest first — see `git log`)
+- **Golden fixture promotion removed from product UI (July 14).** The **Golden** button was removed from the output review panel because the regression test runs `MockExecutor`, which builds outputs from hardcoded Python templates rather than `SKILL.md`/Claude instructions. Promoting an SE-corrected output therefore does not make real skill runs follow that correction, and a promoted fixture that differs from the canned mock output would cause CI to fail for the wrong reason. The backend `POST /api/output/golden` and `GET /api/golden/manifests` endpoints, `webapp/golden.py:manifest_scenarios`, and the `eval/` regression harness remain as developer infrastructure for deterministic mock-baseline tests.
+  - `webapp/static/app.js`: removed the **Golden** button and `openGoldenModal`.
+  - `webapp/static/style.css`: removed golden-modal styles.
+  - `webapp/static/index.html`: cache-bust bump.
+  - `webapp/README.md` and this log: updated to describe the golden regression tests as mock-baseline only, not a product learning loop.
+
+- **Golden promotion review fixes (July 14).** The **Golden** button now opens an editable Markdown preview so the SE can review and correct the fixture text before saving. It requires an explicit "this content is synthetic and contains no customer or confidential data" confirmation, and it only allows saving to a Phase 1 manifest scenario actually exercised by `test_skill_regression.py`. `GET /api/golden/manifests` returns the active scenarios for a skill; `POST /api/output/golden` validates `confirm_synthetic`, the selected `scenario`, and accepts an edited `text` body.
+  - `webapp/static/app.js`: new `openGoldenModal` with a warning banner, editable textarea, scenario `<select>`, and synthetic-confirmation checkbox.
+  - `webapp/static/style.css`: golden-modal layout and warning styles.
+  - `webapp/app.py`: `OutputGolden` now requires `confirm_synthetic` and accepts `text`; new `GET /api/golden/manifests`; `POST /api/output/golden` validates the scenario against `golden.manifest_scenarios`.
+  - `webapp/golden.py`: new `manifest_scenarios(skill)` helper that reads `eval/manifests/phase1/*.yaml`.
+  - `eval/tests/test_webapp_output_golden.py`: updated to test active-fixture writing, edited-text saving, synthetic-confirmation rejection, untested-scenario rejection, and bad-path rejection.
+  - `webapp/static/index.html`: bumped `app.js?v=` cache-bust.
+  - `webapp/README.md` and this log: documented the corrected workflow.
+
+- **UX-001/EVAL-002: golden fixture promotion and regression tests to close the feedback loop (July 14).** Added `eval/golden.py` and `webapp/golden.py` to store canonical Markdown outputs for each skill/scenario, a **Promote to golden fixture** action in the output review panel, and `POST /api/output/golden` to copy a corrected/approved output into `eval/golden/{skill}/{scenario}.md`. Added `eval/tests/test_skill_regression.py` plus a `--update-golden` pytest flag; the test runs every Phase 1 manifest with the mock executor and diffs each generated skill output against the committed golden fixture, failing on unexpected drift. Missing fixtures can be seeded by running the regression test with `--update-golden`. Updated `webapp/README.md` and `IMPLEMENTATION-PLAN.md` to mark the feedback loop complete.
+  - `eval/golden.py`: new golden fixture store used by the regression suite.
+  - `webapp/golden.py`: webapp-side golden store so the API endpoint can write fixtures without depending on `eval` being on the runtime PYTHONPATH.
+  - `webapp/app.py`: new `POST /api/output/golden` endpoint; reads the output sidecar, sanitizes the scenario name, and writes the Markdown into the golden fixture tree.
+  - `webapp/static/app.js`: added **Golden** button in the feedback panel with a `prompt()` for scenario name and a toast on success.
+  - `webapp/static/index.html`: bumped `app.js?v=` cache-bust.
+  - `eval/conftest.py`: added `--update-golden` pytest option.
+  - `eval/tests/test_skill_regression.py`: parametrized test that runs each Phase 1 manifest and compares mock output to `eval/golden/{skill}/{manifest_id}.md`.
+  - `eval/tests/test_webapp_output_golden.py`: tests for the promotion endpoint and path-traversal rejection.
+  - `eval/golden/`: populated with baseline fixtures for the 12 Phase 1 scenarios.
+  - `.gitignore`: added `!eval/golden/**/*.md` so fixture files containing `-transcript` are not ignored.
+  - `webapp/SESSION-LOG.md` and `webapp/README.md`: documented the new action.
+  - `IMPLEMENTATION-PLAN.md`: marked UX-001 fully completed and EVAL-002 completed.
+  - Validation: `uv run --extra dev pytest eval/ -v` passes; mock suite passes; `./scripts/check-sync.sh` passes; `node --check webapp/static/app.js` passes.
+
 - **ORCH-001: deterministic prerequisite planner for skill sequencing (July 14).** Added `webapp/orchestrator.py` with `check_prerequisites` and wired it into the invoke flow. The planner reads the structured output sidecars (STRUCT-003) to verify that a skill has the required transcripts and valid upstream outputs before it runs. `GET /api/plan` returns a `ready`/`missing` result with `can_override: true`; `POST /api/invoke` now blocks on missing prerequisites unless `override_prerequisites=true` is sent. The frontend `invokeWithPlan` helper calls `/api/plan`, lists missing items in a browser `confirm`, and resends with the override flag if the SE chooses "Run anyway." Free-form instructions bypass the planner. Rules cover the workflow chain (`prep-call` → `post-call` → `biz-qual` → `tech-qual` → `connector-feasibility` → `poc-plan`) and late-stage skills (`roi-business-case`, `mutual-close-plan`), with transcript gates for `biz-qual`, `deal-assessment`, `post-call`, etc.
   - `webapp/orchestrator.py`: new `PlanResult` / `UpstreamStatus` models; `SKILL_PREREQUISITES` mapping; helpers to find the latest output and read its sidecar; transcript presence check.
   - `webapp/app.py`: new `GET /api/plan` route; `InvokeBody.override_prerequisites` field; `api_invoke` checks prerequisites before starting a job.
