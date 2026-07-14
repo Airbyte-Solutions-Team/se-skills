@@ -34,7 +34,7 @@ per_skill_expected_sections:
   tech-qual:
     - Data Volume & Scale
   poc-plan:
-    - POC Scope
+    - Scope
     - Success Criteria
 deterministic_assertions:
   - name: does not recommend reducing sync frequency

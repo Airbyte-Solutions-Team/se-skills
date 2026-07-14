@@ -1,14 +1,16 @@
-"""Workspace setup, skill execution, and manifest evaluation.
+"""Workspace setup, skill execution, manifest evaluation, and CLI.
 
 The runner is intentionally thin: it builds a temporary customer workspace,
 invokes one or more skills, and checks the resulting Markdown against the
-deterministic assertions in the manifest. It does not contain business
-logic; that lives in the `SKILL.md` prompts and the evaluation manifests.
+deterministic assertions in the manifest. Phase 1B adds a real `claude` executor,
+CLI entry points, and an optional semantic evaluator.
 """
 
 from __future__ import annotations
 
 import abc
+import argparse
+import ast
 import dataclasses
 import datetime
 import json
@@ -16,8 +18,11 @@ import os
 import re
 import shutil
 import subprocess
+import sys
+import tempfile
+import textwrap
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import yaml
 
@@ -41,15 +46,24 @@ class SkillResult:
 
 @dataclasses.dataclass
 class SkillEvaluationResult:
-    """Skill result plus the outcome of all deterministic checks."""
+    """Skill result plus the outcome of structural, invariant, and semantic checks."""
 
     skill: str
     passed: bool
     refused: bool
-    output_excerpt: str
+    output_text: str
+    output_path: Optional[Path]
     failures: List[str]
     warnings: List[str]
     assertion_results: List[Dict[str, Any]]
+    invocation_errors: List[str] = dataclasses.field(default_factory=list)
+    structural_failures: List[str] = dataclasses.field(default_factory=list)
+    invariant_failures: List[str] = dataclasses.field(default_factory=list)
+    semantic_results: List[Dict[str, Any]] = dataclasses.field(default_factory=list)
+
+    @property
+    def output_excerpt(self) -> str:
+        return self.output_text[:500]
 
 
 @dataclasses.dataclass
@@ -109,12 +123,16 @@ class WorkspaceBuilder:
         transcripts_dir = customers_dir / "_transcripts"
         transcripts_dir.mkdir(exist_ok=True)
 
+        account_dir = customers_dir / self.manifest.fixtures.account
+        account_dir.mkdir(exist_ok=True)
+        (account_dir / "outputs").mkdir(exist_ok=True)
+
         self._install_config(workspace_root)
         self._copy_transcripts(workspace_root)
         self._copy_existing_outputs(workspace_root)
 
         env = self._derive_env()
-        return Workspace(root=workspace_root, account="Acme", env=env)
+        return Workspace(root=workspace_root, account=self.manifest.fixtures.account, env=env)
 
     def _install_config(self, workspace_root: Path) -> None:
         config_source = self.eval_root / self.manifest.fixtures.config
@@ -162,12 +180,68 @@ class WorkspaceBuilder:
         }
 
 
-class ClaudeExecutor(SkillExecutor):
-    """Execute a skill by shelling out to `claude -p`."""
+class _ClaudeHome:
+    """Prepare an isolated `$HOME` for the `claude` CLI."""
 
-    def __init__(self, timeout: int = 300, permission_mode: str = "acceptEdits") -> None:
+    def __init__(self, workspace_root: Path, repo_root: Path) -> None:
+        self.workspace_root = workspace_root
+        self.repo_root = repo_root
+        self.home = workspace_root / ".claude-home"
+
+    def prepare(self) -> Path:
+        """Create an isolated home with a copy of the skills and stub external tools."""
+        if self.home.exists():
+            shutil.rmtree(self.home, ignore_errors=True)
+        self.home.mkdir(parents=True, exist_ok=True)
+        claude_dir = self.home / ".claude"
+        claude_dir.mkdir(exist_ok=True)
+
+        skills_dir = claude_dir / "skills"
+        shutil.copytree(self.repo_root / "skills", skills_dir, dirs_exist_ok=True)
+
+        bin_dir = self.home / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        self._write_stub(bin_dir / "sf", "sf (Salesforce CLI)")
+        self._write_stub(bin_dir / "gh", "gh (GitHub CLI)")
+        self._write_stub(bin_dir / "curl", "curl")
+        self._write_stub(bin_dir / "wget", "wget")
+
+        config_dir = self.home / ".config"
+        config_dir.mkdir(exist_ok=True)
+        cache_dir = self.home / ".cache"
+        cache_dir.mkdir(exist_ok=True)
+
+        return self.home
+
+    @staticmethod
+    def _write_stub(path: Path, name: str) -> None:
+        path.write_text(
+            f"#!/bin/sh\necho \"{name} is disabled in the evaluation environment\" >&2\nexit 1\n",
+            encoding="utf-8",
+        )
+        path.chmod(0o755)
+
+
+class ClaudeExecutor(SkillExecutor):
+    """Execute a skill by shelling out to `claude -p` in an isolated home."""
+
+    _repo_root: Optional[Path] = None
+
+    def __init__(
+        self,
+        timeout: int = 300,
+        permission_mode: str = "acceptEdits",
+        bare: bool = True,
+        repo_root: Optional[Path] = None,
+    ) -> None:
         self.timeout = timeout
         self.permission_mode = permission_mode
+        self.bare = bare
+        self._repo_root = repo_root or Path(__file__).parent.parent
+
+    @classmethod
+    def available(cls) -> bool:
+        return shutil.which("claude") is not None
 
     def run(
         self,
@@ -178,17 +252,34 @@ class ClaudeExecutor(SkillExecutor):
         output_dir: Path,
         manifest: Manifest,
     ) -> SkillResult:
+        claude_home = _ClaudeHome(workspace_root, self._repo_root).prepare()
+
         prompt = f"Use the {skill} skill for {account}."
         if extra_prompt:
             prompt += f" {extra_prompt}"
-        prompt += (
-            f" IMPORTANT: save any output file under {output_dir}/{skill}/ "
-            "instead of the default account outputs folder."
-        )
 
-        cmd = ["claude", "-p", prompt, "--permission-mode", self.permission_mode]
+        cmd = ["claude", "-p", prompt]
+        if self.bare:
+            cmd.append("--bare")
+        if self.permission_mode:
+            cmd.extend(["--permission-mode", self.permission_mode])
+
+        disallowed = [
+            "Bash(sf *)",
+            "Bash(gh *)",
+            "Bash(curl *)",
+            "Bash(wget *)",
+            "Bash(git push *)",
+            "Bash(git clone *)",
+        ]
+        cmd.extend(["--disallowed-tools", " ".join(disallowed)])
+
         env = os.environ.copy()
+        env["HOME"] = str(claude_home)
+        env["XDG_CONFIG_HOME"] = str(claude_home / ".config")
+        env["XDG_CACHE_HOME"] = str(claude_home / ".cache")
         env["SE_WORKSPACE"] = str(workspace_root)
+        env["PATH"] = f"{claude_home / 'bin'}{os.pathsep}{env.get('PATH', '')}"
 
         try:
             proc = subprocess.run(
@@ -243,6 +334,7 @@ class ClaudeExecutor(SkillExecutor):
                 "refused to run",
                 "zero transcripts",
                 "no transcripts",
+                "cannot run",
             ]
         )
 
@@ -265,7 +357,7 @@ class MockOutputBuilder:
         ],
         "full-qual": ["Business Qual Summary", "Technical Qual Summary"],
         "connector-feasibility": ["Connector Coverage", "Fit Verdict", "Recommended Next Actions"],
-        "poc-plan": ["POC Scope", "Success Criteria", "Timeline", "Risks & Blockers"],
+        "poc-plan": ["Scope", "Success Criteria", "Timeline", "Risks & Mitigations"],
         "roi-business-case": ["At a Glance", "One-Slide Summary", "TCO Comparison", "Assumptions"],
         "mutual-close-plan": ["Mutual Action Plan", "Owners & Dates", "Risk Mitigation"],
         "follow-up-email": ["Email"],
@@ -368,7 +460,7 @@ class MockOutputBuilder:
             return self._data_volume_body()
         if section == "Success Criteria":
             return self._success_criteria_body()
-        if section == "POC Scope":
+        if section == "Scope":
             return self._poc_scope_body()
         if section == "Connector Coverage":
             return self._connector_coverage_body()
@@ -388,7 +480,7 @@ class MockOutputBuilder:
             return self._deployment_model_body()
         if section == "Security & Compliance":
             return self._security_body()
-        return f"*Section content for {section}.*"
+        return f"*Section content for {section}."
 
     def _data_volume_body(self) -> str:
         scenario = self._scenario()
@@ -562,12 +654,165 @@ class MockExecutor(SkillExecutor):
         )
 
 
+class SemanticEvaluator:
+    """Optional LLM-as-judge evaluator using the `claude` CLI.
+
+    The evaluator is intentionally minimal: it takes a rubric from the manifest,
+    asks a model to assess the generated output, and returns machine-readable
+    results with excerpts and confidence. It does not run unless explicitly
+    requested, so deterministic tests remain fast and free.
+    """
+
+    def __init__(self, timeout: int = 300, permission_mode: str = "readOnly", bare: bool = True) -> None:
+        self.timeout = timeout
+        self.permission_mode = permission_mode
+        self.bare = bare
+
+    @classmethod
+    def available(cls) -> bool:
+        return shutil.which("claude") is not None and bool(os.environ.get("ANTHROPIC_API_KEY"))
+
+    def evaluate(self, output: str, manifest: Manifest, skill: str) -> List[Dict[str, Any]]:
+        """Return a list of semantic check results for the given output."""
+        rubric = self._rubric(manifest)
+        if not rubric:
+            return []
+
+        prompt = self._build_prompt(output, manifest, skill, rubric)
+        result = self._call_claude(prompt)
+        return self._parse_result(result, rubric)
+
+    def _rubric(self, manifest: Manifest) -> List[str]:
+        if manifest.model_judge.enabled and manifest.model_judge.criteria:
+            return manifest.model_judge.criteria
+        combined: List[str] = []
+        for item in manifest.required_behavior:
+            combined.append(f"Required: {item}")
+        for item in manifest.forbidden_behavior:
+            combined.append(f"Forbidden: {item}")
+        return combined
+
+    def _build_prompt(self, output: str, manifest: Manifest, skill: str, rubric: List[str]) -> str:
+        rubric_text = "\n".join(f"{i + 1}. {item}" for i, item in enumerate(rubric))
+        return textwrap.dedent(
+            f"""\
+            You are an expert evaluator assessing an AI-generated SE skill output.
+
+            Manifest: {manifest.id} ({manifest.title})
+            Skill: {skill}
+
+            Evaluate the output against each item in the rubric below. For each item,
+            return a JSON object with these fields:
+            - "criterion": the rubric item text
+            - "passed": true/false
+            - "confidence": "High", "Medium", or "Low"
+            - "excerpt": a short, relevant quote from the output (or empty string if none)
+            - "reasoning": one concise sentence explaining the verdict
+
+            Return ONLY a JSON array of objects. Do not wrap it in markdown fences.
+
+            Rubric:
+            {rubric_text}
+
+            Output:
+            ---
+            {output}
+            ---
+            """
+        )
+
+    def _call_claude(self, prompt: str) -> subprocess.CompletedProcess:
+        cmd = ["claude", "-p", prompt]
+        if self.bare:
+            cmd.append("--bare")
+        if self.permission_mode:
+            cmd.extend(["--permission-mode", self.permission_mode])
+
+        env = os.environ.copy()
+        home = Path(tempfile.mkdtemp(prefix="claude-semantic-"))
+        env["HOME"] = str(home)
+        env["XDG_CONFIG_HOME"] = str(home / ".config")
+        env["XDG_CACHE_HOME"] = str(home / ".cache")
+
+        try:
+            return subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,
+                env=env,
+            )
+        finally:
+            shutil.rmtree(home, ignore_errors=True)
+
+    def _parse_result(self, proc: subprocess.CompletedProcess, rubric: List[str]) -> List[Dict[str, Any]]:
+        text = proc.stdout or ""
+        if proc.returncode != 0:
+            return [
+                {
+                    "criterion": rubric[0] if rubric else "semantic evaluation",
+                    "passed": False,
+                    "confidence": "Low",
+                    "excerpt": "",
+                    "reasoning": f"claude judge exited {proc.returncode}: {proc.stderr[:500]}",
+                }
+            ]
+
+        # Find the first JSON array in the response.
+        match = re.search(r"\[.*\]", text, re.DOTALL)
+        if not match:
+            return [
+                {
+                    "criterion": rubric[0] if rubric else "semantic evaluation",
+                    "passed": False,
+                    "confidence": "Low",
+                    "excerpt": "",
+                    "reasoning": "Could not parse a JSON array from the judge response.",
+                }
+            ]
+
+        try:
+            parsed = json.loads(match.group(0))
+            if isinstance(parsed, list):
+                return [self._normalize_item(item) for item in parsed]
+        except json.JSONDecodeError:
+            pass
+
+        return [
+            {
+                "criterion": rubric[0] if rubric else "semantic evaluation",
+                "passed": False,
+                "confidence": "Low",
+                "excerpt": "",
+                "reasoning": "Judge response contained invalid JSON.",
+            }
+        ]
+
+    @staticmethod
+    def _normalize_item(item: Any) -> Dict[str, Any]:
+        if not isinstance(item, dict):
+            item = {"criterion": str(item), "passed": False, "confidence": "Low", "excerpt": "", "reasoning": "Unexpected item type."}
+        return {
+            "criterion": str(item.get("criterion", "")),
+            "passed": bool(item.get("passed", False)),
+            "confidence": str(item.get("confidence", "Low")),
+            "excerpt": str(item.get("excerpt", "")),
+            "reasoning": str(item.get("reasoning", "")),
+        }
+
+
 class ManifestEvaluator:
     """Evaluate one manifest against a skill executor."""
 
-    def __init__(self, manifest: Manifest, executor: SkillExecutor) -> None:
+    def __init__(
+        self,
+        manifest: Manifest,
+        executor: SkillExecutor,
+        semantic_evaluator: Optional[SemanticEvaluator] = None,
+    ) -> None:
         self.manifest = manifest
         self.executor = executor
+        self.semantic_evaluator = semantic_evaluator
 
     def evaluate(self, workspace: Workspace) -> ManifestResult:
         """Run every skill in the manifest and check deterministic assertions."""
@@ -580,7 +825,11 @@ class ManifestEvaluator:
                 skill=skill,
                 workspace_root=workspace.root,
                 account=workspace.account,
-                extra_prompt="This is a synthetic evaluation run. Do not use real customer data.",
+                extra_prompt=(
+                    "This is a synthetic evaluation run. Do not use real customer data. "
+                    "If the skill offers to skip missing upstream qualification docs, choose the 'skip' option "
+                    "and produce the requested output with appropriate flags. Do not chain into other skills."
+                ),
                 output_dir=output_dir,
                 manifest=self.manifest,
             )
@@ -602,18 +851,28 @@ class ManifestEvaluator:
     def _evaluate_skill(
         self, skill: str, result: SkillResult, env: Dict[str, Any]
     ) -> SkillEvaluationResult:
-        failures: List[str] = []
+        invocation_errors: List[str] = []
+        structural_failures: List[str] = []
+        invariant_failures: List[str] = []
         warnings: List[str] = []
         assertion_results: List[Dict[str, Any]] = []
         output = result.output_text
 
-        # Required sections
+        if result.returncode != 0:
+            invocation_errors.append(
+                f"[{skill}] claude exited with code {result.returncode}: {result.stderr[:500]}"
+            )
+        elif result.stderr:
+            # Non-fatal stderr is recorded as a warning, not a failure.
+            warnings.append(f"[{skill}] stderr: {result.stderr[:500]}")
+
+        # Required sections (structural validation).
         for section in self.manifest.expected_sections_for_skill(skill):
             if not self._has_section(output, section):
                 msg = f"[{skill}] missing required section: {section}"
-                failures.append(msg)
+                structural_failures.append(msg)
 
-        # Deterministic assertions
+        # Deterministic assertions (business-invariant validation).
         for assertion in self.manifest.deterministic_assertions:
             if assertion.skills is not None and skill not in assertion.skills:
                 continue
@@ -625,7 +884,7 @@ class ManifestEvaluator:
                     ).evaluate(assertion.when)
                 except Exception as exc:
                     msg = f"[{skill}] assertion '{assertion.name}' when-clause error: {exc}"
-                    failures.append(msg)
+                    invariant_failures.append(msg)
                     applicable = False
             if not applicable:
                 continue
@@ -635,7 +894,7 @@ class ManifestEvaluator:
                 ).evaluate(assertion.check)
             except Exception as exc:
                 passed = False
-                failures.append(f"[{skill}] assertion '{assertion.name}' error: {exc}")
+                invariant_failures.append(f"[{skill}] assertion '{assertion.name}' error: {exc}")
             assertion_results.append(
                 {
                     "name": assertion.name,
@@ -644,24 +903,48 @@ class ManifestEvaluator:
                 }
             )
             if not passed:
-                failures.append(
+                invariant_failures.append(
                     f"[{skill}] assertion '{assertion.name}' ({assertion.severity}) failed"
                 )
 
-        # Refusal expectations
+        # Refusal expectations (informational warnings).
         if skill in self.manifest.expected_refusal_for and not result.refused:
             warnings.append(
                 f"[{skill}] expected a refusal but the skill produced an output"
             )
+        if result.refused and skill not in self.manifest.expected_refusal_for:
+            warnings.append(
+                f"[{skill}] skill refused unexpectedly; treating as a model-behavior warning"
+            )
+
+        # Optional semantic / model-behavior evaluation.
+        semantic_results: List[Dict[str, Any]] = []
+        if self.semantic_evaluator is not None:
+            semantic_results = self.semantic_evaluator.evaluate(output, self.manifest, skill)
+
+        failures = invocation_errors + structural_failures + invariant_failures
+        semantic_failed = [s for s in semantic_results if not s.get("passed")]
+        if semantic_failed:
+            for item in semantic_failed:
+                failures.append(
+                    f"[{skill}] semantic check failed: {item['criterion']} ({item['confidence']})"
+                )
+
+        passed = not failures
 
         return SkillEvaluationResult(
             skill=skill,
-            passed=not failures,
+            passed=passed,
             refused=result.refused,
-            output_excerpt=output[:500],
+            output_text=output,
+            output_path=result.output_path,
             failures=failures,
             warnings=warnings,
             assertion_results=assertion_results,
+            invocation_errors=invocation_errors,
+            structural_failures=structural_failures,
+            invariant_failures=invariant_failures,
+            semantic_results=semantic_results,
         )
 
     @staticmethod
@@ -679,10 +962,32 @@ class EvaluationReport:
         report_dir = report_dir or Path(__file__).parent / "results"
         report_dir.mkdir(parents=True, exist_ok=True)
         path = report_dir / f"{result.manifest_id}.json"
+
+        structural = []
+        invariants = []
+        invocation = []
+        semantic = []
+        warnings = []
+        for sr in result.skill_results:
+            structural.extend([{"skill": sr.skill, "failure": f} for f in sr.structural_failures])
+            invariants.extend([{"skill": sr.skill, "failure": f} for f in sr.invariant_failures])
+            invocation.extend([{"skill": sr.skill, "failure": f} for f in sr.invocation_errors])
+            semantic.extend(
+                [{"skill": sr.skill, **s} for s in sr.semantic_results]
+            )
+            warnings.extend([{"skill": sr.skill, "warning": w} for w in sr.warnings])
+
         payload = {
             "manifest_id": result.manifest_id,
             "title": result.title,
             "status": result.status,
+            "categories": {
+                "invocation": {"passed": not invocation, "failures": invocation},
+                "structural": {"passed": not structural, "failures": structural},
+                "business_invariants": {"passed": not invariants, "failures": invariants},
+                "semantic": {"passed": not [s for s in semantic if not s.get("passed")], "results": semantic},
+                "warnings": warnings,
+            },
             "failures": result.failures,
             "skill_results": [
                 {
@@ -690,9 +995,15 @@ class EvaluationReport:
                     "passed": sr.passed,
                     "refused": sr.refused,
                     "output_excerpt": sr.output_excerpt,
+                    "output_text": sr.output_text,
+                    "output_path": str(sr.output_path) if sr.output_path else None,
                     "failures": sr.failures,
                     "warnings": sr.warnings,
                     "assertion_results": sr.assertion_results,
+                    "invocation_errors": sr.invocation_errors,
+                    "structural_failures": sr.structural_failures,
+                    "invariant_failures": sr.invariant_failures,
+                    "semantic_results": sr.semantic_results,
                 }
                 for sr in result.skill_results
             ],
@@ -720,3 +1031,187 @@ class EvaluationReport:
         }
         path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
         return path
+
+
+def _executor_for_name(name: str, repo_root: Path) -> SkillExecutor:
+    if name == "mock":
+        return MockExecutor()
+    if name == "claude":
+        if not ClaudeExecutor.available():
+            raise RuntimeError("`claude` CLI is not installed or not on PATH")
+        return ClaudeExecutor(repo_root=repo_root)
+    if name == "anthropic":
+        raise RuntimeError("Anthropic API executor is not implemented; use `claude` or `mock`.")
+    raise ValueError(f"Unknown executor: {name}")
+
+
+def _run_manifest(
+    manifest_path: Path,
+    repo_root: Path,
+    executor_name: str,
+    retain_workspace: bool,
+    semantic: bool,
+    report_dir: Optional[Path] = None,
+    work_dir: Optional[Path] = None,
+    quiet: bool = False,
+) -> ManifestResult:
+    """Run a single manifest inside a temporary or caller-provided work directory."""
+    manifest = Manifest.from_yaml(manifest_path)
+    executor = _executor_for_name(executor_name, repo_root)
+    semantic_evaluator = SemanticEvaluator() if semantic and SemanticEvaluator.available() else None
+
+    created_by_runner = work_dir is None
+    if created_by_runner:
+        work_dir = Path(tempfile.mkdtemp(prefix="se-eval-"))
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    workspace = WorkspaceBuilder(manifest, work_dir, repo_root).build()
+    result = ManifestEvaluator(manifest, executor, semantic_evaluator=semantic_evaluator).evaluate(workspace)
+
+    report_path = EvaluationReport.write(result, report_dir=report_dir)
+    result.report_path = report_path
+
+    if retain_workspace and not quiet:
+        print(f"Retained workspace: {workspace.root}")
+    elif created_by_runner:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+    return result
+
+
+def _run_suite(
+    manifest_dir: Path,
+    repo_root: Path,
+    executor_name: str,
+    retain_failures: bool,
+    semantic: bool,
+    report_dir: Optional[Path],
+) -> List[ManifestResult]:
+    """Run every manifest in `manifest_dir` sequentially, keeping failed workspaces when requested."""
+    paths = sorted(manifest_dir.glob("*.yaml"))
+    if not paths:
+        raise FileNotFoundError(f"No manifests found in {manifest_dir}")
+
+    suite_root = Path(tempfile.mkdtemp(prefix="se-suite-"))
+    results: List[ManifestResult] = []
+    try:
+        for path in paths:
+            print(f"\n=== Running {path.stem} ===")
+            manifest_work_dir = suite_root / path.stem
+            manifest_work_dir.mkdir(parents=True, exist_ok=True)
+            result = _run_manifest(
+                manifest_path=path,
+                repo_root=repo_root,
+                executor_name=executor_name,
+                retain_workspace=True,  # caller cleans up non-failures
+                semantic=semantic,
+                report_dir=report_dir,
+                work_dir=manifest_work_dir,
+                quiet=True,
+            )
+            results.append(result)
+
+            if result.passed and not retain_failures:
+                shutil.rmtree(manifest_work_dir, ignore_errors=True)
+
+            print(f"{result.manifest_id}: {result.status}")
+            if result.failures:
+                for failure in result.failures:
+                    print(f"  - {failure}")
+
+        EvaluationReport.write_combined(results, report_dir=report_dir)
+    finally:
+        if not retain_failures or all(r.passed for r in results):
+            shutil.rmtree(suite_root, ignore_errors=True)
+        else:
+            print(f"\nRetained failed workspaces in: {suite_root}")
+
+    return results
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    parser = argparse.ArgumentParser(prog="python -m eval.runner", description="SE Skills evaluation runner")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "--executor",
+        choices=["mock", "claude", "anthropic"],
+        default="mock",
+        help="Executor to use. `claude` requires the `claude` CLI and ANTHROPIC_API_KEY.",
+    )
+    common.add_argument(
+        "--semantic",
+        action="store_true",
+        default=False,
+        help="Run the optional semantic (LLM-as-judge) evaluator.",
+    )
+    common.add_argument(
+        "--report-dir",
+        type=Path,
+        default=None,
+        help="Directory for per-manifest and combined JSON reports (default: eval/results).",
+    )
+
+    run_parser = subparsers.add_parser("run", parents=[common], help="Evaluate a single manifest")
+    run_parser.add_argument("--manifest", required=True, type=Path, help="Path to a manifest YAML file")
+    run_parser.add_argument(
+        "--retain-workspace",
+        action="store_true",
+        help="Keep the temporary workspace after the run for debugging.",
+    )
+
+    suite_parser = subparsers.add_parser("run-suite", parents=[common], help="Evaluate all manifests in a directory")
+    suite_parser.add_argument("--manifest-dir", required=True, type=Path, help="Directory containing manifest YAML files")
+    suite_parser.add_argument(
+        "--retain-failures",
+        action="store_true",
+        help="Keep the workspace for any scenario that fails.",
+    )
+
+    list_parser = subparsers.add_parser("list", help="List available manifests")
+    list_parser.add_argument("--manifest-dir", type=Path, default=None, help="Directory to list")
+
+    args = parser.parse_args(argv)
+    repo_root = Path(__file__).parent.parent
+
+    if args.command == "list":
+        manifest_dir = args.manifest_dir or repo_root / "eval" / "manifests" / "phase1"
+        for path in sorted(manifest_dir.glob("*.yaml")):
+            manifest = Manifest.from_yaml(path)
+            print(f"{path.stem}: {manifest.title}")
+        return 0
+
+    if args.command == "run":
+        result = _run_manifest(
+            manifest_path=args.manifest,
+            repo_root=repo_root,
+            executor_name=args.executor,
+            retain_workspace=args.retain_workspace,
+            semantic=args.semantic,
+            report_dir=args.report_dir,
+        )
+        print(f"\n{result.manifest_id}: {result.status}")
+        if result.failures:
+            for failure in result.failures:
+                print(f"  - {failure}")
+        print(f"Report: {result.report_path}")
+        return 0 if result.passed else 1
+
+    if args.command == "run-suite":
+        results = _run_suite(
+            manifest_dir=args.manifest_dir,
+            repo_root=repo_root,
+            executor_name=args.executor,
+            retain_failures=args.retain_failures,
+            semantic=args.semantic,
+            report_dir=args.report_dir,
+        )
+        print(f"\nCombined status: {'passed' if all(r.passed for r in results) else 'failed'}")
+        return 0 if all(r.passed for r in results) else 1
+
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

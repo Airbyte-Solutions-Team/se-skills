@@ -88,6 +88,12 @@ class UnsafeExpressionError(Exception):
     """Raised when an assertion expression uses disallowed syntax."""
 
 
+def section_contains_any_case_insensitive(markdown: str, heading: str, phrases: Sequence[str]) -> bool:
+    """Return True when any `phrase` appears inside the named section."""
+    section = extract_section(markdown, heading)
+    return any(contains_case_insensitive(section, phrase) for phrase in phrases)
+
+
 class SafeExpressionEvaluator:
     """Evaluate a small boolean expression against an assertion context."""
 
@@ -97,6 +103,8 @@ class SafeExpressionEvaluator:
         "contains_all_case_insensitive": contains_all_case_insensitive,
         "has_section": has_section,
         "section_contains": section_contains,
+        "section_contains_any_case_insensitive": section_contains_any_case_insensitive,
+        "extract_section": extract_section,
     }
 
     _allowed_op_types = {

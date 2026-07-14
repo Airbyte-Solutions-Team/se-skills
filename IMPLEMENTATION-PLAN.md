@@ -2,7 +2,7 @@
 
 > Source of truth for planned improvements to the SE Skills Suite.
 > Created from the repository assessment dated 2026-07-14.
-> Status: Phase 0 complete (plan created). All backlog items are `Proposed`.
+> Status: Phase 1 merged (#1, 2026-07-14). Phase 1B implemented as real-skill evaluation harness. Broader Phase 2 items remain `Proposed`.
 
 ---
 
@@ -674,7 +674,54 @@ This keeps the fast CI deterministic and makes the slower, more expensive evalua
 
 ---
 
-## 9. Definition of done
+## 9. Phase 1B: real skill-output evaluation (implemented)
+
+Phase 1B extends the Phase 1 framework so existing manifests can be executed against the actual skills in an isolated, synthetic workspace.
+
+### 9.1 Delivered
+
+- `eval/runner.py` CLI: `list`, `run`, `run-suite` subcommands.
+- `WorkspaceBuilder` creates a temporary customer workspace with synthetic transcripts and `.se-config.yaml`.
+- `_ClaudeHome` prepares an isolated `$HOME`, copies `skills/` into it, stubs external tools (`sf`, `gh`, `curl`, `wget`), and redirects `XDG_*` paths.
+- `ClaudeExecutor` invokes `claude -p --bare --permission-mode acceptEdits --disallowed-tools ...` with `SE_WORKSPACE` set to the temp workspace.
+- Categorized reporting: invocation, structural, business-invariants, semantic, warnings.
+- Failed outputs are preserved in `eval/results/` and temp workspaces are cleaned by default (`--retain-workspace` to keep).
+- Optional semantic evaluator scaffold uses `claude` as a judge with manifest rubrics, returning machine-readable results.
+- Business-invariant checks strengthened for sync-frequency preservation, constraint removal, alternative scenarios, unverified connectors/entitlements, missing-input handling, SFDC conflict, and `next-move` evidence.
+
+### 9.2 Execution modes
+
+1. Deterministic: `uv run --extra dev pytest eval/ -v`
+2. Single live scenario: `uv run python -m eval.runner run --manifest eval/manifests/phase1/hourly-sync-constraint.yaml --executor claude`
+3. Suite: `uv run python -m eval.runner run-suite --manifest-dir eval/manifests/phase1 --executor claude`
+
+### 9.3 Safety constraints
+
+- Temp `HOME` and `SE_WORKSPACE`; real `~/.se-skills` / `~/airbyte-work` are never used.
+- External CLI tools are stubbed; dangerous `git`/network commands are disallowed.
+- `salesforce.enabled: false` in synthetic config.
+- Skills are copied into the temp home, not symlinked, to avoid sandbox escape.
+- Generated outputs go to `eval/results/` (gitignored); nothing is committed.
+
+### 9.4 Acceptance criteria
+
+- [x] `pytest eval/` still passes with no model access.
+- [x] A single Phase 1 scenario runs end-to-end against the real `claude` CLI.
+- [x] The hourly-sync-constraint scenario passes against real skill output.
+- [x] Report separates structural, business-invariant, semantic, and invocation failures.
+- [x] No real customer workspaces or data are touched.
+
+### 9.5 Limitations and next work
+
+- Semantic evaluator is a scaffold; it returns structured JSON but has not been run against all scenarios.
+- `poc-plan` initially paused on missing `biz-qual`/`deployment-qual`; the runner now instructs the skill to skip missing upstream docs and produce with flags.
+- Some manifest expected-section names were refined to match actual skill headings (`Scope` instead of `POC Scope`).
+- `skills/roi-business-case/SKILL.md` already covers capacity-based pricing and loaded cost; it is not in the Phase 1B skill list but should be added to the Phase 2 evaluation suite if capacity sizing becomes a priority.
+- Phase 1B does not implement golden-output regression diffs, CI, prompt versioning, or webapp changes — those remain Phase 2/Proposed.
+
+---
+
+## 10. Definition of done
 
 A backlog item is complete only when:
 
@@ -715,3 +762,4 @@ Record durable architecture and product decisions here. Only record decisions su
 |---|---|---|---|
 | 2026-07-14 | Created `IMPLEMENTATION-PLAN.md` | Devin | Phase 0 complete; all backlog items `Proposed`. |
 | 2026-07-14 | Completed Phase 1: `eval/` framework, manifest schema, runner, 6 synthetic scenarios, and baseline report | Devin | All deterministic tests pass; model-dependent and real-skill invocation are optional. `skills/` and `webapp/` were not modified. |
+| 2026-07-14 | Completed Phase 1B: real-skill evaluation runner, isolated `claude` execution, categorized reporting, semantic evaluator scaffold | Devin | Hourly-sync-constraint and next-move-low-evidence validated against real `claude` output in isolated temp workspaces. `sfdc-transcript-conflict.yaml` gitignore fix staged. `skills/` and `webapp/` were not modified. |

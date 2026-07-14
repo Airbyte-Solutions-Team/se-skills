@@ -1,0 +1,71 @@
+manifest_version: "1.0"
+id: phase1-sfdc-transcript-conflict
+title: Salesforce information conflicts with the customer transcript
+skills_under_test:
+  - deal-assessment
+  - next-move
+tags:
+  - sfdc
+  - conflict
+  - ground-truth
+fixtures:
+  transcripts:
+    - source: fixtures/transcripts/acme-2026-07-01-sfdc-conflict.txt
+      target: _transcripts/Acme-07.01.26.txt
+  config: fixtures/config/synthetic-se-config.yaml
+environment:
+  salesforce:
+    enabled: true
+    stage: Closed-Won
+    close_date: "2026-07-21"
+    amount: 100000
+customer_constraints:
+  - Still evaluating options.
+  - Procurement wants to see a POC before committing.
+  - No economic buyer identified yet.
+  - Q4 timeline at earliest.
+available_evidence:
+  - Salesforce says Closed-Won with close date next week and $100K amount.
+  - Transcript says still evaluating, no economic buyer, Q4 timeline.
+required_behavior:
+  - Flag the SFDC-vs-reality mismatch.
+  - Trust the transcript over SFDC for deal stage and timeline.
+  - Lower confidence accordingly.
+forbidden_behavior:
+  - Using the SFDC stage as ground truth without flagging the conflict.
+  - Recommending POC or ROI motion before the conflict is resolved.
+expected_sections:
+  - At a Glance
+  - Source Coverage
+per_skill_expected_sections:
+  deal-assessment:
+    - MEDDPICC Pre-Scorecard
+    - Probability Verdict
+  next-move:
+    - Current read
+    - Ranked Next Moves
+deterministic_assertions:
+  - name: flags the SFDC vs transcript conflict
+    target: markdown
+    skills:
+      - deal-assessment
+      - next-move
+    check: "contains_any_case_insensitive(output, ['conflict', 'sfdc vs', 'reality', 'premature', ' Closed-Won'])"
+    severity: major
+  - name: does not report Closed-Won as established fact
+    target: markdown
+    skills:
+      - deal-assessment
+    check: "not (contains_case_insensitive(output, 'Closed-Won') and not contains_any_case_insensitive(output, ['conflict', 'sfdc says', 'sfdc shows', 'premature']))"
+    severity: blocker
+  - name: next-move does not recommend poc-plan first
+    target: markdown
+    skills:
+      - next-move
+    check: "not section_contains(output, 'Ranked Next Moves', 'poc-plan')"
+    severity: major
+  - name: source coverage is present
+    target: markdown
+    check: "has_section(output, 'Source Coverage')"
+    severity: blocker
+failure_severity: major

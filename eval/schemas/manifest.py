@@ -52,6 +52,7 @@ class Fixtures(BaseModel):
     transcripts: List[FixtureItem] = Field(default_factory=list)
     existing_outputs: List[FixtureItem] = Field(default_factory=list)
     config: str = Field("fixtures/config/synthetic-se-config.yaml", description="Path to the SE config fixture.")
+    account: str = Field("Acme", description="Synthetic account name used in the scenario.")
 
 
 class Environment(BaseModel):

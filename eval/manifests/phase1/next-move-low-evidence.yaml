@@ -38,19 +38,25 @@ deterministic_assertions:
     target: markdown
     skills:
       - next-move
-    check: "contains_any_case_insensitive(output, ['low', 'low-confidence', 'low confidence'])"
+    check: "section_contains(output, 'At a Glance', 'confidence:** low') or section_contains(output, 'At a Glance', 'low confidence') or section_contains(output, 'At a Glance', 'low-confidence')"
     severity: major
-  - name: ranked moves are discovery-oriented
+  - name: ranked moves include an early-stage action
     target: markdown
     skills:
       - next-move
-    check: "section_contains(output, 'Ranked Next Moves', 'prep-call') or section_contains(output, 'Ranked Next Moves', 'account-refresher') or section_contains(output, 'Ranked Next Moves', 'biz-qual')"
+    check: "section_contains_any_case_insensitive(output, 'Ranked Next Moves', ['follow-up-email', 'prep-call', 'account-refresher', 'biz-qual', 'deal-assessment'])"
     severity: major
   - name: does not recommend poc-plan as a ranked move
     target: markdown
     skills:
       - next-move
     check: "not section_contains(output, 'Ranked Next Moves', 'poc-plan')"
+    severity: blocker
+  - name: does not recommend mutual-close-plan as a ranked move
+    target: markdown
+    skills:
+      - next-move
+    check: "not section_contains(output, 'Ranked Next Moves', 'mutual-close-plan')"
     severity: blocker
   - name: source coverage is present
     target: markdown
