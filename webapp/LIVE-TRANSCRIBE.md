@@ -39,14 +39,14 @@ brew install blackhole-2ch   # for system-audio capture (still needed)
 Audio MIDI Setup: a **Multi-Output** (speakers + BlackHole, so you still hear the call) and optionally an **Aggregate** (mic + BlackHole) for You/Call labels. Set `ANTHROPIC_API_KEY` for the quick path.
 
 ## Verified
-Single-stream capture → transcription → SSE panel, a deep "is a Snowflake connector feasible?" → `claude -p` → codebase-grounded answer, Stop & Save → transcript file written. (Two-channel labels + quick streaming path are coded but not yet exercised live — needs BlackHole + an API key on the machine.)
+Single-stream capture → transcription → SSE panel, a deep "is a Snowflake connector feasible?" → `claude -p` → codebase-grounded answer, Stop & Save → transcript file written. Session recovery and custom mic/call labels are covered by deterministic tests but not yet exercised live — needs BlackHole + an API key on the machine.
 
 ## TODO / future ideas (where to pick up)
-- [ ] **Verify the two-channel You/Call path live** once BlackHole is installed (start with both mic + BlackHole devices; confirm labels merge correctly by timestamp).
+- [ ] **Verify the two-channel label path live** once BlackHole is installed (start with both mic + BlackHole devices; confirm labels merge correctly by timestamp and that custom mic/call labels render).
 - [ ] **Verify the quick ⚡ streaming path** once `ANTHROPIC_API_KEY` is set (token-by-token render).
 - [ ] **Rolling-window + running summary** for long calls — currently the ask-bar sends the transcript *tail* (last ~12k chars). For 1hr+ calls, add a periodic running summary of older content + prompt-caching on the stable prefix (per the `claude-api` skill).
 - [ ] **Partial (interim) transcript segments** — currently only finalized ~5s windows show. Could show greyed live partials for lower perceived latency.
-- [ ] **Session recovery** — `SESSIONS` is in-memory; a server restart mid-call loses the live session (the saved transcript file is safe). Could persist like the `.runs/` job cache.
+- [x] **Session recovery** — live sessions are now persisted to disk and recovered on startup; a server restart mid-call preserves the transcript and offers to save it.
 - [ ] **Per-person labels** — only achievable with a meeting bot (Recall.ai) tapping per-participant audio; deliberately out of scope.
 - [ ] **Auto-run post-call on Stop** — optional, instead of the manual shortcut.
 - [ ] **whisper.cpp (Metal) escape hatch** if `small`/`medium` latency is too high on a given Mac.

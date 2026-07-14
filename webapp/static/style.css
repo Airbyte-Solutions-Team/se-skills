@@ -675,7 +675,8 @@ a.live-btn { text-decoration: none; display: inline-flex; align-items: center; }
 
 .live-setup { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin: 4px 0 16px; }
 .live-setup label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--muted); }
-.live-setup select { font: inherit; font-size: 14px; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-width: 220px; }
+.live-setup select, .live-setup input[type="text"] { font: inherit; font-size: 14px; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-width: 220px; }
+.live-setup input[type="text"] { margin-top: 6px; }
 .live-timer { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 16px; color: var(--muted); }
 .live-timer.rec { color: var(--danger); }
 .live-timer.rec::before { content: "● "; animation: recpulse 1.4s ease-in-out infinite; }
@@ -719,6 +720,7 @@ a.live-btn { text-decoration: none; display: inline-flex; align-items: center; }
 .seg-who { font-weight: 700; font-size: 12px; padding: 1px 7px; border-radius: 5px; margin-right: 7px; }
 .seg-you { color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); }
 .seg-call { color: var(--accent2); background: color-mix(in srgb, var(--accent2) 15%, transparent); }
+.seg-unknown { color: var(--muted); background: color-mix(in srgb, var(--muted) 15%, transparent); }
 
 /* Q&A thread: newest at bottom (chat-style), auto-scrolls down with transcript */
 .qa-item { margin: 0 0 16px; }

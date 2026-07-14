@@ -2113,8 +2113,8 @@ async function openOutput(path, title, ctx) {
   // After deleting the open output, leave the now-gone doc → back to the opp.
   wireDownloadMenus(view, goBack);
 
-  const compareBtn = document.getElementById("doc-compare");
-  if (compareBtn && ctx) compareBtn.onclick = () => openDealDiffModal(ctx, path);
+  const compareBtnEl = document.getElementById("doc-compare");
+  if (compareBtnEl && ctx) compareBtnEl.onclick = () => openDealDiffModal(ctx, path);
 
   // Collapsible sections — clicking the H2 band toggles its body. Ignore clicks
   // on links inside the heading (there are none today, but stay safe).
@@ -2428,11 +2428,13 @@ async function pageLive(account, slug, oppName) {
     </div>
     <div class="live-past" id="live-past"></div>
     <div class="live-setup" id="live-setup">
-      <label>Your mic (You)
+      <label>Your mic
         <select id="dev-mic">${opts()}</select>
+        <input type="text" id="mic-label" value="You" maxlength="80" placeholder="Label (e.g. You)" />
       </label>
       <label>Call audio — everyone else (optional)
         <select id="dev-call"><option value="">— none (single stream, no labels) —</option>${opts()}</select>
+        <input type="text" id="call-label" value="Call" maxlength="80" placeholder="Label (e.g. Call)" />
       </label>
       <button class="primary" id="live-start">● Start</button>
       <span id="live-timer" class="live-timer hidden">00:00</span>
@@ -2481,10 +2483,17 @@ async function pageLive(account, slug, oppName) {
   })();
 
   // ── Transcript rendering ────────────────────────────────────────────
+  let micLabel = "You", callLabel = "Call";
   let hasSegs = false;
   const addSegment = (seg) => {
     if (!hasSegs) { segsEl.innerHTML = ""; hasSegs = true; }
-    const who = seg.speaker ? `<span class="seg-who seg-${seg.speaker === "You" ? "you" : "call"}">${esc(seg.speaker)}</span>` : "";
+    let whoClass = "";
+    if (seg.speaker) {
+      if (seg.speaker === micLabel) whoClass = "seg-you";
+      else if (seg.speaker === callLabel) whoClass = "seg-call";
+      else whoClass = "seg-unknown";
+    }
+    const who = seg.speaker ? `<span class="seg-who ${whoClass}">${esc(seg.speaker)}</span>` : "";
     const div = document.createElement("div");
     div.className = "live-seg";
     div.innerHTML = `<span class="seg-t">${esc(seg.t)}</span>${who}<span class="seg-text">${esc(seg.text)}</span>`;
@@ -2518,6 +2527,10 @@ async function pageLive(account, slug, oppName) {
     }
     try {
       const data = await api(`/api/transcripts/${encodeURIComponent(name)}?account=${encodeURIComponent(account)}`);
+      micLabel = data.mic_label || "You";
+      callLabel = data.call_label || "Call";
+      if ($("mic-label")) $("mic-label").value = micLabel;
+      if ($("call-label")) $("call-label").value = callLabel;
       segsEl.innerHTML = ""; hasSegs = false;
       data.segments.forEach(addSegment);
       segsEl.insertAdjacentHTML("afterbegin",
@@ -2536,17 +2549,21 @@ async function pageLive(account, slug, oppName) {
   // Attaches the SSE stream (which replays existing segments), flips the UI to
   // recording, and runs the timer from `startedAtMs` so a reconnected session
   // shows correct elapsed time.
-  const enterRecording = (sessionId, startedAtMs) => {
+  const enterRecording = (sessionId, startedAtMs, labels = {}) => {
+    micLabel = labels.micLabel || micLabel || "You";
+    callLabel = labels.callLabel || callLabel || "Call";
     // tear down any prior client-side handles (avoid leaking a 2nd SSE/timer)
     if (_liveState) { try { _liveState.sse?.close(); } catch {} if (_liveState.timer) clearInterval(_liveState.timer); }
-    _liveState = { sessionId };
+    _liveState = { sessionId, recovered: false };
     segsEl.innerHTML = ""; hasSegs = false;
     const sse = new EventSource(`/api/transcribe/${sessionId}/stream`);
     sse.addEventListener("segment", (e) => addSegment(JSON.parse(e.data)));
     _liveState.sse = sse;
     $("dev-mic").disabled = $("dev-call").disabled = true;
+    $("mic-label").disabled = $("call-label").disabled = true;
     startBtn.classList.add("hidden");
     stopBtn.classList.remove("hidden"); stopBtn.disabled = false;
+    stopBtn.textContent = "■ Stop & Save";
     timerEl.classList.remove("hidden"); timerEl.classList.add("rec");
     askInput.disabled = sendBtn.disabled = false;
     const t0 = startedAtMs || Date.now();
@@ -2558,18 +2575,46 @@ async function pageLive(account, slug, oppName) {
     _liveState.timer = setInterval(tick, 1000);
   };
 
+  // ── Recovered session mode ─────────────────────────────────────────
+  // A session that was active when the app restarted has its transcript on
+  // disk but can no longer capture audio. Show it read-only and let the SE save.
+  const enterRecovered = (active) => {
+    if (_liveState) { try { _liveState.sse?.close(); } catch {} if (_liveState.timer) clearInterval(_liveState.timer); }
+    micLabel = active.mic_label || "You";
+    callLabel = active.call_label || "Call";
+    if ($("mic-label")) $("mic-label").value = micLabel;
+    if ($("call-label")) $("call-label").value = callLabel;
+    _liveState = { sessionId: active.session_id, recovered: true };
+    segsEl.innerHTML = ""; hasSegs = false;
+    active.segments.forEach(addSegment);
+    segsEl.insertAdjacentHTML("afterbegin",
+      `<div class="callout callout-note"><div class="callout-title">Recovered session</div>
+       <div class="callout-body">The app restarted while this live session was active. Audio capture is stopped — click <b>Stop &amp; Save</b> to keep the recovered transcript.</div></div>`);
+    startBtn.classList.add("hidden");
+    stopBtn.classList.remove("hidden"); stopBtn.disabled = false;
+    stopBtn.textContent = "■ Save recovered transcript";
+    timerEl.classList.add("hidden");
+    askInput.disabled = sendBtn.disabled = false;
+    askInput.placeholder = "Ask the copilot about the recovered transcript… (Shift+Enter for newline)";
+    $("dev-mic").disabled = $("dev-call").disabled = true;
+    $("mic-label").disabled = $("call-label").disabled = true;
+  };
+
   // ── Start / Stop ────────────────────────────────────────────────────
   startBtn.onclick = async () => {
     const mic = $("dev-mic").value;
     const call = $("dev-call").value || null;
+    micLabel = ($("mic-label").value || "You").trim();
+    callLabel = ($("call-label").value || "Call").trim();
     startBtn.disabled = true;
     try {
       const res = await api("/api/transcribe/start", {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ account, opp_slug: slug, opportunity: oppName,
-                               mic_device: Number(mic), call_device: call === null ? null : Number(call) }),
+                               mic_device: Number(mic), call_device: call === null ? null : Number(call),
+                               mic_label: micLabel, call_label: callLabel }),
       });
-      enterRecording(res.session_id, Date.now());
+      enterRecording(res.session_id, Date.now(), { micLabel: res.mic_label, callLabel: res.call_label });
     } catch (e) {
       alert("Could not start: " + e.message); startBtn.disabled = false;
     }
@@ -2597,6 +2642,7 @@ async function pageLive(account, slug, oppName) {
       askInput.placeholder = "Ask the copilot about this saved transcript… (Shift+Enter for newline)";
       stopBtn.classList.add("hidden"); startBtn.classList.remove("hidden"); startBtn.disabled = false;
       $("dev-mic").disabled = $("dev-call").disabled = false;
+      $("mic-label").disabled = $("call-label").disabled = false;
       loadPast();  // refresh the past-transcripts list to include this one
     } catch (e) { alert("Stop failed: " + e.message); stopBtn.disabled = false; }
   };
@@ -2687,13 +2733,17 @@ async function pageLive(account, slug, oppName) {
   // Populate the past-transcripts list on load.
   loadPast();
 
-  // ── Reconnect if a session is still recording for this opp ───────────
+  // ── Reconnect if a session is active or recovered for this opp ───────
   // Leaving and returning re-renders this page, but the session lives on the
   // server — pick it back up so the transcript isn't lost.
   const active = await api(`/api/transcribe/active?account=${encodeURIComponent(account)}&opp_slug=${encodeURIComponent(slug)}`).catch(() => null);
   if (active && active.session_id) {
-    // restore the device picker selections if we can infer them (best-effort)
-    enterRecording(active.session_id, (active.started_at || 0) * 1000);
+    if (active.recovered) {
+      enterRecovered(active);
+    } else {
+      enterRecording(active.session_id, (active.started_at || 0) * 1000,
+                    { micLabel: active.mic_label, callLabel: active.call_label });
+    }
   }
 }
 

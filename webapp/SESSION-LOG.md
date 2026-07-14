@@ -2,7 +2,7 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`, mine = `gyairbyte/SE-Workflow`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: July 14, 2026 — SKILL-004 customer-constraint preservation in ROI and POC skills._
+_Last updated: July 14, 2026 — ARCH-004 durable jobs/live-transcribe sessions + UX-005 custom speaker labels and recovery._
 
 ## What the app is
 Local FastAPI + vanilla-JS UI (no build step) over the SE skills suite. `cd webapp && uv run app.py` → http://127.0.0.1:8787 (needs `CPATH/LIBRARY_PATH` for portaudio on this Mac — see "Run" below). Browse team → member's accounts → an account's opportunities → generated outputs; invoke skills; ask follow-ups on outputs; Live Transcribe a Zoom call with an AI copilot.
@@ -16,6 +16,17 @@ uv run --python 3.11 app.py    # port 8787
 ```
 
 ## Built this session (newest first — see `git log`)
+- **ARCH-004 + UX-005 durable jobs/live-transcribe sessions and custom speaker labels (July 14).** Added disk persistence for background state and live-transcribe sessions so the app survives restarts without losing work. Child process jobs that were running at restart are marked lost with a clear re-run message; live sessions are recovered as read-only transcripts with a **Save recovered transcript** button. Live-transcribe setup now exposes editable `mic-label` and `call-label` inputs, which are embedded in saved transcripts and rendered with speaker-specific styling. Also fixed a pre-existing JS duplicate `const compareBtn` in `static/app.js`.
+  - `webapp/persistence.py`: new atomic disk persistence module for `JOBS` snapshots and live sessions.
+  - `webapp/app.py`: load `JOBS` from disk on startup; save after job creation and completion; rewrite `LiveSession` to support recovery, labels, and `to_dict`/`from_state`; update `StartLive`, transcribe endpoints, and `_parse_saved_transcript` to carry and parse mic/call labels.
+  - `webapp/static/app.js`: label inputs, dynamic segment styling, and recovered-session mode.
+  - `webapp/static/style.css`: input styling and `.seg-unknown` for unknown speaker labels.
+  - `webapp/static/index.html`: bumped `app.js?v=` cache-bust.
+  - `webapp/README.md` and `webapp/LIVE-TRANSCRIBE.md`: documented durability and labels.
+  - `IMPLEMENTATION-PLAN.md`: marked ARCH-004 and UX-005 completed.
+  - `eval/tests/test_webapp_durable_state.py`: deterministic tests for persistence, recovery, and labels.
+  - Validation: `uv run --extra dev pytest eval/ -v` passes; mock suite passes; `./scripts/check-sync.sh` passes.
+
 - **SKILL-004 customer-constraint preservation (July 14).** Centralized the guardrail as Operating Discipline D5 in `skills/_se-playbook.md` and referenced it from `skills/roi-business-case/SKILL.md` and `skills/poc-plan/SKILL.md`. The primary scenario discipline now explicitly calls out capacity sizing, sync frequency, concurrency, throughput, and volume, and asks for explicit customer permission before lowering them. POC success-criteria preservation now explicitly covers capacity, sync frequency, concurrency, throughput, and POC schedule, and requires proxy validation + rationale when a hard criterion moves to stretch scope or production requirements. Added `eval/tests/test_skill_constraint_preservation.py` to keep the prompt language from regressing.
   - `skills/_se-playbook.md`: added D5 "Customer-constraint preservation".
   - `skills/roi-business-case/SKILL.md`: expanded primary scenario discipline and anti-patterns.
