@@ -569,7 +569,7 @@ class MockOutputBuilder:
             "Security & Compliance",
             "Recommended Next Actions",
         ],
-        "full-qual": ["Business Qual Summary", "Technical Qual Summary"],
+        "full-qual": ["Business Qual Summary", "Technical Qual Summary", "Closing Summary"],
         "connector-feasibility": ["Connector Coverage", "Fit Verdict", "Recommended Next Actions"],
         "poc-plan": ["Scope", "Success Criteria", "Timeline", "Risks & Mitigations"],
         "roi-business-case": [
@@ -640,6 +640,7 @@ class MockOutputBuilder:
             "sfdc-transcript-conflict",
             "next-move-low-evidence",
             "missing-technical-input",
+            "full-qual-partial-failure",
         ):
             if key in self.manifest.id:
                 return key
@@ -674,6 +675,8 @@ class MockOutputBuilder:
             return "🟡 Low confidence — gather more evidence"
         if scenario == "sfdc-transcript-conflict" and self.skill == "deal-assessment":
             return "🟡 SFDC stage conflicts with transcript"
+        if scenario == "full-qual-partial-failure" and self.skill == "full-qual":
+            return "🟡 partial — one child refused"
         return "🟢 viable with standard caveats"
 
     def _confidence(self) -> str:
@@ -690,7 +693,36 @@ class MockOutputBuilder:
         combined = "\n".join(self.manifest.customer_constraints).lower()
         return any(needle.lower() in combined for needle in needles)
 
+    def _full_qual_business_summary_body(self) -> str:
+        if self._scenario() == "full-qual-partial-failure":
+            return "- biz-qual ran to completion on the business-discovery transcript.\n- No business-qualification blockers identified."
+        return "- biz-qual and tech-qual ran to completion."
+
+    def _full_qual_technical_summary_body(self) -> str:
+        if self._scenario() == "full-qual-partial-failure":
+            return "- **tech-qual was not run:** the transcript contains no technical discovery to qualify against.\n- Recommendation: re-run `tech-qual` after a technical call."
+        return "- tech-qual ran to completion."
+
+    def _full_qual_closing_summary_body(self) -> str:
+        if self._scenario() == "full-qual-partial-failure":
+            return (
+                "- biz-qual: ✓ produced → `outputs/biz-qual/biz-qual-2026-07-14-eval.md`\n"
+                "- tech-qual: ✗ refused — transcript has no technical discovery. Run `tech-qual` after a technical call.\n"
+                "- Next up per the workflow: `connector-feasibility`, then `poc-plan`."
+            )
+        return (
+            "- biz-qual: ✓ produced\n"
+            "- tech-qual: ✓ produced\n"
+            "- Next up per the workflow: `connector-feasibility`, then `poc-plan`."
+        )
+
     def _section_body(self, section: str) -> str:
+        if section == "Business Qual Summary":
+            return self._full_qual_business_summary_body()
+        if section == "Technical Qual Summary":
+            return self._full_qual_technical_summary_body()
+        if section == "Closing Summary":
+            return self._full_qual_closing_summary_body()
         if section == "Data Volume & Scale":
             return self._data_volume_body()
         if section == "Success Criteria":

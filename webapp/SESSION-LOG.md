@@ -2,7 +2,7 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`, mine = `gyairbyte/SE-Workflow`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: July 14, 2026 — UX-004 Late-stage tier in `webapp/`._
+_Last updated: July 14, 2026 — ORCH-002 full-qual partial-failure handling._
 
 ## What the app is
 Local FastAPI + vanilla-JS UI (no build step) over the SE skills suite. `cd webapp && uv run app.py` → http://127.0.0.1:8787 (needs `CPATH/LIBRARY_PATH` for portaudio on this Mac — see "Run" below). Browse team → member's accounts → an account's opportunities → generated outputs; invoke skills; ask follow-ups on outputs; Live Transcribe a Zoom call with an AI copilot.
@@ -16,6 +16,12 @@ uv run --python 3.11 app.py    # port 8787
 ```
 
 ## Built this session (newest first — see `git log`)
+- **ORCH-002 full-qual partial-failure handling (July 14).** Tightened the `full-qual` wrapper contract so it reports which child skill completed and which refused, with a one-line reason, and does not leave a partial/stale doc or claim "full qualification complete" when one half is missing.
+  - `skills/full-qual/SKILL.md`: added explicit partial-failure / atomic-completion section and `✓ produced` / `✗ refused` / `✗ failed` status markers in the closing summary.
+  - `skills/_se-playbook.md`: updated the `full-qual` shortcut description to include partial-failure reporting.
+  - `eval/runner.py`: added `full-qual-partial-failure` scenario support to the mock output builder.
+  - New `eval/manifests/phase1/full-qual-partial-failure.yaml` with deterministic assertions for the partial-failure behavior.
+  - Validation: `uv run --extra dev pytest eval/ -v` passes; mock suite passes.
 - **UX-004 Late-stage skill tier (July 14).** Added a `Late-stage — after POC` tier in the webapp invoke picker for `roi-business-case` and `mutual-close-plan` so they no longer blend into the `Anytime` group.
   - `webapp/app.py`: new `TIER_LATE`, `roi-business-case` as step 8 and `mutual-close-plan` as step 9, ordered right after `poc-plan`.
   - `webapp/README.md` and `skills/_se-playbook.md`: updated picker tier descriptions.
