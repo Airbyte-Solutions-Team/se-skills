@@ -10,11 +10,14 @@ dev = [
     "pytest>=7.4",
     "pyyaml>=6.0",
     "pydantic>=2.0",
+    "fastapi>=0.100",
+    "markdown>=3.5",
+    "nh3>=0.2.18",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["eval"]
-pythonpath = ["."]
+pythonpath = [".", "webapp"]
 filterwarnings = ["ignore::DeprecationWarning"]
 markers = [
     "model_dependent: tests that invoke a language model (skipped by default)",

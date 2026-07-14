@@ -23,6 +23,7 @@ import subprocess
 import tempfile
 
 import markdown
+import nh3
 
 # Chrome/Chromium candidates, in preference order (macOS first, then Linux).
 _CHROME_CANDIDATES = [
@@ -121,6 +122,47 @@ blockquote p:last-child { margin-bottom: 0; }
 em { color: #333; }
 """
 
+# HTML sanitizer configuration for exported Markdown. Keep this in sync with the
+# tags/attributes the skills emit and python-markdown produces.
+_ALLOWED_TAGS = {
+    "h1", "h2", "h3", "h4", "h5", "h6",
+    "p", "br", "hr",
+    "blockquote", "ol", "ul", "li", "dl", "dt", "dd",
+    "div", "pre", "code",
+    "em", "strong", "a", "img",
+    "table", "thead", "tbody", "tr", "th", "td", "caption", "col", "colgroup",
+    "sub", "sup", "span", "mark", "abbr", "acronym", "del", "s", "nav",
+}
+
+_ALLOWED_ATTRIBUTES = {
+    "*": {"class", "id"},
+    "a": {"href", "title", "target"},
+    "img": {"src", "alt", "title"},
+    "th": {"style", "colspan", "rowspan", "align"},
+    "td": {"style", "colspan", "rowspan", "align"},
+}
+
+_ALLOWED_URL_SCHEMES = {"http", "https", "mailto", "tel"}
+
+_ALLOWED_STYLE_PROPERTIES = {"text-align"}
+
+
+def _sanitize_html(html: str) -> str:
+    """Remove unsafe tags, attributes, and URL schemes from an HTML fragment.
+
+    Preserves the structural and styling tags used by skill output while
+    stripping `<script>`, inline event handlers, `javascript:` links, and
+    unsupported URL schemes.
+    """
+    return nh3.clean(
+        html,
+        tags=_ALLOWED_TAGS,
+        attributes=_ALLOWED_ATTRIBUTES,
+        url_schemes=_ALLOWED_URL_SCHEMES,
+        link_rel="noopener noreferrer",
+        filter_style_properties=_ALLOWED_STYLE_PROPERTIES,
+    )
+
 
 def find_chrome() -> str | None:
     """Return a usable Chrome/Chromium executable path, or None."""
@@ -203,7 +245,7 @@ def markdown_to_body_html(md_text: str) -> str:
     for dot in ["🟢", "🟡", "🔴", "⚠️", "❌", "✅", "⭐", "★"]:
         body = body.replace(dot, f'<span class="dot">{dot}</span>')
 
-    return body
+    return _sanitize_html(body)
 
 
 def markdown_to_html(md_text: str) -> str:
