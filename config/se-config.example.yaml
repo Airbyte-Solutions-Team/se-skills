@@ -49,6 +49,17 @@ workspace_root: "~/.se-skills"
 #   connector_models:
 #     enabled: false
 
+# ── Model configuration (optional) ─────────────────────────────────────────
+# Which Claude model the webapp uses for quick-ask, live-ask, deep skill runs,
+# or specific skills. Any key missing falls back to `default`, then to the app
+# default (`claude-sonnet-4-6`). Per-skill keys match the skill folder name.
+# models:
+#   default: "claude-sonnet-4-6"
+#   quick-ask: "claude-sonnet-4-6"
+#   live-ask: "claude-sonnet-4-6"
+#   deal-assessment: "claude-opus-4-6"
+#   roi-business-case: "claude-opus-4-6"
+
 # ── SE identity ────────────────────────────────────────────────────────────────
 name: "Your Name"
 email: "you@airbyte.io"

@@ -2740,6 +2740,26 @@ function openInvoke(account, opp = null) {
   sel.onchange = setBlurb; setBlurb();
   document.getElementById("skill-extra").value = "";
 
+  // Runtime skill discovery — reload skills from disk without restarting the app.
+  const refreshBtn = document.getElementById("skill-refresh");
+  if (refreshBtn) refreshBtn.onclick = async () => {
+    refreshBtn.disabled = true; refreshBtn.textContent = "…";
+    try {
+      await api("/api/reload", { method: "POST" });
+      SKILLS = await api("/api/skills");
+      try { SKILLS_HELP = Object.fromEntries((await api("/api/skills/help")).map((h) => [h.id, h])); } catch {}
+      const prev = sel.value;
+      sel.innerHTML = skillOptionsGrouped();
+      if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
+      setBlurb();
+      showToast("Skills reloaded", "ok");
+    } catch (e) {
+      showToast("Reload failed: " + e.message, "err");
+    } finally {
+      refreshBtn.disabled = false; refreshBtn.textContent = "↻";
+    }
+  };
+
   const status = document.getElementById("invoke-status");
   const output = document.getElementById("invoke-output");
   status.className = "status hidden"; output.className = "output hidden"; output.textContent = "";
