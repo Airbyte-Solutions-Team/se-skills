@@ -133,15 +133,31 @@ class PermissionProfile(BaseModel):
     def requires_approval(self) -> bool:
         return self.write or self.shell or self.git
 
-    def summary(self) -> str:
+
+# API response model for the permission profile of a specific skill invocation.
+class SkillPermission(BaseModel):
+    write: bool = True
+    shell: bool = False
+    git: bool = False
+    requires_approval: bool = True
+    summary: str = ""
+
+    @classmethod
+    def from_profile(cls, profile: PermissionProfile) -> "SkillPermission":
         caps = []
-        if self.write:
+        if profile.write:
             caps.append("writes a file to the customer workspace")
-        if self.git:
+        if profile.git:
             caps.append("runs git commands")
-        if self.shell:
+        if profile.shell:
             caps.append("runs shell commands")
-        return "; ".join(caps) if caps else "performs this action"
+        return cls(
+            write=profile.write,
+            shell=profile.shell,
+            git=profile.git,
+            requires_approval=profile.requires_approval(),
+            summary="; ".join(caps) if caps else "performs this action",
+        )
 
 
 # Known skill permission overrides. Unknown skills default to write-only, which
@@ -152,7 +168,7 @@ SKILL_PERMISSIONS: dict[str, PermissionProfile] = {
 }
 
 
-def _permission_profile(skill_id: str | None, freeform: bool = False) -> dict[str, Any]:
+def _permission_profile(skill_id: str | None, freeform: bool = False) -> SkillPermission:
     """Return the permission profile for a skill invocation.
 
     Free-form instructions always get the broadest profile because their content
@@ -163,13 +179,7 @@ def _permission_profile(skill_id: str | None, freeform: bool = False) -> dict[st
         profile = SKILL_PERMISSIONS["freeform"]
     else:
         profile = SKILL_PERMISSIONS.get(skill_id, PermissionProfile(write=True))
-    return {
-        "write": profile.write,
-        "shell": profile.shell,
-        "git": profile.git,
-        "requires_approval": profile.requires_approval(),
-        "summary": profile.summary(),
-    }
+    return SkillPermission.from_profile(profile)
 
 
 # Source of truth for WHICH skills belong to this suite: the repo's own
@@ -208,7 +218,7 @@ def discover_skills() -> list[dict]:
     found.sort(key=lambda s: (s.get("order", 999), s["label"]))
     return [{"id": s["id"], "label": s["label"], "blurb": s["blurb"],
              "tier": s.get("tier", "Other"), "step": s.get("step"),
-             "permissions": _permission_profile(s["id"])} for s in found]
+             "permissions": _permission_profile(s["id"]).model_dump()} for s in found]
 
 
 SKILLS = discover_skills()
@@ -2060,8 +2070,8 @@ async def api_invoke(body: InvokeBody):
     # write/shell/git needs and must be explicitly approved before we launch
     # Claude with --permission-mode acceptEdits.
     profile = _permission_profile(body.skill, freeform=bool(body.freeform))
-    if profile["requires_approval"] and not body.approve_permissions:
-        return JSONResponse({"permissions": profile, "blocked": True})
+    if profile.requires_approval and not body.approve_permissions:
+        return JSONResponse({"permissions": profile.model_dump(), "blocked": True})
 
     prompt = _build_prompt(body, account, out_dir)
 

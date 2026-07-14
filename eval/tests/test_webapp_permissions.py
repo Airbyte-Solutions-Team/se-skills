@@ -34,23 +34,25 @@ def _decode_json_response(resp):
 )
 def test_permission_profile_classifies_skills(skill, freeform, expected_write, expected_shell, expected_git):
     profile = app._permission_profile(skill, freeform=freeform)
-    assert profile["write"] is expected_write
-    assert profile["shell"] is expected_shell
-    assert profile["git"] is expected_git
-    assert profile["requires_approval"] is True
-    assert profile["summary"]
+    data = profile.model_dump()
+    assert data["write"] is expected_write
+    assert data["shell"] is expected_shell
+    assert data["git"] is expected_git
+    assert data["requires_approval"] is True
+    assert data["summary"]
 
 
 def test_permission_profile_defaults_unknown_skill_to_write():
     profile = app._permission_profile("not-a-skill")
-    assert profile["write"] is True
-    assert profile["shell"] is False
-    assert profile["git"] is False
-    assert profile["requires_approval"] is True
+    data = profile.model_dump()
+    assert data["write"] is True
+    assert data["shell"] is False
+    assert data["git"] is False
+    assert data["requires_approval"] is True
 
 
 def test_api_permissions_returns_profile_for_known_skill():
-    data = app.api_permissions(skill="connector-feasibility")
+    data = app.api_permissions(skill="connector-feasibility").model_dump()
     assert data["write"] is True
     assert data["shell"] is True
     assert data["git"] is True
@@ -59,7 +61,7 @@ def test_api_permissions_returns_profile_for_known_skill():
 
 
 def test_api_permissions_returns_broad_profile_for_freeform():
-    data = app.api_permissions(freeform=True)
+    data = app.api_permissions(freeform=True).model_dump()
     assert data["write"] is True
     assert data["shell"] is True
     assert data["git"] is True
