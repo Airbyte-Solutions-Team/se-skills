@@ -1,0 +1,4 @@
+Acme Corp - Intro - 2026-06-15
+
+John (Acme): We are a mid-size SaaS company. We're interested in Airbyte.
+Jane (Acme): We have some pipeline pain but we are early in our evaluation.

@@ -1,0 +1,6 @@
+Acme Corp - Business Discovery - 2026-07-01
+
+Jane (Acme): We're struggling with data silos. Our engineering team spends too much time maintaining pipelines.
+John (Acme): We want to understand the business impact of moving to Airbyte.
+Gary (Airbyte): What does the current state cost you?
+Jane (Acme): We estimate about two data engineers, fully loaded around $500K per year.

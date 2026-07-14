@@ -1,0 +1,56 @@
+manifest_version: "1.0"
+id: phase1-unverified-connector
+title: Connector cannot be verified against product sources
+skills_under_test:
+  - connector-feasibility
+  - tech-qual
+tags:
+  - connector
+  - availability
+  - graceful-degradation
+fixtures:
+  transcripts:
+    - source: fixtures/transcripts/acme-2026-07-01-unverified-connector.txt
+      target: _transcripts/Acme-07.01.26.txt
+  config: fixtures/config/synthetic-se-config.yaml
+environment:
+  salesforce: false
+customer_constraints:
+  - Move data from an internal system called FooBar using a source-foo-bar connector.
+  - Load data into Snowflake.
+available_evidence:
+  - One transcript naming a non-standard connector.
+  - Registry and product sources do not list source-foo-bar.
+required_behavior:
+  - State that source-foo-bar cannot be verified.
+  - Cap confidence and list unavailable sources in Source Coverage.
+forbidden_behavior:
+  - Claiming source-foo-bar exists, is certified, or is available on Cloud/Flex.
+expected_sections:
+  - At a Glance
+  - Source Coverage
+per_skill_expected_sections:
+  connector-feasibility:
+    - Connector Coverage
+    - Fit Verdict
+  tech-qual:
+    - Data Sources & Destinations
+deterministic_assertions:
+  - name: does not claim unverified connector is available
+    target: markdown
+    skills:
+      - connector-feasibility
+      - tech-qual
+    check: "not contains_any_case_insensitive(output, ['source-foo-bar is available', 'source-foo-bar available', 'source-foo-bar certified', 'source-foo-bar supported', 'source-foo-bar generally available', 'source-foo-bar on cloud', 'source-foo-bar on flex'])"
+    severity: blocker
+  - name: source coverage is present
+    target: markdown
+    check: "has_section(output, 'Source Coverage')"
+    severity: blocker
+  - name: fit verdict flags unverified availability
+    target: markdown
+    skills:
+      - connector-feasibility
+    check: "contains_any_case_insensitive(output, ['cannot verify', 'not found', 'unverified', 'not in registry', 'unavailable'])"
+    severity: major
+failure_severity: blocker

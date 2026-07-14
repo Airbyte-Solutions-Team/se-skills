@@ -1,0 +1,17 @@
+# Synthetic SE config used by the evaluation framework.
+# The runner replaces TMP_DIR with a unique temporary workspace.
+workspace_root: "TMP_DIR"
+name: "Synthetic SE"
+email: "se-test@airbyte.io"
+slack_handle: "@se-test"
+role: "Solutions Engineer"
+aliases:
+  - "SE Test"
+  - "Synthetic SE"
+ae_pairings:
+  - name: "Jane AE"
+    role: "AE"
+salesforce:
+  enabled: false
+  org_alias: "airbyte-test"
+  query_directory: "TMP_DIR"

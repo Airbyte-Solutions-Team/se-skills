@@ -1,0 +1,40 @@
+manifest_version: "1.0"
+id: phase1-missing-technical-input
+title: Technical qualification refuses without technical discovery
+skills_under_test:
+  - tech-qual
+tags:
+  - refusal
+  - missing-input
+fixtures:
+  transcripts:
+    - source: fixtures/transcripts/acme-2026-07-01-business-only.txt
+      target: _transcripts/Acme-07.01.26.txt
+  config: fixtures/config/synthetic-se-config.yaml
+environment:
+  salesforce: false
+customer_constraints:
+  - Reduce engineering cost.
+  - Understand business impact.
+available_evidence:
+  - One business-only transcript with no technical discovery.
+required_behavior:
+  - Refuse to generate a tech-qual document.
+  - Recommend running prep-call or gathering technical requirements.
+forbidden_behavior:
+  - Generating a technical qualification from thin air.
+expected_refusal_for:
+  - tech-qual
+expected_sections:
+  - Source Coverage
+deterministic_assertions:
+  - name: refuses to run without technical discovery
+    target: markdown
+    skills:
+      - tech-qual
+    check: "contains_any_case_insensitive(output, ['cannot generate tech-qual', 'refuse', 'zero transcripts', 'no technical discovery', 'no technical discovery'])"
+    severity: blocker
+failure_severity: blocker
+notes: >
+  This scenario ensures the hard transcript gate in tech-qual still fires when
+  the provided transcript contains only business discovery.

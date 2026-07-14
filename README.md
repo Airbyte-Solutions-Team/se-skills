@@ -42,6 +42,17 @@ Local-only by design (invoking a skill needs compute + your auth + your data, wh
 
 **Full setup — prerequisites (`uv`, `claude` CLI, portaudio/BlackHole for Live Transcribe, optional `ANTHROPIC_API_KEY`), a fresh-clone walkthrough, and the audio routing — is in [`webapp/README.md`](webapp/README.md).**
 
+### Evaluation framework (`eval/`)
+
+`eval/` runs deterministic, synthetic scenario tests against the skills. By default it uses mock outputs so it works without the `claude` CLI; pass `--run-skills` to invoke the real skills.
+
+```bash
+uv run --extra dev pytest eval/ -v       # deterministic suite
+uv run --extra dev pytest eval/ -v --run-skills  # real claude invocation
+```
+
+See [`eval/README.md`](eval/README.md) for the manifest schema and how to add a scenario.
+
 ---
 
 ## The workflow chain

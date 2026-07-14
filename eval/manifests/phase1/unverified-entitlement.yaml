@@ -1,0 +1,83 @@
+manifest_version: "1.0"
+id: phase1-unverified-entitlement
+title: Deployment recommendation depends on an unverified entitlement
+skills_under_test:
+  - deployment-model-qual
+  - tech-qual
+  - poc-plan
+tags:
+  - entitlement
+  - byok
+  - park
+  - deployment-model
+fixtures:
+  transcripts:
+    - source: fixtures/transcripts/acme-2026-07-01-byok.txt
+      target: _transcripts/Acme-07.01.26.txt
+  config: fixtures/config/synthetic-se-config.yaml
+environment:
+  salesforce: false
+  reference_data:
+    repos: {}
+customer_constraints:
+  - Customer-managed KMS keys for all data in transit and at rest.
+  - BYOK model required.
+  - Data plane can run in customer VPC.
+  - Cannot use Airbyte-managed secrets.
+available_evidence:
+  - One transcript with a hard BYOK/KMS requirement.
+  - Local `airbyte-platform` entitlement checkout is not available.
+required_behavior:
+  - Park or verify-with-team verdict when entitlement cannot be confirmed.
+  - Do not claim Cloud Pro or Enterprise Flex supports BYOK unless verified.
+forbidden_behavior:
+  - Claiming BYOK/customer-managed KMS is supported on Cloud Pro or Enterprise Flex.
+expected_sections:
+  - At a Glance
+  - Source Coverage
+per_skill_expected_sections:
+  deployment-model-qual:
+    - The Five Qualifying Questions
+    - Verdict
+    - Recommended Next Action
+  tech-qual:
+    - Deployment Model
+    - Security & Compliance
+  poc-plan:
+    - POC Scope
+    - Success Criteria
+    - Risks & Blockers
+deterministic_assertions:
+  - name: does not claim BYOK or customer-managed KMS is supported
+    target: markdown
+    skills:
+      - deployment-model-qual
+      - tech-qual
+      - poc-plan
+    check: "not contains_any_case_insensitive(output, ['byok is supported', 'customer-managed kms is supported', 'enterprise flex supports byok', 'cloud supports byok', 'flex supports byok'])"
+    severity: blocker
+  - name: deployment verdict is park or verify when entitlement is unavailable
+    target: markdown
+    when: "env['airbyte_platform_available'] is not True"
+    skills:
+      - deployment-model-qual
+    check: "contains_any_case_insensitive(output, ['park', 'no fit', 'verify with team', 'cannot commit', 'verify'])"
+    severity: blocker
+  - name: source coverage is present
+    target: markdown
+    check: "has_section(output, 'Source Coverage')"
+    severity: blocker
+  - name: security section references BYOK limitation
+    target: markdown
+    skills:
+      - tech-qual
+    check: "section_contains(output, 'Security & Compliance', 'BYOK') or section_contains(output, 'Security & Compliance', 'KMS')"
+    severity: major
+  - name: poc-plan is blocked or defers until BYOK is resolved
+    target: markdown
+    when: "env['airbyte_platform_available'] is not True"
+    skills:
+      - poc-plan
+    check: "contains_any_case_insensitive(output, ['blocked', 'defer', 'cannot proceed', 'pending'])"
+    severity: major
+failure_severity: blocker

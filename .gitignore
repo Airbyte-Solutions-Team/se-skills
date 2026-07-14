@@ -20,3 +20,12 @@ webapp/__pycache__/
 
 # Per-user local UI state (each person's own AE selection, etc.) — not shared
 webapp/.member-prefs/
+
+# Evaluation framework runtime artifacts
+eval/results/
+eval/**/*.pyc
+
+# Python packaging / uv artifacts
+*.egg-info/
+uv.lock
+
