@@ -2,7 +2,7 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`, mine = `gyairbyte/SE-Workflow`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: July 14, 2026 — Phase 2 security quick wins in `webapp/`._
+_Last updated: July 14, 2026 — UX-004 Late-stage tier in `webapp/`._
 
 ## What the app is
 Local FastAPI + vanilla-JS UI (no build step) over the SE skills suite. `cd webapp && uv run app.py` → http://127.0.0.1:8787 (needs `CPATH/LIBRARY_PATH` for portaudio on this Mac — see "Run" below). Browse team → member's accounts → an account's opportunities → generated outputs; invoke skills; ask follow-ups on outputs; Live Transcribe a Zoom call with an AI copilot.
@@ -16,6 +16,11 @@ uv run --python 3.11 app.py    # port 8787
 ```
 
 ## Built this session (newest first — see `git log`)
+- **UX-004 Late-stage skill tier (July 14).** Added a `Late-stage — after POC` tier in the webapp invoke picker for `roi-business-case` and `mutual-close-plan` so they no longer blend into the `Anytime` group.
+  - `webapp/app.py`: new `TIER_LATE`, `roi-business-case` as step 8 and `mutual-close-plan` as step 9, ordered right after `poc-plan`.
+  - `webapp/README.md` and `skills/_se-playbook.md`: updated picker tier descriptions.
+  - Added `eval/tests/test_webapp_skill_tiers.py` to assert the late-stage ordering and tier membership.
+  - Validation: `uv run --extra dev pytest eval/ -v` passes.
 - **Phase 2 security quick wins (July 14).** Tightened `webapp/` external-input and output-safety boundaries without changing skill prompts or broad architecture.
   - **Salesforce query safety:** added `webapp/soql.py` with `soql_string_literal` and `soql_like_prefix`; `webapp/app.py` `_sf_quote` and `_sfdc_like_prefix` now use them, escaping `\`, `'`, `"`, `%`, and `_` for literal-safe `=`/`IN` and `LIKE` queries.
   - **Export + reader sanitization:** `webapp/pdf_render.py::markdown_to_body_html` now runs `nh3.clean` to strip `<script>`, inline event handlers, `javascript:` links, and unsupported URL schemes while preserving python-markdown/skill output tags and classes. `webapp/static/app.js::mdToHtml` now sanitizes link `href` values to `http`/`https`/`mailto`/`tel`/relative only.

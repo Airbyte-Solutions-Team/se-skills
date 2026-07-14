@@ -99,7 +99,7 @@ Notes:
 
 - **Main page** — solutions team members (from `team-members.yaml`, or your `.se-config.yaml` if absent)
 - **Member page** — that member's accounts (folders in `~/airbyte-work/01-customers/`), with a **+ Create Account** box. Can also bulk-create accounts from a Salesforce preview (per-account failures surface for retry).
-- **Account / opportunity page** — every saved skill output (newest first, concise titles), plus **⚡ Invoke Skill** to run any skill. The invoke picker is grouped into tiers (Workflow 1–7 / Anytime / When unsure) reflecting real dependency order.
+- **Account / opportunity page** — every saved skill output (newest first, concise titles), plus **⚡ Invoke Skill** to run any skill. The invoke picker is grouped into tiers (Workflow 1–7 / Late-stage 8–9 / Anytime / When unsure) reflecting real dependency order.
 - **Output reader** — a rich document view of any saved skill output: decision-first layout (exec card + tiles), top-risks strip, collapsible audit sections, grouped TOC, and a **follow-up chat bar** (ask questions about the doc, or launch another skill from the chat).
 - **Export & share** — from a **3-dots options menu** on any output: download **PDF** (server-rendered, paginated) or **MD**, or **Export to internal HTML** (a self-contained rs-group page for internal.airbyte.ai). Coverage-handoff outputs additionally support **push-to-repo** — a one-click PR to internal.airbyte.ai with open-PR detection.
 - **Live Transcribe** — transcribe a live call with an AI copilot ask-bar (see the Live Transcribe section below).
