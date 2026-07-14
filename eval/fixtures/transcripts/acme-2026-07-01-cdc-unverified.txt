@@ -1,0 +1,11 @@
+Acme Corp - Technical Discovery - 2026-07-01
+
+John (Acme): We need to replicate our Postgres transactions table into Snowflake.
+Gary (Airbyte): What sync mode do you need?
+John (Acme): We need CDC or at least incremental on the transactions table; we cannot afford a full refresh every run.
+Gary (Airbyte): Is Postgres CDC (WAL / Debezium) enabled in your database?
+John (Acme): We haven't confirmed that yet with the DBA. We know the table has an updated_at column, so incremental by cursor might work.
+Gary (Airbyte): What volume are we talking about?
+John (Acme): About 2M rows per day, mostly during business hours.
+Gary (Airbyte): Where do you want this to run?
+John (Acme): We'd prefer Airbyte Cloud if it can do incremental/CDC.

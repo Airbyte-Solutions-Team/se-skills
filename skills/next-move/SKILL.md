@@ -55,6 +55,12 @@ Check the customer's `outputs/` folder (`{customers_dir}/<Customer>/outputs/<ski
 
 For each, note the **date** (from filename). Stale artifacts (>30 days old) are treated as incomplete.
 
+### Already-completed action guard
+Before recommending any skill, check whether a fresh, relevant artifact already exists and whether a new signal justifies re-running it:
+- If a qualification doc exists and is **<30 days old**, and no new transcript/objection/blocker has appeared, **do not recommend re-running that same qualification skill**. Recommending `deployment-model-qual` when a fresh deployment-qual doc exists, or `biz-qual` when a fresh biz-qual exists, is a repeat, not a next move.
+- The next move should be the **next logical downstream step** (e.g., if deployment-qual + biz-qual + tech-qual exist, move toward `connector-feasibility` or `poc-plan`) or a **gap-closing action** (prep-call, account-refresher, Gong check) if the existing artifacts are thin.
+- If the user explicitly asks to refresh an existing artifact, honor the request and note that it is a refresh.
+
 ### 2. Transcripts
 Check `{transcripts_dir}/` for files matching the customer. Note:
 - Total count
@@ -91,6 +97,8 @@ Add SFDC stage + the mismatch finding to the Inferred Stage section. If SFDC una
 ## How to Infer Deal Stage
 
 Use this decision tree. **Critical rule: never recommend a skill that would refuse to run due to missing call data.** See `_se-playbook.md` "Skill Sequencing Rules" for the hard prerequisites.
+
+**Low-confidence default:** When evidence is thin (fewer than 2 meaningful artifacts, only one old transcript, or conflicting SFDC/local signals), the top recommendation must be an **evidence-gathering action** (`prep-call`, `account-refresher`, a targeted Gong check, or `deal-assessment` to diagnose decay) rather than a deliverable skill (`poc-plan`, `roi-business-case`, `mutual-close-plan`, `coverage-handoff`). Only move to a deliverable when the artifact chain supports it or the user explicitly asks for that artifact.
 
 ```
 No customer folder, no transcripts
@@ -332,6 +340,7 @@ The router can recommend `follow-up-email` or `objection-handler`, but only when
 Avoid "run follow-up-email because it's been a while" without a substantive trigger.
 
 ### Anti-patterns to avoid in this skill
+- Recommending a skill whose fresh artifact already exists without a new trigger
 - Recommending all 5 qualification skills simultaneously when 1 is the prerequisite
 - Treating an old artifact as "done" without checking freshness
 - Inferring stage from gut feel instead of artifact inventory
@@ -342,7 +351,8 @@ Avoid "run follow-up-email because it's been a while" without a substantive trig
 
 ## Changelog
 
-- **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
+- **2026-07-14** — **Phase 3 guardrails: no repeat recommendations; low-confidence → gather evidence.** Added an "Already-completed action guard" so the router does not recommend a qualification skill whose fresh artifact already exists without a new trigger. Added a "Low-confidence default" that prefers evidence-gathering actions over deliverable skills when the artifact chain is thin or signals conflict.
+- **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
 - **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE" (routing prose, inputs-needed field).
 - **2026-07-09** — Fixed the Local Artifacts scan: reads each prior doc from `outputs/<skill>/` (was the customer root); `Deal-Assessment-*.md` → lowercase `deal-assessment-*.md`; `call-summary-*.md` → `post-call-*.md`. The stage-inference was silently missing every prior artifact.
 - **2026-07-09** — Added a **conflicting-signals branch** to the override logic: when signals collide (stale quals + fresh objection, or SFDC-stage vs local-artifact mismatch), name the tension in `Current read` and pick the de-risking move with its assumption stated, rather than forcing one tree path. Handled in prose only — the four At-a-Glance labels (`Recommended Next Move`/`Confidence`/`Stage`/`Top Blocker`) the web-app reader keys on for hero-card routing are unchanged.

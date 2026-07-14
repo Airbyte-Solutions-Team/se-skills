@@ -1,0 +1,11 @@
+Acme Corp - Technical Discovery - 2026-07-01
+
+John (Acme): We need to replicate Postgres transactions and Salesforce opportunities into Snowflake.
+Gary (Airbyte): What volume are we talking about?
+John (Acme): About 2M rows per day across both sources.
+Gary (Airbyte): What are your latency requirements?
+John (Acme): We need sub-hourly latency for the sales pipeline.
+Gary (Airbyte): Where do you want this to run? Cloud or self-hosted?
+John (Acme): We haven't decided yet. The security team is reviewing options.
+Gary (Airbyte): Any specific security or compliance requirements?
+John (Acme): Standard SOC 2, but no BYOK or air-gap requirement.

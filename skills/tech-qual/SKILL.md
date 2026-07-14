@@ -64,6 +64,8 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 ## Technical Fit Summary
 **Overall fit:** 🟢 Strong / 🟡 Moderate / 🔴 Weak / ⬜ Insufficient info
 
+**Pre-save fit gate:** Do not label the overall technical fit as `🟢 Strong` when any scorecard row is `⬜ Unknown` or `🔴 Weak` unless that row is explicitly a **solvable implementation risk** (not a critical blocker). If a critical requirement is unverified, cap the overall fit at `🟡 Moderate` or lower and make the recommended motion conditional on resolving the open item. An "Insufficient info" call is better than an inflated "Strong."
+
 *Scorecard — the "Why it matters" column states the consequence, not a restatement of the area.*
 
 | Area | Status | Why it matters |
@@ -185,9 +187,16 @@ Document structure follows `_se-playbook.md` → Output Document Format (H1 titl
 - **Need for professional services:** [Yes / No / Possibly]
 
 ## Technical Risks & Open Items
-| Risk | Severity | Why it matters / mitigation |
-|------|----------|------------------------------|
-| [e.g., Custom connector needed for key source] | High | [consequence + how to de-risk] |
+Classify every item in this table into one of four buckets so the SE knows whether the deal is qualified, blocked, or merely unfinished:
+
+- **Confirmed fit** — validated against evidence; no residual uncertainty
+- **Solvable implementation risk** — known gap with a feasible mitigation; does not block qualification
+- **Critical blocker** — requirement Airbyte cannot meet or is unverified; prevents a `🟢 Strong` fit
+- **Open validation item** — evidence is missing; must be resolved before the fit call is final
+
+| Risk | Severity | Classification | Why it matters / mitigation |
+|------|----------|----------------|------------------------------|
+| [e.g., Custom connector needed for key source] | High | Solvable implementation risk | [consequence + how to de-risk] |
 | [e.g., Sub-minute latency requirement] | Medium | |
 | [e.g., Air-gapped deployment not yet validated] | High | |
 
@@ -275,6 +284,7 @@ If the customer is comparing connector counts to Fivetran/Matillion, that's a Re
 Always include "build internally" as a competitor in tech qual — it's often the strongest alternative. Surface their actual current-state cost: engineer hours/week, on-call burden, schema-drift handling, opportunity cost. Without this number, you can't win the TCO conversation.
 
 ### Anti-patterns to avoid in this skill
+- Marking the deal `🟢 Strong` while a critical requirement is still `⬜ Unknown` or `🔴 Weak`
 - Tech qual filled out before deployment model is confirmed
 - Connector list without coverage assessment ("we have Salesforce" ≠ "we have the auth + objects + sync mode they need")
 - Volume/latency answers taken at face value without asking what happens when they're missed
@@ -307,6 +317,7 @@ Read `config_file` (per playbook → Workspace Paths) for the `[SE name]` field.
 
 ## Changelog
 
+- **2026-07-14** — **Phase 3 guardrails: no `🟢 Strong` with critical unknowns; four-bucket classification.** Added a pre-save fit gate to the Technical Fit Summary: an unverified or weak critical requirement caps the overall fit at `🟡 Moderate` or lower. Added a four-bucket classification (Confirmed fit / Solvable implementation risk / Critical blocker / Open validation item) to the Technical Risks & Open Items table so a definitive qualification cannot be built on a missing critical input.
 - **2026-07-10** — **DS2 entitlement grounding of the compliance self-check.** The Security & Compliance self-check now maps each customer security/compliance requirement to a NAMED `feature-*` entitlement from the real `EntitlementDefinitions.kt` (DS2 = `reference_data.repos.airbyte_platform`, per `_se-playbook.md` → "Product & Connector Reference Data") rather than asserting capabilities from memory: SSO → `feature-sso`, RBAC/groups → `feature-rbac-roles`/`feature-groups`, in-pipeline row filtering/hashing/encryption → `feature-mappers`, PrivateLink/network isolation → `feature-privatelink`, data residency → `feature-self-managed-regions`, sub-hourly latency → `feature-15-minute-sync-frequency`. Made the customer-managed KMS/BYOK / full-control-plane-in-VPC / air-gap boundary concrete: no entitlement on any currently-offered shape → not supported today (was SME, retired/may return), a no-fit rather than a positionable capability. Feature-ids kept internal per guardrail (customer-facing = "available on Enterprise Flex," never the feature-id). Source Coverage now reports whether the airbyte-platform checkout was used (+ date) or unavailable, with capped confidence and "verify with [team]" degradation. Additive — refusal rule, transcript prerequisite, and section order unchanged.
 - **2026-07-10** — SME-retirement phrasing fixes. Deployment method row now Cloud Pro / Flex-hybrid (dropped SME as an option); Preferred deployment now Cloud / Enterprise Flex / Open Source; customer-managed KMS reframed as not available on any currently-offered shape (was SME — retired, may return); deployment-first block now names the two live shapes (Cloud / Flex-hybrid), routes residency/VPC to Flex, and treats BYOK / full-VPC / air-gap-with-no-Flex-path as a park/no-fit rather than requalify-to-SME. Kept SME as a retired-may-return note, not deleted.
 - **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.

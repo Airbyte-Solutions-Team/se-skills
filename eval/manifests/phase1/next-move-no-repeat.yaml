@@ -1,0 +1,78 @@
+manifest_version: "1.0"
+id: phase1-next-move-no-repeat
+title: Next-move does not recommend an already completed qualification action
+skills_under_test:
+  - next-move
+tags:
+  - next-move
+  - routing
+  - no-repeat
+  - artifact-chain
+fixtures:
+  transcripts:
+    - source: fixtures/transcripts/acme-2026-07-01-next-move-ready.txt
+      target: _transcripts/Acme-07.01.26.txt
+  existing_outputs:
+    - source: fixtures/outputs/next-move-biz-qual.md
+      target: customers/Acme/outputs/biz-qual/biz-qual-2026-07-01.md
+    - source: fixtures/outputs/next-move-deployment-qual.md
+      target: customers/Acme/outputs/deployment-qual/deployment-qual-2026-07-01.md
+    - source: fixtures/outputs/next-move-tech-qual.md
+      target: customers/Acme/outputs/tech-qual/tech-qual-2026-07-01.md
+    - source: fixtures/outputs/next-move-connector-feasibility.md
+      target: customers/Acme/outputs/connector-feasibility/connector-feasibility-2026-07-01.md
+  config: fixtures/config/synthetic-se-config.yaml
+environment:
+  salesforce: false
+execution:
+  prerequisite_mode: enforce
+  classification: normal
+customer_constraints:
+  - Fresh biz-qual, deployment-qual, tech-qual, and connector-feasibility artifacts exist.
+  - No new trigger (new transcript, objection, or blocker) has appeared.
+  - Customer is ready to scope the POC.
+available_evidence:
+  - One recent transcript confirming alignment and readiness to scope POC.
+  - All upstream qualification outputs are present and recent.
+required_behavior:
+  - Recommend a downstream action (e.g., poc-plan or prep-call for POC kickoff).
+  - Avoid recommending a re-run of biz-qual, deployment-qual, tech-qual, or connector-feasibility.
+  - Explain why the recommended move is the highest priority.
+forbidden_behavior:
+  - Recommending a qualification skill whose fresh artifact already exists without a new trigger.
+expected_sections:
+  - At a Glance
+  - Current read
+  - Ranked Next Moves
+  - Source Coverage
+per_skill_expected_sections:
+  next-move:
+    - Current read
+    - Ranked Next Moves
+deterministic_assertions:
+  - name: recommends a downstream move
+    target: markdown
+    skills:
+      - next-move
+    check: "section_contains(output, 'Ranked Next Moves', 'poc-plan')"
+    severity: blocker
+  - name: does not re-run existing qualification skills
+    target: markdown
+    skills:
+      - next-move
+    check: "not section_contains(output, 'Ranked Next Moves', 'Run `deployment-model-qual`') and not section_contains(output, 'Ranked Next Moves', 'Run `biz-qual`') and not section_contains(output, 'Ranked Next Moves', 'Run `tech-qual`') and not section_contains(output, 'Ranked Next Moves', 'Run `connector-feasibility`')"
+    severity: blocker
+  - name: explains priority
+    target: markdown
+    skills:
+      - next-move
+    check: "section_contains(output, 'Current read', 'poc') or section_contains(output, 'Current read', 'POC')"
+    severity: major
+  - name: source coverage is present
+    target: markdown
+    check: "has_section(output, 'Source Coverage')"
+    severity: blocker
+failure_severity: blocker
+notes: >
+  The core invariant is that next-move should not repeat an already completed
+  action when the artifact chain already supports a downstream step.

@@ -50,6 +50,15 @@ When an optional skill/tool is missing, do the fallback named above and **record
 
 For each system the customer needs, go through this chain. "The connector exists" is step 2a, not the answer.
 
+**Feasibility is not binary.** Keep these five dimensions distinct in the output and in your reasoning:
+1. **Connector availability** — does an Airbyte connector with the right name exist?
+2. **Supported sync behavior** — does it expose the objects/streams, sync modes (full refresh / incremental / CDC), and cursor behavior the customer needs?
+3. **Authentication and networking feasibility** — can the customer supply the required auth model and network path (OAuth app, IP allowlist, VPN, PrivateLink)?
+4. **Full use-case feasibility** — do the above, plus volume, latency, history, and reliability, actually solve the customer's specific use case?
+5. **Native support versus workaround** — is the fit built into the connector, or does it require a manual workaround (CSV export, proxy, custom script)? A workaround is not the same as native support and must be labeled as such.
+
+A connector with the right name only clears dimension 1. Do not treat dimensions 2–5 as green until they are explicitly confirmed or listed as open questions. Do not present a workaround as native connector support.
+
 **First-pass, for every connector: run the connector availability lookup** (per `_se-playbook.md` → "Product & Connector Reference Data"). From the cached registry JSON, resolve `{ exists, dockerImageTag, supportLevel, releaseStage, sourceType, language, cloud_available, self_managed_only, isEnterprise, auth }`. Two derivations do work the MCP can't:
 - **`cloud_available` vs `self_managed_only`** — a connector present in the OSS registry but **absent from the Cloud registry** is Self-Managed-only (the OSS-minus-Cloud set difference). This is the "which connectors force a non-Cloud deployment" answer — it feeds the new **Availability** column and the deployment-model tie-in.
 - **Enterprise variant** — if the system is a regulated/legacy stack (Oracle, NetSuite, SAP HANA, ServiceNow, SharePoint, Workday, DB2) or the registry marks `ab_internal.isEnterprise`, check the private **`airbyte-enterprise` `connector_stubs.json`** for an enterprise variant. If present, the connector is **available via the enterprise connector** (entitlement-gated on Enterprise Flex) with a docs `url` — surface that instead of falsely reporting a gap. If `airbyte-enterprise` isn't cloned, note it unavailable and don't infer enterprise availability from memory.
@@ -145,7 +154,7 @@ Also label build-effort ranges as planning estimates: "1–3 wks build is a plan
 ---
 
 ## Fit Verdict
-*Lead with the answer — this is the first section after the decision card.* For each needed connector, the verdict is not just exists/missing — it's **does it solve their use case**:
+*Lead with the answer — this is the first section after the decision card.* For each needed connector, the verdict is not just exists/missing — it's **does it solve their use case**. Make the distinction between availability, supported sync behavior, auth/network feasibility, and full use-case fit visible for each row:
 
 If every needed connector is fully validated, open with a verdict callout:
 
@@ -161,6 +170,12 @@ If every needed connector is fully validated, open with a verdict callout:
 | DB2 | source-db2 | ✅ Community | 🟦 Self-Managed / Flex only | 🟡 Needs confirmation | Med | Not on Cloud — forces a Flex (or self-hosted OSS) deployment |
 | Workday | source-workday-enterprise | ✅ Enterprise | 🟧 Enterprise (Flex, entitlement-gated) | 🟡 Needs confirmation | Med | Enterprise connector — not in the Cloud/OSS registry |
 | [System] | — | ❌ Missing | 🟥 No connector | 🔴 Build needed | — | [build path + effort] |
+
+**Use-case fit must be explicit.** The "Use-case fit" cell must state whether the required sync mode, objects, and auth/network path are:
+- **🟢 Native** — supported directly by the connector
+- **🟡 Workaround** — possible via a documented or custom workaround (explain it; do not call it native)
+- **🔴 Gap** — not supported and no viable workaround
+- **⬜ Unverified** — the customer hasn't confirmed enough to choose the above
 
 **Availability** is the registry-derived deployment reach (per the availability lookup): 🟢 Cloud + SM (in both registries) · 🟦 Self-Managed / Flex only (OSS-minus-Cloud set difference) · 🟧 Enterprise variant (from `airbyte-enterprise` `connector_stubs.json` — entitlement-gated on Enterprise Flex) · 🟥 no connector. A 🟦 or 🟧 row **independently constrains the deployment model** regardless of use-case fit — carry it into the deployment-model tie-in and flag it in Constraints. If the registry cache or `airbyte-enterprise` was unavailable, mark the column `⬜ unverified` for affected rows rather than guessing.
 
@@ -315,15 +330,18 @@ If a connector is community-tier or has known reliability issues, say so plainly
 If a connector is only available on Cloud (or only on Self-Managed), flag it. This connects to the deployment-model qualification — a Cloud-only connector for an air-gap customer is a deal-killer surfaced here, not at procurement.
 
 ### Anti-patterns to avoid in this skill
+- Treating connector existence as proof of full use-case feasibility
 - Coverage table without effort estimates for gaps
 - "We can build it" as the answer without TCO context
 - Hiding community-tier or known-issue connectors in the "Available" column
 - Connector counts without coverage-of-their-stack framing
+- Presenting a workaround (CSV export, proxy, custom script) as native connector support
 
 ---
 
 ## Changelog
 
+- **2026-07-14** — **Phase 3 guardrails: connector availability ≠ full use-case feasibility.** Added explicit five-dimension distinction (availability · supported sync behavior · auth/network feasibility · full use-case fit · native support vs workaround) to Step 2 and the Fit Verdict table. The "Use-case fit" column now requires a native/workaround/gap/unverified label so a workaround cannot be presented as native support. Added anti-patterns against treating existence as a full fit.
 - **2026-07-10** — **Connector-registry availability + enterprise detection (P-EXT, first primary consumer).** Wired the connector availability lookup + enterprise stubs from `_se-playbook.md` → "Product & Connector Reference Data" into Step 2 as the first-pass source of truth: existence · version · support tier · release stage · **Cloud-vs-Self-Managed availability** (the OSS-minus-Cloud registry set difference) · auth (from embedded `spec`) · enterprise-variant detection (private `airbyte-enterprise` `connector_stubs.json`). Added a required **Availability** column to the Fit Verdict table (🟢 Cloud+SM · 🟦 Self-Managed/Flex-only · 🟧 Enterprise · 🟥 none) + an Availability line in At-a-Glance; a 🟦/🟧 row now independently flags a deployment-model constraint (regulated/legacy stacks surface as enterprise variants, not gaps). Registry cache + `airbyte-enterprise` availability/checkout dates added to the fail-loud used/unavailable list and Source Coverage; `⬜ unverified` when the cache is absent. `airbyte-ops-mcp` registry demoted from sole source to live cross-check/fallback (the cached public registry is load-bearing and works with no GCS creds). Guardrail: registry set-diffs stay internal — customer-facing framing is "Enterprise Flex / Self-Managed," not "absent from Cloud registry." **Acceptance-tested** (db2 SM-only + salesforce Cloud-certified + Workday enterprise-variant) — see SESSION-LOG.
 - **2026-07-10** — **Portability + MCP fix.** Repointed hardcoded `~/airbyte-work/` output/config paths to the resolver (`{customers_dir}`/`config_file`); local Airbyte repo checkouts now resolve via `{airbyte_repos_dir}` (optional — skill degrades to MCP/registry-only when unset, noted in Source Coverage). **Fixed dead MCP tool names:** `mcp__airbyte-mcp__list_connectors` → `mcp__airbyte-ops-mcp__list_connectors_in_registry`, and `mcp__airbyte-mcp__get_connector_info` → `mcp__airbyte-ops-mcp__get_connector_registry_entry` + `get_connector_registry_spec` (there is no `airbyte-mcp` server; the old names would have failed on every machine). These require the `airbyte-ops-mcp` server + GCS creds; skill notes and falls back if unavailable. Added a **Tool & skill dependencies** section declaring what's required (registry) vs. optional-with-graceful-degradation (`shared-airbyte-skills:*`, `discovering-connectors`, deepwiki/Kapa/Sentry/Datadog, local checkouts) — each with a named fallback, since those skills ship separately from this repo and aren't guaranteed present.
 - **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE" (reframe talk-track note).

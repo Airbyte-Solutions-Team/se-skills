@@ -51,6 +51,8 @@ If user signals brief mode (`--brief`, `just the number`, `one-slide`): produce 
 - **Self-Managed Enterprise** was licensed — **retired / not currently offered (may return)**; not a live pricing lane today, kept here as historical context only.
 - The core ROI story for most enterprise deals is **predictable capacity-based spend vs. a competitor's consumption bill that spikes with volume** — model the customer's *growth* trajectory, because that's where capacity-based pricing wins. Confirm current pricing specifics before putting exact figures in a customer-facing artifact; ground stated numbers in the objection reference's `Last updated` date.
 
+**Primary scenario discipline:** The customer's stated operating model (Cloud Pro or Flex, with their requested sync frequency, scope, concurrency, and volume) is the **primary scenario**. Do not lower sync frequency, reduce scope, or change concurrency assumptions in the primary estimate unless the customer explicitly approves that change. If you model an alternative (e.g., daily instead of hourly, fewer connections, lower concurrency), label it clearly as an **optimization alternative**, explain the trade-off, and show that it differs from the customer's baseline. Never silently substitute an optimization for the requested baseline.
+
 ## Discovery Inputs (the numbers this skill needs — flag any that are missing)
 
 | Input | Why it matters | Typical source |
@@ -141,7 +143,10 @@ Be honest about Airbyte's own costs (migration, ramp) — a case that shows zero
 ## Assumptions & Confirms
 - **Customer-confirmed inputs:** [list — these are solid]
 - **[confirm] inputs (SE must validate before this goes to the EB):** [list — the case is directional until these are nailed]
+- **Missing inputs that materially affect the result:** [list the 1–3 inputs whose absence changes the answer most — e.g., volume growth rate, true concurrency target, exact data-worker pricing. State clearly how the result would move if each is higher/lower.]
 - **Pricing basis:** [Cloud Pro / Flex capacity model], figures as of [objection-reference date] — confirm current terms with AE/deal-desk before sharing externally.
+
+**Avoid false precision.** Use ranges for estimates and explain the sensitivity. If a number is derived from an assumed input, show the assumption. The EB should be able to see which numbers are solid and which are placeholders.
 
 ---
 
@@ -167,6 +172,8 @@ Per `_se-playbook.md`: if the most-recent local transcript is >14 days old, chec
 
 ### Anti-patterns to avoid in this skill
 - Inventing inputs to fill the table (the cardinal sin — mark [confirm] instead)
+- Lowering the customer's requested sync frequency, scope, or concurrency in the primary estimate without explicit approval
+- Presenting an optimization alternative as the baseline
 - A case that only works under best-case assumptions, presented as if it's certain
 - Hiding Airbyte's switching/ramp cost
 - Jargon in the one-slide summary (the EB isn't technical)
@@ -203,5 +210,6 @@ Read `config_file` (per playbook → Workspace Paths) for the `[SE name]` field.
 
 ## Changelog
 
+- **2026-07-14** — **Phase 3 guardrails: primary scenario discipline and explicit missing-input impact.** Added a "Primary scenario discipline" rule that the customer's stated operating model is the baseline; sync frequency, scope, and concurrency may not be lowered in the primary estimate without explicit approval, and optimization alternatives must be clearly labeled. Added a "Missing inputs that materially affect the result" line to Assumptions & Confirms plus an explicit "Avoid false precision" callout.
 - **2026-07-10** — Dropped SME from the cost model. Self-Managed Enterprise's licensed pricing lane is retired / not currently offered (may return) — removed as a live option from the deployment-qual read, the pricing-model spine, and the At-a-Glance "Deployment model priced" line; cost model is now Cloud Pro / Flex (both capacity-based). SME kept as a historical note, not deleted.
 - **2026-07-10** — Initial creation. Compiles biz-qual Metrics + capacity/volume profile + build-vs-buy into a customer-shareable 3-yr TCO / ROI / payback artifact with a one-slide EB summary. Capacity-based pricing model for Pro/Flex (predictable) vs. consumption-based competitor. Honest-math discipline: every figure sourced or explicitly [confirm]. Requires a transcript; warns without biz-qual. Per playbook → Operating Disciplines (Metrics → the number that unlocks the EB).

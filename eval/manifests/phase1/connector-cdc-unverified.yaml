@@ -1,0 +1,71 @@
+manifest_version: "1.0"
+id: phase1-connector-cdc-unverified
+title: Connector exists but required incremental/CDC behavior is unverified
+skills_under_test:
+  - connector-feasibility
+tags:
+  - connector
+  - cdc
+  - incremental
+  - feasibility
+  - unverified
+fixtures:
+  transcripts:
+    - source: fixtures/transcripts/acme-2026-07-01-cdc-unverified.txt
+      target: _transcripts/Acme-07.01.26.txt
+  config: fixtures/config/synthetic-se-config.yaml
+environment:
+  salesforce: false
+execution:
+  prerequisite_mode: enforce
+  classification: normal
+customer_constraints:
+  - Postgres source is required.
+  - CDC or incremental sync on the transactions table is required.
+  - Volume is approximately 2M rows per day during business hours.
+  - Deployment preference is Airbyte Cloud if the use case is feasible.
+available_evidence:
+  - One transcript confirming Postgres source and a need for CDC/incremental.
+  - The transcript explicitly states CDC has not been confirmed with the DBA.
+required_behavior:
+  - Identify that `source-postgres` is available in the registry.
+  - Flag the required CDC/incremental behavior as unverified.
+  - Distinguish connector availability from supported sync behavior, auth/network feasibility, and full use-case feasibility.
+  - Label the use-case fit as native, workaround, gap, or unverified.
+forbidden_behavior:
+  - Marking Postgres CDC/incremental as fully supported without verification.
+  - Presenting a workaround (e.g., cursor-based incremental) as native CDC support.
+  - Treating connector existence as proof of full use-case feasibility.
+expected_sections:
+  - At a Glance
+  - Source Coverage
+per_skill_expected_sections:
+  connector-feasibility:
+    - Connector Coverage
+    - Fit Verdict
+    - Recommended Next Actions
+deterministic_assertions:
+  - name: fit verdict section exists
+    target: markdown
+    check: "has_section(output, 'Fit Verdict')"
+    severity: blocker
+  - name: cdc/incremental is flagged unverified
+    target: markdown
+    skills:
+      - connector-feasibility
+    check: "contains_case_insensitive(output, 'unverified') or contains_case_insensitive(output, 'needs confirmation')"
+    severity: blocker
+  - name: does not claim native cdc support
+    target: markdown
+    skills:
+      - connector-feasibility
+    check: "not contains_any_case_insensitive(output, ['native cdc', 'cdc fully supported', 'cdc is supported'])"
+    severity: major
+  - name: source coverage is present
+    target: markdown
+    check: "has_section(output, 'Source Coverage')"
+    severity: blocker
+failure_severity: blocker
+notes: >
+  The core invariant is that a connector with the right name must not be treated
+  as proof that the customer's required sync mode is natively supported.

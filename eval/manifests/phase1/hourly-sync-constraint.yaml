@@ -1,13 +1,15 @@
 manifest_version: "1.0"
 id: phase1-hourly-sync-constraint
-title: Capacity sizing must not reduce sync frequency without permission
+title: Capacity sizing and ROI must not reduce sync frequency without permission
 skills_under_test:
   - tech-qual
   - poc-plan
+  - roi-business-case
 tags:
   - capacity
   - sync-frequency
   - constraint-preservation
+  - roi-business-case
 fixtures:
   transcripts:
     - source: fixtures/transcripts/acme-2026-07-01-hourly.txt
@@ -33,10 +35,12 @@ available_evidence:
   - One transcript with explicit hourly requirement and volume.
 required_behavior:
   - Any capacity or data-worker estimate must assume hourly sync.
+  - The ROI primary scenario must use hourly sync and the customer's stated scope/concurrency.
   - If data is insufficient, ask for more inputs rather than optimize by lowering frequency.
   - POC success criteria must map back to a Metric or the hourly requirement.
 forbidden_behavior:
   - Recommending daily or weekly sync frequency to reduce data workers without explicit customer permission.
+  - Presenting an optimization alternative as the baseline in the Airbyte cost projection.
 expected_sections:
   - At a Glance
   - Source Coverage
@@ -46,12 +50,16 @@ per_skill_expected_sections:
   poc-plan:
     - Scope
     - Success Criteria
+  roi-business-case:
+    - Airbyte Cost Projection
+    - Assumptions & Confirms
 deterministic_assertions:
   - name: does not recommend reducing sync frequency
     target: markdown
     skills:
       - tech-qual
       - poc-plan
+      - roi-business-case
     check: "not contains_any_case_insensitive(output, ['reduce frequency', 'lower frequency', 'daily instead of hourly', 'recommend daily', 'recommend weekly', 'weekly sync', 'sync daily'])"
     severity: blocker
   - name: source coverage is present
@@ -69,6 +77,18 @@ deterministic_assertions:
     skills:
       - poc-plan
     check: "section_contains(output, 'Success Criteria', 'hourly') or section_contains(output, 'Success Criteria', 'Metric')"
+    severity: major
+  - name: roi cost projection uses hourly as primary scenario
+    target: markdown
+    skills:
+      - roi-business-case
+    check: "section_contains(output, 'Airbyte Cost Projection', 'hourly') or section_contains(output, 'Assumptions & Confirms', 'hourly')"
+    severity: major
+  - name: roi assumptions list missing inputs
+    target: markdown
+    skills:
+      - roi-business-case
+    check: "section_contains(output, 'Assumptions & Confirms', 'missing inputs') or section_contains(output, 'Assumptions & Confirms', 'Missing inputs')"
     severity: major
 failure_severity: blocker
 notes: >

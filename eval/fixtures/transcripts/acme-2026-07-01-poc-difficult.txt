@@ -1,0 +1,9 @@
+Acme Corp - POC Scoping Call - 2026-07-01
+
+John (Acme): We want to run a POC that proves Airbyte can sync our Postgres transactions table to Snowflake with incremental loads.
+Gary (Airbyte): What does success look like for the POC?
+John (Acme): The hard one is throughput: we need to sync 50M rows end-to-end within 5 minutes. That's the number our board cares about.
+Gary (Airbyte): Is there a specific latency requirement beyond throughput?
+John (Acme): Under 5 minutes for the full 50M rows is the must-have. Incremental sync on new rows is also a must-have.
+Gary (Airbyte): What about configuration help?
+John (Acme): It would be nice if the SE can set it up without our engineering team, but we can live with some guidance.

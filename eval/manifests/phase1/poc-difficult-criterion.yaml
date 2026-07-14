@@ -1,0 +1,71 @@
+manifest_version: "1.0"
+id: phase1-poc-difficult-criterion
+title: POC preserves a difficult customer success criterion
+skills_under_test:
+  - poc-plan
+tags:
+  - poc
+  - success-criteria
+  - difficult-criterion
+  - scope-tiers
+fixtures:
+  transcripts:
+    - source: fixtures/transcripts/acme-2026-07-01-poc-difficult.txt
+      target: _transcripts/Acme-07.01.26.txt
+  config: fixtures/config/synthetic-se-config.yaml
+environment:
+  salesforce: false
+execution:
+  prerequisite_mode: provide_fixtures
+  classification: normal
+customer_constraints:
+  - "POC must prove Airbyte can sync 50M rows end-to-end within 5 minutes."
+  - "POC must also demonstrate incremental sync on new Postgres transactions."
+  - "Nice-to-have: SE can configure the connector without heavy engineering support."
+available_evidence:
+  - One transcript with an explicit, difficult success criterion.
+required_behavior:
+  - Preserve the 50M rows / 5 minute criterion as a must-have success criterion.
+  - If the criterion cannot be tested in the POC, explain the proxy validation and keep it as a production requirement.
+  - Separate minimum viable POC scope, optional stretch scope, production requirements, and POC-specific simplifications.
+forbidden_behavior:
+  - Removing the 50M/5min success criterion merely to make the POC easier to complete.
+  - Moving the criterion to out-of-scope without rationale and customer acknowledgment.
+expected_sections:
+  - At a Glance
+  - Source Coverage
+per_skill_expected_sections:
+  poc-plan:
+    - Success Criteria
+    - Scope
+deterministic_assertions:
+  - name: success criteria section exists
+    target: markdown
+    check: "has_section(output, 'Success Criteria')"
+    severity: blocker
+  - name: preserves 50m/5min criterion
+    target: markdown
+    skills:
+      - poc-plan
+    check: "section_contains(output, 'Success Criteria', '50M') and section_contains(output, 'Success Criteria', '5 minutes')"
+    severity: blocker
+  - name: scope tiers separate minimum/stretch/production/simplifications
+    target: markdown
+    skills:
+      - poc-plan
+    check: "section_contains(output, 'Scope', 'Minimum viable POC scope') and section_contains(output, 'Scope', 'Production requirements')"
+    severity: major
+  - name: does not silently drop the criterion
+    target: markdown
+    skills:
+      - poc-plan
+    check: "not contains_any_case_insensitive(output, ['remove', 'drop', 'omit'])"
+    severity: major
+  - name: source coverage is present
+    target: markdown
+    check: "has_section(output, 'Source Coverage')"
+    severity: blocker
+failure_severity: blocker
+notes: >
+  The core invariant is that a difficult customer success criterion cannot be
+  silently removed to make a POC easier to complete.
