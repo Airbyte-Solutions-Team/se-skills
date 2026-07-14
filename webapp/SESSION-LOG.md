@@ -2,7 +2,7 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`, mine = `gyairbyte/SE-Workflow`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: July 15, 2026 — SKILL-002 + SKILL-003 reference-data freshness and objection-handler reality; HEAD d3a24c6._
+_Last updated: July 14, 2026 — PR #19 correctness: generation-time reference freshness snapshot, per-skill source mapping, and changed-since-generation warnings._
 
 ## What the app is
 Local FastAPI + vanilla-JS UI (no build step) over the SE skills suite. `cd webapp && uv run app.py` → http://127.0.0.1:8787 (needs `CPATH/LIBRARY_PATH` for portaudio on this Mac — see "Run" below). Browse team → member's accounts → an account's opportunities → generated outputs; invoke skills; ask follow-ups on outputs; Live Transcribe a Zoom call with an AI copilot.
@@ -16,6 +16,15 @@ uv run --python 3.11 app.py    # port 8787
 ```
 
 ## Built this session (newest first — see `git log`)
+- **PR #19 correctness: preserve generation-time reference freshness and warn only for relevant sources (July 14).** `OutputMetadata` now stores `reference_freshness_at_generation` (the snapshot taken when the skill output is generated) and `reference_changed_since_generation` (sources whose freshness changed after generation). `webapp/app.py` never overwrites the generation-time snapshot at read time; `list_outputs` and `GET /api/output/meta` compute current freshness, compare it to the stored snapshot, and expose both fields. Added `_SKILL_REFERENCE_SOURCES` mapping in `webapp/reference_freshness.py` so only sources the skill actually consumes are attached (e.g., `connector-feasibility` gets registry + `airbyte-enterprise`; `deployment-model-qual` gets platform + enterprise repos; `biz-qual` gets none). The UI now distinguishes three states: "Reference data was stale/missing when this output was generated", "Reference data has changed since this output was generated", and "Reference freshness unknown for this legacy output". Legacy sidecars without a generation snapshot remain `null`/unknown rather than falsely fresh or stale. Updated tests cover per-skill filtering, `compare_to_generation`, snapshot preservation, and legacy unknown behavior.
+  - `webapp/reference_freshness.py`: `ReferenceChange` model, `compare_to_generation`, `_SKILL_REFERENCE_SOURCES`, `get_relevant_sources`, and skill-filtered `compute_reference_freshness`.
+  - `webapp/output_schema.py`: `reference_freshness_at_generation` and `reference_changed_since_generation` fields with legacy `reference_freshness` migration.
+  - `webapp/app.py`: `_write_output_sidecar` records the generation snapshot; `list_outputs` and `/api/output/meta` compute changes without overwriting it.
+  - `webapp/static/app.js`: output list and reader banners render stale-at-generation, changed-since-generation, and unknown messages.
+  - `webapp/static/index.html`: bumped `app.js?v=` cache-bust.
+  - `eval/tests/test_reference_freshness.py` and `eval/tests/test_webapp_reference_freshness.py`: updated for new semantics and per-skill mapping.
+  - Validation: `uv run --extra dev pytest eval/ -v` passes; `node --check webapp/static/app.js` passes; `./scripts/check-sync.sh` passes; `uv run python -m eval.runner run-suite --manifest-dir eval/manifests/phase1 --executor mock` passes.
+
 - **SKILL-002 + SKILL-003: reference-data freshness warnings and objection-handler reality check (July 14).** Added `webapp/reference_freshness.py` to compute the freshness of product/connector reference sources from filesystem mtimes (connector registry cache, `airbyte-platform`/`airbyte-enterprise` repo checkouts, and `skills/_reference/airbyte-objection-reference.md`). `OutputMetadata` now carries a `reference_freshness` list; `webapp/app.py` populates it when writing/listing/reading sidecars and exposes it through the existing `/api/output/meta` and `/api/accounts/{account}/outputs` endpoints. The output list and the output reader now show a yellow `⚠` warning when any reference source is stale or missing, with the source name and age in days. Updated `skills/_se-playbook.md` → Product & Connector Reference Data to require a "Reference data freshness" line in `## Source Coverage` when a skill consumes DS1–DS4 or the objection reference. Updated `skills/objection-handler/SKILL.md` to align its Cloud Pro / Enterprise Flex / park-no-fit routing with `deployment-model-qual`, require the reference-freshness check, and warn when the objection reference is stale.
   - `webapp/reference_freshness.py`: new `ReferenceFreshness` Pydantic model and `compute_reference_freshness`.
   - `webapp/output_schema.py`: added `reference_freshness` field to `OutputMetadata`.

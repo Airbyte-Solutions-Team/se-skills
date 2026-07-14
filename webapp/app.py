@@ -444,14 +444,28 @@ def list_outputs(account: str, opp: str | None = None) -> list[dict]:
             if f.suffix == ".md" and output_schema.skill_has_schema(skill):
                 try:
                     meta = output_schema.read_or_parse_sidecar(f, skill)
-                    meta.reference_freshness = reference_freshness.compute_reference_freshness(
-                        _se_config(), WORKSPACE, WEBAPP_DIR.parent
+                    current = reference_freshness.compute_reference_freshness(
+                        _se_config(), WORKSPACE, WEBAPP_DIR.parent, skill=skill
+                    )
+                    meta.reference_changed_since_generation = (
+                        reference_freshness.compare_to_generation(
+                            current, meta.reference_freshness_at_generation
+                        )
                     )
                     entry["valid"] = meta.valid
                     entry["validation_status"] = meta.validation_status
                     entry["validation_errors"] = meta.validation_errors
                     entry["missing_sections"] = meta.missing_sections
-                    entry["reference_freshness"] = [r.model_dump() for r in meta.reference_freshness]
+                    entry["reference_freshness_at_generation"] = (
+                        [r.model_dump() for r in meta.reference_freshness_at_generation]
+                        if meta.reference_freshness_at_generation is not None
+                        else None
+                    )
+                    entry["reference_changed_since_generation"] = (
+                        [c.model_dump() for c in meta.reference_changed_since_generation]
+                        if meta.reference_changed_since_generation is not None
+                        else None
+                    )
                 except (OSError, ValueError, TypeError):
                     logger.warning("Could not parse sidecar for %s", f)
             items.append(entry)
@@ -1088,11 +1102,16 @@ def api_output_meta(path: str):
         raise HTTPException(404, "Not found")
     skill = target.parent.name
     if not output_schema.skill_has_schema(skill):
-        return {"skill": skill, "valid": None, "validation_errors": [], "missing_sections": [], "reference_freshness": []}
+        return {"skill": skill, "valid": None, "validation_errors": [], "missing_sections": [], "reference_freshness_at_generation": None, "reference_changed_since_generation": None}
     try:
         meta = output_schema.read_or_parse_sidecar(target, skill)
-        meta.reference_freshness = reference_freshness.compute_reference_freshness(
-            _se_config(), WORKSPACE, WEBAPP_DIR.parent
+        current = reference_freshness.compute_reference_freshness(
+            _se_config(), WORKSPACE, WEBAPP_DIR.parent, skill=skill
+        )
+        meta.reference_changed_since_generation = (
+            reference_freshness.compare_to_generation(
+                current, meta.reference_freshness_at_generation
+            )
         )
         return meta.model_dump()
     except (OSError, ValueError, TypeError) as e:
@@ -1992,11 +2011,16 @@ def _write_output_sidecar(account: str, opp_slug: str | None, skill: str) -> Non
         return
     metadata = output_schema.parse_output(skill, text)
     try:
-        metadata.reference_freshness = reference_freshness.compute_reference_freshness(
-            _se_config(), WORKSPACE, WEBAPP_DIR.parent
+        metadata.reference_freshness_at_generation = (
+            reference_freshness.compute_reference_freshness(
+                _se_config(), WORKSPACE, WEBAPP_DIR.parent, skill=skill
+            )
         )
+        metadata.reference_changed_since_generation = []
     except Exception:
         logger.exception("Could not compute reference freshness for %s", newest)
+        metadata.reference_freshness_at_generation = []
+        metadata.reference_changed_since_generation = []
     try:
         output_schema.write_sidecar(newest, metadata)
     except OSError:

@@ -28,6 +28,17 @@ class ReferenceFreshness(BaseModel):
     path: str | None = None
 
 
+class ReferenceChange(BaseModel):
+    """A change in a reference source between output generation and now."""
+
+    source: str
+    label: str
+    old_date: str | None = None
+    new_date: str | None = None
+    old_status: str | None = None
+    new_status: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Default thresholds and source names
 # ---------------------------------------------------------------------------
@@ -46,6 +57,42 @@ _SOURCE_LABELS = {
     "airbyte_enterprise": "airbyte-enterprise repo",
     "connector_models": "airbyte-connector-models package",
 }
+
+# ---------------------------------------------------------------------------
+# Per-skill source mapping
+# ---------------------------------------------------------------------------
+# Only skills that actually consume product/connector reference data are
+# mapped. Unknown skills get an empty list so they do not warn for sources
+# they never touched.
+_SKILL_REFERENCE_SOURCES: dict[str, set[str]] = {
+    "biz-qual": set(),
+    "prep-call": set(),
+    "post-call": set(),
+    "full-qual": set(),
+    "next-move": set(),
+    "account-refresher": set(),
+    "forecast-prep": set(),
+    "internal-prep": set(),
+    "deal-assessment": set(),
+    "roi-business-case": set(),
+    "mutual-close-plan": set(),
+    "connector-feasibility": {"registry", "airbyte_enterprise"},
+    "deployment-model-qual": {"airbyte_platform", "airbyte_enterprise"},
+    "tech-qual": {"airbyte_platform", "airbyte_enterprise"},
+    "objection-handler": {"objection_reference", "airbyte_platform", "airbyte_enterprise"},
+    "poc-plan": {"registry", "airbyte_platform", "airbyte_enterprise"},
+}
+
+
+def get_relevant_sources(skill: str | None) -> set[str] | None:
+    """Return the reference sources a skill is known to depend on.
+
+    Returns `None` when `skill` is not provided, which means "all known
+    sources" (useful for diagnostics or explicit all-source checks).
+    """
+    if skill is None:
+        return None
+    return _SKILL_REFERENCE_SOURCES.get(skill, set())
 
 
 # ---------------------------------------------------------------------------
@@ -136,20 +183,23 @@ def compute_reference_freshness(
     config: dict,
     workspace: Path,
     repo_root: Path,
+    skill: str | None = None,
 ) -> list[ReferenceFreshness]:
-    """Return the freshness of every product/connector reference source.
+    """Return the freshness of product/connector reference sources.
 
     `config` is the parsed `.se-config.yaml` (may be empty). `workspace` is the
     SE workspace root (used to resolve relative paths). `repo_root` points to
     the `se-skills` checkout so we can locate `skills/_reference/airbyte-objection-reference.md`.
 
-    The result is a list of `ReferenceFreshness` records; `fresh=False` means the
-    source is either stale or missing and the UI should warn the SE.
+    If `skill` is provided, only sources known to be relevant to that skill
+    are returned. This prevents every output from warning about data the skill
+    never consumed.
     """
     cfg = (config or {}).get("reference_data") or {}
     workspace = Path(os.path.expanduser(workspace))
     repos_dir = _resolve_path(config.get("airbyte_repos_dir"), workspace, "02-repos")
 
+    # Build all known sources first, then filter by skill relevance.
     results: list[ReferenceFreshness] = []
 
     # DS1 — Connector registry cache (public HTTPS, cached locally)
@@ -241,4 +291,53 @@ def compute_reference_freshness(
         )
     )
 
-    return results
+    relevant = get_relevant_sources(skill)
+    if relevant is None:
+        return results
+    return [r for r in results if r.source in relevant]
+
+
+def compare_to_generation(
+    current: list[ReferenceFreshness],
+    generation: list[ReferenceFreshness] | None,
+) -> list[ReferenceChange] | None:
+    """Return the sources whose freshness has changed since output generation.
+
+    When `generation` is `None` (legacy output or before the first read), this
+    returns `None` because we cannot know what changed. An empty list means the
+    output was generated with an empty (known) source set.
+    """
+    if generation is None:
+        return None
+
+    current_by_source = {r.source: r for r in current}
+    generation_by_source = {r.source: r for r in generation}
+    changes: list[ReferenceChange] = []
+
+    for source, cur in current_by_source.items():
+        gen = generation_by_source.get(source)
+        if gen is None:
+            changes.append(
+                ReferenceChange(
+                    source=source,
+                    label=cur.label,
+                    old_date=None,
+                    new_date=cur.date,
+                    old_status=None,
+                    new_status=cur.status,
+                )
+            )
+            continue
+        if cur.status != gen.status or cur.date != gen.date:
+            changes.append(
+                ReferenceChange(
+                    source=source,
+                    label=cur.label,
+                    old_date=gen.date,
+                    new_date=cur.date,
+                    old_status=gen.status,
+                    new_status=cur.status,
+                )
+            )
+
+    return changes

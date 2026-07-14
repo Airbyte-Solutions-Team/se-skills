@@ -27,6 +27,17 @@ def tmp_workspace(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def _write_all_reference_files(workspace: Path) -> None:
+    _set_mtime(workspace / "02-repos" / "registry" / "oss_registry.json", 1.5)
+    _set_mtime(workspace / "02-repos" / "registry" / "cloud_registry.json", 2.5)
+    _set_mtime(workspace / "02-repos" / "airbyte-platform" / ".git" / "FETCH_HEAD", 5)
+    _set_mtime(workspace / "02-repos" / "airbyte-enterprise" / ".git" / "HEAD", 20)
+    _set_mtime(
+        workspace / "skills" / "_reference" / "airbyte-objection-reference.md",
+        3,
+    )
+
+
 def test_registry_fresh(tmp_workspace: Path) -> None:
     _set_mtime(tmp_workspace / "02-repos" / "registry" / "oss_registry.json", 1.5)
     _set_mtime(tmp_workspace / "02-repos" / "registry" / "cloud_registry.json", 2.5)
@@ -125,6 +136,105 @@ def test_config_overrides_paths(tmp_workspace: Path) -> None:
     assert platform.fresh is True
 
 
+def test_skill_filtering_limits_sources(tmp_workspace: Path) -> None:
+    _write_all_reference_files(tmp_workspace)
+
+    connector = rf.compute_reference_freshness(
+        {}, tmp_workspace, tmp_workspace, skill="connector-feasibility"
+    )
+    assert {r.source for r in connector} == {"registry", "airbyte_enterprise"}
+
+    deployment = rf.compute_reference_freshness(
+        {}, tmp_workspace, tmp_workspace, skill="deployment-model-qual"
+    )
+    assert {r.source for r in deployment} == {"airbyte_platform", "airbyte_enterprise"}
+
+    objection = rf.compute_reference_freshness(
+        {}, tmp_workspace, tmp_workspace, skill="objection-handler"
+    )
+    assert {r.source for r in objection} == {
+        "objection_reference",
+        "airbyte_platform",
+        "airbyte_enterprise",
+    }
+
+    biz = rf.compute_reference_freshness(
+        {}, tmp_workspace, tmp_workspace, skill="biz-qual"
+    )
+    assert biz == []
+
+    unknown = rf.compute_reference_freshness(
+        {}, tmp_workspace, tmp_workspace, skill="not-a-skill"
+    )
+    assert unknown == []
+
+
+def test_compare_to_generation_detects_changes() -> None:
+    fresh = rf.ReferenceFreshness(
+        source="registry",
+        label="Connector registry cache",
+        status="fresh",
+        date="2026-07-14",
+        age_days=0,
+        fresh=True,
+        threshold_days=7,
+        path="/tmp",
+    )
+    stale = rf.ReferenceFreshness(
+        source="objection_reference",
+        label="Objection reference",
+        status="stale",
+        date="2026-07-01",
+        age_days=13,
+        fresh=False,
+        threshold_days=7,
+        path="/tmp",
+    )
+
+    # Same as generation -> no changes
+    assert rf.compare_to_generation([fresh], [fresh]) == []
+
+    # Status changed
+    current = [fresh.model_copy(update={"status": "stale", "fresh": False, "age_days": 10})]
+    changes = rf.compare_to_generation(current, [fresh])
+    assert len(changes) == 1
+    assert changes[0].source == "registry"
+    assert changes[0].old_status == "fresh"
+    assert changes[0].new_status == "stale"
+
+    # Date changed
+    current = [fresh.model_copy(update={"date": "2026-07-15"})]
+    changes = rf.compare_to_generation(current, [fresh])
+    assert changes[0].new_date == "2026-07-15"
+
+    # New source appeared
+    changes = rf.compare_to_generation([fresh, stale], [fresh])
+    assert len(changes) == 1
+    assert changes[0].source == "objection_reference"
+    assert changes[0].old_date is None
+    assert changes[0].new_date == "2026-07-01"
+
+
+def test_compare_to_generation_unknown_for_legacy() -> None:
+    fresh = rf.ReferenceFreshness(
+        source="registry",
+        label="Connector registry cache",
+        status="fresh",
+        date="2026-07-14",
+        age_days=0,
+        fresh=True,
+        threshold_days=7,
+        path="/tmp",
+    )
+    assert rf.compare_to_generation([fresh], None) is None
+    assert rf.compare_to_generation([], []) == []
+    # Known empty generation vs newly observed source is a new source.
+    changes = rf.compare_to_generation([fresh], [])
+    assert len(changes) == 1
+    assert changes[0].source == "registry"
+    assert changes[0].old_date is None
+
+
 def test_output_metadata_reference_freshness_roundtrip(tmp_workspace: Path) -> None:
     fresh = rf.ReferenceFreshness(
         source="registry",
@@ -146,15 +256,49 @@ def test_output_metadata_reference_freshness_roundtrip(tmp_workspace: Path) -> N
         threshold_days=7,
         path=str(tmp_workspace),
     )
+    change = rf.ReferenceChange(
+        source="registry",
+        label="Connector registry cache",
+        old_date="2026-07-14",
+        new_date="2026-07-15",
+        old_status="fresh",
+        new_status="stale",
+    )
 
     md = output_schema.parse_output(
         "unknown-skill",
         "# Title\n\n|**Date:** 2026-07-14 · **Skill:** unknown-skill\n\n## At a Glance\n- **Verdict:** ok\n",
-        reference_freshness=[fresh, stale],
+        reference_freshness_at_generation=[fresh, stale],
     )
+    md.reference_changed_since_generation = [change]
     data = md.model_dump()
     restored = output_schema.OutputMetadata(**data)
 
-    assert len(restored.reference_freshness) == 2
-    assert restored.reference_freshness[0].fresh is True
-    assert restored.reference_freshness[1].fresh is False
+    assert len(restored.reference_freshness_at_generation) == 2
+    assert restored.reference_freshness_at_generation[0].fresh is True
+    assert restored.reference_freshness_at_generation[1].fresh is False
+    assert len(restored.reference_changed_since_generation) == 1
+    assert restored.reference_changed_since_generation[0].new_status == "stale"
+
+
+def test_output_metadata_migrates_legacy_reference_freshness() -> None:
+    legacy = {
+        "skill": "biz-qual",
+        "title": "Legacy",
+        "reference_freshness": [
+            {
+                "source": "registry",
+                "label": "Connector registry cache",
+                "status": "stale",
+                "date": "2026-07-01",
+                "age_days": 13,
+                "fresh": False,
+                "threshold_days": 7,
+                "path": "/tmp",
+            }
+        ],
+    }
+    restored = output_schema.OutputMetadata(**legacy)
+    assert restored.reference_freshness_at_generation is not None
+    assert restored.reference_freshness_at_generation[0].source == "registry"
+    assert restored.reference_changed_since_generation == []

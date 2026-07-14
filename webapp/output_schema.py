@@ -17,7 +17,7 @@ from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field, model_validator
 
-from reference_freshness import ReferenceFreshness, compute_reference_freshness
+from reference_freshness import ReferenceChange, ReferenceFreshness, compute_reference_freshness
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,20 @@ class OutputMetadata(BaseModel):
     valid: bool = True
     schema_version: int = SCHEMA_VERSION
     validation_status: str = "unvalidated"  # "valid" | "invalid" | "unvalidated"
-    reference_freshness: list[ReferenceFreshness] = Field(default_factory=list)
+    reference_freshness_at_generation: list[ReferenceFreshness] | None = None
+    reference_changed_since_generation: list[ReferenceChange] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_reference_freshness(cls, data: Any) -> Any:
+        """Old sidecars stored the snapshot as `reference_freshness`; migrate it."""
+        if isinstance(data, dict) and "reference_freshness_at_generation" not in data:
+            legacy = data.get("reference_freshness")
+            if isinstance(legacy, list):
+                data = dict(data)
+                data["reference_freshness_at_generation"] = legacy
+                data["reference_changed_since_generation"] = []
+        return data
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +235,7 @@ def _extract_sections(text: str) -> dict[str, str]:
 def parse_output(
     skill: str,
     text: str,
-    reference_freshness: list[ReferenceFreshness] | None = None,
+    reference_freshness_at_generation: list[ReferenceFreshness] | None = None,
 ) -> OutputMetadata:
     """Parse a generated Markdown output and validate it against the skill schema.
 
@@ -273,7 +286,7 @@ def parse_output(
             valid=True,
             schema_version=SCHEMA_VERSION,
             validation_status="unvalidated",
-            reference_freshness=reference_freshness or [],
+            reference_freshness_at_generation=reference_freshness_at_generation,
         )
 
     missing: list[str] = [s for s in required if not _section_present(s)]
@@ -301,7 +314,7 @@ def parse_output(
             valid=True,
             schema_version=SCHEMA_VERSION,
             validation_status="unvalidated",
-            reference_freshness=reference_freshness or [],
+            reference_freshness_at_generation=reference_freshness_at_generation,
         )
 
     errors: list[str] = []
@@ -327,7 +340,7 @@ def parse_output(
         valid=valid,
         schema_version=SCHEMA_VERSION,
         validation_status=validation_status,
-        reference_freshness=reference_freshness or [],
+        reference_freshness_at_generation=reference_freshness_at_generation,
     )
 
 
