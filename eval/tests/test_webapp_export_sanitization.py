@@ -8,7 +8,7 @@ output still renders correctly.
 
 import pytest
 
-from webapp.pdf_render import markdown_to_body_html
+from webapp.md_render import markdown_to_body_html
 
 
 NORMAL_MARKDOWN = """# Executive summary

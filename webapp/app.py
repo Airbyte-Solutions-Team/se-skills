@@ -52,6 +52,7 @@ from pydantic import BaseModel, Field
 from typing import Any, Literal
 
 import golden
+import md_render
 import orchestrator
 import output_schema
 import persistence
@@ -1394,6 +1395,25 @@ def api_output_pdf_post(body: OutputPdf):
     )
 
 
+class OutputRender(BaseModel):
+    md: str = Field(max_length=2_000_000)
+
+
+class OutputRenderResponse(BaseModel):
+    html: str
+
+
+@app.post("/api/output/render")
+def api_output_render(body: OutputRender) -> OutputRenderResponse:
+    """Shared Markdown -> HTML renderer for the web reader.
+
+    PDF export and the internal.airbyte.ai HTML export use the same
+    `md_render.markdown_to_body_html` function directly; this endpoint lets
+    the browser get identical, sanitized HTML without a second parser.
+    """
+    return OutputRenderResponse(html=md_render.markdown_to_body_html(body.md))
+
+
 @app.delete("/api/output")
 def api_delete_output(path: str):
     """Delete is RECOVERABLE: move the output .md into 01-customers/_trash/
@@ -1464,6 +1484,7 @@ async def api_output_ask(body: OutputAsk):
     from sse_starlette.sse import EventSourceResponse
 
     async def gen():
+        acc = ""
         try:
             from anthropic import AsyncAnthropic
             client = AsyncAnthropic(api_key=api_key)
@@ -1475,7 +1496,8 @@ async def api_output_ask(body: OutputAsk):
                 messages=[{"role": "user", "content": f"Document:\n\n{doc}\n\nFollow-up question: {q}"}],
             ) as stream:
                 async for text in stream.text_stream:
-                    yield {"event": "token", "data": json.dumps({"text": text})}
+                    acc += text
+                    yield {"event": "token", "data": json.dumps({"text": text, "html": md_render.markdown_to_body_html(acc)})}
             yield {"event": "done", "data": "{}"}
         except Exception as e:  # noqa: BLE001
             yield {"event": "error", "data": json.dumps({"error": security.redact_sensitive(str(e))})}
@@ -2681,6 +2703,7 @@ async def api_transcribe_ask(session_id: str, body: AskLive):
         return f"event: {event}\ndata: {json.dumps(data)}\n\n".encode()
 
     async def gen():
+        acc = ""
         try:
             from anthropic import AsyncAnthropic
             client = AsyncAnthropic(api_key=api_key)
@@ -2695,7 +2718,8 @@ async def api_transcribe_ask(session_id: str, body: AskLive):
                            f"Transcript:\n\n{transcript}\n\nQuestion: {q}"}],
             ) as stream:
                 async for text in stream.text_stream:
-                    yield _frame("token", {"text": text})
+                    acc += text
+                    yield _frame("token", {"text": text, "html": md_render.markdown_to_body_html(acc)})
             yield _frame("done", {})
         except Exception as e:  # noqa: BLE001
             yield _frame("error", {"error": security.redact_sensitive(str(e))})

@@ -19,7 +19,7 @@ import html
 import re
 from pathlib import Path
 
-from pdf_render import markdown_to_body_html
+from md_render import markdown_to_body_html
 
 # The rs-group <style> block lives in the coverage-handoff template so there's a
 # single source of truth for the design system. Read it at render time (verbatim,
