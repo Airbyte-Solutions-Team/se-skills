@@ -1,0 +1,5 @@
+Acme Corp - Connector Discovery - 2026-07-01
+
+John (Acme): We have a legacy internal system called FooBar that we want to move data from. Do you have a source-foo-bar connector?
+Gary (Airbyte): Can you tell me more about its API?
+John (Acme): It has a REST API but it's not a standard product. We also need to load data into Snowflake.

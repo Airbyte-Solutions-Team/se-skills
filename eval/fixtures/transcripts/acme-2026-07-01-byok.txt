@@ -1,0 +1,6 @@
+Acme Corp - Security Review - 2026-07-01
+
+John (Acme): Our security team requires customer-managed KMS keys for all data in transit and at rest.
+Jane (Acme): We need a bring-your-own-key (BYOK) model. We cannot use Airbyte-managed secrets.
+Gary (Airbyte): Are you open to a hybrid deployment with the data plane in your VPC?
+John (Acme): The data plane in our VPC is fine, but the KMS must be ours.

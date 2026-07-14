@@ -1,0 +1,6 @@
+Acme Corp - Check-in - 2026-07-01
+
+John (Acme): We're still evaluating options. Our procurement wants to see a POC before committing.
+Jane (Acme): We have not identified the final economic buyer yet; the CFO is on vacation until August.
+Gary (Airbyte): What is your timeline?
+John (Acme): Probably looking at Q4 at earliest.

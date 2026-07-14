@@ -1,0 +1,9 @@
+Acme Corp - Technical Discovery - 2026-07-01
+
+John (Acme): We need to replicate our Postgres transactions and Salesforce opportunities into Snowflake.
+Gary (Airbyte): What are your latency requirements?
+John (Acme): We need hourly refresh for the sales pipeline. Our ops team needs data no older than an hour for the morning standup.
+Gary (Airbyte): What volume are we talking about?
+John (Acme): About 2M rows per day across Postgres and Salesforce, mostly during US business hours.
+Gary (Airbyte): Where do you want this to run?
+John (Acme): We'd prefer Airbyte Cloud if it can meet the latency.
