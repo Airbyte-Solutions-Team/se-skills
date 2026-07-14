@@ -2,7 +2,7 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`, mine = `gyairbyte/SE-Workflow`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: July 14, 2026 — UX-001 output review/feedback workflow._
+_Last updated: July 14, 2026 — UX-002 deal-assessment diff/trend view._
 
 ## What the app is
 Local FastAPI + vanilla-JS UI (no build step) over the SE skills suite. `cd webapp && uv run app.py` → http://127.0.0.1:8787 (needs `CPATH/LIBRARY_PATH` for portaudio on this Mac — see "Run" below). Browse team → member's accounts → an account's opportunities → generated outputs; invoke skills; ask follow-ups on outputs; Live Transcribe a Zoom call with an AI copilot.
@@ -16,6 +16,15 @@ uv run --python 3.11 app.py    # port 8787
 ```
 
 ## Built this session (newest first — see `git log`)
+- **UX-002 deal-assessment diff/trend view (July 14).** Added a side-by-side comparison view for any two saved `deal-assessment` outputs. The output reader now shows a **Compare** button on `deal-assessment` docs; clicking it opens a modal where an SE selects an older and newer assessment and sees what changed line-by-line.
+  - `webapp/app.py`: new `OutputDiff` Pydantic model, `POST /api/output/diff`, and `_diff_lines` helper using `difflib.SequenceMatcher`.
+  - `webapp/static/app.js`: new `openDealDiffModal` and **Compare** button in `openOutput` when the skill is `deal-assessment`.
+  - `webapp/static/style.css`: styles for the diff modal, form, legend, and side-by-side grid.
+  - `webapp/static/index.html`: bumped `app.js?v=` cache-bust.
+  - `webapp/README.md`: updated the output-reader bullet.
+  - `eval/tests/test_webapp_output_diff.py`: deterministic tests for the diff endpoint and `_diff_lines`.
+  - Validation: `uv run --extra dev pytest eval/ -v` passes; mock suite passes.
+
 - **UX-001 output review/feedback workflow (July 14).** Added an in-app output review panel so an SE can approve, comment on, or correct any generated skill output. Feedback is persisted in a sidecar JSONL file next to the output (e.g., `next-move-2026-07-14.feedback.jsonl`) and is surfaced on the next read.
   - `webapp/app.py`: new `OutputFeedback` Pydantic model, `GET /api/output/feedback`, and `POST /api/output/feedback` endpoints; sidecar storage under `CUSTOMERS_DIR`.
   - `webapp/static/app.js`: new `loadFeedbackPanel` and `showToast`; feedback panel rendered in the output reader.
