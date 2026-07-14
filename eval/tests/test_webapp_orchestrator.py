@@ -196,6 +196,7 @@ def test_api_invoke_allows_override(monkeypatch, tmp_path: Path) -> None:
         opportunity="intro",
         opp_slug="intro",
         override_prerequisites=True,
+        approve_permissions=True,
     )
     resp = asyncio.run(app.api_invoke(body))
     data = resp.body if hasattr(resp, "body") else resp
