@@ -1149,10 +1149,29 @@ function renderOutputGroups(outputs) {
       <div class="out-group-items">
         ${groups[day].map((o) => {
           const isHtml = o.ext === "html";
+          const atGen = o.reference_freshness_at_generation;
+          const changed = o.reference_changed_since_generation || [];
+          const legacy = atGen == null;
+          const staleAtGen = !legacy && atGen.some((r) => !r.fresh);
+          const changedSince = !legacy && changed.length > 0;
+          const refParts = [];
+          if (legacy) {
+            refParts.push("Reference freshness unknown for this legacy output; product claims may be stale");
+          } else if (staleAtGen) {
+            const stale = atGen.filter((r) => !r.fresh);
+            refParts.push("Reference data was stale/missing when generated: " + stale.map((r) => `${r.label}${r.age_days != null ? " (" + r.age_days + " days old)" : r.status === "missing" ? " (missing)" : ""}`).join(", "));
+          }
+          if (changedSince) {
+            refParts.push("Reference data has changed since generation: " + changed.map((c) => `${c.label}${c.new_date ? " (now " + c.new_date + ")" : ""}`).join(", "));
+          }
+          const refWarn = legacy || staleAtGen || changedSince;
+          const refTitle = refParts.join(" | ");
           const status = o.validation_status || (o.valid === false ? "invalid" : "unvalidated");
-          const warn = status === "invalid";
-          const uncertain = status === "unvalidated";
-          const warnTitle = warn ? esc(o.validation_errors.slice(0, 2).join(" ")) : (uncertain ? "Validation unavailable; this output may predate the current format" : "");
+          const invalid = status === "invalid";
+          const uncertain = status === "unvalidated" && !refWarn;
+          const warn = invalid || refWarn;
+          const validationTitle = invalid ? esc(o.validation_errors.slice(0, 2).join(" ")) : "";
+          const warnTitle = [validationTitle, refTitle].filter(Boolean).join(validationTitle && refTitle ? " | " : "");
           return `
           <div class="out-item${isHtml ? " is-html" : ""}${warn ? " out-item-warn" : ""}${uncertain ? " out-item-unvalidated" : ""}" data-path="${encodeURIComponent(o.path)}" data-ext="${esc(o.ext || "md")}" data-title="${esc(prettySkill(o.skill))} — ${esc(o.filename)}">
             <div><div class="skill">${esc(prettySkill(o.skill))}${isHtml ? ' <span class="badge">HTML</span>' : ""}</div><div class="when" title="${esc(o.filename)}">${esc(conciseOutputName(o.filename, o.skill))}</div></div>
@@ -1406,7 +1425,7 @@ function showPushError(account, message) {
 async function pageOpportunity(account, slug, oppName) {
   setCrumbs([...(await accountCrumbs(account)), { label: account, href: `#/account/${encodeURIComponent(account)}` }, { label: oppName }]);
   const outputs = await api(`/api/accounts/${encodeURIComponent(account)}/outputs?opp=${encodeURIComponent(slug)}`);
-  outputMeta = Object.fromEntries(outputs.map((o) => [o.path, { valid: o.valid, validation_status: o.validation_status || (o.valid === false ? "invalid" : "unvalidated"), validation_errors: o.validation_errors || [], missing_sections: o.missing_sections || [] }]));
+  outputMeta = Object.fromEntries(outputs.map((o) => [o.path, { valid: o.valid, validation_status: o.validation_status || (o.valid === false ? "invalid" : "unvalidated"), validation_errors: o.validation_errors || [], missing_sections: o.missing_sections || [], reference_freshness_at_generation: o.reference_freshness_at_generation, reference_changed_since_generation: o.reference_changed_since_generation || [] }]));
   // Resolve the owning member's display name (for the handoff repo-path). Owner
   // is a member id on the account; map to its name. Empty is fine (endpoint
   // falls back to a placeholder slug).
@@ -1454,7 +1473,7 @@ async function pageOpportunity(account, slug, oppName) {
   // Re-fetch the Generated Outputs list (after a run produces a new file).
   const refreshOutputs = async () => {
     const outs = await api(`/api/accounts/${encodeURIComponent(account)}/outputs?opp=${encodeURIComponent(slug)}`).catch(() => []);
-    outputMeta = Object.fromEntries(outs.map((o) => [o.path, { valid: o.valid, validation_errors: o.validation_errors || [], missing_sections: o.missing_sections || [] }]));
+    outputMeta = Object.fromEntries(outs.map((o) => [o.path, { valid: o.valid, validation_errors: o.validation_errors || [], missing_sections: o.missing_sections || [], reference_freshness_at_generation: o.reference_freshness_at_generation, reference_changed_since_generation: o.reference_changed_since_generation || [] }]));
     const el = document.getElementById("outputs");
     if (!el) return;
     el.innerHTML = outs.length ? renderOutputGroups(outs) : `<div class="empty">No outputs yet for this opportunity. Invoke a skill to generate one.</div>`;
@@ -2074,6 +2093,26 @@ async function openOutput(path, title, ctx) {
     : meta && meta.validation_status === "unvalidated"
     ? `<div class="validation-banner validation-banner-unvalidated"><strong>?</strong> This output could not be validated against the current output contract. It may predate the required-section format or use headings the parser does not recognize.</div>`
     : "";
+  const atGen = meta && meta.reference_freshness_at_generation;
+  const changed = (meta && meta.reference_changed_since_generation) || [];
+  const legacy = atGen == null;
+  const staleAtGen = !legacy && atGen.some((r) => !r.fresh);
+  const changedSince = !legacy && changed.length > 0;
+  const referenceBanner = legacy || staleAtGen || changedSince
+    ? (() => {
+      const parts = [];
+      if (legacy) {
+        parts.push("Reference freshness unknown for this legacy output; product claims may be stale.");
+      } else if (staleAtGen) {
+        const stale = atGen.filter((r) => !r.fresh);
+        parts.push("Reference data was stale/missing when this output was generated: " + stale.map((r) => `${r.label}${r.age_days != null ? " (" + r.age_days + " days old)" : r.status === "missing" ? " (missing)" : ""}`).join(", "));
+      }
+      if (changedSince) {
+        parts.push("Reference data has changed since this output was generated: " + changed.map((c) => `${c.label}${c.new_date ? " (now " + c.new_date + ")" : ""}`).join(", "));
+      }
+      return `<div class="validation-banner"><strong>⚠ Reference data warning.</strong> ${esc(parts.join(" "))}</div>`;
+    })()
+    : "";
   view.innerHTML = `
     <div class="row"><h1>${esc(docTitle)}</h1>
       <div class="row-actions">
@@ -2083,6 +2122,7 @@ async function openOutput(path, title, ctx) {
         <button class="ghost" id="doc-back">← Back</button>
       </div></div>
     ${validationBanner}
+    ${referenceBanner}
     <div class="doc-layout" id="doc-layout">
       ${tocHtml ? `<aside class="doc-toc"><div class="doc-toc-head">On this page</div>${tocHtml}</aside>` : ""}
       <article class="md-body">
