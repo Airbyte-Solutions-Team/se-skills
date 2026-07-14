@@ -2,7 +2,7 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`, mine = `gyairbyte/SE-Workflow`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: July 14, 2026 — UX-002 deal-assessment diff/trend view._
+_Last updated: July 14, 2026 — ARCH-005 + ARCH-007 per-skill model config and runtime skill discovery._
 
 ## What the app is
 Local FastAPI + vanilla-JS UI (no build step) over the SE skills suite. `cd webapp && uv run app.py` → http://127.0.0.1:8787 (needs `CPATH/LIBRARY_PATH` for portaudio on this Mac — see "Run" below). Browse team → member's accounts → an account's opportunities → generated outputs; invoke skills; ask follow-ups on outputs; Live Transcribe a Zoom call with an AI copilot.
@@ -16,6 +16,16 @@ uv run --python 3.11 app.py    # port 8787
 ```
 
 ## Built this session (newest first — see `git log`)
+- **ARCH-005 + ARCH-007 model config and runtime skill discovery (July 14).** Added per-skill/per-use Claude model configuration via `.se-config.yaml` `models:` block, and a `POST /api/reload` endpoint + ↻ button in the invoke modal to pick up new/renamed skills without restarting the server.
+  - `webapp/app.py`: `_se_config()` cache, `_model_for(use)` helper, `--model` passed to `claude -p` in `_run_job`, `_model_for("quick-ask")` / `_model_for("live-ask")` for the Anthropic API quick paths, and `POST /api/reload` to refresh `SKILLS`/`SKILL_IDS` from disk.
+  - `webapp/static/app.js`: invoke-modal refresh button fetches `/api/reload`, `/api/skills`, and `/api/skills/help`, then re-renders the picker while preserving the current selection.
+  - `webapp/static/index.html`: added `#skill-refresh` button and bumped `app.js?v=`.
+  - `webapp/static/style.css`: `#skill-mode label` and `#skill-refresh` layout.
+  - `webapp/README.md`: documented the `models:` block and the refresh button.
+  - `config/se-config.example.yaml`: added `models:` example block.
+  - `eval/tests/test_webapp_model_config.py` and `eval/tests/test_webapp_skill_reload.py`: deterministic tests for `_model_for` and `/api/reload`.
+  - Validation: `uv run --extra dev pytest eval/ -v` passes; mock suite passes.
+
 - **UX-002 deal-assessment diff/trend view (July 14).** Added a side-by-side comparison view for any two saved `deal-assessment` outputs. The output reader now shows a **Compare** button on `deal-assessment` docs; clicking it opens a modal where an SE selects an older and newer assessment and sees what changed line-by-line.
   - `webapp/app.py`: new `OutputDiff` Pydantic model, `POST /api/output/diff`, and `_diff_lines` helper using `difflib.SequenceMatcher`.
   - `webapp/static/app.js`: new `openDealDiffModal` and **Compare** button in `openOutput` when the skill is `deal-assessment`.

@@ -70,6 +70,8 @@ The ask-bars (follow-up chat in an output, and the Live Transcribe copilot) rout
    ```
 3. Restart the app. (Treat the key like a password; rotate it in the Console if it leaks.)
 
+**Model configuration:** you can override which Claude model the app uses for quick-ask, live-ask, deep skill runs, or any individual skill by adding a `models:` block to your `.se-config.yaml` (see `config/se-config.example.yaml`). Missing keys fall back to `default`, then to the app default `claude-sonnet-4-6`.
+
 ## Live Transcribe — one-time audio setup
 
 The opportunity page has a **🎙 Live Transcribe** button → a copilot page that transcribes a live Zoom call (locally, via faster-whisper) and lets you ask the AI questions against the rolling transcript. Quick questions answer from the transcript (Claude API); deep ones ("is this connector feasible?", "troubleshoot this") route to `claude -p` with full codebase + skill access.
@@ -99,7 +101,7 @@ Notes:
 
 - **Main page** — solutions team members (from `team-members.yaml`, or your `.se-config.yaml` if absent)
 - **Member page** — that member's accounts (folders in `~/airbyte-work/01-customers/`), with a **+ Create Account** box. Can also bulk-create accounts from a Salesforce preview (per-account failures surface for retry).
-- **Account / opportunity page** — every saved skill output (newest first, concise titles), plus **⚡ Invoke Skill** to run any skill. The invoke picker is grouped into tiers (Workflow 1–7 / Late-stage 8–9 / Anytime / When unsure) reflecting real dependency order.
+- **Account / opportunity page** — every saved skill output (newest first, concise titles), plus **⚡ Invoke Skill** to run any skill. The invoke picker is grouped into tiers (Workflow 1–7 / Late-stage 8–9 / Anytime / When unsure) reflecting real dependency order, and has a **↻ refresh** button to pick up new or renamed skills without restarting the app.
 - **Output reader** — a rich document view of any saved skill output: decision-first layout (exec card + tiles), top-risks strip, collapsible audit sections, grouped TOC, a **follow-up chat bar** (ask questions about the doc, or launch another skill from the chat), an **output review panel** to approve, comment on, or correct a generated doc, and a **deal-assessment compare view** to see what changed between two saved deal assessments.
 - **Export & share** — from a **3-dots options menu** on any output: download **PDF** (server-rendered, paginated) or **MD**, or **Export to internal HTML** (a self-contained rs-group page for internal.airbyte.ai). Coverage-handoff outputs additionally support **push-to-repo** — a one-click PR to internal.airbyte.ai with open-PR detection.
 - **Live Transcribe** — transcribe a live call with an AI copilot ask-bar (see the Live Transcribe section below).

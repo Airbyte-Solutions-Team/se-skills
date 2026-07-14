@@ -61,6 +61,7 @@ CUSTOMERS_DIR = WORKSPACE / "01-customers"
 SE_CONFIG = WORKSPACE / ".se-config.yaml"
 WEBAPP_DIR = Path(__file__).resolve().parent
 TEAM_FILE = WEBAPP_DIR / "team-members.yaml"
+DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-6"
 
 # internal.airbyte.ai clone — target for the "Push to repo" coverage-handoff
 # action. Overridable via .se-config.yaml (`internal_repo_path`); see
@@ -417,21 +418,45 @@ async def sfdc_opportunities(account: str) -> list[dict]:
 # Optional + best-effort: if sf isn't authed/installed, returns {} and the UI
 # just omits the stage/amount line. Loaded async so it never blocks the page.
 # ---------------------------------------------------------------------------
-def _sf_config() -> dict:
+def _se_config() -> dict:
+    """Load the optional `.se-config.yaml` from the workspace root.
+
+    Cached on the function object for the lifetime of the process; the
+    config is read once at startup and again only when an explicit reload is
+    requested. Callers that need fresh config should call `_se_config_clear()`."""
+    cache = getattr(_se_config, "_cache", None)
+    if cache is not None:
+        return cache
     if SE_CONFIG.exists():
         cfg = yaml.safe_load(SE_CONFIG.read_text()) or {}
-        return cfg.get("salesforce", {}) or {}
-    return {}
+    else:
+        cfg = {}
+    _se_config._cache = cfg
+    return cfg
+
+
+def _se_config_clear() -> None:
+    _se_config._cache = None
+
+
+def _model_for(use: str) -> str:
+    """Return the Claude model name configured for `use` (a skill id, or one of
+    `quick-ask` / `live-ask` / `output-ask` / `default`). Falls back to
+    `models.default` in `.se-config.yaml`, then `DEFAULT_CLAUDE_MODEL`."""
+    models = _se_config().get("models", {}) or {}
+    return models.get(use) or models.get("default") or DEFAULT_CLAUDE_MODEL
+
+
+def _sf_config() -> dict:
+    return _se_config().get("salesforce", {}) or {}
 
 
 def _internal_repo() -> Path:
     """Path to the internal.airbyte.ai clone. Overridable via .se-config.yaml
     (`internal_repo_path`); defaults to the standard workspace location."""
-    if SE_CONFIG.exists():
-        cfg = yaml.safe_load(SE_CONFIG.read_text()) or {}
-        p = cfg.get("internal_repo_path")
-        if p:
-            return Path(os.path.expanduser(p))
+    p = _se_config().get("internal_repo_path")
+    if p:
+        return Path(os.path.expanduser(p))
     return INTERNAL_REPO_DEFAULT
 
 
@@ -1344,7 +1369,7 @@ async def api_output_ask(body: OutputAsk):
                       "from the document provided. If the question needs the Airbyte codebase or a deep "
                       "skill, say so in one line.")
             async with client.messages.stream(
-                model="claude-sonnet-4-6", max_tokens=800, system=system,
+                model=_model_for("quick-ask"), max_tokens=800, system=system,
                 messages=[{"role": "user", "content": f"Document:\n\n{doc}\n\nFollow-up question: {q}"}],
             ) as stream:
                 async for text in stream.text_stream:
@@ -1485,6 +1510,19 @@ def api_output_diff(body: OutputDiff):
 @app.get("/api/skills")
 def api_skills():
     return SKILLS
+
+
+@app.post("/api/reload")
+def api_reload_skills():
+    """Re-discover skills from disk without restarting the server.
+
+    Updates the in-memory skill list and SKILL_IDS used for validation.
+    The help endpoint is stateless, so it picks up the new list on the next call."""
+    global SKILLS, SKILL_IDS
+    SKILLS = discover_skills()
+    SKILL_IDS = {s["id"] for s in SKILLS}
+    _ALL_SKILL_IDS.update(SKILL_IDS)
+    return {"skills": SKILLS, "reloaded": True}
 
 
 def _find_skill_file(skill_id: str) -> Path | None:
@@ -1721,7 +1759,8 @@ def _latest_run(account: str, opp_slug: str | None) -> dict | None:
 
 async def _run_job(job_id: str, prompt: str, meta: dict):
     job = JOBS[job_id]
-    cmd = ["claude", "-p", prompt, "--permission-mode", "acceptEdits"]
+    model = _model_for(meta.get("skill", "default"))
+    cmd = ["claude", "-p", prompt, "--model", model, "--permission-mode", "acceptEdits"]
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd, cwd=str(WORKSPACE),
@@ -2251,7 +2290,7 @@ async def api_transcribe_ask(session_id: str, body: AskLive):
                       "directly from the call transcript provided. If the question needs the "
                       "Airbyte codebase or a deep skill, say so in one line.")
             async with client.messages.stream(
-                model="claude-sonnet-4-6",
+                model=_model_for("live-ask"),
                 max_tokens=700,
                 system=system,
                 messages=[{"role": "user", "content":

@@ -334,6 +334,9 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 #skill-blurb .hint-what { color: var(--text); font-size: 13px; line-height: 1.5; }
 #skill-blurb .hint-line { color: var(--muted); font-size: 12px; margin-top: 8px; }
 #skill-blurb .hint-line b { color: var(--text); font-weight: 600; }
+#skill-mode label { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+#skill-select { flex: 1; min-width: 220px; }
+#skill-refresh { margin-left: auto; }
 
 .status { margin-top: 16px; padding: 12px; border-radius: 8px; background: var(--panel2); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .status.hidden, .output.hidden { display: none; }
