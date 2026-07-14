@@ -2052,9 +2052,13 @@ async function openOutput(path, title, ctx) {
   const backHref = ctx
     ? `#/opp/${encodeURIComponent(ctx.account)}/${encodeURIComponent(ctx.slug)}/${encodeURIComponent(ctx.oppName)}`
     : null;
+  const skill = path.split("/").slice(-2, -1)[0] || "";
+  const compareBtn = skill === "deal-assessment" && ctx
+    ? `<button class="ghost" id="doc-compare" title="Compare this deal assessment with a previous one">↔ Compare</button>` : "";
   view.innerHTML = `
     <div class="row"><h1>${esc(docTitle)}</h1>
       <div class="row-actions">
+        ${compareBtn}
         <button class="ghost" id="doc-chat-toggle" title="Ask a follow-up or run a skill on this doc">💬 Chat</button>
         ${downloadMenuHtml(encodeURIComponent(decodeURIComponent(path)), "dl-menu-doc", "Export")}
         <button class="ghost" id="doc-back">← Back</button>
@@ -2108,6 +2112,9 @@ async function openOutput(path, title, ctx) {
   document.getElementById("doc-back").onclick = goBack;
   // After deleting the open output, leave the now-gone doc → back to the opp.
   wireDownloadMenus(view, goBack);
+
+  const compareBtn = document.getElementById("doc-compare");
+  if (compareBtn && ctx) compareBtn.onclick = () => openDealDiffModal(ctx, path);
 
   // Collapsible sections — clicking the H2 band toggles its body. Ignore clicks
   // on links inside the heading (there are none today, but stay safe).
@@ -2989,6 +2996,75 @@ async function loadFeedbackPanel(path) {
       showToast("Feedback failed: " + e.message, "err");
     }
   };
+}
+
+// ── Deal-assessment diff / trend view (UX-002) ───────────────────────────
+// Opens a modal for comparing two `deal-assessment` outputs side-by-side.
+async function openDealDiffModal(ctx, currentPath) {
+  const outs = await api(`/api/accounts/${encodeURIComponent(ctx.account)}/outputs?opp=${encodeURIComponent(ctx.slug)}`).catch(() => []);
+  const da = outs.filter((o) => o.skill === "deal-assessment").sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
+  if (da.length < 2) { showToast("Need at least two deal-assessment outputs to compare.", "err"); return; }
+  const currentIdx = da.findIndex((o) => o.path === currentPath);
+  const rightIdx = currentIdx >= 0 ? currentIdx : 0;
+  const leftIdx = Math.min(rightIdx + 1, da.length - 1);
+
+  const opts = (sel) => da.map((o, i) => `<option value="${esc(o.path)}"${i === sel ? " selected" : ""}>${esc(o.filename)}</option>`).join("");
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal diff-modal">
+      <div class="modal-head"><h2>Deal Assessment — what changed</h2><button class="modal-close">✕</button></div>
+      <div class="diff-form">
+        <label>Older<select id="diff-left">${opts(leftIdx)}</select></label>
+        <label>Newer<select id="diff-right">${opts(rightIdx)}</select></label>
+        <button class="primary small" id="diff-run">Compare</button>
+      </div>
+      <div class="diff-body" id="diff-body"><div class="feedback-empty">Select two deal assessments and click Compare.</div></div>
+      <div class="modal-foot"><button class="ghost small modal-cancel">Close</button></div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector(".modal-close").onclick = close;
+  overlay.querySelector(".modal-cancel").onclick = close;
+  overlay.onclick = (e) => { if (e.target === overlay) close(); };
+
+  async function runDiff() {
+    const left = document.getElementById("diff-left").value;
+    const right = document.getElementById("diff-right").value;
+    if (left === right) { showToast("Select two different assessments to compare.", "err"); return; }
+    try {
+      const data = await api("/api/output/diff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ left, right }),
+      });
+      const body = document.getElementById("diff-body");
+      const rowHtml = (r) => {
+        const c = r.type;
+        const l = r.left !== null ? `<div class="diff-cell diff-left ${c === "delete" || c === "replace" ? "diff-del" : ""}">${esc(r.left)}</div>` : `<div class="diff-cell diff-left diff-empty"></div>`;
+        const rgt = r.right !== null ? `<div class="diff-cell diff-right ${c === "insert" || c === "replace" ? "diff-ins" : ""}">${esc(r.right)}</div>` : `<div class="diff-cell diff-right diff-empty"></div>`;
+        return `<div class="diff-row ${c}">${l}${rgt}</div>`;
+      };
+      body.innerHTML = `
+        <div class="diff-legend">
+          <span class="diff-legend-del">Removed in newer</span>
+          <span class="diff-legend-ins">Added in newer</span>
+          <span class="diff-legend-rep">Changed</span>
+        </div>
+        <div class="diff-grid">
+          <div class="diff-header">${esc(data.left_title || left)}</div>
+          <div class="diff-header">${esc(data.right_title || right)}</div>
+          ${data.rows.map(rowHtml).join("")}
+        </div>`;
+    } catch (e) {
+      showToast("Diff failed: " + e.message, "err");
+    }
+  }
+
+  document.getElementById("diff-run").onclick = runDiff;
+  // Default to comparing immediately if a previous sibling was auto-selected.
+  if (da.length >= 2 && leftIdx !== rightIdx) await runDiff();
 }
 
 (async function init() {

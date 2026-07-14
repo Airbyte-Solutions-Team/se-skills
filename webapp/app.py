@@ -1418,6 +1418,70 @@ def api_output_feedback_post(body: OutputFeedback):
     return {"path": body.path, "entry": entry, "feedback_file": str(fb.relative_to(root))}
 
 
+class OutputDiff(BaseModel):
+    left: str = Field(max_length=500)   # older output path, relative to CUSTOMERS_DIR
+    right: str = Field(max_length=500)  # newer output path, relative to CUSTOMERS_DIR
+
+
+def _diff_lines(left_text: str, right_text: str) -> list[dict]:
+    """Return a side-by-side line diff of two Markdown texts.
+
+    Each row is `{"left": str|None, "right": str|None, "type": "equal|delete|insert|replace"}`.
+    `left`/`right` are plain strings (not HTML-escaped) so the caller can decide encoding.
+    """
+    from itertools import zip_longest
+    import difflib
+
+    left_lines = left_text.splitlines()
+    right_lines = right_text.splitlines()
+    sm = difflib.SequenceMatcher(None, left_lines, right_lines)
+    rows: list[dict] = []
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "equal":
+            for a, b in zip_longest(left_lines[i1:i2], right_lines[j1:j2]):
+                rows.append({"left": a, "right": b, "type": "equal"})
+        elif tag == "delete":
+            for line in left_lines[i1:i2]:
+                rows.append({"left": line, "right": None, "type": "delete"})
+        elif tag == "insert":
+            for line in right_lines[j1:j2]:
+                rows.append({"left": None, "right": line, "type": "insert"})
+        elif tag == "replace":
+            for a, b in zip_longest(left_lines[i1:i2], right_lines[j1:j2]):
+                rows.append({"left": a, "right": b, "type": "replace"})
+    return rows
+
+
+@app.post("/api/output/diff")
+def api_output_diff(body: OutputDiff):
+    """Return a side-by-side line diff of two generated Markdown outputs.
+
+    Designed for `deal-assessment` trend / what-changed views, but works for any
+    two `.md` outputs under the same customer.
+    """
+    root = CUSTOMERS_DIR.resolve()
+    target_left = (CUSTOMERS_DIR / body.left).resolve()
+    target_right = (CUSTOMERS_DIR / body.right).resolve()
+    if (
+        not str(target_left).startswith(str(root))
+        or not str(target_right).startswith(str(root))
+        or not target_left.is_file()
+        or not target_right.is_file()
+    ):
+        raise HTTPException(404, "Not found")
+    if target_left.suffix != ".md" or target_right.suffix != ".md":
+        raise HTTPException(400, "Only generated .md outputs can be diffed")
+    left_text = target_left.read_text(encoding="utf-8")
+    right_text = target_right.read_text(encoding="utf-8")
+    return {
+        "left": body.left,
+        "right": body.right,
+        "left_title": target_left.name,
+        "right_title": target_right.name,
+        "rows": _diff_lines(left_text, right_text),
+    }
+
+
 @app.get("/api/skills")
 def api_skills():
     return SKILLS
