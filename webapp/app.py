@@ -48,6 +48,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from typing import Literal
 
 import security
 import soql
@@ -1353,6 +1354,68 @@ async def api_output_ask(body: OutputAsk):
             yield {"event": "error", "data": json.dumps({"error": security.redact_sensitive(str(e))})}
 
     return EventSourceResponse(gen())
+
+
+class OutputFeedback(BaseModel):
+    path: str = Field(max_length=500)              # output file, relative to CUSTOMERS_DIR
+    action: Literal["approve", "comment", "correct"]
+    comment: str = Field(default="", max_length=2_000)
+    author: str = Field(default="", max_length=100)
+
+
+def _feedback_file(target: Path) -> Path:
+    """Sidecar JSONL file that stores review/feedback entries for an output."""
+    return target.with_suffix(".feedback.jsonl")
+
+
+@app.get("/api/output/feedback")
+def api_output_feedback_get(path: str):
+    """Return all review/feedback entries recorded for a generated output."""
+    target = (CUSTOMERS_DIR / path).resolve()
+    root = CUSTOMERS_DIR.resolve()
+    if not str(target).startswith(str(root)) or not target.is_file():
+        raise HTTPException(404, "Not found")
+    fb = _feedback_file(target)
+    if not fb.exists():
+        return {"path": path, "entries": []}
+    entries = []
+    for line in fb.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entries.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return {"path": path, "entries": entries}
+
+
+@app.post("/api/output/feedback")
+def api_output_feedback_post(body: OutputFeedback):
+    """Record an SE's review/approval/correction feedback on a generated output.
+
+    Feedback is stored as newline-delimited JSON next to the output file so it
+    travels with the doc and can be surfaced on subsequent reads. It does not
+    modify the original generated Markdown.
+    """
+    target = (CUSTOMERS_DIR / body.path).resolve()
+    root = CUSTOMERS_DIR.resolve()
+    if not str(target).startswith(str(root)) or not target.is_file():
+        raise HTTPException(404, "Not found")
+    if target.suffix != ".md":
+        raise HTTPException(400, "Only generated .md outputs can receive feedback")
+
+    entry = {
+        "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+        "action": body.action,
+        "comment": (body.comment or "").strip(),
+        "author": (body.author or "").strip(),
+    }
+    fb = _feedback_file(target)
+    fb.parent.mkdir(parents=True, exist_ok=True)
+    with fb.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry) + "\n")
+    return {"path": body.path, "entry": entry, "feedback_file": str(fb.relative_to(root))}
 
 
 @app.get("/api/skills")
