@@ -76,6 +76,7 @@ _SKILL_REFERENCE_SOURCES: dict[str, set[str]] = {
     "deal-assessment": set(),
     "roi-business-case": set(),
     "mutual-close-plan": set(),
+    "pov-gsheet": set(),
     "connector-feasibility": {"registry", "airbyte_enterprise"},
     "deployment-model-qual": {"airbyte_platform", "airbyte_enterprise"},
     "tech-qual": {"airbyte_platform", "airbyte_enterprise"},

@@ -96,6 +96,11 @@ _SKILL_SCHEMAS: dict[str, SkillOutputSchema] = {
         required_sections=["fit-verdict", "source-coverage"],
         required_at_a_glance_labels=["feasibility", "recommended-motion"],
     ),
+    "pov-gsheet": SkillOutputSchema(
+        skill="pov-gsheet",
+        required_sections=["receipt", "source-coverage"],
+        required_at_a_glance_labels=["google-sheet-url", "status"],
+    ),
 }
 
 

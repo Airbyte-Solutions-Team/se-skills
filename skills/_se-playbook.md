@@ -1,6 +1,6 @@
 # SE Playbook — Frameworks & Tactics
 
-This is the canonical reference for SE craft. All SE skills in `~/.claude/skills/` (prep-call, post-call, biz-qual, tech-qual, full-qual, poc-plan, deal-assessment, connector-feasibility, deployment-model-qual, follow-up-email, objection-handler, internal-prep, next-move, account-refresher, coverage-handoff, roi-business-case, mutual-close-plan) reference this document. When a skill fires, it should read the relevant section here and apply the tactics.
+This is the canonical reference for SE craft. All SE skills in `~/.claude/skills/` (prep-call, post-call, biz-qual, tech-qual, full-qual, poc-plan, deal-assessment, connector-feasibility, deployment-model-qual, follow-up-email, objection-handler, internal-prep, next-move, account-refresher, coverage-handoff, roi-business-case, mutual-close-plan, pov-gsheet) reference this document. When a skill fires, it should read the relevant section here and apply the tactics.
 
 **Not a skill itself** — the leading underscore prevents auto-trigger. Read it on demand from other skills.
 
