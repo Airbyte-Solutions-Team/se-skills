@@ -154,12 +154,13 @@ The suite assumes these MCPs are configured in `~/.claude.json`:
   Skip any of these and skills degrade gracefully — no SFDC/Notion enrichment, everything else works.
 
 #### 4. `pov-gsheet` (Google Sheets POV)
-`pov-gsheet` creates a copy of a POV Success Criteria template in Google Sheets and pre-fills it from the SE workspace: prior skill outputs (`biz-qual`, `tech-qual`, `poc-plan`, `deal-assessment`, `connector-feasibility`, `post-call`, `account-refresher`), workspace transcripts, optional Salesforce `sf` CLI data, and optional JSON evidence files from configured MCP integrations (Salesforce, Gong, meeting notes, Gmail, Slack). It does **not** import the original `se-assistant` skill or use DuckDB/personal paths.
+`pov-gsheet` creates a copy of a POV Success Criteria template in Google Sheets and pre-fills it from the SE workspace: prior skill outputs (`biz-qual`, `tech-qual`, `poc-plan`, `deal-assessment`, `connector-feasibility`, `post-call`, `account-refresher`), workspace transcripts, optional Salesforce `sf` CLI data, and optional evidence from configured MCP integrations (Salesforce, Gong, meeting notes, Gmail, Slack). It does **not** import the original `se-assistant` skill or use DuckDB/personal paths.
 
 `pov-gsheet` is currently **partially operational** in this repo:
 - The deterministic context loader, receipt format, source-coverage reporting, and dry-run plan are implemented and tested.
-- The external MCP integrations are wired through a normalized evidence path, but they require configured MCP servers and a signed-in Google account to verify end-to-end.
-- Google Sheets / Drive automation uses Chrome browser automation (the `computer-use` MCP or `webapp/scripts/pov-gsheet-runner.mjs`) and cannot be verified until Chrome is signed into the Google account that owns the template and Drive folder.
+- The thin bridge `webapp/pov_gsheet_bridge.py` normalizes raw Salesforce and Gong MCP output into `ExternalEvidence` JSON that the loader already consumes; no manual evidence-file preparation is required in the normal workflow.
+- The optional Playwright helper `webapp/scripts/pov-gsheet-runner.mjs` has Google sign-in detection, existing-sheet handling, and Drive-placement verification, but it cannot be exercised end-to-end without a signed-in Google account.
+- External MCP integrations require configured MCP servers (currently none in this environment) to verify runtime retrieval.
 
 Before using it:
 

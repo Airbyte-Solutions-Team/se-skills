@@ -95,74 +95,98 @@ report which tabs are missing or unexpected.
 
 ### Step 0: Build the structured POV context
 
-#### 0a. Gather optional external evidence
+#### 0a. Gather external evidence automatically
 
-Before running the deterministic loader, use any configured MCP integrations to retrieve POV-relevant
-facts. The loader does not call MCP tools itself; the skill must call them and pass the results as
-JSON evidence files.
+The skill calls the configured MCP tools, writes the raw tool responses to a job-scoped temporary
+directory, and uses `webapp/pov_gsheet_bridge.py` to normalize them into `ExternalEvidence` JSON.
+The SE does **not** manually query MCPs, prepare evidence JSON files, or pass `--*-evidence` flags
+unless they are deliberately overriding a source.
 
-For each configured source, write a JSON file containing a list of `ExternalEvidence` objects. If an
-MCP is not configured, not reachable, or the user has not consented, write exactly one entry with
-`status: "unavailable"` and a clear `note`. Do not invent data or mark a source as "searched" if the
-tool was not actually called.
+Set a temporary job directory for the run:
 
-* **Salesforce** — `mcp__salesforce__run_soql_query` (read-only SOQL). Scope to the account/opportunity.
-  Convert Account, Opportunity, and Contact records into `fact_type: prospect` / `contact` evidence.
-  File: `${OUT_DIR:-/tmp}/pov-gsheet-salesforce-evidence.json`
-* **Gong** — `mcp__gong__search_calls` scoped to the customer domain/participants and last 14 days,
-  then `gong://calls/{callId}/transcript` for each relevant call. Extract transcripts, participants,
-  and POV-relevant facts.
-  File: `${OUT_DIR:-/tmp}/pov-gsheet-gong-evidence.json`
-* **Meeting notes** (e.g. Granola) — via a configured meeting-notes MCP. Scope to the account and
-  recent date range. Extract attendees, decisions, action items, POV commitments.
-  File: `${OUT_DIR:-/tmp}/pov-gsheet-granola-evidence.json`
-* **Gmail** — via a configured Gmail MCP. Search threads for the customer domain, account name,
-  opportunity name, and POV terms within a bounded date range. Distinguish direct customer statements
-  from drafts/internal forwards. Do not persist full email bodies.
-  File: `${OUT_DIR:-/tmp}/pov-gsheet-gmail-evidence.json`
-* **Slack** — via a configured Slack MCP. Search account-relevant channels/threads for internal
-  updates, relayed requirements, engineering confirmations, POV blockers, and decisions. Mark whether
-  each fact is direct customer evidence, internal interpretation, engineering-confirmed, or unverified.
-  File: `${OUT_DIR:-/tmp}/pov-gsheet-slack-evidence.json`
-
-Each evidence object must carry:
-
-```yaml
-source: "salesforce" | "gong" | "granola" | "gmail" | "slack"
-source_id: "<record/call/message id or safe URL>"
-retrieved_at: "2026-07-14T00:00:00Z"
-account_name: "<Account>"
-opportunity_name: "<Opportunity>"
-direct_customer: true | false  # true for customer statements, false for internal interpretation
-fact_type: "prospect" | "contact" | "business_objective" | "technical_system" | "success_criterion" | "milestone" | "feature_request" | "requirement" | "transcript" | "note" | "unknown"
-fact: {}  # payload keyed to the target model fields
-raw: "<short verbatim snippet>"  # optional, PII-safe
-status: "ok" | "unavailable" | "skipped"
-note: "<human-readable provenance>"
+```bash
+JOB_DIR="${OUT_DIR:-/tmp/pov-gsheet-$(date +%s)}"
+mkdir -p "$JOB_DIR"
 ```
+
+**Salesforce** — use `mcp__salesforce__run_soql_query` (read-only SOQL) and scope to the account/
+opportunity.
+
+1. Run the SOQL queries below (or combine the returned record arrays into one raw JSON list):
+   * Account: `SELECT Id, Name, Type FROM Account WHERE Name LIKE '%<Account>%' LIMIT 1`
+   * Opportunities: `SELECT Id, Name, StageName, Amount, CloseDate, Type, Owner.Name, SE_Name__c, Next_Step__c, Account.Name, Account.Id, Required_features_functionality__c, Most_important_sources__c, Most_Important_Destinations__c, Use_case_description__c, Airbyte_Use_Case__c FROM Opportunity WHERE Account.Name LIKE '%<Account>%' ORDER BY CloseDate DESC`
+   * Contacts: `SELECT Id, FirstName, LastName, Name, Email, Title, Account.Name FROM Contact WHERE Account.Name LIKE '%<Account>%'`
+2. Save the raw response(s) as `$JOB_DIR/pov-gsheet-salesforce-raw.json`.
+3. Normalize:
+   ```bash
+   uv run --python 3.11 python "$REPO_DIR/webapp/pov_gsheet_bridge.py" \
+     --source salesforce --account "$ACCOUNT" --opportunity "$OPPORTUNITY" \
+     --raw-input "$JOB_DIR/pov-gsheet-salesforce-raw.json" \
+     --out "$JOB_DIR/pov-gsheet-salesforce-evidence.json"
+   ```
+   If the Salesforce MCP is unavailable or returns an error, instead run:
+   ```bash
+   uv run --python 3.11 python "$REPO_DIR/webapp/pov_gsheet_bridge.py" \
+     --source salesforce --account "$ACCOUNT" --opportunity "$OPPORTUNITY" \
+     --status unavailable --note "Salesforce MCP not configured or failed" \
+     --out "$JOB_DIR/pov-gsheet-salesforce-evidence.json"
+   ```
+
+**Gong** — use `mcp__gong__search_calls` scoped by customer domain/participant email and a bounded
+14-day lookback, then fetch `gong://calls/{callId}/transcript` for each relevant call.
+
+1. Call `mcp__gong__search_calls` with `from_date_time` = 14 days ago and `to_date_time` = now.
+2. For each returned call, fetch `gong://calls/{callId}/transcript`.
+3. Save `search_calls` output as `$JOB_DIR/pov-gsheet-gong-search.json` and a `{callId: transcript, ...}` object as `$JOB_DIR/pov-gsheet-gong-transcripts.json`.
+4. Normalize:
+   ```bash
+   uv run --python 3.11 python "$REPO_DIR/webapp/pov_gsheet_bridge.py" \
+     --source gong --account "$ACCOUNT" --opportunity "$OPPORTUNITY" \
+     --raw-input "$JOB_DIR/pov-gsheet-gong-search.json" \
+     --transcripts "$JOB_DIR/pov-gsheet-gong-transcripts.json" \
+     --out "$JOB_DIR/pov-gsheet-gong-evidence.json"
+   ```
+   If the Gong MCP is unavailable, use `--status unavailable --note "Gong MCP not configured or failed"`.
+
+**Granola / Gmail / Slack** — check whether a usable MCP is configured. If one is available, retrieve
+scoped data and normalize it through the bridge. If not, write an unavailable marker:
+```bash
+uv run --python 3.11 python "$REPO_DIR/webapp/pov_gsheet_bridge.py" \
+  --source <granola|gmail|slack> --account "$ACCOUNT" --opportunity "$OPPORTUNITY" \
+  --status unavailable --note "<Source> not configured in this environment" \
+  --out "$JOB_DIR/pov-gsheet-<source>-evidence.json"
+```
+
+Temporary evidence rules:
+- Keep all raw and normalized files inside `$JOB_DIR`.
+- Do not include credentials, OAuth tokens, or full email bodies.
+- Preserve provenance: `source`, `source_id`, `retrieved_at`, `account_name`, `opportunity_name`, and `direct_customer`.
+- Do not mark a source as `searched` unless the tool was actually invoked.
 
 #### 0b. Run the deterministic context loader
 
-The loader merges workspace sources, optional Salesforce `sf` CLI output, and the JSON evidence
-files into a single `PovContext`. It is deterministic and produces one JSON file the rest of the run
-consumes.
+The loader merges workspace sources and the normalized JSON evidence files into a single
+`PovContext`. It is deterministic and produces one JSON file the rest of the run consumes.
 
 ```bash
 REPO_DIR=$(cd "$(dirname "$(readlink -f ~/.claude/skills/pov-gsheet/SKILL.md)")/.." && pwd)
-OUT_DIR="${OUT_DIR:-/tmp}"
-CTX_FILE="$OUT_DIR/pov-gsheet-context.json"
+JOB_DIR="${JOB_DIR:-/tmp/pov-gsheet-$(date +%s)}"
+CTX_FILE="$JOB_DIR/pov-gsheet-context.json"
 
-python "$REPO_DIR/webapp/pov_gsheet_context.py" \
+uv run --python 3.11 python "$REPO_DIR/webapp/pov_gsheet_context.py" \
   --account "$ACCOUNT" \
   --opportunity "$OPPORTUNITY" \
   --workspace "$(pwd)" \
-  --salesforce-evidence "$OUT_DIR/pov-gsheet-salesforce-evidence.json" \
-  --gong-evidence "$OUT_DIR/pov-gsheet-gong-evidence.json" \
-  --granola-evidence "$OUT_DIR/pov-gsheet-granola-evidence.json" \
-  --gmail-evidence "$OUT_DIR/pov-gsheet-gmail-evidence.json" \
-  --slack-evidence "$OUT_DIR/pov-gsheet-slack-evidence.json" \
+  --salesforce-evidence "$JOB_DIR/pov-gsheet-salesforce-evidence.json" \
+  --gong-evidence "$JOB_DIR/pov-gsheet-gong-evidence.json" \
+  --granola-evidence "$JOB_DIR/pov-gsheet-granola-evidence.json" \
+  --gmail-evidence "$JOB_DIR/pov-gsheet-gmail-evidence.json" \
+  --slack-evidence "$JOB_DIR/pov-gsheet-slack-evidence.json" \
   --out "$CTX_FILE" --pretty
 ```
+
+If `uv` is not on PATH, fall back to `python` (the loader and bridge declare their own inline
+dependencies when run directly, but `uv run` is the reliable path).
 
 Inspect the context JSON. It has these top-level keys:
 
@@ -183,6 +207,24 @@ warnings:                # human-readable gaps
 
 If `status == "blocked"`, do not proceed to Google Sheets. Write the local receipt (see Step 4) and
 explain which upstream skill to run (e.g., `biz-qual`, `tech-qual`, `poc-plan`, `connector-feasibility`).
+
+### Step 0c: Check for an existing POV sheet
+
+Before copying the template, search the configured Drive target folder (and any prospect subfolder)
+for a sheet titled `Airbyte || [Prospect Name] - POV Success Criteria`. If one exists, stop and
+present:
+
+- The existing sheet title
+- The direct Google Sheet URL
+- The Drive folder where it lives
+
+Then ask the user to choose one of:
+
+1. **Use the existing sheet** — stop and return the link.
+2. **Create a new version** — proceed to Step 1, but name the copy `Airbyte || [Prospect Name] - POV Success Criteria v2` (or v3, etc.).
+3. **Stop** — do nothing.
+
+Do not silently overwrite or duplicate an existing POV sheet.
 
 ### Step 1: Copy the Template
 
@@ -438,33 +480,53 @@ the run happened, what inputs were available, and what still needs to be filled.
 If the run was `blocked` or `partial`, set `Status` accordingly and explain the missing evidence in
 `Unresolved fields`. Do not claim the sheet was created unless Drive placement was verified.
 
+## Consent and permissions
+
+This skill requests the following access. Surface this clearly to the SE before running if the
+platform does not already require approval:
+
+- Read the selected account/opportunity workspace files and prior skill outputs.
+- Query Salesforce via the configured `mcp__salesforce__run_soql_query` MCP (read-only SOQL).
+- Query Gong via the configured `mcp__gong__search_calls` and `gong://calls/{callId}/transcript` MCP resources.
+- Read local workspace transcripts.
+- Control Chrome to copy the configured Google Sheets template, paste data, and move the copy to the configured Drive folder.
+- Write to the system clipboard.
+- Create a Google Sheet and create/use a Drive folder.
+- Write a local Markdown receipt under the opportunity `outputs/pov-gsheet/` folder.
+
+Do not request access to sources that are not used (e.g. Gmail or Slack unless a configured MCP exists).
+
 ## Scope boundaries
 
 Do not:
 
-- Import external dependency skills or their personal database files
+- Import external dependency skills or personal database files
 - Use personal `~/Documents/...` paths or any Ryan-specific configuration
-- Call external note-taking or call-transcript MCP tools that are not configured in this environment
+- Build a generalized MCP orchestration framework
+- Build new Granola, Gmail, or Slack integrations from scratch solely for this skill
 - Invent prospect contacts, emails, or roles
 - Invent customer requirements from generic Airbyte knowledge
-- Overwrite an existing POV sheet automatically
+- Silently overwrite an existing POV sheet
 - Replace `poc-plan` or other qualification skills
 - Add a general Google Sheets framework
+- Claim Salesforce or Gong was searched if the MCP call failed or was not configured
 
 ## Data Source Reference
 
-This skill uses repository-native sources only:
+This skill uses the following sources, in priority order:
 
 - **Workspace account/opportunity metadata** — folder structure, `.sfdc-name`, `.se-config.yaml`
 - **Prior skill outputs** — `biz-qual`, `tech-qual`, `poc-plan`, `deal-assessment`, `connector-feasibility`, `post-call`, `account-refresher`, etc.
 - **Workspace transcripts** — files in `customers/_transcripts/`
-- **Salesforce** — optional, via the `sf` CLI if `salesforce.enabled: true`
+- **Salesforce** — optional, via the configured `mcp__salesforce__run_soql_query` MCP; normalized by `webapp/pov_gsheet_bridge.py`
+- **Gong** — optional, via the configured `mcp__gong__search_calls` + `gong://calls/{callId}/transcript` resources; normalized by `webapp/pov_gsheet_bridge.py`
+- **Granola / Gmail / Slack** — optional, only when a configured integration exists; otherwise recorded as `unavailable`
 
-The deterministic loader is `webapp/pov_gsheet_context.py`. It builds the structured POV context and
-records source coverage. It does not require external dependency skills, note-taking tools, or personal
-databases.
+The deterministic loader is `webapp/pov_gsheet_context.py`. The normalization bridge is `webapp/pov_gsheet_bridge.py`.
+Neither requires external dependency skills, note-taking tools, or personal databases.
 
 ## Changelog
 
 - 2026-07-15 — Ported from external dependency skill to repository-native context loader; removed external databases and personal-path references.
 - 2026-07-15 — Added `.se-config.yaml` `pov_gsheet` block, preflight checks, and structured POV context output.
+- 2026-07-16 — Wired Salesforce and Gong MCP results through `pov_gsheet_bridge.py`; removed manual evidence-file preparation from the normal workflow; added existing-sheet detection and consent/permissions disclosure.
