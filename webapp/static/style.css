@@ -922,3 +922,82 @@ a.live-btn { text-decoration: none; display: inline-flex; align-items: center; }
 .diff-row.replace .diff-left { background: rgba(245, 158, 11, .12); color: var(--warn); }
 .diff-row.replace .diff-right { background: rgba(245, 158, 11, .12); color: var(--warn); }
 
+/* ── Document status bar (replaces stacked validation + reference banners) ─── */
+.doc-status {
+  display: flex; flex-direction: column; gap: 0;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  padding: 10px 14px; margin: 0 0 18px;
+}
+.doc-status--ok { background: color-mix(in srgb, var(--accent2) 10%, var(--panel)); border-color: color-mix(in srgb, var(--accent2) 40%, var(--line)); }
+.doc-status--info { background: color-mix(in srgb, var(--accent) 8%, var(--panel)); border-color: color-mix(in srgb, var(--accent) 30%, var(--line)); }
+.doc-status--warn { background: color-mix(in srgb, var(--warn) 10%, var(--panel)); border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); }
+.doc-status--error { background: color-mix(in srgb, var(--danger) 10%, var(--panel)); border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); }
+.doc-status-main { display: flex; align-items: center; gap: 10px; }
+.doc-status-icon { font-size: 15px; width: 20px; text-align: center; }
+.doc-status--ok .doc-status-icon { color: var(--accent2); }
+.doc-status--info .doc-status-icon { color: var(--accent); }
+.doc-status--warn .doc-status-icon { color: var(--warn); }
+.doc-status--error .doc-status-icon { color: var(--danger); }
+.doc-status-label { font-weight: 600; font-size: 13.5px; }
+.doc-status-summary { color: var(--muted); font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-status-toggle { margin-left: auto; color: var(--muted); }
+.doc-status-toggle:hover { color: var(--text); }
+.doc-status-details { list-style: none; margin: 10px 0 0; padding: 10px 0 0; border-top: 1px solid var(--line); }
+.doc-status-details li { padding: 6px 0 6px 30px; font-size: 13px; line-height: 1.5; color: var(--text); position: relative; }
+.doc-status-details li::before { content: "•"; position: absolute; left: 12px; color: var(--muted); }
+.doc-status-issue--error { color: var(--danger); }
+.doc-status-issue--warn { color: var(--warn); }
+.doc-status-issue--info { color: var(--accent); }
+
+/* ── Reader action-bar separation ───────────────────────────────────────── */
+.row-actions--doc { gap: 8px; flex-wrap: wrap; }
+.row-actions--doc .row-actions-spacer { flex: 1; min-width: 8px; }
+.row-actions--doc #doc-delete { margin-left: 0; }
+
+/* ── Output list status badges ──────────────────────────────────────────── */
+.out-status {
+  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .3px;
+  padding: 3px 8px; border-radius: 999px; white-space: nowrap;
+  background: var(--panel2); border: 1px solid var(--line); color: var(--muted);
+}
+.out-status--error { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
+.out-status--warn { background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--warn); border-color: color-mix(in srgb, var(--warn) 35%, transparent); }
+.out-status--info { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+
+/* ── Compact feedback panel ─────────────────────────────────────────────── */
+.feedback-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; margin: 0 0 18px; }
+.feedback-panel .feedback-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.feedback-panel .feedback-status { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+.feedback-panel .feedback-status-icon { font-size: 14px; }
+.feedback-panel .feedback-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.feedback-panel .feedback-form { display: none; gap: 8px; flex-direction: column; margin-top: 10px; }
+.feedback-panel .feedback-form.show { display: flex; }
+.feedback-panel .feedback-form textarea { min-height: 60px; resize: vertical; }
+.feedback-panel .feedback-empty { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
+.feedback-panel .feedback-latest { font-size: 13px; font-weight: 500; margin-top: 8px; }
+.feedback-panel .feedback-latest--ok { color: var(--accent2); }
+.feedback-panel .feedback-latest--warn { color: var(--warn); }
+.feedback-panel .feedback-latest--info { color: var(--accent); }
+.feedback-panel .feedback-count { color: var(--muted); font-weight: 400; }
+.feedback-panel .feedback-entries { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.feedback-panel .feedback-entry { border-left: 3px solid var(--line-strong); padding: 9px 12px; border-radius: 0 8px 8px 0; background: var(--panel2); }
+.feedback-panel .feedback-entry--approve { border-left-color: var(--accent2); }
+.feedback-panel .feedback-entry--correct { border-left-color: var(--warn); }
+.feedback-panel .feedback-entry--comment { border-left-color: var(--accent); }
+.feedback-panel .feedback-meta { color: var(--faint); font-size: 12px; margin-bottom: 5px; }
+.feedback-panel .feedback-body { font-size: 13.5px; line-height: 1.55; white-space: pre-wrap; }
+.feedback-panel .feedback-toggle.active { border-color: var(--accent); color: var(--accent); }
+
+/* ── Section-level callout accents for high-stakes deal sections ────────── */
+.md-body .doc-section--blocker { border-left: 3px solid var(--danger); background: color-mix(in srgb, var(--danger) 6%, var(--panel)); }
+.md-body .doc-section--blocker > .md-h2::before { background: var(--danger); }
+.md-body .doc-section--blocker > .sec-body > p:first-of-type > strong:first-child,
+.md-body .doc-section--blocker > .sec-body > .risk-card.blocker .risk-card-title { color: var(--danger); }
+.md-body .doc-section--win { border-left: 3px solid var(--accent2); background: color-mix(in srgb, var(--accent2) 6%, var(--panel)); }
+.md-body .doc-section--win > .md-h2::before { background: var(--accent2); }
+.md-body .doc-section--risk { border-left: 3px solid var(--warn); background: color-mix(in srgb, var(--warn) 6%, var(--panel)); }
+.md-body .doc-section--risk > .md-h2::before { background: var(--warn); }
+
+/* Keep legacy validation-banner hidden if any stray markup still carries it. */
+.validation-banner { display: none; }
+

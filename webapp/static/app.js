@@ -183,7 +183,7 @@ async function downloadInternalHtml(path) {
 // ⬇ — used in the doc-reader header so export reads as a document-level action
 // (per UI/UX guidance: don't use icon-only for a primary document action). The
 // compact opp-row menus keep the icon-only ⬇ to stay dense.
-function downloadMenuHtml(path, cls = "", label = "") {
+function downloadMenuHtml(path, cls = "", label = "", includeDelete = true) {
   // The doc reader (dl-menu-doc) also offers "with Q&A" exports that append the
   // follow-up thread. Other menus (opp list rows) have no thread, so they don't.
   const withQa = cls.includes("dl-menu-doc")
@@ -193,6 +193,7 @@ function downloadMenuHtml(path, cls = "", label = "") {
   const trigger = label
     ? `<button class="dl-btn dl-btn-labeled" title="Options" aria-label="Options">${esc(label)} <span class="dl-caret">▾</span></button>`
     : `<button class="dl-btn dl-btn-dots" title="Options" aria-label="Options">⋮</button>`;
+  const deleteItem = includeDelete ? `<button class="menu-item danger dl-del">Delete output</button>` : "";
   return `<span class="dl-menu ${cls}" data-path="${path}">
     ${trigger}
     <div class="dropdown-menu hidden">
@@ -200,7 +201,7 @@ function downloadMenuHtml(path, cls = "", label = "") {
       <button class="menu-item dl-md">Download Markdown (.md)</button>
       <button class="menu-item dl-html">Export to internal HTML</button>
       ${withQa}
-      <button class="menu-item danger dl-del">Delete output</button>
+      ${deleteItem}
     </div></span>`;
 }
 // Move an output to _trash/ (recoverable). Resolves true on success.
@@ -238,7 +239,7 @@ function wireDownloadMenus(root, onDeleted) {
     });
     // Delete is two-click: first click arms ("Delete — confirm?"), second deletes.
     const del = wrap.querySelector(".dl-del");
-    del.onclick = async (e) => {
+    if (del) del.onclick = async (e) => {
       e.preventDefault(); e.stopPropagation();
       if (!del.classList.contains("armed")) {
         del.classList.add("armed"); del.textContent = "Delete — click to confirm";
@@ -1155,16 +1156,14 @@ function renderOutputGroups(outputs) {
           const staleAtGen = !legacy && atGen.some((r) => !r.fresh);
           const changedSince = !legacy && changed.length > 0;
           const refParts = [];
-          if (legacy) {
-            refParts.push("Reference freshness unknown for this legacy output; product claims may be stale");
-          } else if (staleAtGen) {
+          if (staleAtGen) {
             const stale = atGen.filter((r) => !r.fresh);
             refParts.push("Reference data was stale/missing when generated: " + stale.map((r) => `${r.label}${r.age_days != null ? " (" + r.age_days + " days old)" : r.status === "missing" ? " (missing)" : ""}`).join(", "));
           }
           if (changedSince) {
             refParts.push("Reference data has changed since generation: " + changed.map((c) => `${c.label}${c.new_date ? " (now " + c.new_date + ")" : ""}`).join(", "));
           }
-          const refWarn = legacy || staleAtGen || changedSince;
+          const refWarn = staleAtGen || changedSince;
           const refTitle = refParts.join(" | ");
           const status = o.validation_status || (o.valid === false ? "invalid" : "unvalidated");
           const invalid = status === "invalid";
@@ -1172,11 +1171,20 @@ function renderOutputGroups(outputs) {
           const warn = invalid || refWarn;
           const validationTitle = invalid ? esc(o.validation_errors.slice(0, 2).join(" ")) : "";
           const warnTitle = [validationTitle, refTitle].filter(Boolean).join(validationTitle && refTitle ? " | " : "");
+          let statusBadge = "";
+          if (invalid) {
+            statusBadge = `<span class="out-status out-status--error" title="${warnTitle}">Incomplete</span>`;
+          } else if (refWarn) {
+            const label = changedSince ? "Source changed" : "Stale source";
+            statusBadge = `<span class="out-status out-status--warn" title="${warnTitle}">${esc(label)}</span>`;
+          } else if (uncertain) {
+            statusBadge = `<span class="out-status out-status--info" title="${warnTitle}">Needs review</span>`;
+          }
           return `
-          <div class="out-item${isHtml ? " is-html" : ""}${warn ? " out-item-warn" : ""}${uncertain ? " out-item-unvalidated" : ""}" data-path="${encodeURIComponent(o.path)}" data-ext="${esc(o.ext || "md")}" data-title="${esc(prettySkill(o.skill))} — ${esc(o.filename)}">
+          <div class="out-item${isHtml ? " is-html" : ""}" data-path="${encodeURIComponent(o.path)}" data-ext="${esc(o.ext || "md")}" data-title="${esc(prettySkill(o.skill))} — ${esc(o.filename)}">
             <div><div class="skill">${esc(prettySkill(o.skill))}${isHtml ? ' <span class="badge">HTML</span>' : ""}</div><div class="when" title="${esc(o.filename)}">${esc(conciseOutputName(o.filename, o.skill))}</div></div>
             <div class="out-item-right">
-              ${warn ? `<span class="out-warn" title="${warnTitle}">⚠</span>` : uncertain ? `<span class="out-unvalidated" title="${warnTitle}">?</span>` : ""}
+              ${statusBadge}
               <span class="when">${esc((o.modified || "").slice(11))} UTC</span>
               ${isHtml ? `<button class="ghost small out-view" data-path="${encodeURIComponent(o.path)}">View</button><button class="ghost small out-copy-path" data-path="${encodeURIComponent(o.path)}">Copy repo path</button><button class="ghost small out-push-repo" data-path="${encodeURIComponent(o.path)}">Push to repo</button>` : ""}
               ${downloadMenuHtml(encodeURIComponent(o.path), "dl-menu-row")}
@@ -1727,6 +1735,84 @@ function tileSentiment(label, valueText) {
   return "";
 }
 
+// Build a single, scannable Document status bar from output metadata. Combines
+// validation state and reference freshness into one color-coded line, with the
+// verbose explanation hidden behind a Details toggle.
+function buildDocStatus(meta) {
+  const issues = [];
+  let severity = "ok";
+
+  if (!meta) {
+    issues.push({ text: "Metadata unavailable. This output could not be checked.", type: "warn" });
+    severity = "warn";
+  } else {
+    const vstatus = meta.validation_status || "unvalidated";
+    if (vstatus === "invalid") {
+      issues.push({
+        text: "This output is missing required sections: " + (meta.validation_errors || []).slice(0, 3).join("; ") + ".",
+        type: "error",
+      });
+      severity = "error";
+    } else if (vstatus === "unvalidated") {
+      issues.push({
+        text: "This output could not be validated against the current output contract. It may predate the required-section format or use headings the parser does not recognize.",
+        type: "info",
+      });
+      if (severity === "ok") severity = "info";
+    }
+
+    const atGen = meta.reference_freshness_at_generation;
+    const changed = meta.reference_changed_since_generation || [];
+    const legacy = atGen == null;
+    if (legacy) {
+      issues.push({
+        text: "Reference freshness unknown for this legacy output; product claims may be stale.",
+        type: "warn",
+      });
+      if (severity === "ok" || severity === "info") severity = "warn";
+    } else {
+      const stale = atGen.filter((r) => !r.fresh);
+      if (stale.length) {
+        issues.push({
+          text: "Reference data was stale/missing when generated: " + stale.map((r) => `${r.label}${r.age_days != null ? " (" + r.age_days + " days old)" : r.status === "missing" ? " (missing)" : ""}`).join(", ") + ".",
+          type: "warn",
+        });
+        if (severity === "ok" || severity === "info") severity = "warn";
+      }
+      if (changed.length) {
+        issues.push({
+          text: "Reference data has changed since generation: " + changed.map((c) => `${c.label}${c.new_date ? " (now " + c.new_date + ")" : ""}`).join(", ") + ".",
+          type: "warn",
+        });
+        if (severity === "ok" || severity === "info") severity = "warn";
+      }
+    }
+  }
+
+  const config = {
+    ok: { icon: "✓", label: "Ready", cls: "ok" },
+    info: { icon: "?", label: "Needs review", cls: "info" },
+    warn: { icon: "⚠", label: "Review sources", cls: "warn" },
+    error: { icon: "✕", label: "Output incomplete", cls: "error" },
+  }[severity];
+
+  if (severity === "ok" && !issues.length) {
+    return `<div class="doc-status doc-status--ok"><span class="doc-status-icon">${config.icon}</span><span class="doc-status-label">${config.label}</span></div>`;
+  }
+
+  const details = issues.map((i) => `<li class="doc-status-issue doc-status-issue--${i.type}">${esc(i.text)}</li>`).join("");
+  const summary = issues.length === 1 ? issues[0].text : `${issues.length} issues`;
+  return `<div class="doc-status doc-status--${config.cls}" id="doc-status">
+    <div class="doc-status-main">
+      <span class="doc-status-icon">${config.icon}</span>
+      <span class="doc-status-label">${config.label}</span>
+      <span class="doc-status-summary">${esc(summary)}</span>
+      <button class="doc-status-toggle ghost smallest" id="doc-status-toggle">Details ▾</button>
+    </div>
+    <ul class="doc-status-details hidden" id="doc-status-details">${details}</ul>
+  </div>`;
+}
+
 // Map a (concise) section title to a sidebar intent group. Order of groups is
 // fixed; anything unmatched falls into "Context" so nothing is dropped. Covers
 // both the analytical skills (deal-assessment, tech-qual, …) and account-refresher
@@ -2027,6 +2113,31 @@ async function openOutput(path, title, ctx) {
     if (COLLAPSE_DEFAULT.test(titleText)) s.classList.add("collapsed");
   }
 
+  // ── Drop a leading section that only contains document meta (Date / Skill / Account).
+  // The page header and breadcrumbs already carry that context, so showing it as a
+  // full section pushes the real content down without adding value.
+  if (sections[0] && !sections[0].querySelector(":scope > h2.md-h2")) {
+    const kv = sections[0].querySelector(":scope > .kv-grid");
+    if (kv) {
+      const labels = Array.from(kv.querySelectorAll(".kv-k")).map((k) => k.textContent.trim().toLowerCase());
+      const metaLabels = new Set(["date", "skill", "account", "opportunity", "generated", "source", "output"]);
+      if (labels.length && labels.every((l) => metaLabels.has(l))) sections.shift();
+    }
+  }
+
+  // ── Visually distinguish the highest-stakes narrative sections.
+  const sectionAccent = {
+    blocker: /\bdeal blocker\b|\bprimary blocker\b|\b#1 blocker\b/i,
+    win: /\bwhat would close\b|\bhow to win\b|\bwinning path\b/i,
+    risk: /\bwhat would lose\b|\bwatch[- ]?outs?\b|\brisk factors\b/i,
+  };
+  for (const s of sections) {
+    const title = (s.querySelector(":scope > h2.md-h2")?.textContent || "").toLowerCase();
+    if (sectionAccent.blocker.test(title)) s.classList.add("doc-section--blocker");
+    else if (sectionAccent.win.test(title)) s.classList.add("doc-section--win");
+    else if (sectionAccent.risk.test(title)) s.classList.add("doc-section--risk");
+  }
+
   // ── Top-risk strip: a navigational summary of the doc's risk/blocker callouts
   // AND risk-section cards (above), surfaced high on the page. Anchors back to each
   // in place (not a copy). Scanned in document order across both shapes.
@@ -2087,48 +2198,25 @@ async function openOutput(path, title, ctx) {
     : null;
   const skill = decodedPath.split("/").slice(-2, -1)[0] || "";
   const compareBtn = skill === "deal-assessment" && ctx
-    ? `<button class="ghost" id="doc-compare" title="Compare this deal assessment with a previous one">↔ Compare</button>` : "";
-  const validationBanner = meta && meta.validation_status === "invalid"
-    ? `<div class="validation-banner"><strong>⚠ This output may be incomplete.</strong> ${esc((meta.validation_errors || []).slice(0, 3).join(" "))}</div>`
-    : meta && meta.validation_status === "unvalidated"
-    ? `<div class="validation-banner validation-banner-unvalidated"><strong>?</strong> This output could not be validated against the current output contract. It may predate the required-section format or use headings the parser does not recognize.</div>`
-    : "";
-  const atGen = meta && meta.reference_freshness_at_generation;
-  const changed = (meta && meta.reference_changed_since_generation) || [];
-  const legacy = atGen == null;
-  const staleAtGen = !legacy && atGen.some((r) => !r.fresh);
-  const changedSince = !legacy && changed.length > 0;
-  const referenceBanner = legacy || staleAtGen || changedSince
-    ? (() => {
-      const parts = [];
-      if (legacy) {
-        parts.push("Reference freshness unknown for this legacy output; product claims may be stale.");
-      } else if (staleAtGen) {
-        const stale = atGen.filter((r) => !r.fresh);
-        parts.push("Reference data was stale/missing when this output was generated: " + stale.map((r) => `${r.label}${r.age_days != null ? " (" + r.age_days + " days old)" : r.status === "missing" ? " (missing)" : ""}`).join(", "));
-      }
-      if (changedSince) {
-        parts.push("Reference data has changed since this output was generated: " + changed.map((c) => `${c.label}${c.new_date ? " (now " + c.new_date + ")" : ""}`).join(", "));
-      }
-      return `<div class="validation-banner"><strong>⚠ Reference data warning.</strong> ${esc(parts.join(" "))}</div>`;
-    })()
-    : "";
+    ? `<button class="ghost small" id="doc-compare" title="Compare this deal assessment with a previous one">↔ Compare</button>` : "";
+  const docStatusHtml = buildDocStatus(meta);
   view.innerHTML = `
     <div class="row"><h1>${esc(docTitle)}</h1>
-      <div class="row-actions">
+      <div class="row-actions row-actions--doc">
+        <button class="ghost small" id="doc-back" title="Back to opportunity">← Back</button>
         ${compareBtn}
-        <button class="ghost" id="doc-chat-toggle" title="Ask a follow-up or run a skill on this doc">💬 Chat</button>
-        ${downloadMenuHtml(encodeURIComponent(decodedPath), "dl-menu-doc", "Export")}
-        <button class="ghost" id="doc-back">← Back</button>
+        <span class="row-actions-spacer"></span>
+        ${downloadMenuHtml(encodeURIComponent(decodedPath), "dl-menu-doc", "Export", false)}
+        <button class="danger small" id="doc-delete" title="Delete this output">Delete</button>
+        <button class="primary small" id="doc-chat-toggle" title="Ask a follow-up or run a skill on this doc">💬 Chat</button>
       </div></div>
-    ${validationBanner}
-    ${referenceBanner}
+    ${docStatusHtml}
     <div class="doc-layout" id="doc-layout">
       ${tocHtml ? `<aside class="doc-toc"><div class="doc-toc-head">On this page</div>${tocHtml}</aside>` : ""}
       <article class="md-body">
         ${execCardHtml}
         ${riskStripHtml}
-        <div id="feedback-panel"></div>
+        <div id="feedback-panel" class="feedback-panel"></div>
         <div class="doc-sheet">${sheetHtml}</div>
       </article>
       <aside class="doc-chat">
@@ -2172,6 +2260,38 @@ async function openOutput(path, title, ctx) {
   document.getElementById("doc-back").onclick = goBack;
   // After deleting the open output, leave the now-gone doc → back to the opp.
   wireDownloadMenus(view, goBack);
+
+  // Separate, explicit Delete button in the reader header.
+  const deleteBtn = document.getElementById("doc-delete");
+  if (deleteBtn) {
+    let armed = false;
+    deleteBtn.onclick = async () => {
+      if (!armed) {
+        armed = true;
+        deleteBtn.textContent = "Confirm delete";
+        setTimeout(() => { armed = false; deleteBtn.textContent = "Delete"; }, 4000);
+        return;
+      }
+      deleteBtn.disabled = true; deleteBtn.textContent = "Deleting…";
+      try {
+        await deleteOutput(decodedPath);
+        goBack();
+      } catch (err) {
+        showToast("Delete failed: " + err.message, "err");
+        deleteBtn.disabled = false; deleteBtn.textContent = "Delete"; armed = false;
+      }
+    };
+  }
+
+  // Document status bar: toggle the detailed issue list.
+  const statusToggle = document.getElementById("doc-status-toggle");
+  const statusDetails = document.getElementById("doc-status-details");
+  if (statusToggle && statusDetails) {
+    statusToggle.onclick = () => {
+      const hidden = statusDetails.classList.toggle("hidden");
+      statusToggle.textContent = hidden ? "Details ▾" : "Details ▴";
+    };
+  }
 
   const compareBtnEl = document.getElementById("doc-compare");
   if (compareBtnEl && ctx) compareBtnEl.onclick = () => openDealDiffModal(ctx, decodedPath);
@@ -3066,11 +3186,12 @@ async function loadFeedbackPanel(path) {
 
   const actionLabels = { approve: "Approve", comment: "Comment", correct: "Correct" };
   const actionIcons = { approve: "✓", comment: "💬", correct: "✎" };
+  const actionClass = { approve: "ok", comment: "info", correct: "warn" };
 
   function renderForm(selectedAction) {
     return `
       <div class="feedback-form${selectedAction ? " show" : ""}" id="feedback-form">
-        <textarea id="feedback-comment" placeholder="What would you change? What did the model get right or wrong?" rows="3"></textarea>
+        <textarea id="feedback-comment" placeholder="What would you change? What did the model get right or wrong?" rows="2"></textarea>
         <div class="feedback-form-row">
           <input type="text" id="feedback-author" placeholder="Your name (optional)" />
           <button class="primary small" id="feedback-submit" data-action="${selectedAction || "comment"}">${actionLabels[selectedAction || "comment"]}</button>
@@ -3080,22 +3201,35 @@ async function loadFeedbackPanel(path) {
   }
 
   function renderEntries() {
-    if (!entries.length) return `<div class="feedback-empty">No feedback yet. Approve, comment, or correct this output.</div>`;
-    return `<div class="feedback-entries">` + entries.map((e) => `
-      <div class="feedback-entry ${esc(e.action)}">
+    if (!entries.length) return `<div class="feedback-empty">No review yet</div>`;
+    const latest = entries[entries.length - 1];
+    const latestText = `${actionIcons[latest.action] || "•"} ${actionLabels[latest.action] || esc(latest.action)}${latest.author ? ` by ${esc(latest.author)}` : ""}${latest.timestamp ? ` · ${new Date(latest.timestamp).toLocaleDateString()}` : ""}`;
+    const list = entries.slice().reverse().map((e) => `
+      <div class="feedback-entry feedback-entry--${esc(e.action)}">
         <div class="feedback-meta">${actionIcons[e.action] || "•"} ${actionLabels[e.action] || esc(e.action)} ${e.author ? `by ${esc(e.author)}` : ""} · ${e.timestamp ? new Date(e.timestamp).toLocaleString() : ""}</div>
         ${e.comment ? `<div class="feedback-body">${esc(e.comment)}</div>` : ""}
       </div>
-    `).join("") + `</div>`;
+    `).join("");
+    return `<div class="feedback-latest feedback-latest--${actionClass[latest.action] || "info"}">${latestText}${entries.length > 1 ? ` <span class="feedback-count">(${entries.length})</span>` : ""}</div>
+      <div class="feedback-entries" id="feedback-entries-list">${list}</div>`;
   }
+
+  const status = entries.length ? "reviewed" : "none";
+  const statusIcon = status === "reviewed" ? actionIcons[entries[entries.length - 1].action] : "•";
+  const statusText = status === "reviewed"
+    ? `${actionLabels[entries[entries.length - 1].action]} by ${entries[entries.length - 1].author || "someone"}`
+    : "No review yet";
 
   panel.innerHTML = `
     <div class="feedback-head">
-      <div class="feedback-title">Output review</div>
+      <div class="feedback-status" title="Latest review status">
+        <span class="feedback-status-icon">${statusIcon}</span>
+        <span class="feedback-status-text">${esc(statusText)}</span>
+      </div>
       <div class="feedback-actions">
-        <button class="ghost small feedback-toggle" data-action="approve">✓ Approve</button>
-        <button class="ghost small feedback-toggle" data-action="comment">💬 Comment</button>
-        <button class="ghost small feedback-toggle" data-action="correct">✎ Correct</button>
+        <button class="ghost small feedback-toggle" data-action="approve" title="Approve">✓ Approve</button>
+        <button class="ghost small feedback-toggle" data-action="comment" title="Comment">💬 Comment</button>
+        <button class="ghost small feedback-toggle" data-action="correct" title="Correct">✎ Correct</button>
       </div>
     </div>
     ${renderForm("")}
