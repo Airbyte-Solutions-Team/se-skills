@@ -75,13 +75,13 @@ def test_api_permissions_rejects_unknown_skill():
 def _patch_invoke(monkeypatch, tmp_path: Path):
     customers = tmp_path / "customers"
     monkeypatch.setattr(app, "CUSTOMERS_DIR", customers)
-    monkeypatch.setattr(app, "JOBS", {})
+    app.job_service.jobs = {}
 
     async def _noop(*args, **kwargs):
         pass
 
-    monkeypatch.setattr(app, "_save_jobs_snapshot", _noop)
-    monkeypatch.setattr(app, "_run_job", lambda *args, **kwargs: None)
+    monkeypatch.setattr(app.job_service, "save_snapshot", _noop)
+    monkeypatch.setattr(app.job_service, "_run_job", lambda *args, **kwargs: None)
     monkeypatch.setattr("asyncio.create_task", lambda coro, *, name=None: None)
     return customers
 

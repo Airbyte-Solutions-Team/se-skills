@@ -155,13 +155,13 @@ def test_api_plan_blocks_poc_plan_without_upstream(monkeypatch, tmp_path: Path) 
 def test_api_invoke_blocks_without_override(monkeypatch, tmp_path: Path) -> None:
     customers = tmp_path / "customers"
     monkeypatch.setattr(app, "CUSTOMERS_DIR", customers)
-    monkeypatch.setattr(app, "JOBS", {})
+    app.job_service.jobs = {}
 
     async def _noop(*args, **kwargs):
         pass
 
-    monkeypatch.setattr(app, "_save_jobs_snapshot", _noop)
-    monkeypatch.setattr(app, "_run_job", lambda *args, **kwargs: None)
+    monkeypatch.setattr(app.job_service, "save_snapshot", _noop)
+    monkeypatch.setattr(app.job_service, "_run_job", lambda *args, **kwargs: None)
     monkeypatch.setattr("asyncio.create_task", lambda coro, *, name=None: None)
 
     body = app.InvokeBody(account="Acme", skill="poc-plan", opportunity="intro", opp_slug="intro")
@@ -181,13 +181,13 @@ def test_api_invoke_blocks_without_override(monkeypatch, tmp_path: Path) -> None
 def test_api_invoke_allows_override(monkeypatch, tmp_path: Path) -> None:
     customers = tmp_path / "customers"
     monkeypatch.setattr(app, "CUSTOMERS_DIR", customers)
-    monkeypatch.setattr(app, "JOBS", {})
+    app.job_service.jobs = {}
 
     async def _noop(*args, **kwargs):
         pass
 
-    monkeypatch.setattr(app, "_save_jobs_snapshot", _noop)
-    monkeypatch.setattr(app, "_run_job", lambda *args, **kwargs: None)
+    monkeypatch.setattr(app.job_service, "save_snapshot", _noop)
+    monkeypatch.setattr(app.job_service, "_run_job", lambda *args, **kwargs: None)
     monkeypatch.setattr("asyncio.create_task", lambda coro, *, name=None: None)
 
     body = app.InvokeBody(
