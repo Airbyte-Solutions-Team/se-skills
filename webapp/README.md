@@ -64,11 +64,16 @@ The ask-bars (follow-up chat in an output, and the Live Transcribe copilot) rout
 **Without a key, nothing breaks** — quick questions just fall back to the (slower) `claude -p` path. To enable the fast path:
 
 1. Create a key at **https://console.anthropic.com** → API Keys → Create Key (requires billing enabled). It's pay-as-you-go; these calls are tiny.
-2. Save it where the app looks (env var, or a `~/.mcp/*.env` file — outside the repo so it's never committed):
+2. Store it securely. The app prefers the OS keyring, with an `ANTHROPIC_API_KEY` environment variable as a fallback:
    ```bash
-   echo 'ANTHROPIC_API_KEY=sk-ant-…' >> ~/.mcp/anthropic.env && chmod 600 ~/.mcp/anthropic.env
+   # preferred: OS credential store (keyring must be available)
+   uv run keyring set se-skills ANTHROPIC_API_KEY
+   # fallback: environment variable
+   export ANTHROPIC_API_KEY=sk-ant-…
    ```
 3. Restart the app. (Treat the key like a password; rotate it in the Console if it leaks.)
+
+Previous `~/.mcp/*.env` files are no longer read by the app. Move any key stored there into the keyring or an env var and delete the plain-text file.
 
 **Model configuration:** you can override which Claude model the app uses for quick-ask, live-ask, deep skill runs, or any individual skill by adding a `models:` block to your `.se-config.yaml` (see `config/se-config.example.yaml`). Missing keys fall back to `default`, then to the app default `claude-sonnet-4-6`. Example values currently supported by the Claude API: `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-haiku-4-5`.
 

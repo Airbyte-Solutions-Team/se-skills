@@ -2,7 +2,7 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`, mine = `gyairbyte/SE-Workflow`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: July 14, 2026 — Semantic deal-assessment comparison view (UX-002). Added deterministic section-level diff, risk/action item classification, and raw Markdown fallback._
+_Last updated: July 14, 2026 — Closed UI/UX improvement phase and moved Anthropic API key storage from plaintext `~/.mcp/*.env` to the OS keyring (SEC-005)._
 
 ## What the app is
 Local FastAPI + vanilla-JS UI (no build step) over the SE skills suite. `cd webapp && uv run app.py` → http://127.0.0.1:8787 (needs `CPATH/LIBRARY_PATH` for portaudio on this Mac — see "Run" below). Browse team → member's accounts → an account's opportunities → generated outputs; invoke skills; ask follow-ups on outputs; Live Transcribe a Zoom call with an AI copilot.
@@ -16,6 +16,14 @@ uv run --python 3.11 app.py    # port 8787
 ```
 
 ## Built this session (newest first — see `git log`)
+- **Closed UI/UX improvement phase + moved Anthropic key to keyring (July 14).** Ran a whole-app visual regression pass across the landing page, member directory, account/opportunity/output lists, invoke modal, output reader, review panel, deal-assessment comparison, live transcription entry point, and responsive viewports. Found and fixed one regression: `unvalidated` deal-assessment outputs were incorrectly counted as validation "needs attention" in `/api/overview`. Updated `IMPLEMENTATION-PLAN.md` to mark UX-001/002/004/006/007/008/009 and Phase 4 as completed and recorded deferred UX ideas. Then implemented SEC-005: the quick ask-bar path now reads `ANTHROPIC_API_KEY` from the OS keyring via the `keyring` module, with the `ANTHROPIC_API_KEY` environment variable as a fallback. Plaintext `~/.mcp/*.env` files are no longer read. Added tests for env/keyring precedence and fallback. Updated `webapp/README.md` with the new keyring-first setup instructions.
+  - `webapp/app.py`: `_anthropic_key_from_keyring`, `_anthropic_api_key`; replaced env/MCP `.env` reads in the two ask-bar paths and `/api/ai-status`.
+  - `webapp/app.py` PEP 723 deps + `pyproject.toml` dev deps: added `keyring`.
+  - `webapp/README.md`: keyring-first setup, env fallback, and migration note.
+  - `IMPLEMENTATION-PLAN.md`: UI/UX phase closed, Phase 4 completed, SEC-005 in progress/completed, deferred UX ideas recorded.
+  - `eval/tests/test_webapp_overview.py`: corrected `unvalidated` attention classification.
+  - `eval/tests/test_webapp_security.py`: added env/keyring precedence tests.
+  - Validation: `node --check webapp/static/app.js`; `uv run --extra dev pytest eval/ -q`; `uv run python -m eval.runner run-suite --manifest-dir eval/manifests/phase1 --executor mock`; `./scripts/check-sync.sh`.
 - **Semantic deal-assessment comparison view (UX-002) (July 14).** Replaced the raw Markdown line diff with a section-oriented semantic comparison so an SE can quickly see what materially changed between two deal assessments. `POST /api/output/diff` now returns both a deterministic `semantic` object and the existing `rows` raw diff. The modal opens by default to a concise summary (sections changed, risks added/removed, actions changed, At a Glance changes), followed by section cards with before/after content and item-level additions/removals for risk and action lists. Unchanged sections are collapsed behind a disclosure, and the raw Markdown diff remains available as an expandable "Raw Markdown diff" audit toggle. The selector now shows each output's generated date, prevents comparing an output to itself, and degrades safely for legacy outputs without sidecars. Risk and action classification uses exact normalized section keys plus safe substrings (`risk`, `probability`, `verdict`, `action`, `next-step`, `what-would-close`) and does not infer deal health from wording.
   - `webapp/output_schema.py`: new `_display_title`, `_extract_list_items`, `_item_diff`, `_is_risk_section`, `_is_action_section`, and `semantic_diff` helpers.
   - `webapp/app.py`: `api_output_diff` reads sidecar metadata and returns `semantic` alongside `rows`; `list_outputs` parses `.md.json` sidecars for all Markdown outputs (not just schema-known skills) so the compare selector can show validation status; `api_output_meta` returns full metadata for any Markdown skill.

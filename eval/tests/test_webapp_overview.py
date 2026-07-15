@@ -187,8 +187,9 @@ def test_overview_stale_output_needs_attention(tmp_path, monkeypatch) -> None:
     assert item["review_status"] == "awaiting review"
 
 
-def test_overview_incomplete_output_needs_attention(tmp_path, monkeypatch) -> None:
-    """An unvalidated (incomplete-format) output is a validation attention item."""
+def test_overview_unvalidated_output_awaits_review(tmp_path, monkeypatch) -> None:
+    """A successfully parsed output from a skill with no schema is unvalidated
+    but does not need validation attention; it still awaits human review."""
     customers = tmp_path / "customers"
     _write_output(
         customers,
@@ -201,9 +202,11 @@ def test_overview_incomplete_output_needs_attention(tmp_path, monkeypatch) -> No
     data = _overview(tmp_path, monkeypatch)
 
     assert data["summary"]["needs_attention"] == 1
+    assert len(data["attention"]) == 1
     item = data["attention"][0]
-    assert item["type"] == "attention"
-    assert item["validation_status"] == "incomplete"
+    assert item["type"] == "review"
+    assert item["status"] == "awaiting review"
+    assert item["validation_status"] == "unvalidated"
     assert item["review_status"] == "awaiting review"
 
 
