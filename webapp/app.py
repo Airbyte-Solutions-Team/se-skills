@@ -444,17 +444,23 @@ def list_outputs(account: str, opp: str | None = None) -> list[dict]:
                 "modified": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).strftime("%Y-%m-%d %H:%M"),
                 "size": st.st_size,
             }
-            if f.suffix == ".md" and output_schema.skill_has_schema(skill):
+            if f.suffix == ".md":
                 try:
                     meta = output_schema.read_or_parse_sidecar(f, skill)
-                    current = reference_freshness.compute_reference_freshness(
-                        _se_config(), WORKSPACE, WEBAPP_DIR.parent, skill=skill
-                    )
-                    meta.reference_changed_since_generation = (
-                        reference_freshness.compare_to_generation(
-                            current, meta.reference_freshness_at_generation
+                    # Reference freshness is only computed for skills with a known
+                    # product-data dependency so non-product skills do not pay the
+                    # filesystem scan cost on every listing.
+                    if output_schema.skill_has_schema(skill):
+                        current = reference_freshness.compute_reference_freshness(
+                            _se_config(), WORKSPACE, WEBAPP_DIR.parent, skill=skill
                         )
-                    )
+                        meta.reference_changed_since_generation = (
+                            reference_freshness.compare_to_generation(
+                                current, meta.reference_freshness_at_generation
+                            )
+                        )
+                    else:
+                        meta.reference_changed_since_generation = []
                     entry["valid"] = meta.valid
                     entry["validation_status"] = meta.validation_status
                     entry["validation_errors"] = meta.validation_errors
@@ -1104,18 +1110,19 @@ def api_output_meta(path: str):
     if not str(target).startswith(str(CUSTOMERS_DIR.resolve())) or not target.is_file():
         raise HTTPException(404, "Not found")
     skill = target.parent.name
-    if not output_schema.skill_has_schema(skill):
-        return {"skill": skill, "valid": None, "validation_errors": [], "missing_sections": [], "reference_freshness_at_generation": None, "reference_changed_since_generation": None}
     try:
         meta = output_schema.read_or_parse_sidecar(target, skill)
-        current = reference_freshness.compute_reference_freshness(
-            _se_config(), WORKSPACE, WEBAPP_DIR.parent, skill=skill
-        )
-        meta.reference_changed_since_generation = (
-            reference_freshness.compare_to_generation(
-                current, meta.reference_freshness_at_generation
+        if output_schema.skill_has_schema(skill):
+            current = reference_freshness.compute_reference_freshness(
+                _se_config(), WORKSPACE, WEBAPP_DIR.parent, skill=skill
             )
-        )
+            meta.reference_changed_since_generation = (
+                reference_freshness.compare_to_generation(
+                    current, meta.reference_freshness_at_generation
+                )
+            )
+        else:
+            meta.reference_changed_since_generation = []
         return meta.model_dump()
     except (OSError, ValueError, TypeError) as e:
         raise HTTPException(500, f"Could not parse output metadata: {e}")
@@ -1702,10 +1709,12 @@ def _diff_lines(left_text: str, right_text: str) -> list[dict]:
 
 @app.post("/api/output/diff")
 def api_output_diff(body: OutputDiff):
-    """Return a side-by-side line diff of two generated Markdown outputs.
+    """Return a side-by-side diff of two generated Markdown outputs.
 
     Designed for `deal-assessment` trend / what-changed views, but works for any
-    two `.md` outputs under the same customer.
+    two `.md` outputs under the same customer. The response contains both a
+    deterministic semantic comparison (using parsed sidecar metadata) and a
+    fallback raw Markdown line diff for auditability.
     """
     root = CUSTOMERS_DIR.resolve()
     target_left = (CUSTOMERS_DIR / body.left).resolve()
@@ -1721,11 +1730,21 @@ def api_output_diff(body: OutputDiff):
         raise HTTPException(400, "Only generated .md outputs can be diffed")
     left_text = target_left.read_text(encoding="utf-8")
     right_text = target_right.read_text(encoding="utf-8")
+
+    semantic = None
+    try:
+        left_meta = output_schema.read_or_parse_sidecar(target_left, target_left.parent.name)
+        right_meta = output_schema.read_or_parse_sidecar(target_right, target_right.parent.name)
+        semantic = output_schema.semantic_diff(left_meta, right_meta)
+    except (OSError, ValueError, TypeError) as e:
+        logger.warning("Could not build semantic diff for %s / %s: %s", body.left, body.right, e)
+
     return {
         "left": body.left,
         "right": body.right,
         "left_title": target_left.name,
         "right_title": target_right.name,
+        "semantic": semantic,
         "rows": _diff_lines(left_text, right_text),
     }
 

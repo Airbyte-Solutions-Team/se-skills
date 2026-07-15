@@ -206,3 +206,80 @@ def test_read_or_parse_sidecar_reparses_on_schema_version_mismatch(tmp_path: Pat
     reloaded = output_schema.read_or_parse_sidecar(md_path, "biz-qual")
     assert reloaded.schema_version == output_schema.SCHEMA_VERSION
     assert reloaded.validation_status == "valid"
+
+
+# ---------------------------------------------------------------------------
+# Semantic comparison (UX-002)
+# ---------------------------------------------------------------------------
+
+def _deal_meta(at_a_glance: dict | None = None, sections: dict | None = None) -> output_schema.OutputMetadata:
+    return output_schema.OutputMetadata(
+        skill="deal-assessment",
+        at_a_glance=at_a_glance or {},
+        sections=sections or {},
+    )
+
+
+def test_semantic_diff_detects_added_and_removed_risks() -> None:
+    older = _deal_meta(
+        at_a_glance={"verdict": "Yellow"},
+        sections={
+            "deal-blocker": "- No economic buyer identified",
+            "bottom-line": "Deal is stalled.",
+        },
+    )
+    newer = _deal_meta(
+        at_a_glance={"verdict": "Yellow"},
+        sections={
+            "deal-blocker": "- No economic buyer identified\n- Budget cut in Q3",
+            "bottom-line": "Deal is stalled.",
+        },
+    )
+    result = output_schema.semantic_diff(older, newer)
+    assert result["summary"]["structured_changes"] is True
+    assert result["summary"]["risks_added"] == 1
+    assert result["summary"]["risks_removed"] == 0
+    blocker = next(s for s in result["sections"] if s["key"] == "deal-blocker")
+    assert blocker["change"] == "changed"
+    assert any(c["type"] == "added" and "Budget" in c["right"] for c in blocker["item_changes"])
+
+
+def test_semantic_diff_detects_changed_at_a_glance() -> None:
+    older = _deal_meta(at_a_glance={"verdict": "Yellow", "confidence": "Medium"})
+    newer = _deal_meta(at_a_glance={"verdict": "Red", "confidence": "Medium"})
+    result = output_schema.semantic_diff(older, newer)
+    assert result["summary"]["at_a_glance_changed"] == 1
+    assert result["summary"]["sections_changed"] == 0
+    verdict = next(r for r in result["at_a_glance"] if r["label"] == "verdict")
+    assert verdict["change"] == "changed"
+    confidence = next(r for r in result["at_a_glance"] if r["label"] == "confidence")
+    assert confidence["change"] == "unchanged"
+
+
+def test_semantic_diff_detects_changed_recommended_actions() -> None:
+    older = _deal_meta(sections={"what-would-close-it": "- Exec demo\n- Pricing call"})
+    newer = _deal_meta(sections={"what-would-close-it": "- Exec demo\n- POC with IT"})
+    result = output_schema.semantic_diff(older, newer)
+    assert result["summary"]["sections_changed"] == 1
+    assert result["summary"]["actions_changed"] == 1
+    section = result["sections"][0]
+    assert section["is_action"] is True
+    assert any(c["type"] == "changed" for c in section["item_changes"])
+
+
+def test_semantic_diff_handles_added_and_removed_sections() -> None:
+    older = _deal_meta(sections={"driver": "Q4 renewal"})
+    newer = _deal_meta(sections={"driver": "Q4 renewal", "sfdc-vs-reality": "> [!risk] Stage mismatch"})
+    result = output_schema.semantic_diff(older, newer)
+    assert result["summary"]["sections_added"] == 1
+    assert result["summary"]["sections_removed"] == 0
+
+
+def test_semantic_diff_no_changes() -> None:
+    meta = _deal_meta(
+        at_a_glance={"verdict": "Green"},
+        sections={"deal-blocker": "- None", "bottom-line": "Healthy."},
+    )
+    result = output_schema.semantic_diff(meta, meta)
+    assert result["summary"]["structured_changes"] is False
+    assert result["summary"]["message"] == "No material structured changes found."

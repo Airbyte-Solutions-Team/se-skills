@@ -3596,20 +3596,140 @@ async function loadFeedbackPanel(path) {
 
 }
 
-// ── Deal-assessment diff / trend view (UX-002) ───────────────────────────
-// Opens a modal for comparing two `deal-assessment` outputs side-by-side.
+// ── Deal-assessment semantic comparison (UX-002) ──────────────────────────
+// Opens a modal for comparing two `deal-assessment` outputs semantically,
+// with a raw Markdown line diff available as an audit fallback.
+function renderCompareBadge(change) {
+  const labels = { added: "Added", removed: "Removed", changed: "Changed", unchanged: "Unchanged" };
+  return `<span class="compare-badge compare-badge--${change}">${labels[change] || esc(change)}</span>`;
+}
+
+function renderCompareBody(left, right, change) {
+  if (change === "added") {
+    return `<div class="compare-pre compare-pre--right">${esc(right || "")}</div>`;
+  }
+  if (change === "removed") {
+    return `<div class="compare-pre compare-pre--left">${esc(left || "")}</div>`;
+  }
+  if (change === "unchanged") {
+    return `<div class="compare-pre">${esc(right || left || "")}</div>`;
+  }
+  return `<div class="compare-body-pair">
+    <div class="compare-pre compare-pre--left"><span class="compare-mini-label">Older</span>${esc(left || "")}</div>
+    <div class="compare-pre compare-pre--right"><span class="compare-mini-label">Newer</span>${esc(right || "")}</div>
+  </div>`;
+}
+
+function renderCompareItems(itemChanges) {
+  const interesting = itemChanges.filter((ic) => ic.type !== "unchanged");
+  if (!interesting.length) return "";
+  const rows = interesting.map((ic) => {
+    if (ic.type === "added") {
+      return `<div class="compare-item compare-item--added"><span class="compare-item-label">Added</span><div class="compare-item-text">${esc(ic.right)}</div></div>`;
+    }
+    if (ic.type === "removed") {
+      return `<div class="compare-item compare-item--removed"><span class="compare-item-label">Removed</span><div class="compare-item-text">${esc(ic.left)}</div></div>`;
+    }
+    return `<div class="compare-item compare-item--changed">
+      <div class="compare-item-side"><span class="compare-mini-label">Older</span><div class="compare-item-text">${esc(ic.left)}</div></div>
+      <div class="compare-item-side"><span class="compare-mini-label">Newer</span><div class="compare-item-text">${esc(ic.right)}</div></div>
+    </div>`;
+  }).join("");
+  return `<div class="compare-items">${rows}</div>`;
+}
+
+function renderCompareSection(section) {
+  const hasItemChanges = section.item_changes && section.item_changes.some((ic) => ic.type !== "unchanged");
+  const body = hasItemChanges ? renderCompareItems(section.item_changes) : renderCompareBody(section.left_body, section.right_body, section.change);
+  return `<div class="compare-section compare-section--${section.change}">
+    <div class="compare-section-header">
+      <span class="compare-section-title">${esc(section.title)}</span>
+      ${renderCompareBadge(section.change)}
+    </div>
+    <div class="compare-section-body">${body}</div>
+  </div>`;
+}
+
+function renderAtAGlance(items) {
+  const rows = items.map((item) => {
+    const changed = item.change !== "unchanged";
+    return `<div class="compare-aa-row compare-aa-row--${item.change}">
+      <span class="compare-aa-label">${esc(item.display_label)}</span>
+      <span class="compare-aa-value compare-aa-value--left${changed && item.left ? "" : " compare-aa-empty"}">${item.left ? esc(item.left) : "—"}</span>
+      <span class="compare-aa-arrow">→</span>
+      <span class="compare-aa-value compare-aa-value--right${changed && item.right ? "" : " compare-aa-empty"}">${item.right ? esc(item.right) : "—"}</span>
+    </div>`;
+  }).join("");
+  return `<div class="compare-aa-grid">${rows}</div>`;
+}
+
+function renderRawDiff(rows, leftTitle, rightTitle) {
+  const rowHtml = (r) => {
+    const c = r.type;
+    const l = r.left !== null ? `<div class="diff-cell diff-left ${c === "delete" || c === "replace" ? "diff-del" : ""}">${esc(r.left)}</div>` : `<div class="diff-cell diff-left diff-empty"></div>`;
+    const rgt = r.right !== null ? `<div class="diff-cell diff-right ${c === "insert" || c === "replace" ? "diff-ins" : ""}">${esc(r.right)}</div>` : `<div class="diff-cell diff-right diff-empty"></div>`;
+    return `<div class="diff-row ${c}">${l}${rgt}</div>`;
+  };
+  return `<div class="diff-legend">
+      <span class="diff-legend-del">Removed in newer</span>
+      <span class="diff-legend-ins">Added in newer</span>
+      <span class="diff-legend-rep">Changed</span>
+    </div>
+    <div class="diff-grid">
+      <div class="diff-header">${esc(leftTitle)}</div>
+      <div class="diff-header">${esc(rightTitle)}</div>
+      ${rows.map(rowHtml).join("")}
+    </div>`;
+}
+
+function renderSemanticCompare(semantic, rawRows, leftTitle, rightTitle) {
+  if (!semantic) {
+    return `<div class="feedback-empty">Semantic comparison is unavailable for one of these outputs. Falling back to the raw Markdown diff.</div>
+      <details class="compare-raw"><summary>Raw Markdown diff</summary>${renderRawDiff(rawRows, leftTitle, rightTitle)}</details>`;
+  }
+  const summary = semantic.summary;
+  const sections = semantic.sections || [];
+  const changed = sections.filter((s) => s.change !== "unchanged");
+  const unchanged = sections.filter((s) => s.change === "unchanged");
+  let html = `<div class="compare-summary compare-summary--${summary.structured_changes ? "changed" : "unchanged"}">${esc(summary.message)}</div>`;
+  html += `<div class="compare-aa"><h3 class="compare-subhead">At a Glance</h3>${renderAtAGlance(semantic.at_a_glance || [])}</div>`;
+  html += `<div class="compare-sections">${changed.map(renderCompareSection).join("")}</div>`;
+  if (unchanged.length) {
+    html += `<details class="compare-unchanged"><summary>${unchanged.length} unchanged section${unchanged.length === 1 ? "" : "s"}</summary><div class="compare-sections">${unchanged.map(renderCompareSection).join("")}</div></details>`;
+  }
+  html += `<details class="compare-raw"><summary>Raw Markdown diff</summary>${renderRawDiff(rawRows, leftTitle, rightTitle)}</details>`;
+  return html;
+}
+
 async function openDealDiffModal(ctx, currentPath) {
   const outs = await api(`/api/accounts/${encodeURIComponent(ctx.account)}/outputs?opp=${encodeURIComponent(ctx.slug)}`).catch(() => []);
   const da = outs.filter((o) => o.skill === "deal-assessment").sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
-  if (da.length < 2) { showToast("Need at least two deal-assessment outputs to compare.", "err"); return; }
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+
+  if (da.length < 2) {
+    overlay.innerHTML = `
+      <div class="modal diff-modal">
+        <div class="modal-head"><h2>Deal Assessment — what changed</h2><button class="modal-close">✕</button></div>
+        <div class="diff-body"><div class="feedback-empty">Only one deal-assessment output exists. Generate another one to compare.</div></div>
+        <div class="modal-foot"><button class="ghost small modal-cancel">Close</button></div>
+      </div>`;
+    overlay.querySelector(".modal-close").onclick = close;
+    overlay.querySelector(".modal-cancel").onclick = close;
+    overlay.onclick = (e) => { if (e.target === overlay) close(); };
+    return;
+  }
+
   const currentIdx = da.findIndex((o) => o.path === currentPath);
   const rightIdx = currentIdx >= 0 ? currentIdx : 0;
   const leftIdx = Math.min(rightIdx + 1, da.length - 1);
 
-  const opts = (sel) => da.map((o, i) => `<option value="${esc(o.path)}"${i === sel ? " selected" : ""}>${esc(o.filename)}</option>`).join("");
+  const option = (o) => `${esc(o.filename)} — ${esc(o.modified || "")}`;
+  const opts = (sel) => da.map((o, i) => `<option value="${esc(o.path)}"${i === sel ? " selected" : ""}>${option(o)}</option>`).join("");
 
-  const overlay = document.createElement("div");
-  overlay.className = "modal-overlay";
   overlay.innerHTML = `
     <div class="modal diff-modal">
       <div class="modal-head"><h2>Deal Assessment — what changed</h2><button class="modal-close">✕</button></div>
@@ -3621,8 +3741,6 @@ async function openDealDiffModal(ctx, currentPath) {
       <div class="diff-body" id="diff-body"><div class="feedback-empty">Select two deal assessments and click Compare.</div></div>
       <div class="modal-foot"><button class="ghost small modal-cancel">Close</button></div>
     </div>`;
-  document.body.appendChild(overlay);
-  const close = () => overlay.remove();
   overlay.querySelector(".modal-close").onclick = close;
   overlay.querySelector(".modal-cancel").onclick = close;
   overlay.onclick = (e) => { if (e.target === overlay) close(); };
@@ -3638,31 +3756,14 @@ async function openDealDiffModal(ctx, currentPath) {
         body: JSON.stringify({ left, right }),
       });
       const body = document.getElementById("diff-body");
-      const rowHtml = (r) => {
-        const c = r.type;
-        const l = r.left !== null ? `<div class="diff-cell diff-left ${c === "delete" || c === "replace" ? "diff-del" : ""}">${esc(r.left)}</div>` : `<div class="diff-cell diff-left diff-empty"></div>`;
-        const rgt = r.right !== null ? `<div class="diff-cell diff-right ${c === "insert" || c === "replace" ? "diff-ins" : ""}">${esc(r.right)}</div>` : `<div class="diff-cell diff-right diff-empty"></div>`;
-        return `<div class="diff-row ${c}">${l}${rgt}</div>`;
-      };
-      body.innerHTML = `
-        <div class="diff-legend">
-          <span class="diff-legend-del">Removed in newer</span>
-          <span class="diff-legend-ins">Added in newer</span>
-          <span class="diff-legend-rep">Changed</span>
-        </div>
-        <div class="diff-grid">
-          <div class="diff-header">${esc(data.left_title || left)}</div>
-          <div class="diff-header">${esc(data.right_title || right)}</div>
-          ${data.rows.map(rowHtml).join("")}
-        </div>`;
+      body.innerHTML = renderSemanticCompare(data.semantic, data.rows, data.left_title, data.right_title);
     } catch (e) {
       showToast("Diff failed: " + e.message, "err");
     }
   }
 
   document.getElementById("diff-run").onclick = runDiff;
-  // Default to comparing immediately if a previous sibling was auto-selected.
-  if (da.length >= 2 && leftIdx !== rightIdx) await runDiff();
+  if (leftIdx !== rightIdx) await runDiff();
 }
 
 (async function init() {
