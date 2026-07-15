@@ -130,7 +130,7 @@ A confidently-wrong product fact costs more trust than a hedge.
 ## After Generating
 
 ### Auto-save path
-Per `_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), if a customer was named, save the talk track to:
+Per `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), if a customer was named, save the talk track to:
 ```
 {customers_dir}/<Customer>/outputs/objection-handler/objection-<YYYY-MM-DD>-<category>.md
 ```
@@ -140,7 +140,7 @@ Filename example: `objection-2026-05-28-Data-Residency.md` (category descriptor 
 For abstract objections (no customer named), don't auto-save — output to chat only.
 
 ### Source Coverage
-If customer-specific: include Source Coverage noting which transcripts, memory, and prior objection-playbook entries were checked. (See `_se-playbook.md` → Source Coverage Transparency.)
+If customer-specific: include Source Coverage noting which transcripts, memory, and prior objection-playbook entries were checked. (See `~/.claude/skills/_se-playbook.md` → Source Coverage Transparency.)
 
 ### Then offer to
 1. **Add to customer Notion Q&A page** as a yellow callout (question) + green callout (answer)

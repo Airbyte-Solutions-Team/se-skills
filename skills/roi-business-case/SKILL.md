@@ -70,7 +70,7 @@ If ≥3 of these are unknown, say so prominently — the case will be directiona
 
 ## Output Format
 
-Document structure follows `_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
+Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---
 
@@ -185,7 +185,7 @@ Per `_se-playbook.md`: if the most-recent local transcript is >14 days old, chec
 ## After Generating
 
 ### Auto-save path
-Per `_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save to:
+Per `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save to:
 ```
 {customers_dir}/<Customer>/outputs/roi-business-case/roi-business-case-<YYYY-MM-DD>-<Descriptor>.md
 ```

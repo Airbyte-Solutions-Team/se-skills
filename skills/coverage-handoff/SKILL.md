@@ -67,7 +67,7 @@ Copy these straight from the SFDC query into the page; IDs and numbers must be e
 ## After Generating
 
 ### Auto-save path
-Per `_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save the HTML to the opportunity's outputs dir the caller specifies (the webapp passes an `out_dir` — save under `<out_dir>/coverage-handoff/`). Filename:
+Per `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save the HTML to the opportunity's outputs dir the caller specifies (the webapp passes an `out_dir` — save under `<out_dir>/coverage-handoff/`). Filename:
 ```
 coverage-handoff-<YYYY-MM-DD>-<Customer>.html
 ```

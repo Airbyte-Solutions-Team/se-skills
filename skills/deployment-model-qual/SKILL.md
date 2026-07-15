@@ -84,7 +84,7 @@ Per `_se-playbook.md` → "Product & Connector Reference Data," ground each qual
 
 ## Output Format
 
-Document structure follows `_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
+Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---
 
@@ -238,7 +238,7 @@ Don't lead with reframes here. The job is to find the truth, not to convert. If 
 ## After Generating
 
 ### Auto-save path
-Per `_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save to:
+Per `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save to:
 ```
 {customers_dir}/<Customer>/outputs/deployment-qual/deployment-qual-<YYYY-MM-DD>.md
 ```

@@ -63,7 +63,7 @@ If user signals brief mode (`--brief`, `quick POC plan`, `POC summary`): produce
 
 ## Output Format
 
-Document structure follows `_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
+Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---
 
@@ -293,7 +293,7 @@ When designing the POC, identify the *story* the data will tell at the results r
 ## After Generating
 
 ### Auto-save path
-Per `_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save to:
+Per `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save to:
 ```
 {customers_dir}/<Customer>/outputs/poc-plan/poc-plan-<YYYY-MM-DD>-<Descriptor>.md
 ```

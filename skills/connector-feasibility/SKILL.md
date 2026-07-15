@@ -119,7 +119,7 @@ Only surface questions for items **not already answered** in the transcripts/SFD
 
 ## Output Format
 
-Document structure follows `_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
+Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---
 
@@ -265,7 +265,7 @@ For each missing connector, provide:
 ## After Generating
 
 ### Auto-save path
-Per `_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save to:
+Per `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save to:
 ```
 {customers_dir}/<Customer>/outputs/connector-feasibility/connector-feasibility-<YYYY-MM-DD>-<Descriptor>.md
 ```

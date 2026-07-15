@@ -62,7 +62,7 @@ If user signals brief mode (`--brief`, `quick assessment`, `deal health summary`
 
 ## Output Format
 
-Document structure follows `_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
+Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 Title format: `<Customer> — Deal Assessment: <short punchy verdict>`
 
@@ -194,7 +194,7 @@ Keep candid. This is the part of the assessment the SE can act on personally.
 ## After Generating
 
 ### Auto-save path
-Per `_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save to:
+Per `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save to:
 ```
 {customers_dir}/<Customer>/outputs/deal-assessment/deal-assessment-<YYYY-MM-DD>.md
 ```

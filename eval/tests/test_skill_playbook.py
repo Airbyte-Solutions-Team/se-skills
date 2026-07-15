@@ -184,3 +184,27 @@ def test_shared_references_resolve(headings: list[str]) -> None:
     ]
     for section in shared_sections:
         assert section in headings, f"shared playbook section missing: {section}"
+
+
+@pytest.mark.parametrize("skill", sorted(SAVING_SKILLS | {"full-qual"}))
+def test_shared_boilerplate_uses_resolvable_path(skill: str) -> None:
+    """Bare `_se-playbook.md` can resolve to the skill directory and fail at runtime; the
+    shared-boilerplate references must use an absolute installed path or the
+    `${CLAUDE_SKILL_DIR}` substitution so Claude reads the real shared file.
+    """
+    text = (SKILLS_DIR / skill / "SKILL.md").read_text(encoding="utf-8")
+    # find every arrow-chain reference that includes Shared Skill Boilerplate
+    for match in re.finditer(r"`([^`]+)` → Shared Skill Boilerplate", text):
+        path = match.group(1)
+        assert "_se-playbook.md" in path, f"{skill} references wrong file for shared boilerplate: {path!r}"
+        assert (
+            path.startswith("~/.claude/skills/") or "${CLAUDE_SKILL_DIR}" in path
+        ), f"{skill} shared-boilerplate reference is not resolvable at runtime: {path!r}"
+
+
+def test_no_bare_shared_boilerplate_references(skill_files: list[Path]) -> None:
+    """A bare `_se-playbook.md` reference to the shared boilerplate is not sufficient."""
+    bare = "`_se-playbook.md` → Shared Skill Boilerplate"
+    for path in skill_files:
+        text = path.read_text(encoding="utf-8")
+        assert bare not in text, f"{path.parent.name} has a bare shared-boilerplate reference"

@@ -57,7 +57,7 @@ If user signals brief mode (`--brief`, `quick prep`, `1-pager`, `short version`)
 
 ## Output Format
 
-Document structure follows `_se-playbook.md` → Shared Skill Boilerplate → Output format reference. Produce a structured call prep brief with the following sections:
+Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference. Produce a structured call prep brief with the following sections:
 
 ---
 
@@ -306,7 +306,7 @@ Don't end prep with "follow up next week." Write the specific next-step you'll p
 ## After Generating
 
 ### Auto-save path
-Per `_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save the prep doc automatically to:
+Per `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save the prep doc automatically to:
 ```
 {customers_dir}/<Customer>/outputs/call-prep/call-prep-<YYYY-MM-DD>-<Descriptor>.md
 ```

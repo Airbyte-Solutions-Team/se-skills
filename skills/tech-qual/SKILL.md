@@ -39,7 +39,7 @@ If user signals brief mode (`--brief`, `quick tech qual`, `tech summary`): produ
 
 ## Output Format
 
-Document structure follows `_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
+Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---
 
@@ -295,7 +295,7 @@ Always include "build internally" as a competitor in tech qual — it's often th
 ## After Generating
 
 ### Auto-save path
-Per `_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save to:
+Per `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save to:
 ```
 {customers_dir}/<Customer>/outputs/tech-qual/tech-qual-<YYYY-MM-DD>-<Descriptor>.md
 ```

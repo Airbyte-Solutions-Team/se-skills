@@ -18,7 +18,7 @@ The user will provide one or more of:
 
 **This skill requires at least one customer transcript to run.** MEDDPICC scoring is synthesis of what the customer said — without a transcript, the output is hypothesis, not qualification.
 
-Before doing anything else, run the pre-flight source check per `_se-playbook.md` → Shared Skill Boilerplate → Pre-flight source check (qualification and synthesis skills).
+Before doing anything else, run the pre-flight source check per `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Pre-flight source check (qualification and synthesis skills).
 
 **If zero transcripts exist in either location: REFUSE TO RUN.** Output:
 > "Cannot generate biz-qual for [Customer] — zero transcripts available. MEDDPICC scoring requires customer voice, not hypotheses. Recommend: run `prep-call` to plan the first discovery call, then re-run `biz-qual` after the transcript is saved."
@@ -37,7 +37,7 @@ If user signals brief mode (`--brief`, `quick qual`, `qual summary`): produce ju
 
 ## Output Format
 
-Document structure follows `_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
+Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---
 
@@ -344,7 +344,7 @@ If you can't fill layer 3, pain isn't fully identified.
 ## After Generating
 
 ### Auto-save path
-Per `_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save to:
+Per `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save to:
 ```
 {customers_dir}/<Customer>/outputs/biz-qual/biz-qual-<YYYY-MM-DD>-<Descriptor>.md
 ```

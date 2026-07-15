@@ -71,7 +71,7 @@ If user signals brief mode (`--brief`, `quick prep`, `bullet points only`): prod
 
 ## Output Format — Varies by Meeting Type
 
-Document structure follows `_se-playbook.md` → Shared Skill Boilerplate → Output format reference — applied per mode template below. In every template, write the `[Date]` in the title/headers and any prose dates in long form per `_se-playbook.md`, e.g. June 11, 2026 — not 2026-06-11. (Filenames keep the numeric `YYYY-MM-DD` prefix.)
+Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference — applied per mode template below. In every template, write the `[Date]` in the title/headers and any prose dates in long form per `_se-playbook.md`, e.g. June 11, 2026 — not 2026-06-11. (Filenames keep the numeric `YYYY-MM-DD` prefix.)
 
 ### Type: `ae-sync`
 
@@ -265,7 +265,7 @@ Don't invent a separate probability scale for forecasting. The deal-assessment b
 ## After Generating
 
 ### Auto-save path
-Per `_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills):
+Per `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills):
 
 For single-customer prep (ae-sync, exec-readout, deal-review):
 ```

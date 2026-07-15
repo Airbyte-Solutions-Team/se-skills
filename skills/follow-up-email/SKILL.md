@@ -203,7 +203,7 @@ Every email must pass these tests (from the canonical voice rules below):
 Exempt from the Output Document Format contract (see `_se-playbook.md`) — this is a customer email, so no At-a-Glance, Jump-to, TOC headings, or callouts.
 
 ### Auto-save path
-Per `_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save drafted emails to:
+Per `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save drafted emails to:
 ```
 {customers_dir}/<Customer>/outputs/emails/email-<YYYY-MM-DD>-<purpose>.md
 ```

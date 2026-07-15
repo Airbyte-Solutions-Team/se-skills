@@ -302,7 +302,7 @@ Any stage + objection raised on most recent call
 ## After Generating
 
 ### Auto-save path
-Per `_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save the routing recommendation as an output file so it shows up in the web app's Generated Outputs (and the completion toast can deep-link to it). Write to:
+Per `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save the routing recommendation as an output file so it shows up in the web app's Generated Outputs (and the completion toast can deep-link to it). Write to:
 ```
 {customers_dir}/<Customer>/outputs/next-move/next-move-<YYYY-MM-DD>.md
 ```

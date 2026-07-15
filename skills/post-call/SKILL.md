@@ -54,7 +54,7 @@ If the user signals brief mode (`--brief`, `quick summary`, `just the takeaways`
 
 Generate a structured summary with these sections. **Local auto-save is ON** (see After Generating). Only **Notion and memory writes are ask-first** — never auto-write those without confirmation.
 
-Document structure follows `_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
+Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---
 
@@ -138,7 +138,7 @@ The single most important next action. Be specific — "send POC proposal by Fri
 ## After Generating the Summary
 
 ### Auto-save path
-Per `_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save the output automatically to:
+Per `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save the output automatically to:
 ```
 {customers_dir}/<Customer>/outputs/post-call/post-call-<YYYY-MM-DD>-<Descriptor>.md
 ```
