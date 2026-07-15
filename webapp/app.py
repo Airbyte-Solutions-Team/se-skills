@@ -4,7 +4,7 @@
 # dependencies = [
 #   "fastapi", "uvicorn[standard]", "pyyaml",
 #   "faster-whisper", "sounddevice", "numpy", "sse-starlette", "anthropic",
-#   "markdown", "nh3",
+#   "markdown", "nh3", "keyring",
 # ]
 # ///
 # NOTE: live-transcribe needs the PortAudio system lib for sounddevice:
@@ -1514,7 +1514,7 @@ async def api_output_ask(body: OutputAsk):
         return {"mode": "deep", "job_id": job_id,
                 **({"persistence_warning": persist_warn} if persist_warn else {})}
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY") or _anthropic_key_from_mcp()
+    api_key = _anthropic_api_key()
     if not api_key:
         return JSONResponse({"mode": "needs_deep",
                              "reason": "No ANTHROPIC_API_KEY for the quick path — re-ask routes to claude -p."})
@@ -2253,9 +2253,10 @@ def _output_validation_status(sidecar_path: Path) -> tuple[bool, str]:
     """Read an output's `.md.json` sidecar and decide whether it needs attention.
 
     Returns `(needs_attention, validation_status)`. `validation_status` is one
-    of: `valid`, `invalid`, `stale`, `incomplete`, `unknown`. A missing or
-    unreadable sidecar is treated as `unknown` and does **not** need attention,
-    so legacy outputs without modern metadata degrade safely.
+    of: `valid`, `invalid`, `stale`, `incomplete`, `unvalidated`, `unknown`. A
+    missing or unreadable sidecar is treated as `unknown` and does **not** need
+    attention. `unvalidated` means the skill has no output schema and the file
+    was parsed successfully; it does **not** need attention.
     """
     if not sidecar_path.exists():
         return False, "unknown"
@@ -2273,10 +2274,10 @@ def _output_validation_status(sidecar_path: Path) -> tuple[bool, str]:
         return True, "invalid"
     if stale:
         return True, "stale"
-    if validation_status == "unvalidated":
-        return True, "incomplete"
     if valid is not True:
         return True, "incomplete"
+    if validation_status == "unvalidated":
+        return False, "unvalidated"
     return False, "valid"
 
 
@@ -3293,7 +3294,7 @@ async def api_transcribe_ask(session_id: str, body: AskLive):
                 **({"persistence_warning": persist_warn} if persist_warn else {})}
 
     # Quick path → Claude API streaming (SSE).
-    api_key = os.environ.get("ANTHROPIC_API_KEY") or _anthropic_key_from_mcp()
+    api_key = _anthropic_api_key()
     if not api_key:
         # No key → tell the client to re-route as deep so the ask-bar still works.
         return JSONResponse({"mode": "needs_deep",
@@ -3336,19 +3337,30 @@ async def api_transcribe_ask(session_id: str, body: AskLive):
                              headers={"cache-control": "no-store", "x-accel-buffering": "no"})
 
 
-def _anthropic_key_from_mcp() -> str | None:
-    """Best-effort: read ANTHROPIC_API_KEY from a ~/.mcp/*.env if present."""
-    mcp = Path(os.path.expanduser("~/.mcp"))
-    if not mcp.exists():
+def _anthropic_key_from_keyring() -> str | None:
+    """Best-effort: read ANTHROPIC_API_KEY from the OS keyring via the
+    `keyring` module. Any backend error (missing service, locked keychain,
+    unsupported platform) is treated as "no key" so the app degrades to the
+    deep `claude -p` path.
+    """
+    try:
+        import keyring
+        import keyring.errors
+
+        return keyring.get_password("se-skills", "ANTHROPIC_API_KEY")
+    except (ImportError, keyring.errors.KeyringError, RuntimeError, OSError):
         return None
-    for f in mcp.glob("*.env"):
-        try:
-            for line in f.read_text().splitlines():
-                if line.startswith("ANTHROPIC_API_KEY="):
-                    return line.split("=", 1)[1].strip().strip('"').strip("'")
-        except Exception:
-            pass
-    return None
+    except Exception:
+        return None
+
+
+def _anthropic_api_key() -> str | None:
+    """Return the Anthropic API key for the quick ask-bar path.
+
+    Priority: `ANTHROPIC_API_KEY` environment variable, then the OS keyring.
+    No plaintext `~/.mcp/*.env` files are read.
+    """
+    return os.environ.get("ANTHROPIC_API_KEY") or _anthropic_key_from_keyring()
 
 
 @app.get("/api/ai-status")
@@ -3359,7 +3371,7 @@ def api_ai_status():
     slower claude -p deep path. The front-end uses this to show a badge so the
     SE knows which mode they're in instead of wondering why answers are slow.
     """
-    has_key = bool(os.environ.get("ANTHROPIC_API_KEY") or _anthropic_key_from_mcp())
+    has_key = bool(_anthropic_api_key())
     return {"quick_path": has_key}
 
 
