@@ -602,7 +602,8 @@ class MockOutputBuilder:
             return self._refusal_output()
 
         lines: List[str] = [f"# {self.account} — {self._skill_title()}: {self._verdict()}"]
-        lines.append(f"**Date:** {datetime.date.today().isoformat()} · **Skill:** {self.skill}")
+        # Pin the mock build date so golden fixtures stay stable across days.
+        lines.append(f"**Date:** {datetime.date(2026, 7, 14).isoformat()} · **Skill:** {self.skill}")
         lines.append("")
 
         lines.append("## At a Glance")
