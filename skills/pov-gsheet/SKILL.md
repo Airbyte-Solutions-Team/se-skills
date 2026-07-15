@@ -7,7 +7,8 @@ description: >
   "fill out the POV template", "set up POV tracking for [prospect]", "create success criteria for
   [account]", "prep the POV sheet", or any variation involving POV + prospect/account name.
   This skill uses a Google Sheets template (not XLSX) with dropdown fields and pulls data from the
-  existing SE workspace — prior skill outputs, workspace transcripts, and (optionally) Salesforce.
+  existing SE workspace — prior skill outputs, workspace transcripts, and optional external evidence
+  (Salesforce, Gong, meeting notes, Gmail, Slack) when those MCP integrations are configured.
 ---
 
 # POV Google Sheets Creator
@@ -94,16 +95,72 @@ report which tabs are missing or unexpected.
 
 ### Step 0: Build the structured POV context
 
-Run the context loader once. It is deterministic and produces a single JSON file that the rest of the
-run consumes.
+#### 0a. Gather optional external evidence
+
+Before running the deterministic loader, use any configured MCP integrations to retrieve POV-relevant
+facts. The loader does not call MCP tools itself; the skill must call them and pass the results as
+JSON evidence files.
+
+For each configured source, write a JSON file containing a list of `ExternalEvidence` objects. If an
+MCP is not configured, not reachable, or the user has not consented, write exactly one entry with
+`status: "unavailable"` and a clear `note`. Do not invent data or mark a source as "searched" if the
+tool was not actually called.
+
+* **Salesforce** — `mcp__salesforce__run_soql_query` (read-only SOQL). Scope to the account/opportunity.
+  Convert Account, Opportunity, and Contact records into `fact_type: prospect` / `contact` evidence.
+  File: `${OUT_DIR:-/tmp}/pov-gsheet-salesforce-evidence.json`
+* **Gong** — `mcp__gong__search_calls` scoped to the customer domain/participants and last 14 days,
+  then `gong://calls/{callId}/transcript` for each relevant call. Extract transcripts, participants,
+  and POV-relevant facts.
+  File: `${OUT_DIR:-/tmp}/pov-gsheet-gong-evidence.json`
+* **Meeting notes** (e.g. Granola) — via a configured meeting-notes MCP. Scope to the account and
+  recent date range. Extract attendees, decisions, action items, POV commitments.
+  File: `${OUT_DIR:-/tmp}/pov-gsheet-granola-evidence.json`
+* **Gmail** — via a configured Gmail MCP. Search threads for the customer domain, account name,
+  opportunity name, and POV terms within a bounded date range. Distinguish direct customer statements
+  from drafts/internal forwards. Do not persist full email bodies.
+  File: `${OUT_DIR:-/tmp}/pov-gsheet-gmail-evidence.json`
+* **Slack** — via a configured Slack MCP. Search account-relevant channels/threads for internal
+  updates, relayed requirements, engineering confirmations, POV blockers, and decisions. Mark whether
+  each fact is direct customer evidence, internal interpretation, engineering-confirmed, or unverified.
+  File: `${OUT_DIR:-/tmp}/pov-gsheet-slack-evidence.json`
+
+Each evidence object must carry:
+
+```yaml
+source: "salesforce" | "gong" | "granola" | "gmail" | "slack"
+source_id: "<record/call/message id or safe URL>"
+retrieved_at: "2026-07-14T00:00:00Z"
+account_name: "<Account>"
+opportunity_name: "<Opportunity>"
+direct_customer: true | false  # true for customer statements, false for internal interpretation
+fact_type: "prospect" | "contact" | "business_objective" | "technical_system" | "success_criterion" | "milestone" | "feature_request" | "requirement" | "transcript" | "note" | "unknown"
+fact: {}  # payload keyed to the target model fields
+raw: "<short verbatim snippet>"  # optional, PII-safe
+status: "ok" | "unavailable" | "skipped"
+note: "<human-readable provenance>"
+```
+
+#### 0b. Run the deterministic context loader
+
+The loader merges workspace sources, optional Salesforce `sf` CLI output, and the JSON evidence
+files into a single `PovContext`. It is deterministic and produces one JSON file the rest of the run
+consumes.
 
 ```bash
 REPO_DIR=$(cd "$(dirname "$(readlink -f ~/.claude/skills/pov-gsheet/SKILL.md)")/.." && pwd)
-CTX_FILE="${OUT_DIR:-/tmp}/pov-gsheet-context.json"
+OUT_DIR="${OUT_DIR:-/tmp}"
+CTX_FILE="$OUT_DIR/pov-gsheet-context.json"
+
 python "$REPO_DIR/webapp/pov_gsheet_context.py" \
   --account "$ACCOUNT" \
   --opportunity "$OPPORTUNITY" \
   --workspace "$(pwd)" \
+  --salesforce-evidence "$OUT_DIR/pov-gsheet-salesforce-evidence.json" \
+  --gong-evidence "$OUT_DIR/pov-gsheet-gong-evidence.json" \
+  --granola-evidence "$OUT_DIR/pov-gsheet-granola-evidence.json" \
+  --gmail-evidence "$OUT_DIR/pov-gsheet-gmail-evidence.json" \
+  --slack-evidence "$OUT_DIR/pov-gsheet-slack-evidence.json" \
   --out "$CTX_FILE" --pretty
 ```
 

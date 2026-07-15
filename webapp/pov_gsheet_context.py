@@ -6,10 +6,11 @@
 """Deterministic account-context loader for the `pov-gsheet` skill.
 
 Builds a structured POV context from the repository's existing workspace files,
-prior skill outputs, transcripts, and (optionally) Salesforce. The skill then
-uses this context to populate the Airbyte POV Success Criteria Google Sheet.
+prior skill outputs, transcripts, and optional external evidence (Salesforce,
+Gong, Granola, Gmail, Slack). The skill then uses this context to populate the
+Airbyte POV Success Criteria Google Sheet.
 
-No `se-assistant`, DuckDB, personal paths, or Granola dependencies.
+No `se-assistant`, DuckDB, personal paths, or Ryan-specific dependencies.
 """
 from __future__ import annotations
 
@@ -24,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 # This script lives in webapp/; output_schema.py is a sibling module used by the
 # webapp to parse generated Markdown outputs. Python puts the script directory on
@@ -41,6 +42,28 @@ class SourceCoverageEntry(BaseModel):
     path: str | None = None
     freshness: str | None = None
     material: bool = False
+    note: str = ""
+    status: str | None = None  # searched | unavailable | failed | skipped
+
+
+class ExternalEvidence(BaseModel):
+    """One extracted fact from an external source (Salesforce, Gong, Granola, Gmail, Slack).
+
+    `fact_type` tells the normalizer how to merge this fact into the PovContext.
+    `fact` is a typed payload keyed to the target model fields. `direct_customer`
+    distinguishes a customer statement from internal interpretation.
+    """
+
+    source: str  # e.g. "salesforce", "gong", "granola", "gmail", "slack"
+    source_id: str | None = None  # record/call/message id, or URL if safe
+    retrieved_at: str | None = None  # ISO-8601 timestamp of retrieval
+    account_name: str | None = None
+    opportunity_name: str | None = None
+    direct_customer: bool = False
+    fact_type: str  # prospect | contact | business_objective | technical_system | success_criterion | milestone | feature_request | requirement | transcript | decision | action_item | note | unknown
+    fact: dict[str, Any] = Field(default_factory=dict)
+    raw: str | None = None  # verbatim snippet, kept short and PII-safe
+    status: str = "ok"  # ok | unavailable | skipped | failed
     note: str = ""
 
 
@@ -733,6 +756,511 @@ def _read_transcripts(transcripts_dir: Path, account: str) -> tuple[list[str], l
 
 
 # ---------------------------------------------------------------------------
+# External source evidence
+# ---------------------------------------------------------------------------
+
+def _parse_iso_timestamp(ts: str | None) -> datetime | None:
+    """Parse an ISO-8601 timestamp, treating trailing Z as UTC."""
+    if not ts:
+        return None
+    try:
+        if ts.endswith("Z"):
+            ts = ts[:-1] + "+00:00"
+        return datetime.fromisoformat(ts)
+    except (ValueError, TypeError):
+        return None
+
+
+def _is_more_recent(new_ts: str | None, existing_ts: str | None) -> bool:
+    """Return True when `new_ts` is a valid timestamp later than `existing_ts`."""
+    new_dt = _parse_iso_timestamp(new_ts)
+    existing_dt = _parse_iso_timestamp(existing_ts)
+    if not new_dt:
+        return False
+    if not existing_dt:
+        return True
+    return new_dt > existing_dt
+
+
+def _load_external_evidence(path: Path | None) -> list[ExternalEvidence]:
+    """Load a JSON file of ExternalEvidence entries.
+
+    The file may be a top-level list of evidence objects or an object with an
+    `entries` or `evidence` key. Invalid items are silently dropped.
+    """
+    if not path or not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if isinstance(data, dict):
+        data = data.get("entries") or data.get("evidence") or []
+    if not isinstance(data, list):
+        return []
+    items: list[ExternalEvidence] = []
+    for raw in data:
+        try:
+            items.append(ExternalEvidence.model_validate(raw))
+        except ValidationError:
+            continue
+    return items
+
+
+def _extract_transcript_text(text: str, source: str) -> dict[str, list[Any]]:
+    """Pull connector/system signals out of raw transcript text."""
+    scope: dict[str, list[Any]] = {"sources": [], "destinations": [], "use_cases": [], "requirements": [], "dependencies": []}
+    if not text:
+        return scope
+    for name, explicit_kind in _find_connectors(text):
+        kind = _classify_system(name, text, explicit_kind)
+        target = scope["sources"] if kind == "source" else scope["destinations"] if kind == "destination" else scope["sources"]
+        if not any(s.name == name for s in target):
+            target.append(TechnicalSystem(name=name, kind=kind, evidence="found in transcript", sources=[source]))
+    return scope
+
+
+def _coalesce_prospect(prospect: Prospect, evidence: ExternalEvidence) -> list[str]:
+    """Merge a `prospect` fact into the existing prospect, preferring fresher/direct evidence."""
+    warnings: list[str] = []
+    if evidence.fact_type != "prospect":
+        return warnings
+    fact = evidence.fact or {}
+    for field in (
+        "opportunity_name",
+        "stage",
+        "owner",
+        "se_name",
+        "se_title",
+        "next_step",
+        "pov_start_date",
+        "target_completion_date",
+    ):
+        new_val = fact.get(field)
+        if not new_val:
+            continue
+        old_val = getattr(prospect, field)
+        if not old_val:
+            setattr(prospect, field, str(new_val))
+            continue
+        if str(old_val).lower() == str(new_val).lower():
+            continue
+        prefer_new = evidence.direct_customer or _is_more_recent(evidence.retrieved_at, None)
+        if prefer_new:
+            warnings.append(
+                f"Prospect conflict on {field}: overriding '{old_val}' with '{new_val}' "
+                f"from {evidence.source} (direct_customer={evidence.direct_customer}, "
+                f"retrieved_at={evidence.retrieved_at})."
+            )
+            setattr(prospect, field, str(new_val))
+        else:
+            warnings.append(
+                f"Prospect conflict on {field}: keeping '{old_val}' over '{new_val}' "
+                f"from {evidence.source} (not a direct customer statement)."
+            )
+    return warnings
+
+
+def _coalesce_contact(contacts: list[Contact], evidence: ExternalEvidence) -> Contact:
+    """Merge a contact fact, matching by name or email and filling in missing fields."""
+    fact = evidence.fact or {}
+    name = str(fact.get("name") or "").strip()
+    email = str(fact.get("email") or fact.get("emailAddress") or fact.get("mail") or "").strip() or None
+    raw_side = fact.get("side") or "Customer"
+    side = raw_side if raw_side in {"Airbyte", "Customer", "Partner"} else "Customer"
+    role = str(fact.get("title") or fact.get("role") or "").strip() or None
+    source = evidence.source
+    source_id = evidence.source_id
+    notes = fact.get("notes") or evidence.raw or evidence.note
+
+    for c in contacts:
+        name_match = bool(name and c.name and c.name.lower() == name.lower())
+        email_match = bool(email and c.email and c.email.lower() == email.lower())
+        if name_match or email_match:
+            if not c.email and email:
+                c.email = email
+            if not c.role and role:
+                c.role = role
+            if not c.side or (c.side == "Customer" and side != "Customer"):
+                c.side = side
+            if source and source not in (c.source or ""):
+                extra = f"{source}: {evidence.retrieved_at or 'unknown'}"
+                c.notes = "; ".join(filter(None, [c.notes, extra]))
+            return c
+
+    new = Contact(
+        name=name,
+        email=email,
+        role=role,
+        side=side,
+        source=source,
+        source_path=source_id,
+        notes=notes,
+    )
+    contacts.append(new)
+    return new
+
+
+def _business_objective_from_evidence(evidence: ExternalEvidence) -> BusinessObjective | None:
+    if evidence.fact_type != "business_objective":
+        return None
+    fact = evidence.fact or {}
+    obj = fact.get("objective") or fact.get("description")
+    if not obj:
+        return None
+    return BusinessObjective(
+        objective=str(obj).strip(),
+        desired_outcome=str(fact.get("desired_outcome") or fact.get("outcome") or "").strip() or None,
+        evidence=str(evidence.raw or fact.get("evidence") or obj).strip()[:500],
+        sources=[evidence.source],
+    )
+
+
+def _success_criterion_from_evidence(evidence: ExternalEvidence) -> SuccessCriterion | None:
+    if evidence.fact_type != "success_criterion":
+        return None
+    fact = evidence.fact or {}
+    feature = fact.get("feature_or_capability") or fact.get("feature") or fact.get("description")
+    if not feature:
+        return None
+    return SuccessCriterion(
+        use_case=fact.get("use_case") or None,
+        feature_or_capability=str(feature).strip(),
+        validation_method=str(fact.get("validation_method") or "Customer validation during POV").strip(),
+        acceptance_threshold=fact.get("acceptance_threshold") or fact.get("threshold") or None,
+        in_scope=str(fact.get("in_scope") or "Yes").strip(),
+        priority=str(fact.get("priority") or "Must Have").strip(),
+        notes=str(evidence.raw or fact.get("notes") or "").strip()[:500] or None,
+        evidence=str(evidence.raw or fact.get("evidence") or feature).strip()[:500],
+        sources=[evidence.source],
+    )
+
+
+def _milestone_from_evidence(evidence: ExternalEvidence) -> Milestone | None:
+    if evidence.fact_type != "milestone":
+        return None
+    fact = evidence.fact or {}
+    name = fact.get("name") or fact.get("description")
+    if not name:
+        return None
+    return Milestone(
+        name=str(name).strip(),
+        target_date=fact.get("target_date") or fact.get("date") or None,
+        status=str(fact.get("status") or "Not Started").strip(),
+        evidence=str(evidence.raw or fact.get("evidence") or name).strip()[:500],
+        sources=[evidence.source],
+    )
+
+
+def _feature_request_from_evidence(evidence: ExternalEvidence) -> FeatureRequest | None:
+    if evidence.fact_type != "feature_request":
+        return None
+    fact = evidence.fact or {}
+    desc = fact.get("description") or fact.get("feature")
+    if not desc:
+        return None
+    area = fact.get("product_area") or fact.get("area")
+    if not area:
+        for a in ("Connectors", "Platform", "Cloud", "Enterprise"):
+            if a.lower() in str(desc).lower():
+                area = a
+                break
+    return FeatureRequest(
+        date=fact.get("date") or None,
+        product_area=area,
+        description=str(desc).strip(),
+        priority=fact.get("priority") or None,
+        evidence=str(evidence.raw or fact.get("evidence") or desc).strip()[:500],
+        sources=[evidence.source],
+    )
+
+
+def _technical_system_from_evidence(evidence: ExternalEvidence) -> tuple[str, TechnicalSystem] | None:
+    if evidence.fact_type != "technical_system":
+        return None
+    fact = evidence.fact or {}
+    name = fact.get("name")
+    if not name:
+        return None
+    kind = fact.get("kind") or "unknown"
+    if kind not in {"source", "destination", "use_case", "unknown"}:
+        kind = "unknown"
+    ts = TechnicalSystem(
+        name=str(name).strip(),
+        kind=kind,
+        integration_type=fact.get("integration_type") or fact.get("integration") or None,
+        use_case=fact.get("use_case") or None,
+        evidence=str(evidence.raw or fact.get("evidence") or name).strip()[:500],
+        sources=[evidence.source],
+    )
+    if kind == "destination":
+        return ("destinations", ts)
+    if kind == "use_case":
+        return ("use_cases", ts)
+    return ("sources", ts)
+
+
+def _dedupe_append(items: list[Any], new_items: list[Any], key_func: Any) -> None:
+    """Append items from `new_items` whose key is not already in `items`."""
+    seen = {key_func(i) for i in items}
+    for item in new_items:
+        key = key_func(item)
+        if key not in seen:
+            seen.add(key)
+            items.append(item)
+
+
+def _merge_external_evidence(ctx: PovContext, evidence_list: list[ExternalEvidence]) -> None:
+    """Normalize raw external evidence into the typed PovContext."""
+    for evidence in evidence_list:
+        if evidence.status != "ok":
+            continue
+        fact_type = evidence.fact_type
+
+        if fact_type == "prospect":
+            ctx.warnings.extend(_coalesce_prospect(ctx.prospect, evidence))
+            continue
+
+        if fact_type == "contact":
+            side = evidence.fact.get("side") if evidence.fact else None
+            target = ctx.contacts["internal"] if side == "Airbyte" else ctx.contacts["prospect"]
+            _coalesce_contact(target, evidence)
+            continue
+
+        if fact_type == "business_objective":
+            obj = _business_objective_from_evidence(evidence)
+            if obj:
+                _dedupe_append(ctx.business_objectives, [obj], lambda o: o.objective.lower())
+            continue
+
+        if fact_type == "success_criterion":
+            crit = _success_criterion_from_evidence(evidence)
+            if crit:
+                _dedupe_append(ctx.success_criteria, [crit], lambda c: c.feature_or_capability.lower())
+            continue
+
+        if fact_type == "milestone":
+            ms = _milestone_from_evidence(evidence)
+            if ms:
+                _dedupe_append(ctx.milestones, [ms], lambda m: m.name.lower())
+            continue
+
+        if fact_type == "feature_request":
+            fr = _feature_request_from_evidence(evidence)
+            if fr:
+                _dedupe_append(ctx.feature_requests, [fr], lambda f: f.description.lower())
+            continue
+
+        if fact_type == "technical_system":
+            result = _technical_system_from_evidence(evidence)
+            if result:
+                key, ts = result
+                _dedupe_append(ctx.technical_scope[key], [ts], lambda s: s.name.lower())
+            continue
+
+        if fact_type == "requirement":
+            req = evidence.fact.get("description") if evidence.fact else None
+            if req and req not in ctx.technical_scope["requirements"]:
+                ctx.technical_scope["requirements"].append(str(req))
+            continue
+
+        if fact_type == "dependency":
+            dep = evidence.fact.get("description") if evidence.fact else None
+            if dep and dep not in ctx.technical_scope["dependencies"]:
+                ctx.technical_scope["dependencies"].append(str(dep))
+            continue
+
+        if fact_type == "transcript":
+            text = evidence.fact.get("text") or evidence.raw or ""
+            scope = _extract_transcript_text(str(text), evidence.source)
+            for key in ("sources", "destinations", "use_cases"):
+                _dedupe_append(ctx.technical_scope[key], scope[key], lambda s: s.name.lower())
+            continue
+
+        if fact_type == "note" and evidence.raw:
+            if evidence.raw not in ctx.architecture_notes:
+                ctx.architecture_notes.append(str(evidence.raw))
+            continue
+
+        if fact_type == "unknown" and evidence.raw:
+            if evidence.raw not in ctx.unknowns:
+                ctx.unknowns.append(str(evidence.raw))
+
+
+def _source_coverage_from_evidence(evidence_list: list[ExternalEvidence]) -> list[SourceCoverageEntry]:
+    """Summarize external evidence by source for the receipt."""
+    by_source: dict[str, list[ExternalEvidence]] = {}
+    for e in evidence_list:
+        by_source.setdefault(e.source, []).append(e)
+
+    coverage: list[SourceCoverageEntry] = []
+    for source, items in sorted(by_source.items()):
+        ok_items = [e for e in items if e.status == "ok"]
+        material = any(e.fact_type not in {"note", "unknown"} for e in ok_items)
+        if ok_items:
+            freshness = max((e.retrieved_at for e in ok_items if e.retrieved_at), default=None)
+            coverage.append(
+                SourceCoverageEntry(
+                    source=source,
+                    available=True,
+                    freshness=freshness,
+                    material=material,
+                    note=f"{len(ok_items)} fact(s) merged",
+                    status="searched",
+                )
+            )
+        else:
+            representative = items[0]
+            coverage.append(
+                SourceCoverageEntry(
+                    source=source,
+                    available=False,
+                    freshness=representative.retrieved_at,
+                    material=False,
+                    note=representative.note or f"{representative.status} in this run",
+                    status=representative.status,
+                )
+            )
+    return coverage
+
+
+def _dedupe_contacts(contacts: list[Contact]) -> list[Contact]:
+    """De-duplicate contacts by name, preserving the richest record."""
+    seen: dict[str, Contact] = {}
+    for c in contacts:
+        key = (c.name or "").lower()
+        if not key:
+            continue
+        if key not in seen:
+            seen[key] = c
+            continue
+        existing = seen[key]
+        if not existing.email and c.email:
+            existing.email = c.email
+        if not existing.role and c.role:
+            existing.role = c.role
+        if c.source and c.source not in (existing.source or ""):
+            extra = f"{c.source}: {c.source_path or 'unknown'}"
+            existing.notes = "; ".join(filter(None, [existing.notes, extra]))
+    return list(seen.values())
+
+
+def _dedupe_by(items: list[Any], key_func: Any) -> list[Any]:
+    """De-duplicate a list of objects using `key_func`."""
+    seen: set[Any] = set()
+    unique: list[Any] = []
+    for item in items:
+        key = key_func(item)
+        if key not in seen:
+            seen.add(key)
+            unique.append(item)
+    return unique
+
+
+def _dedupe_strings(items: list[str]) -> list[str]:
+    """De-duplicate a list of strings case-insensitively while preserving order."""
+    seen: set[str] = set()
+    unique: list[str] = []
+    for item in items:
+        key = item.lower()
+        if key not in seen:
+            seen.add(key)
+            unique.append(item)
+    return unique
+
+
+def _merge_coverage(
+    existing: list[SourceCoverageEntry], new: list[SourceCoverageEntry]
+) -> list[SourceCoverageEntry]:
+    """Merge external source coverage into existing coverage without duplicates."""
+    by_source: dict[str, SourceCoverageEntry] = {e.source: e for e in existing}
+    for entry in new:
+        old = by_source.get(entry.source)
+        if not old:
+            by_source[entry.source] = entry
+            continue
+        old.available = old.available or entry.available
+        old.material = old.material or entry.material
+        if entry.freshness and (not old.freshness or _is_more_recent(entry.freshness, old.freshness)):
+            old.freshness = entry.freshness
+        if entry.note:
+            old.note = entry.note
+        if entry.status:
+            old.status = entry.status
+    return list(by_source.values())
+
+
+def _classify_status(ctx: PovContext) -> None:
+    """Recompute the context status after all evidence has been merged.
+
+    Mirrors the PovContext `_classification` model validator so we can avoid
+    re-validating the model (which would turn `TechnicalSystem` instances in the
+    loosely-typed `technical_scope` back into plain dicts).
+    """
+    has_prospect = bool(ctx.prospect.account_name and ctx.prospect.account_name.strip())
+    has_business_context = bool(ctx.business_objectives)
+    has_connector_or_use_case = (
+        ctx.technical_scope["sources"]
+        or ctx.technical_scope["destinations"]
+        or ctx.technical_scope["use_cases"]
+    )
+    has_success_criteria = bool(ctx.success_criteria)
+    if has_prospect and (has_business_context or has_connector_or_use_case) and has_success_criteria:
+        ctx.status = "complete"
+    elif has_prospect and (has_business_context or has_connector_or_use_case or has_success_criteria):
+        ctx.status = "partial"
+    else:
+        ctx.status = "blocked"
+
+
+def _derive_success_criteria(
+    technical_scope: dict[str, list[Any]],
+    business_objectives: list[BusinessObjective],
+    source: str,
+) -> list[SuccessCriterion]:
+    """Create placeholder success criteria from use cases, objectives, or systems."""
+    criteria: list[SuccessCriterion] = []
+    if technical_scope.get("use_cases"):
+        for uc in technical_scope["use_cases"][:2]:
+            criteria.append(
+                SuccessCriterion(
+                    feature_or_capability=uc.name,
+                    validation_method="Customer validation during POV",
+                    in_scope="Yes",
+                    priority="Must Have",
+                    evidence=uc.evidence or uc.name,
+                    sources=[source],
+                )
+            )
+    elif business_objectives:
+        for o in business_objectives[:2]:
+            criteria.append(
+                SuccessCriterion(
+                    feature_or_capability=o.objective,
+                    validation_method="Confirm with customer during POV",
+                    in_scope="Yes",
+                    priority="Must Have",
+                    evidence=o.objective,
+                    sources=[source],
+                )
+            )
+    elif technical_scope.get("sources") or technical_scope.get("destinations"):
+        systems = [s.name for s in technical_scope["sources"] + technical_scope["destinations"]]
+        if systems:
+            criteria.append(
+                SuccessCriterion(
+                    feature_or_capability=f"Replicate data from {', '.join(systems[:3])} end-to-end",
+                    validation_method="Customer validation during POV",
+                    in_scope="Yes",
+                    priority="Must Have",
+                    evidence="derived from connector-feasibility / tech-qual outputs",
+                    sources=[source],
+                )
+            )
+    return criteria
+
+
+# ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
 def build_context(
@@ -740,8 +1268,15 @@ def build_context(
     opp: str | None = None,
     workspace_arg: str | None = None,
     config_path: str | None = None,
+    external_evidence_paths: dict[str, Path | None] | None = None,
 ) -> PovContext:
-    """Build the structured POV context deterministically."""
+    """Build the structured POV context deterministically.
+
+    `external_evidence_paths` is an optional mapping from source name (salesforce,
+    gong, granola, gmail, slack) to a JSON file of `ExternalEvidence` objects.
+    This lets the skill feed in data from configured MCP integrations without the
+    deterministic loader needing to know how to invoke those tools.
+    """
     workspace, config = _resolve_se_config(workspace_arg)
     paths = _derive_paths(config, workspace)
     customers_dir = paths["customers_dir"]
@@ -865,106 +1400,73 @@ def build_context(
         milestones.extend(_extract_milestones(meta, path, customers_dir))
         feature_requests.extend(_extract_feature_requests(meta, path, customers_dir))
 
-    # De-duplicate prospect contacts by name
-    seen_names: set[str] = set()
-    unique_prospect: list[Contact] = []
-    for c in prospect_contacts:
-        key = c.name.lower()
-        if key and key not in seen_names:
-            seen_names.add(key)
-            unique_prospect.append(c)
-
-    # De-duplicate success criteria and feature requests by description
-    seen_crit: set[str] = set()
-    unique_crit: list[SuccessCriterion] = []
-    for c in success_criteria:
-        key = c.feature_or_capability.lower()
-        if key not in seen_crit:
-            seen_crit.add(key)
-            unique_crit.append(c)
-
-    seen_feat: set[str] = set()
-    unique_feat: list[FeatureRequest] = []
-    for f in feature_requests:
-        key = f.description.lower()
-        if key not in seen_feat:
-            seen_feat.add(key)
-            unique_feat.append(f)
-
-    # Deduplicate business objectives
-    seen_obj: set[str] = set()
-    unique_obj: list[BusinessObjective] = []
-    for o in business_objectives:
-        key = o.objective.lower()
-        if key not in seen_obj:
-            seen_obj.add(key)
-            unique_obj.append(o)
-
-    # If we have no success criteria but have business objectives or use cases,
-    # derive placeholder success criteria so the run is not "blocked" purely
-    # because `poc-plan` was never run. The skill may refine these.
-    if not unique_crit:
-        if technical_scope["use_cases"]:
-            for uc in technical_scope["use_cases"][:2]:
-                unique_crit.append(
-                    SuccessCriterion(
-                        feature_or_capability=uc.name,
-                        validation_method="Customer validation during POV",
-                        in_scope="Yes",
-                        priority="Must Have",
-                        evidence=uc.evidence or uc.name,
-                        sources=uc.sources,
-                    )
-                )
-        elif unique_obj:
-            for o in unique_obj[:2]:
-                unique_crit.append(
-                    SuccessCriterion(
-                        feature_or_capability=o.objective,
-                        validation_method="Confirm with customer during POV",
-                        in_scope="Yes",
-                        priority="Must Have",
-                        evidence=o.objective,
-                        sources=o.sources,
-                    )
-                )
-        elif technical_scope["sources"] or technical_scope["destinations"]:
-            systems = [s.name for s in technical_scope["sources"] + technical_scope["destinations"]]
-            if systems:
-                unique_crit.append(
-                    SuccessCriterion(
-                        feature_or_capability=f"Replicate data from {', '.join(systems[:3])} end-to-end",
-                        validation_method="Customer validation during POV",
-                        in_scope="Yes",
-                        priority="Must Have",
-                        evidence="derived from connector-feasibility / tech-qual outputs",
-                        sources=["prior skill outputs"],
-                    )
-                )
-
-    # Warnings for missing optional integrations
-    warnings: list[str] = []
-    if not transcript_texts:
-        warnings.append("No local transcripts found; customer voice is limited to prior outputs.")
-    if not any(s.source == "salesforce" and s.available for s in source_coverage):
-        warnings.append("Salesforce not available; opportunity metadata may be incomplete.")
-    if not parsed_outputs:
-        warnings.append("No prior skill outputs found; run biz-qual / tech-qual / poc-plan for richer context.")
-
-    # Build context (classification is applied by the model validator)
+    # Preliminary context; external evidence will be merged before final dedup/derive.
     ctx = PovContext(
         prospect=prospect,
-        contacts={"internal": internal_contacts, "prospect": unique_prospect},
-        business_objectives=unique_obj,
+        contacts={"internal": internal_contacts, "prospect": prospect_contacts},
+        business_objectives=business_objectives,
         technical_scope=technical_scope,
-        success_criteria=unique_crit,
+        success_criteria=success_criteria,
         milestones=milestones,
-        feature_requests=unique_feat,
+        feature_requests=feature_requests,
         architecture_notes=architecture_notes,
         unknowns=unknowns,
         source_coverage=source_coverage,
-        warnings=warnings,
+        warnings=[],
     )
+
+    # Merge external evidence provided by the skill from configured MCP integrations.
+    external_evidence: list[ExternalEvidence] = []
+    for src_path in (external_evidence_paths or {}).values():
+        if src_path:
+            external_evidence.extend(_load_external_evidence(src_path))
+    if external_evidence:
+        _merge_external_evidence(ctx, external_evidence)
+        external_coverage = _source_coverage_from_evidence(external_evidence)
+        source_coverage = _merge_coverage(source_coverage, external_coverage)
+
+    # Final deduplication across workspace and external sources.
+    ctx.contacts["prospect"] = _dedupe_contacts(ctx.contacts["prospect"])
+    ctx.contacts["internal"] = _dedupe_contacts(ctx.contacts["internal"])
+    ctx.business_objectives = _dedupe_by(ctx.business_objectives, lambda o: o.objective.lower())
+    ctx.success_criteria = _dedupe_by(ctx.success_criteria, lambda c: c.feature_or_capability.lower())
+    ctx.milestones = _dedupe_by(ctx.milestones, lambda m: m.name.lower())
+    ctx.feature_requests = _dedupe_by(ctx.feature_requests, lambda f: f.description.lower())
+    ctx.technical_scope["sources"] = _dedupe_by(ctx.technical_scope["sources"], lambda s: s.name.lower())
+    ctx.technical_scope["destinations"] = _dedupe_by(ctx.technical_scope["destinations"], lambda s: s.name.lower())
+    ctx.technical_scope["use_cases"] = _dedupe_by(ctx.technical_scope["use_cases"], lambda s: s.name.lower())
+    ctx.technical_scope["requirements"] = _dedupe_strings(ctx.technical_scope["requirements"])
+    ctx.technical_scope["dependencies"] = _dedupe_strings(ctx.technical_scope["dependencies"])
+    ctx.architecture_notes = _dedupe_strings(ctx.architecture_notes)
+    ctx.unknowns = _dedupe_strings(ctx.unknowns)
+
+    # Derive placeholder success criteria if none exist.
+    if not ctx.success_criteria:
+        ctx.success_criteria = _derive_success_criteria(ctx.technical_scope, ctx.business_objectives, "prior skill outputs")
+
+    # Warnings for missing optional integrations and source coverage.
+    warnings: list[str] = ctx.warnings[:]
+    if not transcript_texts and not any(
+        s.source in {"gong", "granola"} and s.available for s in source_coverage
+    ):
+        warnings.append("No local transcripts found and no Gong/Granola integration returned calls; customer voice is limited to prior outputs.")
+    if not any(s.source == "salesforce" and s.available for s in source_coverage):
+        warnings.append("Salesforce not available; opportunity metadata may be incomplete.")
+    if not parsed_outputs and not any(
+        s.source in {"gong", "granola", "salesforce"} and s.available for s in source_coverage
+    ):
+        warnings.append("No prior skill outputs found; run biz-qual / tech-qual / poc-plan for richer context.")
+    for entry in source_coverage:
+        if entry.available or entry.status in {"skipped"}:
+            continue
+        if entry.source in {"gong", "granola", "gmail", "slack"}:
+            warnings.append(f"{entry.source} not available in this run: {entry.note}")
+
+    ctx.source_coverage = source_coverage
+    ctx.warnings = warnings
+
+    # Re-classify so the status reflects all merged evidence.
+    _classify_status(ctx)
     return ctx
 
 
@@ -975,9 +1477,26 @@ def _main() -> None:
     parser.add_argument("--workspace", default=None, help="Workspace root override")
     parser.add_argument("--out", default=None, help="Output JSON file (default: stdout)")
     parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON")
+    parser.add_argument("--salesforce-evidence", default=None, help="JSON file of ExternalEvidence from Salesforce")
+    parser.add_argument("--gong-evidence", default=None, help="JSON file of ExternalEvidence from Gong")
+    parser.add_argument("--granola-evidence", default=None, help="JSON file of ExternalEvidence from Granola")
+    parser.add_argument("--gmail-evidence", default=None, help="JSON file of ExternalEvidence from Gmail")
+    parser.add_argument("--slack-evidence", default=None, help="JSON file of ExternalEvidence from Slack")
     args = parser.parse_args()
 
-    ctx = build_context(account=args.account, opp=args.opportunity, workspace_arg=args.workspace)
+    external_evidence_paths = {
+        "salesforce": Path(args.salesforce_evidence) if args.salesforce_evidence else None,
+        "gong": Path(args.gong_evidence) if args.gong_evidence else None,
+        "granola": Path(args.granola_evidence) if args.granola_evidence else None,
+        "gmail": Path(args.gmail_evidence) if args.gmail_evidence else None,
+        "slack": Path(args.slack_evidence) if args.slack_evidence else None,
+    }
+    ctx = build_context(
+        account=args.account,
+        opp=args.opportunity,
+        workspace_arg=args.workspace,
+        external_evidence_paths=external_evidence_paths,
+    )
     payload = ctx.model_dump(mode="json")
     text = json.dumps(payload, indent=2 if args.pretty else None)
     if args.out:

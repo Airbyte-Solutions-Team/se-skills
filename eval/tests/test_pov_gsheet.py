@@ -19,12 +19,17 @@ import yaml
 from pov_gsheet_context import (
     PovContext,
     Prospect,
+    Contact,
     BusinessObjective,
     SuccessCriterion,
     TechnicalSystem,
     _classify_system,
+    _dedupe_by,
+    _dedupe_contacts,
     _derive_paths,
     _find_connectors,
+    _load_external_evidence,
+    _merge_external_evidence,
     _resolve_se_config,
     build_context,
 )
@@ -49,16 +54,22 @@ DROPDOWN_VALUES = {
     "Airbyte Product Area": ["Connectors", "Platform", "Cloud", "Enterprise"],
 }
 
-FORBIDDEN_REFS = [
+LEGACY_FORBIDDEN_REFS = [
     "se-assistant",
     "se_assistant",
     "DuckDB",
     "duckdb",
-    "Granola",
-    "granola",
     "~/Documents/Claude",
     "db_sales_data",
     "generate_pov.py",
+]
+
+# Legacy Granola references from the old se-assistant skill (not the source name itself).
+LEGACY_GRANOLA_REFS = [
+    "query_granola_meetings",
+    "get_meetings",
+    "list_meetings",
+    "get_meeting_transcript",
 ]
 
 
@@ -132,10 +143,12 @@ def test_skill_frontmatter_and_tabs(skill_md: str) -> None:
 
 
 def test_skill_md_has_no_legacy_dependencies(skill_md: str) -> None:
-    """The ported skill no longer references se-assistant, DuckDB, Granola, or personal paths."""
+    """The ported skill no longer references se-assistant, DuckDB, or personal paths."""
     lower = skill_md.lower()
-    for ref in FORBIDDEN_REFS:
-        assert ref.lower() not in lower, f"SKILL.md still references '{ref}'"
+    for ref in LEGACY_FORBIDDEN_REFS:
+        assert ref.lower() not in lower, f"SKILL.md still references legacy dependency '{ref}'"
+    for ref in LEGACY_GRANOLA_REFS:
+        assert ref not in lower, f"SKILL.md still references legacy Granola tool '{ref}'"
 
 
 def test_skill_md_references_shared_playbook_and_config(skill_md: str) -> None:
@@ -452,3 +465,246 @@ def test_runner_dry_run_generates_plan(repo_root: Path, minimal_context: dict, t
         assert tab in plan_tabs, f"Plan missing tab {tab}"
         assert "startCell" in plan_tabs[tab]
         assert "tsv" in plan_tabs[tab]
+
+
+def _minimal_config(tmp_path: Path) -> None:
+    cfg = {
+        "workspace_root": str(tmp_path),
+        "pov_gsheet": {
+            "template_url": "https://docs.google.com/spreadsheets/d/TEMPLATE/edit",
+            "drive_target_folder_url": "https://drive.google.com/drive/folders/FOLDER",
+            "se_name": "Gary Yang",
+            "se_title": "Solutions Engineer",
+        },
+        "salesforce": {"enabled": False},
+    }
+    (tmp_path / ".se-config.yaml").write_text(yaml.safe_dump(cfg), encoding="utf-8")
+
+
+def test_salesforce_evidence_populates_prospect_and_contacts(tmp_path: Path) -> None:
+    """External Salesforce evidence merges account, opportunity, and contact facts."""
+    _minimal_config(tmp_path)
+    (tmp_path / "customers" / "TestCo").mkdir(parents=True)
+
+    evidence = [
+        {
+            "source": "salesforce",
+            "source_id": "001abc",
+            "retrieved_at": "2026-07-14T10:00:00Z",
+            "account_name": "TestCo",
+            "opportunity_name": "TestCo - POV",
+            "direct_customer": False,
+            "fact_type": "prospect",
+            "fact": {
+                "opportunity_name": "TestCo - POV",
+                "stage": "Tech Eval",
+                "owner": "Alice AE",
+                "next_step": "Schedule POV kickoff",
+            },
+            "status": "ok",
+        },
+        {
+            "source": "salesforce",
+            "source_id": "003abc",
+            "retrieved_at": "2026-07-14T10:00:00Z",
+            "account_name": "TestCo",
+            "direct_customer": False,
+            "fact_type": "contact",
+            "fact": {"name": "Bob Prospect", "email": "bob@testco.com", "title": "VP Data", "side": "Customer"},
+            "status": "ok",
+        },
+    ]
+    sf_file = tmp_path / "salesforce-evidence.json"
+    sf_file.write_text(json.dumps(evidence), encoding="utf-8")
+
+    ctx = build_context(
+        account="TestCo",
+        workspace_arg=str(tmp_path),
+        external_evidence_paths={"salesforce": sf_file},
+    )
+
+    assert ctx.prospect.opportunity_name == "TestCo - POV"
+    assert ctx.prospect.stage == "Tech Eval"
+    assert ctx.prospect.owner == "Alice AE"
+    assert any(c.name == "Bob Prospect" and c.email == "bob@testco.com" for c in ctx.contacts["prospect"])
+    sf_cov = next(s for s in ctx.source_coverage if s.source == "salesforce")
+    assert sf_cov.available is True
+    assert sf_cov.material is True
+    assert sf_cov.status == "searched"
+
+
+def test_gong_transcript_evidence_extracts_systems(tmp_path: Path) -> None:
+    """A Gong transcript fact has connectors extracted into technical_scope."""
+    _minimal_config(tmp_path)
+    (tmp_path / "customers" / "TestCo").mkdir(parents=True)
+
+    evidence = [
+        {
+            "source": "gong",
+            "source_id": "call-123",
+            "retrieved_at": "2026-07-14T10:00:00Z",
+            "account_name": "TestCo",
+            "direct_customer": True,
+            "fact_type": "transcript",
+            "fact": {
+                "text": "We need to replicate `source-postgres` and `source-salesforce` into `destination-snowflake`. Also the team uses `source-netsuite`."
+            },
+            "status": "ok",
+        }
+    ]
+    gong_file = tmp_path / "gong-evidence.json"
+    gong_file.write_text(json.dumps(evidence), encoding="utf-8")
+
+    ctx = build_context(
+        account="TestCo",
+        workspace_arg=str(tmp_path),
+        external_evidence_paths={"gong": gong_file},
+    )
+
+    source_names = {s.name for s in ctx.technical_scope["sources"]}
+    dest_names = {s.name for s in ctx.technical_scope["destinations"]}
+    assert "Postgres" in source_names
+    assert "Salesforce" in source_names
+    assert "NetSuite" in source_names
+    assert "Snowflake" in dest_names
+    gong_cov = next(s for s in ctx.source_coverage if s.source == "gong")
+    assert gong_cov.available is True
+    assert gong_cov.material is True
+
+
+def test_granola_evidence_adds_business_objective(tmp_path: Path) -> None:
+    """External meeting-notes evidence contributes business objectives."""
+    _minimal_config(tmp_path)
+    (tmp_path / "customers" / "TestCo").mkdir(parents=True)
+
+    evidence = [
+        {
+            "source": "granola",
+            "source_id": "meeting-456",
+            "retrieved_at": "2026-07-14T10:00:00Z",
+            "account_name": "TestCo",
+            "direct_customer": True,
+            "fact_type": "business_objective",
+            "fact": {"objective": "Reduce pipeline maintenance by 30%", "desired_outcome": "Free up two FTEs"},
+            "status": "ok",
+        }
+    ]
+    granola_file = tmp_path / "granola-evidence.json"
+    granola_file.write_text(json.dumps(evidence), encoding="utf-8")
+
+    ctx = build_context(
+        account="TestCo",
+        workspace_arg=str(tmp_path),
+        external_evidence_paths={"granola": granola_file},
+    )
+
+    objectives = {o.objective for o in ctx.business_objectives}
+    assert "Reduce pipeline maintenance by 30%" in objectives
+
+
+def test_unavailable_external_source_is_recorded_not_searched(tmp_path: Path) -> None:
+    """An unavailable MCP source produces an unavailable coverage entry, not a false search claim."""
+    _minimal_config(tmp_path)
+    (tmp_path / "customers" / "TestCo").mkdir(parents=True)
+
+    evidence = [
+        {
+            "source": "gmail",
+            "retrieved_at": "2026-07-14T10:00:00Z",
+            "account_name": "TestCo",
+            "direct_customer": False,
+            "fact_type": "unknown",
+            "status": "unavailable",
+            "note": "Gmail MCP not configured",
+        }
+    ]
+    gmail_file = tmp_path / "gmail-evidence.json"
+    gmail_file.write_text(json.dumps(evidence), encoding="utf-8")
+
+    ctx = build_context(
+        account="TestCo",
+        workspace_arg=str(tmp_path),
+        external_evidence_paths={"gmail": gmail_file},
+    )
+
+    gmail_cov = next(s for s in ctx.source_coverage if s.source == "gmail")
+    assert gmail_cov.available is False
+    assert gmail_cov.status == "unavailable"
+    assert "not configured" in gmail_cov.note
+    assert not any(s.source in {"gong", "slack"} for s in ctx.source_coverage)
+
+
+def test_conflict_resolution_prefers_direct_customer(tmp_path: Path) -> None:
+    """When sources disagree, prefer the direct and more recent customer statement."""
+    _minimal_config(tmp_path)
+    (tmp_path / "customers" / "TestCo").mkdir(parents=True)
+
+    evidence = [
+        {
+            "source": "salesforce",
+            "retrieved_at": "2026-07-13T10:00:00Z",
+            "direct_customer": False,
+            "fact_type": "prospect",
+            "fact": {"stage": "Discovery"},
+            "status": "ok",
+        },
+        {
+            "source": "gong",
+            "retrieved_at": "2026-07-14T10:00:00Z",
+            "direct_customer": True,
+            "fact_type": "prospect",
+            "fact": {"stage": "Tech Eval"},
+            "status": "ok",
+        },
+    ]
+    ev_file = tmp_path / "conflict-evidence.json"
+    ev_file.write_text(json.dumps(evidence), encoding="utf-8")
+
+    ctx = build_context(
+        account="TestCo",
+        workspace_arg=str(tmp_path),
+        external_evidence_paths={"external": ev_file},
+    )
+
+    assert ctx.prospect.stage == "Tech Eval"
+    assert any("Prospect conflict on stage" in w for w in ctx.warnings)
+
+
+def test_external_contact_dedup_merges_emails_and_sources(tmp_path: Path) -> None:
+    """Duplicate contacts across sources are merged, preserving the richest record."""
+    contacts = [
+        Contact(name="Alice", email="alice@testco.com", source="salesforce"),
+        Contact(name="Alice", role="VP Data", source="gong"),
+    ]
+    merged = _dedupe_contacts(contacts)
+    assert len(merged) == 1
+    assert merged[0].email == "alice@testco.com"
+    assert merged[0].role == "VP Data"
+    assert merged[0].source == "salesforce"
+    assert "gong" in (merged[0].notes or "")
+
+
+def test_dedupe_by_removes_duplicate_objects() -> None:
+    """_dedupe_by removes objects with duplicate keys while preserving first occurrence."""
+    items = [
+        TechnicalSystem(name="Postgres", kind="source"),
+        TechnicalSystem(name="Postgres", kind="destination"),
+        TechnicalSystem(name="Snowflake", kind="destination"),
+    ]
+    unique = _dedupe_by(items, lambda s: s.name.lower())
+    assert len(unique) == 2
+    assert unique[0].kind == "source"
+
+
+def test_load_external_evidence_skips_invalid_entries(tmp_path: Path) -> None:
+    """Malformed evidence items are dropped without failing the whole file."""
+    data = [
+        {"source": "salesforce", "fact_type": "prospect", "fact": {"stage": "Open"}, "status": "ok"},
+        {"source": "gong"},  # missing required fact_type
+        "not-an-object",
+    ]
+    ev_file = tmp_path / "evidence.json"
+    ev_file.write_text(json.dumps(data), encoding="utf-8")
+    loaded = _load_external_evidence(ev_file)
+    assert len(loaded) == 1
+    assert loaded[0].source == "salesforce"
