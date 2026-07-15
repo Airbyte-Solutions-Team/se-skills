@@ -54,7 +54,7 @@ If the user signals brief mode (`--brief`, `quick summary`, `just the takeaways`
 
 Generate a structured summary with these sections. **Local auto-save is ON** (see After Generating). Only **Notion and memory writes are ask-first** — never auto-write those without confirmation.
 
-Document structure follows `_se-playbook.md` → Output Document Format (H1 title → At a Glance → Jump-to index → Source Coverage → H2 body sections, callouts, `==key==` emphasis).
+Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---
 
@@ -137,29 +137,18 @@ The single most important next action. Be specific — "send POC proposal by Fri
 
 ## After Generating the Summary
 
-### Auto-save (default)
-
-Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save the output automatically to:
+### Auto-save path
+Per `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save the output automatically to:
 ```
 {customers_dir}/<Customer>/outputs/post-call/post-call-<YYYY-MM-DD>-<Descriptor>.md
 ```
 
-Filename example: `post-call-2026-05-28-Tech-Discovery.md`. If a file already exists with the same name, append `-v2`, `-v3`, etc.
-
-Filename rules (per `_se-playbook.md` "Filename format"): keep the numeric `YYYY-MM-DD` prefix (sorting), and make the `<Descriptor>` **Title Case**, single-concept (e.g. `Tech-Discovery`, `Pro-Upsell` — not `Intro-Expansion`). Inside the document, write dates in long form (`June 11, 2026`) per "Date format inside documents".
-
-Create the folder structure if it doesn't exist:
-```bash
-mkdir -p "{customers_dir}/<Customer>/outputs/post-call"
-```
-
-User can suppress with `--no-save`.
+Filename example: `post-call-2026-05-28-Tech-Discovery.md`.
 
 ### Self-check before save
 (1) every action item has an owner or `TBD`; (2) every deal-health signal cites speaker + timestamp; (3) no attendee/company fact appears that isn't in the transcript; (4) the Sources & Destinations table matches what was actually said. Mark each takeaway `[stated]` (customer said it) or `[inferred]` (SE read) — never blend. If a check fails, fix the summary before saving — don't persist a summary a downstream skill will treat as ground truth when it isn't.
 
 ### Then ask which other artifacts to update
-
 1. **Update Notion** — create a new subpage under the customer's parent page named `<YYYY-MM-DD> — <Call Name>` with Attendees / Key Takeaways / Action Items / Follow-up Date sections. Also append new Q&A items to the customer's `Q&A` subpage.
 2. **Propose memory update** — if call surfaced a material change (new blocker, stakeholder change, decision). Per conditional rule in earlier section.
 3. **Suggest deal-assessment** — if call materially shifted deal health (not every call warrants this).
@@ -167,6 +156,8 @@ User can suppress with `--no-save`.
 5. **Suggest tech-qual** — if the call surfaced technical scope (the Technical Notes or Sources & Destinations section is non-empty). Recommend running or updating `tech-qual` so the facts land in its canonical **Technical Requirements & Scope** section. If a `tech-qual-*.md` already exists, frame it as an update (revised volume, new source, new constraint), not a fresh run.
 
 Wait for explicit yes/no on Notion / memory / deal-assessment / tech-qual before doing those.
+
+---
 
 ## Style (post-call skill guidance — not part of output template)
 

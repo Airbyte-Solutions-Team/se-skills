@@ -2,7 +2,7 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`, mine = `gyairbyte/SE-Workflow`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: July 14, 2026 — Closed UI/UX improvement phase and moved Anthropic API key storage from plaintext `~/.mcp/*.env` to the OS keyring (SEC-005)._
+_Last updated: July 14, 2026 — Centralized shared skill boilerplate in `skills/_se-playbook.md` (SKILL-001)._
 
 ## What the app is
 Local FastAPI + vanilla-JS UI (no build step) over the SE skills suite. `cd webapp && uv run app.py` → http://127.0.0.1:8787 (needs `CPATH/LIBRARY_PATH` for portaudio on this Mac — see "Run" below). Browse team → member's accounts → an account's opportunities → generated outputs; invoke skills; ask follow-ups on outputs; Live Transcribe a Zoom call with an AI copilot.
@@ -16,6 +16,11 @@ uv run --python 3.11 app.py    # port 8787
 ```
 
 ## Built this session (newest first — see `git log`)
+- **Centralized shared skill boilerplate in `_se-playbook.md` (SKILL-001) (July 14).** Added a `Shared Skill Boilerplate` section to `skills/_se-playbook.md` with `Output format reference`, `Pre-flight source check`, and `After Generating (saving skills)` fragments. Refactored 16 `SKILL.md` files to reference the shared boilerplate instead of duplicating output-format, auto-save, filename/date-format, source-coverage, and SE-identity instructions. Each skill keeps its unique workflow, specific auto-save path, skill-specific source-coverage notes, and guardrails. Added `eval/tests/test_skill_playbook.py` to verify shared references resolve, old boilerplate is gone, and skill-specific content is preserved. `full-qual` and `biz-qual` now use the shared pre-flight source check. Verified runtime loading with native `claude -p` invocations; found that bare `_se-playbook.md` references can resolve to the skill directory and trigger permission or path-guess failures, so updated the new shared-boilerplate references to the absolute installed path `~/.claude/skills/_se-playbook.md`. Updated `IMPLEMENTATION-PLAN.md` and `README.md`.
+  - `skills/_se-playbook.md`: new `Shared Skill Boilerplate` section.
+  - `skills/*/SKILL.md`: replaced duplicated `After Generating` and `Output format` boilerplate with shared references.
+  - `eval/tests/test_skill_playbook.py`: deterministic verification of shared-playbook references and skill-specific guardrail preservation.
+  - `IMPLEMENTATION-PLAN.md`: SKILL-001 marked completed; header status updated.
 - **Closed UI/UX improvement phase + moved Anthropic key to keyring (July 14).** Ran a whole-app visual regression pass across the landing page, member directory, account/opportunity/output lists, invoke modal, output reader, review panel, deal-assessment comparison, live transcription entry point, and responsive viewports. Found and fixed one regression: `unvalidated` deal-assessment outputs were incorrectly counted as validation "needs attention" in `/api/overview`. Updated `IMPLEMENTATION-PLAN.md` to mark UX-001/002/004/006/007/008/009 and Phase 4 as completed and recorded deferred UX ideas. Then implemented SEC-005: the quick ask-bar path now reads `ANTHROPIC_API_KEY` from the OS keyring via the `keyring` module, with the `ANTHROPIC_API_KEY` environment variable as a fallback. Plaintext `~/.mcp/*.env` files are no longer read. Added tests for env/keyring precedence and fallback. Updated `webapp/README.md` with the new keyring-first setup instructions.
   - `webapp/app.py`: `_anthropic_key_from_keyring`, `_anthropic_api_key`; replaced env/MCP `.env` reads in the two ask-bar paths and `/api/ai-status`.
   - `webapp/app.py` PEP 723 deps + `pyproject.toml` dev deps: added `keyring`.

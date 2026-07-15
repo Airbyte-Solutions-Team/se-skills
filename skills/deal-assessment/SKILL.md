@@ -62,7 +62,7 @@ If user signals brief mode (`--brief`, `quick assessment`, `deal health summary`
 
 ## Output Format
 
-Document structure follows `_se-playbook.md` → Output Document Format (At-a-Glance + Jump-to index, H2-per-section, callouts, `==key==` emphasis).
+Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 Title format: `<Customer> — Deal Assessment: <short punchy verdict>`
 
@@ -193,17 +193,13 @@ Keep candid. This is the part of the assessment the SE can act on personally.
 
 ## After Generating
 
-### Auto-save (default)
-
-Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save to:
+### Auto-save path
+Per `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save to:
 ```
 {customers_dir}/<Customer>/outputs/deal-assessment/deal-assessment-<YYYY-MM-DD>.md
 ```
 
-Append `-v2` etc. if running multiple times same day. User can suppress with `--no-save`.
-
 ### Source Coverage
-
 Include a Source Coverage section at the top reporting:
 - Every transcript read (filename + line count: e.g., "Acme-04.01.26.txt — 566 / 566 lines")
 - Every prior qual doc read (filename + date)
@@ -211,12 +207,7 @@ Include a Source Coverage section at the top reporting:
 - Notion pages accessed (if any)
 - Any source inventoried but not read in full — explicitly say so
 
-### SE Identity
-
-Read `config_file` (per playbook → Workspace Paths) for the `[SE name]` field where applicable.
-
 ### Then ask which other artifacts to update
-
 1. **Mirror to Notion** as a subpage under the customer's parent page
 2. **Update memory** — if this assessment surfaced a significant status change (e.g., deal moved from "active POC" to "stalled", or a new deal-killer emerged, or trajectory flipped from 🟢 to 🔴), propose adding/updating a project memory. Don't update for routine cadence — only material status changes.
 

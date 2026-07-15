@@ -66,7 +66,7 @@ If there's **no** compelling event, say so plainly: the plan is then Airbyte-pac
 
 ## Output Format
 
-Document structure follows `_se-playbook.md` → Output Document Format (H1 → At a Glance → Jump-to → Source Coverage → H2 body, callouts, `==key==` emphasis).
+Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---
 
@@ -160,24 +160,16 @@ Per `_se-playbook.md`: if the most-recent local transcript is >14 days old, chec
 
 ## After Generating
 
-### Auto-save (default)
-
-Per `_se-playbook.md` "Output Persistence (Auto-Save)", save to:
+### Auto-save path
+Per `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save to:
 ```
 {customers_dir}/<Customer>/outputs/mutual-close-plan/mutual-close-plan-<YYYY-MM-DD>-<Descriptor>.md
 ```
-Append `-v2` etc. for same-day duplicates. User can suppress with `--no-save`.
 
 ### Source Coverage
-
 Include a Source Coverage section reporting: biz-qual Paper Process / EB read, poc-plan end date, transcripts referenced (line counts), and which steps are customer-confirmed vs. [confirm].
 
-### SE Identity
-
-Read `config_file` (per playbook → Workspace Paths) for the `[SE name]` field.
-
 ### Then offer to
-
 1. **Draft the close-plan email to the customer** wrapping the mutual-agreement ask (invoke `follow-up-email`)
 2. **Add the close plan to the customer's Notion page** as a live checklist the SE updates
 3. **Feed the target signature date into `internal-prep`** (forecast) — this plan's target date is the forecast date

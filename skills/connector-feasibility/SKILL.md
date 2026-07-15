@@ -119,7 +119,7 @@ Only surface questions for items **not already answered** in the transcripts/SFD
 
 ## Output Format
 
-Document structure follows `_se-playbook.md` → Output Document Format (At-a-Glance + Jump-to index, H2-per-section, callouts, `==key==` emphasis).
+Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---
 
@@ -264,25 +264,16 @@ For each missing connector, provide:
 
 ## After Generating
 
-### Auto-save (default)
-
-Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save to:
+### Auto-save path
+Per `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save to:
 ```
 {customers_dir}/<Customer>/outputs/connector-feasibility/connector-feasibility-<YYYY-MM-DD>-<Descriptor>.md
 ```
 
-Append `-v2` etc. for same-day duplicates. User can suppress with `--no-save`.
-
 ### Source Coverage
-
 Include a Source Coverage section at the top reporting: **connector registry cache** (which files, the cache date, and whether it was fetched fresh this run or read from cache), **`airbyte-enterprise` `connector_stubs.json`** (available/unavailable + checkout date — the source for enterprise-variant detection), MCP queries run (`list_connectors_in_registry`, `get_connector_registry_entry`/`_spec`, etc.), transcripts referenced for source/dest list, and connectors verified for known issues. **Also report, when used:** which connectors' local source was read (and the `{airbyte_repos_dir}/airbyte` checkout date — so the SE can gauge build-path freshness), any docs queries run (Kapa / deepwiki), and any runtime-observability checks (Sentry / Datadog). If a tool or checkout was unavailable on this machine (e.g. `airbyte_repos_dir` unset, Kapa MCP, Sentry, Datadog not configured), don't list it as consulted — note "not available" rather than implying coverage you didn't have.
 
-### SE Identity
-
-Read `config_file` (per playbook → Workspace Paths) for the `[SE name]` field if applicable.
-
 ### Then offer to
-
 1. Add a section to the customer's Notion Overview page
 2. Suggest invoking `tech-qual` next if not already done
 

@@ -84,7 +84,7 @@ Per `_se-playbook.md` → "Product & Connector Reference Data," ground each qual
 
 ## Output Format
 
-Document structure follows `_se-playbook.md` → Output Document Format (At-a-Glance + Jump-to index, H2-per-section, callouts, `==key==` emphasis).
+Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---
 
@@ -237,25 +237,16 @@ Don't lead with reframes here. The job is to find the truth, not to convert. If 
 
 ## After Generating
 
-### Auto-save (default)
-
-Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save to:
+### Auto-save path
+Per `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save to:
 ```
 {customers_dir}/<Customer>/outputs/deployment-qual/deployment-qual-<YYYY-MM-DD>.md
 ```
 
-Append `-v2` etc. for same-day duplicates. User can suppress with `--no-save`.
-
 ### Source Coverage
-
 Include a Source Coverage section at the top reporting: which transcripts answered which of the 5 questions, who said what (cite speaker), and which questions remain unasked. **Also report the DS2 product-truth sources used/unavailable** (per `_se-playbook.md` → fail-loud): the `airbyte-platform` checkout (date) for `EntitlementDefinitions.kt` + the `airbyte-data-plane` chart, or "airbyte-platform not available — entitlement claims reasoned from inlined product reality, confidence capped." Never assert an entitlement you couldn't verify against the file.
 
-### SE Identity
-
-Read `config_file` (per playbook → Workspace Paths) for the `[SE name]` field.
-
 ### Then offer to
-
 1. **Add to Notion Overview page** as a deployment fit section
 2. **Update biz-qual** with the deployment model row in Decision Criteria
 3. **Draft a follow-up email** with the specific discovery questions (invoke `follow-up-email`)

@@ -66,18 +66,16 @@ Copy these straight from the SFDC query into the page; IDs and numbers must be e
 
 ## After Generating
 
-### Auto-save (default)
-Per `_se-playbook.md` "Output Persistence (Auto-Save)", save the HTML to the opportunity's outputs dir the caller specifies (the webapp passes an `out_dir` — save under `<out_dir>/coverage-handoff/`). Filename:
+### Auto-save path
+Per `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save the HTML to the opportunity's outputs dir the caller specifies (the webapp passes an `out_dir` — save under `<out_dir>/coverage-handoff/`). Filename:
 ```
 coverage-handoff-<YYYY-MM-DD>-<Customer>.html
 ```
-Append `-v2` etc. for same-day duplicates.
 
 ### Porting to internal.airbyte.ai
 This file is drop-in for `src/solutions-team/members/<member-slug>/accounts/<account-slug>/index.html`. At the end of your run, print that suggested target path so the SE can copy it into the repo and PR it. Do **not** push to the repo yourself.
 
-### SE Identity
-Read `config_file` (per playbook → Workspace Paths) for the SE name / attribution (the default "SE out" when the form omits it).
+---
 
 ## Style
 
