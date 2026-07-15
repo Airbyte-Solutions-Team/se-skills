@@ -307,6 +307,73 @@ function relTime(epochSec) {
   return `${Math.floor(diff / 86400)} d ago`;
 }
 
+// Format a timestamp (epoch seconds or ISO-ish) as a full date for tooltips.
+function fullDate(epochSec) {
+  if (!epochSec) return "";
+  const d = new Date(epochSec * 1000);
+  if (isNaN(d)) return "";
+  return d.toLocaleString();
+}
+
+// Build per-account / per-opportunity activity summaries from the jobs list.
+function activityByAccount(jobs) {
+  const map = {};
+  for (const j of jobs || []) {
+    const a = j.account;
+    if (!a) continue;
+    if (!map[a]) map[a] = { running: 0, lastRun: null };
+    if (j.status === "running") {
+      map[a].running += 1;
+      continue;
+    }
+    const t = j.finished_at || 0;
+    if (!map[a].lastRun || t > map[a].lastRun.finished_at) {
+      map[a].lastRun = { ok: j.ok, finished_at: t, status: j.status, stderr: j.stderr };
+    }
+  }
+  return map;
+}
+
+function activityByOpp(jobs, account) {
+  const map = {};
+  for (const j of jobs || []) {
+    if (j.account !== account) continue;
+    const key = j.opp_slug || "__account";
+    if (!map[key]) map[key] = { running: 0, lastRun: null };
+    if (j.status === "running") {
+      map[key].running += 1;
+      continue;
+    }
+    const t = j.finished_at || 0;
+    if (!map[key].lastRun || t > map[key].lastRun.finished_at) {
+      map[key].lastRun = { ok: j.ok, finished_at: t, status: j.status, stderr: j.stderr };
+    }
+  }
+  return map;
+}
+
+function renderActivity(activity, size = "small") {
+  if (!activity) return "";
+  if (activity.running) {
+    return `<span class="activity activity--running activity--${size}" title="${activity.running} skill${activity.running > 1 ? "s" : ""} running for this account"><span class="pulse"></span>${activity.running} running</span>`;
+  }
+  if (activity.lastRun && activity.lastRun.ok === false) {
+    const reason = activity.lastRun.stderr ? activity.lastRun.stderr.split("\n")[0].slice(0, 80) : "";
+    return `<span class="activity activity--error activity--${size}" title="Last run failed${reason ? ": " + esc(reason) : ""}">${size === "small" ? "●" : "Last run failed"}</span>`;
+  }
+  return "";
+}
+
+// Compact, actionable empty-state box.
+function emptyBox({ icon = "⊘", title, body = "", actions = "" }) {
+  return `<div class="empty-box">
+    <div class="empty-icon">${icon}</div>
+    <div class="empty-title">${esc(title)}</div>
+    ${body ? `<div class="empty-body">${body}</div>` : ""}
+    ${actions ? `<div class="empty-actions">${actions}</div>` : ""}
+  </div>`;
+}
+
 // De-duplicate persistence-warning toasts across polls and pages.
 const _persistWarningsShown = new Set();
 
@@ -591,6 +658,10 @@ async function pageMember(memberId, tab = "active") {
     showing = showing.map((a) => ({ ...a, _sfdc: sfdc[a.name] || {} }));
   }
 
+  // Activity summary: running jobs and the latest finished job per account.
+  const jobs = tab === "trash" ? [] : await api("/api/jobs").catch(() => []);
+  const activity = activityByAccount(jobs);
+
   // ── Sorting ──────────────────────────────────────────────────────────
   const sortVal = (a, key) => {
     switch (key) {
@@ -624,11 +695,25 @@ async function pageMember(memberId, tab = "active") {
     if (!txt) return '<span class="muted">—</span>';
     return s?.is_closed ? `<span class="stage-closed">${txt}</span>` : txt;
   };
-  const typeCell = (s) => s?.type ? esc(s.type) : '<span class="muted">—</span>';
-  const dateCell = (d) => d ? esc(d) : '<span class="muted">—</span>';
-  const aeCell = (s) => s?.ae ? esc(s.ae) : '<span class="muted">—</span>';
+  const typeCell = (s) => s?.type ? esc(s.type) : null;
+  const dateCell = (d) => d ? esc(d) : null;
+  const aeCell = (s) => s?.ae ? esc(s.ae) : null;
 
-  const acctRow = (a, isArchived) => `
+  const accountSub = (a) => {
+    const parts = [fmtAmt(a._sfdc?.amount), typeCell(a._sfdc), aeCell(a._sfdc)].filter(Boolean);
+    return parts.length ? `<span class="acct-sub">${parts.join(" · ")}</span>` : '';
+  };
+  const accountUpdated = (a) => {
+    if (!a.last_updated_ts) return '<span class="acct-updated muted">—</span>';
+    return `<span class="acct-updated" title="${fullDate(a.last_updated_ts)}">${relTime(a.last_updated_ts)}</span>`;
+  };
+
+  const acctRow = (a, isArchived) => {
+    const act = activity[esc(a.name)];
+    const ownerBadge = a.owner === memberId
+      ? '<span class="badge owned">you</span>'
+      : `<span class="badge">${esc(a.owner || "—")}</span>`;
+    return `
     <div class="acct-row${isArchived ? " is-archived" : ""}" data-acct="${esc(a.name)}">
       <div class="acct-row-menu">
         <button class="kebab" aria-label="Account actions">⋮</button>
@@ -641,47 +726,56 @@ async function pageMember(memberId, tab = "active") {
       </div>
       <label class="acct-check"><input type="checkbox" class="row-check" data-acct="${esc(a.name)}" /></label>
       <a href="#/account/${encodeURIComponent(a.name)}" class="acct-row-main">
-        <span class="acct-name">${esc(a.name)}</span>
-        <span class="acct-col col-stage">${stageCell(a._sfdc)}</span>
-        <span class="acct-col col-amount">${fmtAmt(a._sfdc?.amount)}</span>
-        <span class="acct-col col-close">${dateCell(a._sfdc?.close_date)}</span>
-        <span class="acct-col col-type">${typeCell(a._sfdc)}</span>
-        <span class="acct-col col-ae">${aeCell(a._sfdc)}</span>
-        <span class="acct-col col-updated">${a.last_updated ? esc(a.last_updated) : '<span class="muted">—</span>'}</span>
-        <span class="acct-col col-outputs">${a.output_count}</span>
-        <span class="acct-col col-owner">${a.owner === memberId ? '<span class="badge owned">you</span>' : `<span class="badge">${esc(a.owner || "—")}</span>`}${isArchived ? ' <span class="badge">archived</span>' : ""}</span>
+        <div class="acct-cell acct-cell-main">
+          <span class="acct-name-wrap"><span class="acct-name">${esc(a.name)}</span>${renderActivity(act, "small")}</span>
+          ${accountSub(a)}
+        </div>
+        <div class="acct-cell acct-cell-stage">
+          <span class="acct-stage">${stageCell(a._sfdc)}</span>
+          <span class="acct-sub">${dateCell(a._sfdc?.close_date) || "<span class=\"muted\">—</span>"}</span>
+        </div>
+        <div class="acct-cell acct-cell-updated">${accountUpdated(a)}</div>
+        <div class="acct-cell acct-cell-outputs"><span class="acct-out-count${a.output_count ? "" : " muted"}">${a.output_count || "—"}</span></div>
+        <div class="acct-cell acct-cell-owner">${ownerBadge}${isArchived ? ' <span class="badge">archived</span>' : ""}</div>
       </a>
       <button class="acct-expand" data-acct="${esc(a.name)}" aria-label="Show opportunities" title="Show opportunities">▸</button>
     </div>
     <div class="opp-drawer hidden" data-drawer="${esc(a.name)}"></div>`;
+  };
 
   const trashRow = (t) => `
     <div class="acct-row trash-row">
       <div class="acct-row-menu"><button class="ghost small restore-btn" data-tid="${esc(t.trash_id)}">Restore</button></div>
       <div class="acct-row-main no-link">
         <span class="acct-name">${esc(t.name)}</span>
-        <span class="acct-col" style="grid-column: span 5;"><span class="muted">deleted</span> ${esc(t.deleted_at)}</span>
+        <span class="acct-col" style="grid-column: span 4;"><span class="muted">deleted</span> ${esc(t.deleted_at)}</span>
       </div>
     </div>`;
 
   const renderRow = tab === "trash" ? trashRow : (a) => acctRow(a, tab === "archived");
-  const emptyMsg = { active: "No active accounts. Create one to get started.", archived: "No archived accounts.", trash: "Trash is empty." }[tab];
 
-  const hCell = (key, label, cls) => `<span class="acct-col ${cls} sortable" data-sort="${key}">${label}${sortArrow(key)}</span>`;
+  const emptyActions = {
+    active: `<button class="primary small" id="empty-add">Add account manually</button>`,
+    archived: "",
+    trash: "",
+  };
+  const emptyMsg = {
+    active: { icon: "⊘", title: "No active accounts", body: "Sync from Salesforce or add an account manually to get started.", actions: emptyActions.active },
+    archived: { icon: "⊘", title: "No archived accounts", body: "Archived accounts will appear here.", actions: "" },
+    trash: { icon: "🗑", title: "Trash is empty", body: "Deleted accounts can be restored from here.", actions: "" },
+  }[tab];
+
+  const hCell = (key, label, cls) => `<span class="acct-cell ${cls} sortable" data-sort="${key}">${label}${sortArrow(key)}</span>`;
   const listHeader = tab === "trash" ? "" : `
     <div class="acct-row acct-head">
       <div class="acct-row-menu"></div>
       <label class="acct-check"><input type="checkbox" id="check-all" /></label>
       <div class="acct-row-main no-link">
-        <span class="acct-name sortable" data-sort="name">Account${sortArrow("name")}</span>
-        ${hCell("stage", "SFDC Stage", "col-stage")}
-        ${hCell("amount", "Amount", "col-amount")}
-        ${hCell("close", "Close Date", "col-close")}
-        ${hCell("type", "Type", "col-type")}
-        ${hCell("ae", "Account Executive", "col-ae")}
-        ${hCell("updated", "Updated", "col-updated")}
-        ${hCell("outputs", "Outputs", "col-outputs")}
-        ${hCell("owner", "Owner", "col-owner")}
+        ${hCell("name", "Account", "acct-cell-main")}
+        ${hCell("stage", "Stage", "acct-cell-stage")}
+        ${hCell("updated", "Updated", "acct-cell-updated")}
+        ${hCell("outputs", "Outputs", "acct-cell-outputs")}
+        ${hCell("owner", "Owner", "acct-cell-owner")}
       </div>
       <span class="acct-expand-spacer"></span>
     </div>`;
@@ -721,7 +815,7 @@ async function pageMember(memberId, tab = "active") {
     </div>
     <div id="bulk-handoff-status" class="handoff-bulk-status hidden"></div>
     <div class="acct-list" id="acct-grid">
-      ${showing.length ? listHeader + showing.map(renderRow).join("") : `<div class="empty">${emptyMsg}</div>`}
+      ${showing.length ? listHeader + showing.map(renderRow).join("") : emptyBox(emptyMsg)}
     </div>`;
 
   view.querySelectorAll(".tab").forEach((t) => { t.onclick = () => pageMember(memberId, t.dataset.tab); });
@@ -739,6 +833,11 @@ async function pageMember(memberId, tab = "active") {
     box.classList.toggle("hidden");
     if (!box.classList.contains("hidden")) document.getElementById("new-acct").focus();
   };
+
+  document.getElementById("empty-add")?.addEventListener("click", () => {
+    document.getElementById("create-box")?.classList.remove("hidden");
+    document.getElementById("new-acct")?.focus();
+  });
 
   document.getElementById("create-acct").onclick = async () => {
     const name = document.getElementById("new-acct").value.trim();
@@ -1082,9 +1181,14 @@ async function pageMember(memberId, tab = "active") {
       drawer.classList.remove("hidden");
       if (!drawer.dataset.loaded) {
         drawer.innerHTML = `<div class="opp-drawer-loading">Loading opportunities…</div>`;
-        const opps = await api(`/api/accounts/${encodeURIComponent(acct)}/opportunities`).catch(() => []);
+        const [opps, jobs] = await Promise.all([
+          api(`/api/accounts/${encodeURIComponent(acct)}/opportunities`).catch(() => []),
+          api(`/api/jobs?account=${encodeURIComponent(acct)}`).catch(() => []),
+        ]);
         drawer.dataset.loaded = "1";
-        drawer.innerHTML = opps.length ? `<div class="opp-list">${oppHeaderRow()}${opps.map((o) => oppRow(acct, o)).join("")}</div>`
+        const activityByOpp = activityByOpp(jobs, acct);
+        drawer.innerHTML = opps.length
+          ? `<div class="opp-list">${oppHeaderRow()}${opps.map((o) => oppRow(acct, o, activityByOpp[o.slug])).join("")}</div>`
           : `<div class="opp-drawer-loading muted">No opportunities found.</div>`;
       }
     };
@@ -1095,31 +1199,30 @@ async function pageMember(memberId, tab = "active") {
 function oppHeaderRow() {
   return `
     <div class="opp-row opp-row-head no-link">
-      <span class="opp-row-name">Opportunity</span>
-      <span class="opp-row-col opp-row-stage">SFDC Stage</span>
-      <span class="opp-row-col opp-row-amount">Amount</span>
-      <span class="opp-row-col opp-row-type">Type</span>
-      <span class="opp-row-col opp-row-close">Close Date</span>
-      <span class="opp-row-col opp-row-status">Status</span>
-      <span class="opp-row-col opp-row-outputs">Outputs</span>
+      <span class="opp-cell opp-cell-main">Opportunity</span>
+      <span class="opp-cell opp-cell-stage">Stage</span>
+      <span class="opp-cell opp-cell-status">Status</span>
+      <span class="opp-cell opp-cell-outputs">Outputs</span>
     </div>`;
 }
 
 // Shared opportunity row (used in the expand drawer and the account page)
-function oppRow(account, o) {
-  const fmtAmt = (n) => (n || n === 0) ? "$" + Number(n).toLocaleString() : '<span class="muted">—</span>';
+function oppRow(account, o, activity = null) {
+  const fmtAmt = (n) => (n || n === 0) ? "$" + Number(n).toLocaleString() : null;
   const stage = o.stage_num ? esc(o.stage_num) : (o.stage ? esc(o.stage) : '<span class="muted">—</span>');
   const statusBadge = o.is_closed === false ? '<span class="badge owned">open</span>'
     : (o.is_closed ? '<span class="badge badge-closed">closed</span>' : "");
+  const subParts = [o.type ? esc(o.type) : null, o.close_date ? esc(o.close_date) : null, fmtAmt(o.amount)].filter(Boolean);
+  const sub = subParts.length ? `<span class="opp-row-sub">${subParts.join(" · ")}</span>` : '';
   return `
     <a class="opp-row" href="#/opp/${encodeURIComponent(account)}/${encodeURIComponent(o.slug)}/${encodeURIComponent(o.name)}">
-      <span class="opp-row-name">${esc(o.name)}</span>
-      <span class="opp-row-col opp-row-stage">${stage}</span>
-      <span class="opp-row-col opp-row-amount">${fmtAmt(o.amount)}</span>
-      <span class="opp-row-col opp-row-type">${o.type ? esc(o.type) : '<span class="muted">—</span>'}</span>
-      <span class="opp-row-col opp-row-close">${o.close_date ? esc(o.close_date) : '<span class="muted">—</span>'}</span>
-      <span class="opp-row-col opp-row-status">${statusBadge}</span>
-      <span class="opp-row-col opp-row-outputs">${o.output_count}</span>
+      <div class="opp-cell opp-cell-main">
+        <span class="opp-name-wrap"><span class="opp-row-name">${esc(o.name)}</span>${renderActivity(activity, "small")}</span>
+        ${sub}
+      </div>
+      <div class="opp-cell opp-cell-stage"><span class="opp-stage">${stage}</span></div>
+      <div class="opp-cell opp-cell-status">${statusBadge || '<span class="muted">—</span>'}</div>
+      <div class="opp-cell opp-cell-outputs"><span class="opp-out-count${o.output_count ? "" : " muted"}">${o.output_count || "—"}</span></div>
     </a>`;
 }
 
@@ -1128,12 +1231,22 @@ async function pageAccount(account) {
   setCrumbs([...(await accountCrumbs(account)), { label: account }]);
   view.innerHTML = `<div class="row"><div><h1>${esc(account)}</h1><p class="sub">Opportunities — pick one to view outputs &amp; run skills</p></div></div>
     <div class="empty" id="opps-loading">Loading opportunities from Salesforce…</div>`;
-  const opps = await api(`/api/accounts/${encodeURIComponent(account)}/opportunities`).catch(() => []);
+  const [opps, jobs] = await Promise.all([
+    api(`/api/accounts/${encodeURIComponent(account)}/opportunities`).catch(() => []),
+    api(`/api/jobs?account=${encodeURIComponent(account)}`).catch(() => []),
+  ]);
+  const activityByOppSlug = activityByOpp(jobs, account);
+
+  const empty = emptyBox({
+    icon: "⊘",
+    title: "No opportunities found",
+    body: "Salesforce may be unavailable or this account has no open opportunities. Invoke a skill on this account and it will use a General opportunity bucket.",
+  });
 
   view.innerHTML = `
     <div class="row"><div><h1>${esc(account)}</h1><p class="sub">Opportunities — pick one to view outputs &amp; run skills</p></div></div>
     <div class="opp-list">
-      ${opps.length ? oppHeaderRow() + opps.map((o) => oppRow(account, o)).join("") : `<div class="empty">No opportunities found.</div>`}
+      ${opps.length ? oppHeaderRow() + opps.map((o) => oppRow(account, o, activityByOppSlug[o.slug])).join("") : empty}
     </div>`;
 }
 
@@ -1465,12 +1578,13 @@ async function pageOpportunity(account, slug, oppName) {
     <div id="freebar-status" class="status hidden"></div>
     <h2>Generated outputs</h2>
     <div class="outputs" id="outputs">
-      ${outputs.length ? renderOutputGroups(outputs) : `<div class="empty">No outputs yet for this opportunity. Invoke a skill to generate one.</div>`}
+      ${outputs.length ? renderOutputGroups(outputs) : emptyBox({ icon: "⊘", title: "No outputs yet", body: "Invoke a skill to generate the first output for this opportunity.", actions: `<button class="primary small" id="empty-invoke">Invoke Skill</button>` })}
     </div>`;
   wireOutItems(view, { account, slug, oppName, memberName: _memberName });
   // onDeleted runs on user click (after refreshOutputs is defined below) → safe.
   wireDownloadMenus(view, () => refreshOutputs());
   document.getElementById("invoke-btn").onclick = () => openInvoke(account, { slug, name: oppName });
+  document.getElementById("empty-invoke")?.addEventListener("click", () => openInvoke(account, { slug, name: oppName }));
 
   // Free-text instruction bar — runs the agent without picking a named skill
   const freeInput = document.getElementById("opp-free");
@@ -1484,7 +1598,8 @@ async function pageOpportunity(account, slug, oppName) {
     outputMeta = Object.fromEntries(outs.map((o) => [o.path, { valid: o.valid, validation_errors: o.validation_errors || [], missing_sections: o.missing_sections || [], reference_freshness_at_generation: o.reference_freshness_at_generation, reference_changed_since_generation: o.reference_changed_since_generation || [] }]));
     const el = document.getElementById("outputs");
     if (!el) return;
-    el.innerHTML = outs.length ? renderOutputGroups(outs) : `<div class="empty">No outputs yet for this opportunity. Invoke a skill to generate one.</div>`;
+    el.innerHTML = outs.length ? renderOutputGroups(outs) : emptyBox({ icon: "⊘", title: "No outputs yet", body: "Invoke a skill to generate the first output for this opportunity.", actions: `<button class="primary small empty-invoke">Invoke Skill</button>` });
+    el.querySelector(".empty-invoke")?.addEventListener("click", () => openInvoke(account, { slug, name: oppName }));
     wireOutItems(el, { account, slug, oppName, memberName: _memberName });
     wireDownloadMenus(el, () => refreshOutputs());
   };
