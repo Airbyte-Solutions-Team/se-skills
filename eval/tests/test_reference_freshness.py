@@ -23,7 +23,11 @@ def _set_mtime(path: Path, days_ago: float) -> None:
 
 
 @pytest.fixture
-def tmp_workspace(tmp_path: Path) -> Path:
+def tmp_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    # Keep the objection-reference home-dir fallback (reference_freshness.py)
+    # inside the temp dir so an installed ~/.claude/skills copy on the dev
+    # machine cannot leak into these hermetic tests.
+    monkeypatch.setattr(rf.Path, "home", classmethod(lambda cls: tmp_path))
     return tmp_path
 
 

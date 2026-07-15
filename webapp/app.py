@@ -4,7 +4,7 @@
 # dependencies = [
 #   "fastapi", "uvicorn[standard]", "pyyaml",
 #   "faster-whisper", "sounddevice", "numpy", "sse-starlette", "anthropic",
-#   "markdown",
+#   "markdown", "nh3",
 # ]
 # ///
 # NOTE: live-transcribe needs the PortAudio system lib for sounddevice:
