@@ -119,14 +119,14 @@ opportunity.
 2. Save the raw response(s) as `$JOB_DIR/pov-gsheet-salesforce-raw.json`.
 3. Normalize:
    ```bash
-   uv run --python 3.11 python "$REPO_DIR/webapp/pov_gsheet_bridge.py" \
+   uv run --quiet --python 3.11 --script "$REPO_DIR/webapp/pov_gsheet_bridge.py" \
      --source salesforce --account "$ACCOUNT" --opportunity "$OPPORTUNITY" \
      --raw-input "$JOB_DIR/pov-gsheet-salesforce-raw.json" \
      --out "$JOB_DIR/pov-gsheet-salesforce-evidence.json"
    ```
    If the Salesforce MCP is unavailable or returns an error, instead run:
    ```bash
-   uv run --python 3.11 python "$REPO_DIR/webapp/pov_gsheet_bridge.py" \
+   uv run --quiet --python 3.11 --script "$REPO_DIR/webapp/pov_gsheet_bridge.py" \
      --source salesforce --account "$ACCOUNT" --opportunity "$OPPORTUNITY" \
      --status unavailable --note "Salesforce MCP not configured or failed" \
      --out "$JOB_DIR/pov-gsheet-salesforce-evidence.json"
@@ -140,7 +140,7 @@ opportunity.
 3. Save `search_calls` output as `$JOB_DIR/pov-gsheet-gong-search.json` and a `{callId: transcript, ...}` object as `$JOB_DIR/pov-gsheet-gong-transcripts.json`.
 4. Normalize:
    ```bash
-   uv run --python 3.11 python "$REPO_DIR/webapp/pov_gsheet_bridge.py" \
+   uv run --quiet --python 3.11 --script "$REPO_DIR/webapp/pov_gsheet_bridge.py" \
      --source gong --account "$ACCOUNT" --opportunity "$OPPORTUNITY" \
      --raw-input "$JOB_DIR/pov-gsheet-gong-search.json" \
      --transcripts "$JOB_DIR/pov-gsheet-gong-transcripts.json" \
@@ -151,7 +151,7 @@ opportunity.
 **Granola / Gmail / Slack** — check whether a usable MCP is configured. If one is available, retrieve
 scoped data and normalize it through the bridge. If not, write an unavailable marker:
 ```bash
-uv run --python 3.11 python "$REPO_DIR/webapp/pov_gsheet_bridge.py" \
+uv run --quiet --python 3.11 --script "$REPO_DIR/webapp/pov_gsheet_bridge.py" \
   --source <granola|gmail|slack> --account "$ACCOUNT" --opportunity "$OPPORTUNITY" \
   --status unavailable --note "<Source> not configured in this environment" \
   --out "$JOB_DIR/pov-gsheet-<source>-evidence.json"
@@ -173,7 +173,7 @@ REPO_DIR=$(cd "$(dirname "$(readlink -f ~/.claude/skills/pov-gsheet/SKILL.md)")/
 JOB_DIR="${JOB_DIR:-/tmp/pov-gsheet-$(date +%s)}"
 CTX_FILE="$JOB_DIR/pov-gsheet-context.json"
 
-uv run --python 3.11 python "$REPO_DIR/webapp/pov_gsheet_context.py" \
+uv run --quiet --python 3.11 --script "$REPO_DIR/webapp/pov_gsheet_context.py" \
   --account "$ACCOUNT" \
   --opportunity "$OPPORTUNITY" \
   --workspace "$(pwd)" \
@@ -185,8 +185,7 @@ uv run --python 3.11 python "$REPO_DIR/webapp/pov_gsheet_context.py" \
   --out "$CTX_FILE" --pretty
 ```
 
-If `uv` is not on PATH, fall back to `python` (the loader and bridge declare their own inline
-dependencies when run directly, but `uv run` is the reliable path).
+If `uv` is not on PATH, install it first — the bridge and loader declare their dependencies via PEP 723 inline metadata, which is only honored when run as `uv run --script <path>`.
 
 Inspect the context JSON. It has these top-level keys:
 
