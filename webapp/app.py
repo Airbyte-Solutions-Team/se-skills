@@ -61,6 +61,9 @@ import reference_freshness
 import security
 import soql
 
+from routes.jobs import router as jobs_router
+from services.job_service import JobService
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -784,6 +787,7 @@ async def sfdc_accounts_for_member(member_id: str, ae_names: list[str]) -> dict:
 # App
 # ---------------------------------------------------------------------------
 app = FastAPI(title="SE Skills — Local Hub")
+app.include_router(jobs_router)
 
 
 @app.get("/api/members")
@@ -1503,14 +1507,15 @@ async def api_output_ask(body: OutputAsk):
             f"Answer concisely and practically. If it involves Airbyte connectors, deployment, or the "
             f"codebase, use the relevant SE skills / inspect the repo as needed."
         )
-        job_id = uuid.uuid4().hex[:12]
-        JOBS[job_id] = {"status": "running", "ok": None, "stdout": "", "stderr": "",
-                        "skill": "output-ask", "account": acct, "opportunity": body.opportunity,
-                        "opp_slug": None, "sig": ("output-ask", body.path, q[:60]),
-                        "started_at": datetime.now(timezone.utc).timestamp()}
-        persist_warn = await _save_jobs_snapshot(job_id)
-        meta = {"account": acct or "?", "opp_slug": None, "skill": "output-ask", "opportunity": body.opportunity}
-        asyncio.create_task(_run_job(job_id, prompt, meta))
+        job_id, persist_warn = await job_service.launch(
+            account=acct or "?",
+            opp_slug=None,
+            skill="output-ask",
+            opportunity=body.opportunity,
+            sig=("output-ask", body.path, q[:60]),
+            prompt=prompt,
+            meta={"account": acct or "?", "opp_slug": None, "skill": "output-ask", "opportunity": body.opportunity},
+        )
         return {"mode": "deep", "job_id": job_id,
                 **({"persistence_warning": persist_warn} if persist_warn else {})}
 
@@ -1946,25 +1951,8 @@ class InvokeBody(BaseModel):
 # Now: POST /api/invoke starts the job + returns a job_id; the run continues
 # server-side even if you navigate away; GET /api/jobs/{id} polls for status.
 # ---------------------------------------------------------------------------
-JOBS: dict[str, dict] = persistence.load_jobs(WORKSPACE)
-
-
-_PERSISTENCE_WARNING = "This job will not survive a server restart because state could not be saved."
-
-
-async def _save_jobs_snapshot(source_job_id: str | None = None) -> str | None:
-    """Persist the jobs snapshot and, on success, clear any in-memory persistence
-    warnings. On failure, attach a warning to the originating job (if known) so
-    the UI can tell the SE that restart recovery is unavailable for this run."""
-    ok = await asyncio.to_thread(persistence.save_jobs, JOBS, WORKSPACE)
-    if ok:
-        for job in JOBS.values():
-            job.pop("persistence_warning", None)
-        return None
-    logger.warning("Jobs snapshot persistence failed for %s", source_job_id or "unknown")
-    if source_job_id and source_job_id in JOBS:
-        JOBS[source_job_id]["persistence_warning"] = _PERSISTENCE_WARNING
-    return _PERSISTENCE_WARNING
+# The in-memory job registry is owned by services/job_service.py. It is
+# instantiated below after the run-persistence helpers it depends on.
 
 
 def _build_prompt(body: InvokeBody, account: str, out_dir) -> str:
@@ -2068,51 +2056,17 @@ def _latest_run(account: str, opp_slug: str | None) -> dict | None:
     return best
 
 
-async def _run_job(job_id: str, prompt: str, meta: dict):
-    job = JOBS[job_id]
-    model = _model_for(meta.get("skill", "default"))
-    cmd = ["claude", "-p", prompt, "--model", model, "--permission-mode", "acceptEdits"]
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, cwd=str(WORKSPACE),
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )
-        job["pid"] = proc.pid
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
-        stdout = security.redact_sensitive(stdout.decode(errors="replace"))
-        stderr = security.redact_sensitive(stderr.decode(errors="replace"))
-        job.update(status="done", ok=proc.returncode == 0,
-                   stdout=stdout, stderr=stderr,
-                   finished_at=datetime.now(timezone.utc).timestamp())
-    except FileNotFoundError:
-        job.update(status="error", ok=False, stdout="",
-                   stderr=security.redact_sensitive("`claude` CLI not found on PATH — is Claude Code installed?"),
-                   finished_at=datetime.now(timezone.utc).timestamp())
-    except asyncio.TimeoutError:
-        job.update(status="error", ok=False, stdout="",
-                   stderr=security.redact_sensitive("Skill run timed out after 10 minutes."),
-                   finished_at=datetime.now(timezone.utc).timestamp())
-    except Exception as e:  # noqa: BLE001 — surface any launch failure to the UI
-        job.update(status="error", ok=False, stdout="", stderr=security.redact_sensitive(f"{type(e).__name__}: {e}"),
-                   finished_at=datetime.now(timezone.utc).timestamp())
+# Shared job-service instance. Routes and skill-invocation handlers use this
+# module-level object so the in-memory registry survives imports/reloads.
+job_service = JobService(
+    WORKSPACE,
+    model_for=_model_for,
+    persist_run=_persist_run,
+)
 
-    # Persist the finished result to disk (one file per skill, overwritten).
-    try:
-        _persist_run(meta["account"], meta.get("opp_slug"), meta["skill"], {
-            "skill": meta["skill"], "opportunity": meta.get("opportunity"),
-            "ok": job.get("ok"), "stdout": job.get("stdout", ""), "stderr": job.get("stderr", ""),
-            "finished_at": datetime.now(timezone.utc).timestamp(),
-        })
-    except Exception:
-        pass  # persistence is best-effort; the in-memory job still works
 
-    # Persist the full jobs snapshot so the job record survives a restart.
-    # The child process itself cannot be reattached; the recovered record will
-    # be marked lost with a clear re-run message.
-    try:
-        await _save_jobs_snapshot(job_id)
-    except Exception:
-        pass  # job-state persistence is best-effort
+# Make the service reachable from route dependencies.
+app.state.job_service = job_service
 
 
 @app.get("/api/plan")
@@ -2165,24 +2119,24 @@ async def api_invoke(body: InvokeBody):
     # Reuse an already-running job for the same (account, opp, skill/freeform)
     # so re-entering the page doesn't kick off a duplicate run.
     sig = (account, opp_slug, body.skill or "freeform", (body.freeform or body.extra or "")[:80])
-    for jid, j in JOBS.items():
-        if j.get("sig") == sig and j.get("status") == "running":
-            reused_resp = {"job_id": jid, "status": "running", "reused": True}
-            if j.get("persistence_warning"):
-                reused_resp["persistence_warning"] = j["persistence_warning"]
-            return JSONResponse(reused_resp)
+    reused = job_service.find_reused_job(sig)
+    if reused:
+        jid, j = reused
+        reused_resp = {"job_id": jid, "status": "running", "reused": True}
+        if j.get("persistence_warning"):
+            reused_resp["persistence_warning"] = j["persistence_warning"]
+        return JSONResponse(reused_resp)
 
-    job_id = uuid.uuid4().hex[:12]
     skill_id = body.skill or "freeform"
-    JOBS[job_id] = {
-        "status": "running", "ok": None, "stdout": "", "stderr": "",
-        "skill": skill_id, "account": account,
-        "opportunity": body.opportunity, "opp_slug": opp_slug, "sig": sig,
-        "started_at": datetime.now(timezone.utc).timestamp(),
-    }
-    persist_warn = await _save_jobs_snapshot(job_id)
-    meta = {"account": account, "opp_slug": opp_slug, "skill": skill_id, "opportunity": body.opportunity}
-    asyncio.create_task(_run_job(job_id, prompt, meta))
+    job_id, persist_warn = await job_service.launch(
+        account=account,
+        opp_slug=opp_slug,
+        skill=skill_id,
+        opportunity=body.opportunity,
+        sig=sig,
+        prompt=prompt,
+        meta={"account": account, "opp_slug": opp_slug, "skill": skill_id, "opportunity": body.opportunity},
+    )
     new_resp = {"job_id": job_id, "status": "running", "reused": False}
     if persist_warn:
         new_resp["persistence_warning"] = persist_warn
@@ -2216,26 +2170,26 @@ def api_last_run(account: str, opp_slug: str | None = None):
     return rec
 
 
-@app.get("/api/jobs/{job_id}")
-def api_job(job_id: str):
-    job = JOBS.get(job_id)
+# ---------------------------------------------------------------------------
+# Transitional compatibility wrappers for callers/tests that still import
+# job helpers from webapp.app. They delegate to services/job_service.py.
+# ---------------------------------------------------------------------------
+def api_job(job_id: str) -> dict:
+    """Return a single job, including stdout/stderr but not the dedupe signature."""
+    job = job_service.get_job(job_id)
     if not job:
         raise HTTPException(404, "Unknown job")
     return {k: v for k, v in job.items() if k != "sig"}
 
 
-@app.get("/api/jobs")
-def api_jobs_for(account: str | None = None, opp_slug: str | None = None):
-    """List jobs (optionally filtered) so a page can recover a run it launched
-    earlier — e.g. after you backed out and came back."""
-    out = []
-    for jid, j in JOBS.items():
-        if account and j.get("account") != account:
-            continue
-        if opp_slug and j.get("opp_slug") != opp_slug:
-            continue
-        out.append({"job_id": jid, **{k: v for k, v in j.items() if k not in ("sig", "stdout", "stderr")}})
-    return out
+def api_jobs_for(account: str | None = None, opp_slug: str | None = None) -> list[dict]:
+    """List jobs, optionally filtered by account and/or opportunity slug."""
+    return job_service.list_jobs(account, opp_slug)
+
+
+async def _save_jobs_snapshot(source_job_id: str | None = None) -> str | None:
+    """Persist the jobs snapshot and manage per-job persistence warnings."""
+    return await job_service.save_snapshot(source_job_id)
 
 
 # ---------------------------------------------------------------------------
@@ -2762,7 +2716,7 @@ async def api_overview():
     returns a safe empty fallback rather than a 500 so the landing page still
     renders.
     """
-    jobs_snapshot = {k: dict(v) for k, v in JOBS.items()}
+    jobs_snapshot = {k: dict(v) for k, v in job_service.jobs.items()}
     try:
         return await asyncio.to_thread(_build_overview, jobs_snapshot)
     except (OSError, ValueError, TypeError) as e:
@@ -3280,16 +3234,16 @@ async def api_transcribe_ask(session_id: str, body: AskLive):
             f"Answer concisely and practically. If it involves Airbyte connectors, "
             f"deployment, or the codebase, use the relevant SE skills / inspect the repo as needed."
         )
-        job_id = uuid.uuid4().hex[:12]
-        JOBS[job_id] = {"status": "running", "ok": None, "stdout": "", "stderr": "",
-                        "skill": "live-ask", "account": account,
-                        "opportunity": opportunity,
-                        "opp_slug": opp_slug, "sig": ("live", session_id, q[:60]),
-                        "started_at": datetime.now(timezone.utc).timestamp()}
-        persist_warn = await _save_jobs_snapshot(job_id)
-        meta = {"account": account, "opp_slug": None, "skill": "live-ask",
-                "opportunity": opportunity}
-        asyncio.create_task(_run_job(job_id, prompt, meta))
+        job_id, persist_warn = await job_service.launch(
+            account=account or "?",
+            opp_slug=None,
+            skill="live-ask",
+            opportunity=opportunity,
+            sig=("live", session_id, q[:60]),
+            prompt=prompt,
+            meta={"account": account or "?", "opp_slug": None, "skill": "live-ask",
+                  "opportunity": opportunity},
+        )
         return {"mode": "deep", "job_id": job_id,
                 **({"persistence_warning": persist_warn} if persist_warn else {})}
 
