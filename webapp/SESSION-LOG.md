@@ -2,7 +2,7 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`, mine = `gyairbyte/SE-Workflow`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: July 14, 2026 — Account and opportunity list readability batch: two-line row hierarchy, running/failed job activity indicators, actionable empty states, and responsive column hiding._
+_Last updated: July 15, 2026 — Team landing page and member directory overview: new `/api/overview` aggregation, summary counts, attention-needed list, recent activity, and member workload cards._
 
 ## What the app is
 Local FastAPI + vanilla-JS UI (no build step) over the SE skills suite. `cd webapp && uv run app.py` → http://127.0.0.1:8787 (needs `CPATH/LIBRARY_PATH` for portaudio on this Mac — see "Run" below). Browse team → member's accounts → an account's opportunities → generated outputs; invoke skills; ask follow-ups on outputs; Live Transcribe a Zoom call with an AI copilot.
@@ -16,6 +16,14 @@ uv run --python 3.11 app.py    # port 8787
 ```
 
 ## Built this session (newest first — see `git log`)
+- **Team landing page and member directory overview batch (July 15).** Replaced the sparse member-card grid with a calm operational overview: summary counts (members, accounts, opportunities, outputs, running jobs, recent failures, outputs awaiting review), a focused **Needs attention** list, compact **Recent activity**, and member directory cards that show each person's account count, output count, running jobs, recent failures, outputs awaiting review, and last activity. Added a new lightweight `/api/overview` endpoint that aggregates existing filesystem output sidecars and persisted `JOBS` in one pass. Added `started_at` to job records so the UI can detect long-running jobs; recovered interrupted jobs keep `finished_at` from load time. Attention items include only objective signals (long-running, failed/interrupted, outputs awaiting review, stale activity) with a clear what/who/when/next-action for each. Empty and quiet states explain what is missing and the next action. The existing Team → Member → Account → Opportunity → Output navigation remains intact. Mapped to `IMPLEMENTATION-PLAN.md` UX-009.
+  - `webapp/app.py`: `started_at` on job creation, `_build_overview`, `/api/overview`, `load_jobs`/`save_jobs` persistence.
+  - `webapp/static/app.js`: overview helpers (`summaryCard`, `overviewAttentionTitle/Subtitle`, `overviewRecentTitle/Subtitle`), rewritten `pageMembers`.
+  - `webapp/static/style.css`: `.overview-section`, `.summary-bar`, `.attention-list`, `.recent-list`, `.member-grid`, `.member-card*` responsive styles.
+  - `webapp/static/index.html`: bumped `app.js?v=` cache-bust.
+  - `IMPLEMENTATION-PLAN.md`: marked UX-008 Completed, added UX-009.
+  - `webapp/README.md` and `webapp/SESSION-LOG.md`: updated descriptions.
+  - Validation: `node --check webapp/static/app.js` passes; `uv run --extra dev pytest eval/ -q` passes; `uv run python -m eval.runner run-suite --manifest-dir eval/manifests/phase1 --executor mock` passes; `./scripts/check-sync.sh` passes; manual browser tests for desktop/narrow/mobile, running/failed jobs, empty/quiet states, and navigation.
 - **Account and opportunity list readability batch (July 14).** Reworked the account list into a calmer two-line row hierarchy: the top line highlights the account name + an activity indicator (running count, failed last run), stage, relative last-updated time, output count, and owner; the second line shows muted secondary metadata (amount, type, close date, AE). Did the same for opportunity rows (name, stage, status, outputs). Added small backend-only change to record `finished_at` on job records so the UI can surface the latest run state without a new endpoint. Improved empty states for no accounts, no opportunities, and no outputs with a clear explanation and a primary next-action button. Responsive breakpoints now hide lower-priority columns progressively while keeping the account/opportunity name and output count visible. Mapped to `IMPLEMENTATION-PLAN.md` UX-008.
   - `webapp/static/app.js`: `activityByAccount`, `activityByOpp`, `renderActivity`, `emptyBox`, `pageMember` row/header/empty rewrite, `pageAccount` job enrichment, `oppRow` two-line layout.
   - `webapp/static/style.css`: `.acct-row` two-line grid, `.acct-cell`, `.activity`, `.pulse`, `.empty-box`, `.opp-row` simplified grid, responsive breakpoints.

@@ -591,13 +591,72 @@ async function accountCrumbs(account) {
   return crumbsArr;
 }
 
+// Format a short label for an overview attention/recent item.
+function overviewSkillLabel(skill) {
+  return prettySkill(skill || "skill").toLowerCase();
+}
+
+function overviewAttentionTitle(item) {
+  const skill = overviewSkillLabel(item.skill);
+  if (item.type === "failure") return `${skill} failed`;
+  if (item.type === "long-running") return `${skill} still running`;
+  if (item.type === "running") return `${skill} running`;
+  if (item.type === "review") return `${skill} needs review`;
+  if (item.type === "stale") return `${esc(item.account)} — no activity`;
+  return skill;
+}
+
+function overviewAttentionSubtitle(item) {
+  const parts = [];
+  if (item.opp_name && item.opp_name !== item.account) parts.push(esc(item.opp_name));
+  if (item.account) parts.push(esc(item.account));
+  if (item.duration_min != null) parts.push(`${item.duration_min} min`);
+  if (item.error) parts.push(esc(item.error));
+  else if (item.status) parts.push(esc(item.status.replace("unvalidated", "needs review")));
+  if (item.when) parts.push(relTime(item.when));
+  return parts.join(" · ");
+}
+
+function overviewRecentTitle(item) {
+  const skill = overviewSkillLabel(item.skill);
+  if (item.type === "output") return `Generated ${skill}`;
+  if (item.type === "job_started") return `Started ${skill}`;
+  if (item.type === "job_done") return `${skill} completed`;
+  if (item.type === "job_error") return `${skill} failed`;
+  if (item.type === "job_recovered") return `${skill} recovered (interrupted)`;
+  return skill;
+}
+
+function overviewRecentSubtitle(item) {
+  const parts = [];
+  if (item.opp_name && item.opp_name !== item.account) parts.push(esc(item.opp_name));
+  if (item.account) parts.push(esc(item.account));
+  if (item.filename) parts.push(esc(item.filename));
+  if (item.when) parts.push(relTime(item.when));
+  return parts.join(" · ");
+}
+
+function summaryCard(value, label, level = "neutral") {
+  return `<div class="summary-item${level ? " summary-item--" + level : ""}">
+    <span class="summary-value">${esc(String(value ?? "—"))}</span>
+    <span class="summary-label">${esc(label)}</span>
+  </div>`;
+}
+
 // ---- Page: members --------------------------------------------------------
 async function pageMembers() {
   setCrumbs([{ label: "Team" }]);
-  const members = await api("/api/members");
+  const data = await api("/api/overview").catch(() => null);
+  const fallbackMembers = await api("/api/members").catch(() => []);
+  const members = data?.members || fallbackMembers.map((m) => ({ ...m, account_count: 0, output_count: 0, running_jobs: 0, recent_failures: 0, needs_review: 0, last_activity_ts: 0 }));
+  const summary = data?.summary || {};
+  const attention = data?.attention || [];
+  const recent = data?.recent || [];
+  const empty = data?.empty || {};
+
   view.innerHTML = `
     <div class="row">
-      <div><h1>Solutions Team</h1><p class="sub">Pick a team member to see their accounts.</p></div>
+      <div><h1>Solutions Team</h1><p class="sub">Operational overview — where work is happening now.</p></div>
       <button class="primary small" id="add-member-btn">+ Add Team Member</button>
     </div>
     <div id="add-member-form" class="add-member-form hidden">
@@ -607,19 +666,89 @@ async function pageMembers() {
       <button class="primary small" id="m-save">Add</button>
       <button class="ghost small" id="m-cancel">Cancel</button>
     </div>
-    <div class="grid">
-      ${members.map((m) => `
-        <a class="card" href="#/member/${encodeURIComponent(m.id)}">
-          <h3>${esc(m.name)}</h3>
-          <div class="meta">${esc(m.role || "")}${m.email ? " · " + esc(m.email) : ""}</div>
-        </a>`).join("")}
-    </div>`;
+
+    <div class="summary-bar">
+      ${summaryCard(summary.members ?? members.length, "Members")}
+      ${summaryCard(summary.active_accounts, "Accounts")}
+      ${summaryCard(summary.opportunities, "Opportunities")}
+      ${summaryCard(summary.outputs, "Outputs")}
+      ${summaryCard(summary.running_jobs, "Running", summary.running_jobs ? "info" : "neutral")}
+      ${summaryCard(summary.recent_failures, "Failed", summary.recent_failures ? "error" : "neutral")}
+      ${summaryCard(summary.needs_review, "Needs review", summary.needs_review ? "warn" : "neutral")}
+    </div>
+
+    <section class="overview-section">
+      <h2>Needs attention</h2>
+      <div id="attention-list" class="attention-list">
+        ${empty.attention ? emptyBox({ icon: "✓", title: "Nothing needs attention", body: "No running jobs, recent failures, or outputs awaiting review." }) : attention.map((item) => `
+          <a class="attention-item attention-item--${item.level}" href="${esc(item.href)}">
+            <span class="attention-dot" aria-hidden="true"></span>
+            <span class="attention-main">
+              <span class="attention-title">${overviewAttentionTitle(item)}</span>
+              <span class="attention-sub">${overviewAttentionSubtitle(item)}</span>
+            </span>
+            <span class="attention-when" title="${fullDate(item.when)}">${item.when ? relTime(item.when) : ""}</span>
+          </a>`).join("")}
+      </div>
+    </section>
+
+    <section class="overview-section">
+      <h2>Recent activity</h2>
+      <div id="recent-list" class="recent-list">
+        ${empty.recent ? emptyBox({ icon: "⊘", title: "No recent activity", body: "Run a skill or generate an output to see activity here." }) : recent.map((item) => `
+          <div class="recent-item">
+            <span class="recent-dot recent-dot--${item.type.startsWith("job_error") ? "error" : (item.type === "output" && item.needs_review ? "warn" : (item.type.startsWith("job") ? "info" : "neutral"))}" aria-hidden="true"></span>
+            <span class="recent-main">
+              <span class="recent-title">${overviewRecentTitle(item)}</span>
+              <span class="recent-sub">${overviewRecentSubtitle(item)}</span>
+            </span>
+            <a class="ghost small" href="${esc(item.href)}">Open</a>
+          </div>`).join("")}
+      </div>
+    </section>
+
+    <section class="overview-section">
+      <h2>Team members</h2>
+      ${empty.members ? emptyBox({ icon: "⊘", title: "No team members", body: "Add a team member to get started.", actions: `<button class="primary small" id="empty-add-member">Add team member</button>` }) : ""}
+      <div class="member-grid" id="member-grid">
+        ${members.map((m) => {
+          const meta = [m.role, m.email].filter(Boolean).join(" · ");
+          const last = m.last_activity_ts ? relTime(m.last_activity_ts) : (m.last_output ? relTime(m.last_output.mtime) : "no activity");
+          const lastTitle = m.last_activity_ts ? fullDate(m.last_activity_ts) : (m.last_output ? fullDate(m.last_output.mtime) : "");
+          return `
+          <a class="member-card" href="#/member/${encodeURIComponent(m.id)}">
+            <div class="member-card-main">
+              <h3>${esc(m.name)}</h3>
+              <div class="meta">${meta ? esc(meta) : "&nbsp;"}</div>
+            </div>
+            <div class="member-card-stats">
+              <span class="stat"><strong>${m.account_count || 0}</strong> accounts</span>
+              <span class="stat"><strong>${m.output_count || 0}</strong> outputs</span>
+              ${m.running_jobs ? `<span class="stat stat--info"><strong>${m.running_jobs}</strong> running</span>` : ""}
+              ${m.recent_failures ? `<span class="stat stat--error"><strong>${m.recent_failures}</strong> failed</span>` : ""}
+              ${m.needs_review ? `<span class="stat stat--warn"><strong>${m.needs_review}</strong> review</span>` : ""}
+            </div>
+            <div class="member-card-activity" title="${esc(lastTitle)}">Last activity ${esc(last)}</div>
+          </a>`;
+        }).join("")}
+      </div>
+    </section>
+
+    ${empty.accounts ? `<section class="overview-section">${emptyBox({ icon: "⊘", title: "No accounts yet", body: "Sync from Salesforce or add an account manually to start tracking work.", actions: `<button class="primary small" id="empty-add-account">Add account</button>` })}</section>` : ""}`;
 
   const form = document.getElementById("add-member-form");
-  document.getElementById("add-member-btn").onclick = () => {
+  const addBtn = document.getElementById("add-member-btn");
+  const emptyAddMember = document.getElementById("empty-add-member");
+  const emptyAddAccount = document.getElementById("empty-add-account");
+
+  const toggleForm = () => {
     form.classList.toggle("hidden");
     if (!form.classList.contains("hidden")) document.getElementById("m-name").focus();
   };
+  addBtn.onclick = toggleForm;
+  if (emptyAddMember) emptyAddMember.onclick = toggleForm;
+  if (emptyAddAccount) emptyAddAccount.onclick = () => location.hash = `#/member/me`;
+
   document.getElementById("m-cancel").onclick = () => form.classList.add("hidden");
   document.getElementById("m-save").onclick = async () => {
     const name = document.getElementById("m-name").value.trim();
