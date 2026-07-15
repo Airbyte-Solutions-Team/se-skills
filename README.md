@@ -29,7 +29,7 @@ Built by Gary Yang (Solutions Engineer, Airbyte). Designed to be team-shareable.
 | `coverage-handoff` | PTO coverage handoff — self-contained HTML page for a covering SE | "coverage handoff", "PTO handoff for X" |
 | `pov-gsheet` | Create and pre-fill a POV Success Criteria Google Sheet for a prospect | "POV sheet", "success criteria for X", "prep the POV" |
 
-Plus the shared reference (not a skill): **`_se-playbook.md`** — the SE-craft canon all skills read from.
+Plus the shared reference (not a skill): **`_se-playbook.md`** — the SE-craft canon all skills read from. It now also contains a `Shared Skill Boilerplate` section (`Output format reference`, `Pre-flight source check`, `After Generating (saving skills)`) that individual `SKILL.md` files reference instead of duplicating.
 
 ### Local web app (optional)
 

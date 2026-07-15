@@ -18,9 +18,7 @@ The user will provide one or more of:
 
 **This skill requires at least one customer transcript to run.** MEDDPICC scoring is synthesis of what the customer said — without a transcript, the output is hypothesis, not qualification.
 
-Before doing anything else, check:
-1. `{transcripts_dir}/` (per playbook → Workspace Paths) for files matching the customer
-2. If none local, check Gong (14-day window for existing customer, 7-day for new prospect per `_se-playbook.md` Source Freshness Check)
+Before doing anything else, run the pre-flight source check per `_se-playbook.md` → Shared Skill Boilerplate → Pre-flight source check (qualification and synthesis skills).
 
 **If zero transcripts exist in either location: REFUSE TO RUN.** Output:
 > "Cannot generate biz-qual for [Customer] — zero transcripts available. MEDDPICC scoring requires customer voice, not hypotheses. Recommend: run `prep-call` to plan the first discovery call, then re-run `biz-qual` after the transcript is saved."
@@ -39,7 +37,7 @@ If user signals brief mode (`--brief`, `quick qual`, `qual summary`): produce ju
 
 ## Output Format
 
-Document structure follows `_se-playbook.md` → Output Document Format (At-a-Glance + Jump-to index, H2-per-section, callouts, `==key==` emphasis).
+Document structure follows `_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---
 
@@ -345,27 +343,18 @@ If you can't fill layer 3, pain isn't fully identified.
 
 ## After Generating
 
-### Auto-save (default)
-
-Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save to:
+### Auto-save path
+Per `_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save to:
 ```
 {customers_dir}/<Customer>/outputs/biz-qual/biz-qual-<YYYY-MM-DD>-<Descriptor>.md
 ```
 
-Filename example: `biz-qual-2026-05-28-Post-Tech-Call.md`. Create folders if missing. Append `-v2` etc. for same-day duplicates. User can suppress with `--no-save`.
-
-Per `_se-playbook.md` "Date format inside documents", write dates in the document body — the H1/title line especially, plus headers and prose — in long form (`June 11, 2026`), not the numeric `2026-06-11`. The numeric `YYYY-MM-DD` stays only in the filename.
+Filename example: `biz-qual-2026-05-28-Post-Tech-Call.md`.
 
 ### Source Coverage
-
-Include a Source Coverage section at the top reporting transcripts read (with line counts), prior biz-qual docs (for movement comparison), memory records, and any other inputs.
-
-### SE Identity
-
-Read `config_file` (per playbook → Workspace Paths) for the `[SE name]` field.
+Include a Source Coverage section reporting transcripts read (with line counts), prior biz-qual docs (for movement comparison), memory records, and any other inputs.
 
 ### Then ask which other artifacts to update
-
 1. **Mirror to Notion** under the customer's parent page
 2. **Update memory** — if MEDDPICC scoring surfaced a material change (Champion confirmed, EB identified, deal-killer competitor discovered, etc.), propose adding/updating a project memory. Don't update for incremental progress — only material status shifts.
 

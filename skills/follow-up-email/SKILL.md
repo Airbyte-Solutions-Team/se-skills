@@ -202,25 +202,21 @@ Every email must pass these tests (from the canonical voice rules below):
 
 Exempt from the Output Document Format contract (see `_se-playbook.md`) — this is a customer email, so no At-a-Glance, Jump-to, TOC headings, or callouts.
 
-### Auto-save (default)
-
-Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save drafted emails to:
+### Auto-save path
+Per `_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save drafted emails to:
 ```
 {customers_dir}/<Customer>/outputs/emails/email-<YYYY-MM-DD>-<purpose>.md
 ```
 
-Filename examples: `email-2026-05-28-Recap.md`, `email-2026-05-28-Nudge.md`, `email-2026-05-28-Issue-403-Secret.md` (purpose descriptor in Title Case per `_se-playbook.md`). User can suppress with `--no-save`. Any date written in the email body (e.g. an action-item due date in prose) should be long form, e.g. June 11, 2026 — not 2026-06-11.
+Filename examples: `email-2026-05-28-Recap.md`, `email-2026-05-28-Nudge.md`, `email-2026-05-28-Issue-403-Secret.md` (purpose descriptor in Title Case per `_se-playbook.md`).
 
 ### Source Coverage
-
 Include a Source Coverage section at the top: which call summary, transcript, or notes were used to ground the email content.
 
 ### SE Identity
-
 Sign-off uses the `name` from `config_file` (per playbook → Workspace Paths). Don't hardcode "Gary".
 
 ### Sending
-
 Never send via Gmail MCP unless the user explicitly says "send it." Default is draft to disk + chat output only.
 
 ---

@@ -57,7 +57,7 @@ If user signals brief mode (`--brief`, `quick prep`, `1-pager`, `short version`)
 
 ## Output Format
 
-Document structure follows `_se-playbook.md` → Output Document Format (H1 title → At a Glance → Jump-to index → Source Coverage → H2 body sections, callouts, `==key==` emphasis). Produce a structured call prep brief with the following sections:
+Document structure follows `_se-playbook.md` → Shared Skill Boilerplate → Output format reference. Produce a structured call prep brief with the following sections:
 
 ---
 
@@ -305,21 +305,15 @@ Don't end prep with "follow up next week." Write the specific next-step you'll p
 
 ## After Generating
 
-### Auto-save (default)
-
-Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save the prep doc automatically to:
+### Auto-save path
+Per `_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save the prep doc automatically to:
 ```
 {customers_dir}/<Customer>/outputs/call-prep/call-prep-<YYYY-MM-DD>-<Descriptor>.md
 ```
 
-Filename example: `call-prep-2026-05-28-Tech-Discovery.md`. Create folders if missing. Append `-v2` etc. if same-day duplicate.
-
-Filename rules (per `_se-playbook.md` "Filename format"): keep the numeric `YYYY-MM-DD` prefix (sorting), and make the `<Descriptor>` **Title Case**, single-concept. Inside the document, write dates in long form (`June 11, 2026`) per "Date format inside documents".
-
-User can suppress with `--no-save`.
+Filename example: `call-prep-2026-05-28-Tech-Discovery.md`.
 
 ### Source Coverage Reporting
-
 Include a Source Coverage section at the top of the output stating:
 - AE Gong transcript: file path + line count read (if applicable)
 - Local notes consulted: file names
@@ -329,7 +323,6 @@ Include a Source Coverage section at the top of the output stating:
 Per `_se-playbook.md` "Source Coverage Transparency" rule.
 
 ### SE Identity
-
 Read `config_file` (per playbook → Workspace Paths) to populate the `[SE name]` field in headers and the Upfront Contract opener. If the config doesn't exist, ask the user once and recommend they create it.
 
 ---

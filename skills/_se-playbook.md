@@ -879,6 +879,33 @@ Full unless brief is requested.
 
 ---
 
+## Shared Skill Boilerplate
+
+The fragments below are referenced from multiple `SKILL.md` files. When a skill-specific instruction conflicts with a shared rule, the skill-specific instruction takes precedence and the exception should be explicit.
+
+### Output format reference
+
+Saving skills produce a Markdown document that follows the shared `Output Document Format` above: top-of-document title/meta line, `### At a Glance`, `**Jump to:**` index, `##` body sections, and a final `## Source Coverage` audit section. Use callouts (`[!verdict]`, `[!risk]`, `[!blocker]`, `[!info]`) only for genuinely decision-relevant moments, wrap 3–6 key figures in `==…==`, and keep `Source Coverage` at the bottom.
+
+### Pre-flight source check (qualification and synthesis skills)
+
+Before synthesizing or qualifying, check:
+1. `{transcripts_dir}/` (per `Workspace Paths`) for files matching the customer.
+2. If none are local, check Gong — 14-day window for an existing customer, 7-day window for a new prospect (see `Source Freshness Check`).
+
+If zero transcripts exist and the skill requires customer voice, refuse to run and recommend the right first step.
+
+### After Generating (saving skills)
+
+After producing the output, follow these defaults unless the skill contract says otherwise:
+
+1. **Auto-save (default).** Save to the skill's `outputs/<skill-name>/` folder under `{customers_dir}/<Customer>/`. Use filename `<skill-name>-<YYYY-MM-DD>-<Descriptor>[-vN].md`. Create folders if missing. Append `-v2`, `-v3`, etc. for same-day duplicates. The user can suppress the file write with `--no-save`; the response still goes to chat.
+2. **Dates.** Write dates in the document body (H1, headers, prose) in long form (`June 11, 2026`). Keep the numeric `YYYY-MM-DD` prefix in filenames for chronological sort.
+3. **Source Coverage.** Include a `## Source Coverage` section as the **last content section**. List files read, transcripts summarized, tools used or unavailable, and memory consulted. See `Source Coverage Transparency`.
+4. **SE Identity.** Read `config_file` (per `Workspace Paths`) for `[SE name]` / attribution fields. Never hardcode an individual's name.
+
+---
+
 ## Deferred Future Skills
 
 Skills considered but not built yet. Add when the need is concrete enough to justify the scaffold.

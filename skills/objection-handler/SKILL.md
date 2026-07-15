@@ -129,23 +129,20 @@ A confidently-wrong product fact costs more trust than a hedge.
 
 ## After Generating
 
-### Auto-save (default, customer-specific only)
-
-If a customer was named, save the talk track to:
+### Auto-save path
+Per `_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), if a customer was named, save the talk track to:
 ```
 {customers_dir}/<Customer>/outputs/objection-handler/objection-<YYYY-MM-DD>-<category>.md
 ```
 
-Filename example: `objection-2026-05-28-Data-Residency.md` (category descriptor in Title Case per `_se-playbook.md`). User can suppress with `--no-save`. Any date written in the doc body (headers/prose) should be long form, e.g. June 11, 2026 — not 2026-06-11.
+Filename example: `objection-2026-05-28-Data-Residency.md` (category descriptor in Title Case per `_se-playbook.md`).
 
 For abstract objections (no customer named), don't auto-save — output to chat only.
 
 ### Source Coverage
-
-If customer-specific: include Source Coverage noting which transcripts, memory, and prior objection-playbook entries were checked.
+If customer-specific: include Source Coverage noting which transcripts, memory, and prior objection-playbook entries were checked. (See `_se-playbook.md` → Source Coverage Transparency.)
 
 ### Then offer to
-
 1. **Add to customer Notion Q&A page** as a yellow callout (question) + green callout (answer)
 2. **Append to personal objection playbook** at `{notes_dir}/objection-playbook.md` (for cross-customer pattern tracking)
 3. **Draft an email response** (invoke `follow-up-email` skill)

@@ -17,9 +17,7 @@ The user provides a customer/account name (and optionally deal context). Everyth
 
 **This wrapper requires at least one customer transcript.** Both underlying skills refuse without customer voice, so there's nothing to run.
 
-Before doing anything else, check:
-1. `{transcripts_dir}/` (per playbook → Workspace Paths) for files matching the customer
-2. If none local, check Gong (14-day window for existing customer, 7-day for new prospect per `_se-playbook.md` Source Freshness Check)
+Before doing anything else, run the pre-flight source check per `_se-playbook.md` → Shared Skill Boilerplate → Pre-flight source check (qualification and synthesis skills).
 
 **If zero transcripts exist: REFUSE TO RUN.** Output:
 > "Cannot run full-qual for [Customer] — zero transcripts available. Both qualification skills require customer voice. Recommend: run `prep-call` to plan the first discovery call, then re-run `full-qual` after the transcript is saved."

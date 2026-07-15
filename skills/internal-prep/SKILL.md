@@ -71,7 +71,7 @@ If user signals brief mode (`--brief`, `quick prep`, `bullet points only`): prod
 
 ## Output Format — Varies by Meeting Type
 
-Document structure follows `_se-playbook.md` → Output Document Format (H1 title → At a Glance → Jump-to index → H2 body sections, callouts, `==key==` emphasis) — applied per mode template below. In every template, write the `[Date]` in the title/headers and any prose dates in long form per `_se-playbook.md`, e.g. June 11, 2026 — not 2026-06-11. (Filenames keep the numeric `YYYY-MM-DD` prefix.)
+Document structure follows `_se-playbook.md` → Shared Skill Boilerplate → Output format reference — applied per mode template below. In every template, write the `[Date]` in the title/headers and any prose dates in long form per `_se-playbook.md`, e.g. June 11, 2026 — not 2026-06-11. (Filenames keep the numeric `YYYY-MM-DD` prefix.)
 
 ### Type: `ae-sync`
 
@@ -264,9 +264,8 @@ Don't invent a separate probability scale for forecasting. The deal-assessment b
 
 ## After Generating
 
-### Auto-save (default)
-
-Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule:
+### Auto-save path
+Per `_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills):
 
 For single-customer prep (ae-sync, exec-readout, deal-review):
 ```
@@ -278,18 +277,10 @@ For multi-customer forecast:
 {notes_dir}/forecast-prep-<YYYY-MM-DD>.md
 ```
 
-User can suppress with `--no-save`.
-
 ### Source Coverage
-
 Include a Source Coverage section reporting which customer folders, qual docs, transcripts, and memory records were consulted for each customer in scope.
 
-### SE Identity
-
-Read `config_file` (per playbook → Workspace Paths) for the `[SE name]` and similar fields. Important for productionization — different team members will run this skill on the same customer.
-
 ### Then offer to
-
 1. **Reformat for Slack** — same content, Slack-friendly markdown for posting in #ae-channels
 2. **Generate an exec slide** — if exec-readout type, offer to draft a 1-slide deck outline
 

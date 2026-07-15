@@ -63,7 +63,7 @@ If user signals brief mode (`--brief`, `quick POC plan`, `POC summary`): produce
 
 ## Output Format
 
-Document structure follows `_se-playbook.md` → Output Document Format (H1 title → At a Glance → Jump-to index → Source Coverage → H2 body sections, callouts, `==key==` emphasis).
+Document structure follows `_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---
 
@@ -292,23 +292,16 @@ When designing the POC, identify the *story* the data will tell at the results r
 
 ## After Generating
 
-### Auto-save (default)
-
-Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save to:
+### Auto-save path
+Per `_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save to:
 ```
 {customers_dir}/<Customer>/outputs/poc-plan/poc-plan-<YYYY-MM-DD>-<Descriptor>.md
 ```
 
-Create folders if missing. Append `-v2` etc. for same-day duplicates. User can suppress with `--no-save`.
-
-Per `_se-playbook.md` "Date format inside documents", write dates in the document body — the H1/title line especially, plus headers and prose — in long form (`June 11, 2026`), not the numeric `2026-06-11`. The numeric `YYYY-MM-DD` stays only in the filename.
-
 ### Source Coverage
-
 Include a Source Coverage section at the top reporting prior qual docs read, transcripts referenced (line counts), and any external context pulled.
 
 ### SE Identity
-
 Read `config_file` (per playbook → Workspace Paths) for the `[SE name]` field in the SE owner row.
 
 ---

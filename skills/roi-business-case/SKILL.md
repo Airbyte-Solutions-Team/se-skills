@@ -70,7 +70,7 @@ If ≥3 of these are unknown, say so prominently — the case will be directiona
 
 ## Output Format
 
-Document structure follows `_se-playbook.md` → Output Document Format (H1 → At a Glance → Jump-to → Source Coverage → H2 body, callouts, `==key==` emphasis).
+Document structure follows `_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---
 
@@ -184,24 +184,16 @@ Per `_se-playbook.md`: if the most-recent local transcript is >14 days old, chec
 
 ## After Generating
 
-### Auto-save (default)
-
-Per `_se-playbook.md` "Output Persistence (Auto-Save)", save to:
+### Auto-save path
+Per `_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save to:
 ```
 {customers_dir}/<Customer>/outputs/roi-business-case/roi-business-case-<YYYY-MM-DD>-<Descriptor>.md
 ```
-Append `-v2` etc. for same-day duplicates. User can suppress with `--no-save`.
 
 ### Source Coverage
-
 Include a Source Coverage section reporting: biz-qual Metrics read, transcripts referenced (line counts), which discovery inputs are customer-confirmed vs. [confirm], and the pricing-reference date.
 
-### SE Identity
-
-Read `config_file` (per playbook → Workspace Paths) for the `[SE name]` field.
-
 ### Then offer to
-
 1. **Draft the EB email** wrapping the one-slide summary (invoke `follow-up-email`)
 2. **Feed the payback framing into `poc-plan`** success criteria (prove the metric that drives the number)
 3. **Update biz-qual Metrics** if the case surfaced firmer numbers than the scorecard has

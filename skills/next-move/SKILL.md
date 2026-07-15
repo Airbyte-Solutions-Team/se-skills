@@ -301,26 +301,23 @@ Any stage + objection raised on most recent call
 
 ## After Generating
 
-### Auto-save (default)
-
-Save the routing recommendation as an output file so it shows up in the web app's Generated Outputs (and the completion toast can deep-link to it). Per `_se-playbook.md` "Output Persistence (Auto-Save)", write to:
+### Auto-save path
+Per `_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save the routing recommendation as an output file so it shows up in the web app's Generated Outputs (and the completion toast can deep-link to it). Write to:
 ```
 {customers_dir}/<Customer>/outputs/next-move/next-move-<YYYY-MM-DD>.md
 ```
+
 When invoked for a specific opportunity, save under that opp's folder instead:
 ```
 {customers_dir}/<Customer>/opportunities/<opp-slug>/outputs/next-move/next-move-<YYYY-MM-DD>.md
 ```
-Append `-v2` etc. for same-day re-runs. User can suppress with `--no-save`.
 
 > **Why this changed (2026-07-01):** next-move was previously chat-only/ephemeral. In the web app that meant an invoke finished but produced **no file** — the recommendation "disappeared" with nothing in Generated Outputs to open. Saving a dated file fixes that; the doc is still a point-in-time read (it's a snapshot of the workflow state when generated, not a living artifact — the dated filename makes its staleness obvious).
 
 ### Source Coverage
-
 Fill in the **Source Coverage** section at the bottom of the template: artifact inventory (filenames + dates), transcript line counts (with explicit "read in full" vs. "metadata only" per the Read-Depth Contract above), memory records read. It's the last section by design — the reader collapses it (audit trail, not the lead).
 
 ### Then ask the user
-
 1. **Invoke the #1 recommended skill** now (chain into it)
 2. **Nothing more** — user just wanted the read
 

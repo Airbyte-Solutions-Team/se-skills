@@ -38,7 +38,7 @@ Apply **Source Coverage transparency** (report what you read) and **assertive SF
 
 ## Output Format
 
-Keep it to ~1 page. This is a briefing, not a report. Document structure follows `_se-playbook.md` → Output Document Format.
+Keep it to ~1 page. This is a briefing, not a report. Document structure follows `_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---
 
@@ -106,17 +106,21 @@ If user signals brief mode (`--brief`, `just the gist`, `one-liner`): produce on
 
 ## After Generating
 
-### Auto-save (default)
-Per `_se-playbook.md` "Output Persistence (Auto-Save)" rule, save to:
+### Auto-save path
+Per `_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save to:
 ```
 {customers_dir}/<Customer>/outputs/account-refresher/account-refresher-<YYYY-MM-DD>.md
 ```
-Append `-v2` etc. for same-day duplicates. User can suppress with `--no-save`.
 
 *Note: refreshers go stale fast (like router output). Auto-save is on for record-keeping, but don't treat a saved refresher as current days later — re-run it.*
 
-### SE Identity
-Read `config_file` for the `[SE name]` / attribution where relevant.
+### Source Coverage
+Per `_se-playbook.md` → Source Coverage Transparency.
+
+### Then what
+Read `~/.claude/skills/_se-playbook.md` for source-reading pattern, SFDC field map, freshness rules, and output conventions.
+
+---
 
 ## SE Best Practices Applied
 
