@@ -601,7 +601,8 @@ function overviewAttentionTitle(item) {
   if (item.type === "failure") return `${skill} failed`;
   if (item.type === "long-running") return `${skill} still running`;
   if (item.type === "running") return `${skill} running`;
-  if (item.type === "review") return `${skill} needs review`;
+  if (item.type === "attention") return `${skill} needs attention`;
+  if (item.type === "review") return `${skill} awaiting review`;
   if (item.type === "stale") return `${esc(item.account)} — no activity`;
   return skill;
 }
@@ -612,7 +613,7 @@ function overviewAttentionSubtitle(item) {
   if (item.account) parts.push(esc(item.account));
   if (item.duration_min != null) parts.push(`${item.duration_min} min`);
   if (item.error) parts.push(esc(item.error));
-  else if (item.status) parts.push(esc(item.status.replace("unvalidated", "needs review")));
+  else if (item.status) parts.push(esc(item.status));
   if (item.when) parts.push(relTime(item.when));
   return parts.join(" · ");
 }
@@ -648,7 +649,7 @@ async function pageMembers() {
   setCrumbs([{ label: "Team" }]);
   const data = await api("/api/overview").catch(() => null);
   const fallbackMembers = await api("/api/members").catch(() => []);
-  const members = data?.members || fallbackMembers.map((m) => ({ ...m, account_count: 0, output_count: 0, running_jobs: 0, recent_failures: 0, needs_review: 0, last_activity_ts: 0 }));
+  const members = data?.members || fallbackMembers.map((m) => ({ ...m, account_count: 0, output_count: 0, running_jobs: 0, recent_failures: 0, needs_attention: 0, last_activity_ts: 0 }));
   const summary = data?.summary || {};
   const attention = data?.attention || [];
   const recent = data?.recent || [];
@@ -674,13 +675,13 @@ async function pageMembers() {
       ${summaryCard(summary.outputs, "Outputs")}
       ${summaryCard(summary.running_jobs, "Running", summary.running_jobs ? "info" : "neutral")}
       ${summaryCard(summary.recent_failures, "Failed", summary.recent_failures ? "error" : "neutral")}
-      ${summaryCard(summary.needs_review, "Needs review", summary.needs_review ? "warn" : "neutral")}
+      ${summaryCard(summary.needs_attention, "Needs attention", summary.needs_attention ? "warn" : "neutral")}
     </div>
 
     <section class="overview-section">
       <h2>Needs attention</h2>
       <div id="attention-list" class="attention-list">
-        ${empty.attention ? emptyBox({ icon: "✓", title: "Nothing needs attention", body: "No running jobs, recent failures, or outputs awaiting review." }) : attention.map((item) => `
+        ${empty.attention ? emptyBox({ icon: "✓", title: "Nothing needs attention", body: "No running jobs, recent failures, or outputs needing attention." }) : attention.map((item) => `
           <a class="attention-item attention-item--${item.level}" href="${esc(item.href)}">
             <span class="attention-dot" aria-hidden="true"></span>
             <span class="attention-main">
@@ -697,7 +698,7 @@ async function pageMembers() {
       <div id="recent-list" class="recent-list">
         ${empty.recent ? emptyBox({ icon: "⊘", title: "No recent activity", body: "Run a skill or generate an output to see activity here." }) : recent.map((item) => `
           <div class="recent-item">
-            <span class="recent-dot recent-dot--${item.type.startsWith("job_error") ? "error" : (item.type === "output" && item.needs_review ? "warn" : (item.type.startsWith("job") ? "info" : "neutral"))}" aria-hidden="true"></span>
+            <span class="recent-dot recent-dot--${item.type.startsWith("job_error") ? "error" : (item.type === "output" && item.needs_attention ? "warn" : (item.type.startsWith("job") ? "info" : "neutral"))}" aria-hidden="true"></span>
             <span class="recent-main">
               <span class="recent-title">${overviewRecentTitle(item)}</span>
               <span class="recent-sub">${overviewRecentSubtitle(item)}</span>
@@ -726,7 +727,7 @@ async function pageMembers() {
               <span class="stat"><strong>${m.output_count || 0}</strong> outputs</span>
               ${m.running_jobs ? `<span class="stat stat--info"><strong>${m.running_jobs}</strong> running</span>` : ""}
               ${m.recent_failures ? `<span class="stat stat--error"><strong>${m.recent_failures}</strong> failed</span>` : ""}
-              ${m.needs_review ? `<span class="stat stat--warn"><strong>${m.needs_review}</strong> review</span>` : ""}
+              ${m.needs_attention ? `<span class="stat stat--warn"><strong>${m.needs_attention}</strong> needs attention</span>` : ""}
             </div>
             <div class="member-card-activity" title="${esc(lastTitle)}">Last activity ${esc(last)}</div>
           </a>`;
