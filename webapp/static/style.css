@@ -67,16 +67,32 @@ body:has(.doc-layout) .bar { max-width: 1500px; }
 .acct-row:last-child { border-bottom: none; }
 .acct-row:not(.acct-head):hover { background: var(--panel-hover); }
 
-/* the clickable main area = a 9-column grid so everything lines up:
-   Account | Stage | Amount | Close Date | Type | AE | Updated | Outputs | Owner */
+/* the clickable main area = a 5-column grid with two-line cells:
+   Account | Stage | Updated | Outputs | Owner */
 .acct-row-main {
   flex: 1; display: grid;
-  /* Account | Stage | Amount | Close | Type | AE | Updated | Outputs | Owner
-     — sized to fit ~930px so Owner stays inside the row box (was overflowing). */
-  grid-template-columns: minmax(120px, 1.3fr) 110px 78px 92px minmax(96px, 1fr) minmax(96px, 1.1fr) 86px 58px 74px;
-  align-items: center; gap: 10px;
-  padding: 14px 16px; text-decoration: none; color: inherit; min-width: 0;
+  grid-template-columns: minmax(180px, 2fr) 110px 100px 70px 90px;
+  align-items: start; gap: 12px;
+  padding: 13px 16px; text-decoration: none; color: inherit; min-width: 0;
 }
+
+.acct-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.acct-cell .acct-sub { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acct-cell-main { gap: 3px; }
+.acct-name-wrap { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.acct-name { font-weight: 600; font-size: 15px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acct-cell-stage { align-items: flex-start; }
+.acct-stage { font-size: 14px; color: var(--text); }
+.acct-updated { font-size: 13px; color: var(--text); }
+.acct-out-count { font-size: 13px; font-weight: 600; }
+
+/* activity status chips */
+.activity { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.activity--running { color: var(--accent2); }
+.activity--error { color: var(--danger); }
+.activity--small { font-size: 11px; }
+.pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--accent2); animation: pulse 1.4s infinite; }
+@keyframes pulse { 0% { opacity: 1; transform: scale(1); } 50% { opacity: .4; transform: scale(.85); } 100% { opacity: 1; transform: scale(1); } }
 
 /* expand chevron on the far right — reveals the opportunity drawer */
 .acct-expand { flex: 0 0 40px; background: transparent; border: none; color: var(--muted); font-size: 15px; cursor: pointer; padding: 8px; border-radius: 6px; transition: transform .15s ease, color .15s ease; }
@@ -87,13 +103,8 @@ body:has(.doc-layout) .bar { max-width: 1500px; }
 .opp-drawer.hidden { display: none; }
 .opp-drawer-loading { padding: 12px 0; font-size: 13px; color: var(--muted); }
 .acct-row-main.no-link { cursor: default; }
-.acct-name { font-weight: 600; font-size: 15px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .acct-col { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .acct-col .muted { color: var(--muted); }
-.col-amount { text-align: right; font-variant-numeric: tabular-nums; }
-.col-close { font-variant-numeric: tabular-nums; }
-.col-outputs { text-align: center; }
-.col-owner { text-align: right; }
 /* closed opportunities (won or lost) show their stage in red */
 .stage-closed { color: var(--danger); font-weight: 600; }
 .badge.badge-closed { color: var(--danger); border-color: var(--danger); }
@@ -105,11 +116,10 @@ body:has(.doc-layout) .bar { max-width: 1500px; }
 /* header row */
 .acct-head { background: var(--panel2); border-radius: 12px 12px 0 0; }
 .acct-head .acct-row-main { padding-top: 11px; padding-bottom: 11px; }
-.acct-head .acct-name, .acct-head .acct-col {
+.acct-head .acct-cell {
   font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: var(--muted);
+  white-space: normal; overflow: visible; line-height: 1.25;
 }
-/* let header labels wrap instead of truncating (e.g. "Account Executive") */
-.acct-head .acct-col { white-space: normal; overflow: visible; line-height: 1.25; }
 .sortable { cursor: pointer; user-select: none; }
 .sortable:hover { color: var(--text); }
 .acct-row.is-archived { opacity: .65; }
@@ -155,20 +165,22 @@ body:has(.doc-layout) .bar { max-width: 1500px; }
 .opp-list { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--panel); }
 .opp-row {
   display: grid;
-  grid-template-columns: minmax(180px, 2fr) 150px 120px 120px 120px 90px 80px;
-  align-items: center; gap: 14px;
+  grid-template-columns: minmax(180px, 2fr) 100px 90px 70px;
+  align-items: start; gap: 14px;
   padding: 13px 18px; text-decoration: none; color: inherit;
   border-bottom: 1px solid var(--line);
 }
 .opp-row:last-child { border-bottom: none; }
 .opp-row:not(.opp-row-head):hover { background: var(--panel-hover); }
 .opp-row.no-link { cursor: default; }
+.opp-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.opp-name-wrap { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .opp-row-name { font-weight: 600; font-size: 14px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.opp-row-col { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.opp-row-amount { text-align: right; font-variant-numeric: tabular-nums; }
-.opp-row-outputs { text-align: center; }
+.opp-row-sub { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.opp-stage { font-size: 13px; color: var(--text); }
+.opp-out-count { font-size: 13px; font-weight: 600; }
 .opp-row-head { background: var(--panel2); }
-.opp-row-head .opp-row-name, .opp-row-head .opp-row-col {
+.opp-row-head .opp-cell {
   font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: var(--muted);
 }
 /* inside the expand drawer the rows are lighter / tighter */
@@ -177,30 +189,34 @@ body:has(.doc-layout) .bar { max-width: 1500px; }
 /* Responsive table prioritization — hide lower-value columns on narrow viewports
    so the remaining fields stay readable without redesigning the row layout. */
 @media (max-width: 1100px) {
-  .acct-row-main { grid-template-columns: minmax(120px, 1.3fr) 110px 78px 92px 86px 58px 74px; }
-  .acct-row-main .col-type, .acct-row-main .col-ae { display: none; }
-  .opp-row { grid-template-columns: minmax(180px, 2fr) 150px 120px 90px 80px; }
-  .opp-row .opp-row-type, .opp-row .opp-row-close { display: none; }
+  .acct-row-main { grid-template-columns: minmax(160px, 2fr) 100px 100px 70px 90px; }
+  .opp-row { grid-template-columns: minmax(160px, 2fr) 100px 90px 70px; }
 }
-@media (max-width: 820px) {
-  .acct-row-main { grid-template-columns: minmax(100px, 1.3fr) 90px 78px 58px 74px; }
-  .acct-row-main .col-close, .acct-row-main .col-updated { display: none; }
+@media (max-width: 900px) {
+  .acct-row-main { grid-template-columns: minmax(160px, 2fr) 100px 100px 70px; }
+  .acct-cell-owner { display: none; }
+  .opp-row { grid-template-columns: minmax(160px, 2fr) 100px 90px; }
+  .opp-cell-outputs { display: none; }
+}
+@media (max-width: 720px) {
   .acct-row-main, .opp-row { padding: 10px 12px; }
   .acct-name { font-size: 14px; }
-  .opp-row { grid-template-columns: minmax(140px, 2fr) 120px 90px 80px; }
-  .opp-row .opp-row-stage { display: none; }
+  .acct-row-main { grid-template-columns: minmax(140px, 2fr) 100px 70px; }
+  .acct-cell-updated { display: none; }
+  .opp-row { grid-template-columns: minmax(140px, 2fr) 100px; }
+  .opp-cell-status { display: none; }
 }
 @media (max-width: 520px) {
-  .acct-row-main { grid-template-columns: minmax(80px, 1fr) 80px 58px 74px; }
-  .acct-row-main .col-stage { display: none; }
-  .opp-row { grid-template-columns: minmax(120px, 2fr) 100px 80px; }
-  .opp-row .opp-row-status { display: none; }
-}
-@media (max-width: 420px) {
-  .acct-row-main { grid-template-columns: minmax(80px, 1fr) 80px 58px; }
-  .acct-row-main .col-owner { display: none; }
+  .acct-row-main { grid-template-columns: minmax(100px, 2fr) 70px; }
+  .acct-cell-stage { display: none; }
   .acct-row-menu, .acct-expand, .acct-expand-spacer { flex-basis: 36px; }
   .acct-check { flex-basis: 32px; }
+  .opp-row { grid-template-columns: minmax(100px, 2fr) 60px; }
+  .opp-cell-stage { display: none; }
+}
+@media (max-width: 420px) {
+  .acct-row-main { grid-template-columns: minmax(80px, 1fr); }
+  .acct-cell-outputs { display: none; }
 }
 
 /* free-text instruction bar on the opportunity page (below the opp name) */
@@ -368,6 +384,11 @@ button:disabled { opacity: .5; cursor: default; }
 .dl-menu .menu-item.danger.armed { background: var(--danger); color: #fff; font-weight: 600; }
 .dl-menu .menu-item:disabled { opacity: .6; cursor: default; }
 .empty { color: var(--muted); padding: 24px; text-align: center; border: 1px dashed var(--line); border-radius: 12px; }
+.empty-box { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 36px 24px; text-align: center; border: 1px dashed var(--line); border-radius: 12px; color: var(--text); background: var(--panel); }
+.empty-box .empty-icon { font-size: 28px; line-height: 1; color: var(--muted); }
+.empty-box .empty-title { font-weight: 600; font-size: 16px; }
+.empty-box .empty-body { color: var(--muted); font-size: 13px; max-width: 460px; }
+.empty-box .empty-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 4px; }
 
 input[type=text] { font: inherit; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; min-width: 240px; }
 

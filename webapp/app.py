@@ -2061,15 +2061,19 @@ async def _run_job(job_id: str, prompt: str, meta: dict):
         stdout = security.redact_sensitive(stdout.decode(errors="replace"))
         stderr = security.redact_sensitive(stderr.decode(errors="replace"))
         job.update(status="done", ok=proc.returncode == 0,
-                   stdout=stdout, stderr=stderr)
+                   stdout=stdout, stderr=stderr,
+                   finished_at=datetime.now(timezone.utc).timestamp())
     except FileNotFoundError:
         job.update(status="error", ok=False, stdout="",
-                   stderr=security.redact_sensitive("`claude` CLI not found on PATH — is Claude Code installed?"))
+                   stderr=security.redact_sensitive("`claude` CLI not found on PATH — is Claude Code installed?"),
+                   finished_at=datetime.now(timezone.utc).timestamp())
     except asyncio.TimeoutError:
         job.update(status="error", ok=False, stdout="",
-                   stderr=security.redact_sensitive("Skill run timed out after 10 minutes."))
+                   stderr=security.redact_sensitive("Skill run timed out after 10 minutes."),
+                   finished_at=datetime.now(timezone.utc).timestamp())
     except Exception as e:  # noqa: BLE001 — surface any launch failure to the UI
-        job.update(status="error", ok=False, stdout="", stderr=security.redact_sensitive(f"{type(e).__name__}: {e}"))
+        job.update(status="error", ok=False, stdout="", stderr=security.redact_sensitive(f"{type(e).__name__}: {e}"),
+                   finished_at=datetime.now(timezone.utc).timestamp())
 
     # Persist the finished result to disk (one file per skill, overwritten).
     try:
