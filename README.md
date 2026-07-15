@@ -154,21 +154,22 @@ The suite assumes these MCPs are configured in `~/.claude.json`:
   Skip any of these and skills degrade gracefully — no SFDC/Notion enrichment, everything else works.
 
 #### 4. `pov-gsheet` (Google Sheets POV)
-`pov-gsheet` creates a copy of a POV Success Criteria template in Google Sheets and pre-fills it from Gong/Salesforce/Granola. Before using it:
+`pov-gsheet` creates a copy of a POV Success Criteria template in Google Sheets and pre-fills it from the SE workspace: prior skill outputs (`biz-qual`, `tech-qual`, `poc-plan`, `deal-assessment`, `connector-feasibility`, `post-call`, `account-refresher`), workspace transcripts, and optional Salesforce. It does **not** import the original `se-assistant` skill or use DuckDB/personal paths.
 
-1. **Install the separate `se-assistant` skill.** `pov-gsheet` depends on `se-assistant` to query Gong, Salesforce, and Granola. `se-assistant` is **not** in this repo; obtain it from your team's source and place/symlink it at `~/.claude/skills/se-assistant/`. Verify:
-   ```bash
-   ls ~/.claude/skills/se-assistant/SKILL.md
-   ```
-   If you don't have `se-assistant`, either obtain it or edit `skills/pov-gsheet/SKILL.md` to inline the data-gathering steps.
-2. **Configure `pov_gsheet` in `.se-config.yaml`.** Copy the commented block from `config/se-config.example.yaml`, uncomment it, and set your own values:
+Before using it:
+
+1. **Configure `pov_gsheet` in `.se-config.yaml`.** Copy the commented block from `config/se-config.example.yaml`, uncomment it, and set your own values:
    - `template_url` — your copy of the POV Success Criteria Google Sheet (must be a Sheets URL, not an `.xlsx`)
    - `drive_target_folder_url` — the Drive "Customer" folder where prospect subfolders will be created
    - `se_name` / `se_title` — the SE contact shown on the Contacts sheet
-3. **Chrome / Google authentication.** The skill uses Chrome browser automation (the `computer-use` MCP). Chrome must be signed into the Google account that owns the template and Drive folder. When Claude asks for `clipboardWrite` permission during the run, accept it. The `claude -p` invocation runs with `--permission-mode acceptEdits`; when invoked from the webapp it is flagged as `write + shell` and asks for explicit approval.
+2. **Chrome / Google authentication.** The skill uses Chrome browser automation (the `computer-use` MCP, or the optional `webapp/scripts/pov-gsheet-runner.mjs` Playwright helper). Chrome must be signed into the Google account that owns the template and Drive folder. When Claude asks for `clipboardWrite` permission during the run, accept it. The `claude -p` invocation runs with `--permission-mode acceptEdits`; when invoked from the webapp it is flagged as `write + shell` and asks for explicit approval.
+3. **(Optional) Install Playwright for the Node helper.** If you prefer the helper over manual `computer-use` steps:
+   ```bash
+   cd webapp/scripts && npm install
+   ```
 4. **Run `./install.sh` after pulling.** This symlinks the updated `skills/pov-gsheet/SKILL.md` into `~/.claude/skills/pov-gsheet/`.
 
-`pov-gsheet` now fails early with a clear message if `se-assistant` is missing, the `pov_gsheet` config block is absent, or Chrome automation is unavailable.
+`pov-gsheet` now fails early if the `pov_gsheet` config block is absent, the deterministic context loader cannot find workspace data, or Chrome automation is unavailable. It writes a local Markdown receipt alongside the generated Google Sheet.
 
 ### Optional enhancements
 

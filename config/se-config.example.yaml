@@ -86,12 +86,21 @@ salesforce:
   enabled: true
 
 # ── POV Google Sheets (pov-gsheet) ──────────────────────────────────────────
-# The `pov-gsheet` skill is not bundled with `se-assistant`, which it uses to
-# query Gong, Salesforce, and Granola. Obtain `se-assistant` from your team's
-# source and place it at `~/.claude/skills/se-assistant/`; verify with:
-#   ls ~/.claude/skills/se-assistant/SKILL.md
-# Copy the shared POV template into your own Google Drive, then fill in the
-# values below. Without these, `pov-gsheet` fails early with a clear message.
+# The `pov-gsheet` skill builds a structured POV context from the workspace
+# (prior skill outputs, transcripts, and optional Salesforce) and then uses
+# Chrome/computer-use to copy a Google Sheets template, fill the seven tabs,
+# and move the new sheet into the correct Drive prospect subfolder.
+#
+# Required setup:
+# 1. Copy the shared POV template into your own Google Drive (or keep the team one).
+# 2. Chrome must be signed into the Google account that owns the template/Drive.
+# 3. Chrome must be launched with --remote-debugging-port=29229 OR the
+#    computer-use MCP with clipboardWrite must be available.
+# 4. Uncomment the block below and fill in the template/folder URLs.
+#
+# Optional Node/Playwright runner: `cd webapp/scripts && npm install` installs
+# Playwright for `pov-gsheet-runner.mjs`. Without it, the skill falls back to
+# manual clipboard/Name Box instructions.
 # pov_gsheet:
 #   # Google Sheets URL to copy (must be a Sheets URL, not an .xlsx)
 #   template_url: "https://docs.google.com/spreadsheets/d/.../edit"

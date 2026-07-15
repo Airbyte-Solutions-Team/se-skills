@@ -2,7 +2,20 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`, mine = `gyairbyte/SE-Workflow`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: July 14, 2026 — Centralized shared skill boilerplate in `skills/_se-playbook.md` (SKILL-001)._
+_Last updated: July 15, 2026 — Ported `pov-gsheet` to repository-native context gathering (POV-001)._
+
+## Built this session (newest first — see `git log`)
+- **Ported `pov-gsheet` to repository-native context gathering (POV-001) (July 15).** Rewrote `skills/pov-gsheet/SKILL.md` to remove the `se-assistant` dependency and build a structured `PovContext` from the existing workspace: prior skill outputs, local transcripts, `.se-config.yaml`, and optional Salesforce. Added `webapp/pov_gsheet_context.py` as a deterministic loader with Pydantic models and source-coverage tracking. Added an optional `webapp/scripts/pov-gsheet-runner.mjs` (plus `package.json` and `.gitignore`) that builds a dry-run plan of TSV payloads and cell addresses for each of the seven POV template sheets, and can attempt the Chrome/Playwright automation when Google auth is available. Updated `config/se-config.example.yaml` and `README.md` with the new `pov_gsheet` setup and Google-auth instructions. Added `eval/tests/test_pov_gsheet.py` to verify the context loader, the runner's dry-run output, and the absence of `se-assistant`/DuckDB/Granola/personal-path references. The Google Sheets/Drive end-to-end cannot be verified in this environment because Chrome is not signed into Google; this is explicitly marked unverified with setup instructions.
+  - `skills/pov-gsheet/SKILL.md`: removed `se-assistant` references; added deterministic context loader workflow; preserved Chrome/clipboard/Name Box Google Sheets instructions.
+  - `webapp/pov_gsheet_context.py`: deterministic `PovContext` builder.
+  - `webapp/scripts/pov-gsheet-runner.mjs`, `webapp/scripts/package.json`, `webapp/scripts/.gitignore`: optional dry-run planner + Playwright runner.
+  - `config/se-config.example.yaml`: updated `pov_gsheet` block and setup notes.
+  - `README.md`: updated `pov-gsheet` setup instructions.
+  - `IMPLEMENTATION-PLAN.md`: added POV-001 and marked completed.
+  - `eval/tests/test_pov_gsheet.py`: deterministic tests for context, schema, runner, and skill content.
+  - Validation: `node --check webapp/scripts/pov-gsheet-runner.mjs`; `uv run --extra dev pytest eval/ -q`; `uv run python -m eval.runner run-suite --manifest-dir eval/manifests/phase1 --executor mock`; `./scripts/check-sync.sh`.
+
+- **Centralized shared skill boilerplate in `_se-playbook.md` (SKILL-001) (July 14).**
 
 ## What the app is
 Local FastAPI + vanilla-JS UI (no build step) over the SE skills suite. `cd webapp && uv run app.py` → http://127.0.0.1:8787 (needs `CPATH/LIBRARY_PATH` for portaudio on this Mac — see "Run" below). Browse team → member's accounts → an account's opportunities → generated outputs; invoke skills; ask follow-ups on outputs; Live Transcribe a Zoom call with an AI copilot.
