@@ -32,23 +32,32 @@
   <div id="modal" class="modal hidden">
     <div class="modal-card">
       <h3 id="modal-title">Invoke skill</h3>
-      <div id="skill-mode">
-        <label>Skill
-          <select id="skill-select"></select>
-          <button id="skill-refresh" class="ghost small" title="Reload skills from disk" type="button">↻</button>
-        </label>
-        <div id="skill-blurb" class="muted"></div>
-        <div id="skill-perm" class="validation-banner hidden"></div>
-        <label>Optional context (e.g. an objection, a specific question)
-          <textarea id="skill-extra" rows="3" placeholder="Leave blank for default behavior"></textarea>
-        </label>
+      <div class="modal-body">
+        <div id="skill-mode">
+          <div class="skill-picker">
+            <label class="skill-picker-label" for="skill-select">Skill</label>
+            <div class="skill-picker-row">
+              <select id="skill-select"></select>
+              <button id="skill-refresh" class="ghost small" title="Reload skills from disk" type="button">↻</button>
+              <span id="skill-tier" class="skill-tier hidden"></span>
+            </div>
+          </div>
+          <div id="skill-summary" class="skill-summary"></div>
+          <button id="skill-more" class="linklike skill-more hidden" type="button">Show details</button>
+          <div id="skill-details" class="skill-details hidden"></div>
+          <div id="skill-prereq" class="skill-prereq hidden"></div>
+          <div id="skill-perm" class="skill-perm hidden"></div>
+          <label class="skill-extra-label" for="skill-extra">Optional context <span class="muted">(e.g. an objection, a specific question)</span>
+            <textarea id="skill-extra" rows="2" placeholder="Leave blank for default behavior"></textarea>
+          </label>
+        </div>
+        <div id="invoke-status" class="status hidden"></div>
+        <pre id="invoke-output" class="output hidden"></pre>
       </div>
       <div class="modal-actions">
         <button id="invoke-cancel" class="ghost">Cancel</button>
         <button id="invoke-run" class="primary">Run skill</button>
       </div>
-      <div id="invoke-status" class="status hidden"></div>
-      <pre id="invoke-output" class="output hidden"></pre>
     </div>
   </div>
 
@@ -60,6 +69,6 @@
       l.href = "/style.css?v=" + Date.now();
     })();
   </script>
-  <script src="/app.js?v=2026071506"></script>
+  <script src="/app.js?v=2026071429"></script>
 </body>
 </html>
