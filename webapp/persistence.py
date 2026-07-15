@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -108,6 +109,10 @@ def load_jobs(workspace: Path) -> dict[str, dict]:
         if rec.get("status") == "running":
             rec["status"] = "error"
             rec["ok"] = False
+            # Mark the job as finished at recovery time so the UI can still treat
+            # the interrupted run as the latest finished run for that account.
+            if not rec.get("finished_at"):
+                rec["finished_at"] = time.time()
             existing_stderr = rec.get("stderr") or ""
             rec["stderr"] = existing_stderr + (
                 "\n[Server restarted while this job was running. Re-run if needed.]"

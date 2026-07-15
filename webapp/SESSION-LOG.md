@@ -20,6 +20,7 @@ uv run --python 3.11 app.py    # port 8787
   - `webapp/static/app.js`: `activityByAccount`, `activityByOpp`, `renderActivity`, `emptyBox`, `pageMember` row/header/empty rewrite, `pageAccount` job enrichment, `oppRow` two-line layout.
   - `webapp/static/style.css`: `.acct-row` two-line grid, `.acct-cell`, `.activity`, `.pulse`, `.empty-box`, `.opp-row` simplified grid, responsive breakpoints.
   - `webapp/app.py`: `_run_job` records `finished_at` on completion/error.
+  - `webapp/persistence.py`: recovered running jobs that are converted to `error` on startup now get a `finished_at` timestamp (load time) so the row activity indicator can still rank them as the latest finished run.
   - `webapp/static/index.html`: bumped `app.js?v=` cache-bust.
   - `IMPLEMENTATION-PLAN.md`: added UX-008.
   - `webapp/README.md` and `webapp/SESSION-LOG.md`: updated descriptions.
