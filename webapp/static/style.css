@@ -1088,3 +1088,82 @@ a.live-btn { text-decoration: none; display: inline-flex; align-items: center; }
 /* Keep legacy validation-banner hidden if any stray markup still carries it. */
 .validation-banner { display: none; }
 
+/* ── Team landing page / overview ───────────────────────────────────────── */
+.overview-section { margin-top: 28px; }
+.overview-section h2 { font-size: 16px; font-weight: 600; margin: 0 0 12px; color: var(--text); }
+
+.summary-bar {
+  display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0 8px;
+}
+.summary-item {
+  flex: 1 1 100px; min-width: 90px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 14px 12px; text-align: center;
+}
+.summary-value { display: block; font-size: 22px; font-weight: 700; color: var(--text); line-height: 1.2; }
+.summary-label { display: block; font-size: 12px; color: var(--muted); margin-top: 4px; text-transform: uppercase; letter-spacing: .3px; }
+.summary-item--info { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); background: color-mix(in srgb, var(--accent) 6%, var(--panel)); }
+.summary-item--warn { border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); background: color-mix(in srgb, var(--warn) 8%, var(--panel)); }
+.summary-item--error { border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); background: color-mix(in srgb, var(--danger) 8%, var(--panel)); }
+
+.attention-list { display: flex; flex-direction: column; gap: 8px; }
+.attention-item {
+  display: flex; align-items: center; gap: 12px; background: var(--panel); border: 1px solid var(--line);
+  border-left: 3px solid var(--line); border-radius: 10px; padding: 12px 14px; text-decoration: none; color: inherit;
+}
+.attention-item:hover { background: var(--panel-hover); }
+.attention-item--error { border-left-color: var(--danger); }
+.attention-item--warn { border-left-color: var(--warn); }
+.attention-item--info { border-left-color: var(--accent); }
+.attention-dot {
+  flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--line-strong);
+}
+.attention-item--error .attention-dot { background: var(--danger); }
+.attention-item--warn .attention-dot { background: var(--warn); }
+.attention-item--info .attention-dot { background: var(--accent); }
+.attention-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.attention-title { font-weight: 600; font-size: 14px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.attention-sub { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.attention-when { flex: 0 0 auto; font-size: 12px; color: var(--faint); white-space: nowrap; }
+
+.recent-list { display: flex; flex-direction: column; gap: 6px; }
+.recent-item {
+  display: flex; align-items: center; gap: 12px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; padding: 10px 14px;
+}
+.recent-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line-strong); flex: 0 0 auto; }
+.recent-dot--info { background: var(--accent); }
+.recent-dot--warn { background: var(--warn); }
+.recent-dot--error { background: var(--danger); }
+.recent-dot--neutral { background: var(--accent2); }
+.recent-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.recent-title { font-size: 14px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recent-sub { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.member-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+.member-card {
+  display: flex; flex-direction: column; gap: 10px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 12px; padding: 16px; text-decoration: none; color: inherit;
+}
+.member-card:hover { background: var(--panel-hover); border-color: var(--line-strong); }
+.member-card-main h3 { margin: 0 0 4px; font-size: 16px; font-weight: 600; color: var(--text); }
+.member-card-main .meta { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.member-card-stats { display: flex; flex-wrap: wrap; gap: 8px; }
+.member-card-stats .stat {
+  font-size: 12px; color: var(--muted); background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px;
+}
+.member-card-stats .stat strong { color: var(--text); margin-right: 2px; }
+.member-card-stats .stat--info { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+.member-card-stats .stat--warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); }
+.member-card-stats .stat--error { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); }
+.member-card-activity { font-size: 12.5px; color: var(--faint); margin-top: auto; }
+
+@media (max-width: 720px) {
+  .summary-bar { gap: 8px; }
+  .summary-item { flex: 1 1 80px; padding: 12px 8px; }
+  .summary-value { font-size: 18px; }
+  .attention-item, .recent-item { flex-wrap: wrap; gap: 8px; }
+  .attention-when { width: 100%; text-align: left; }
+  .member-grid { grid-template-columns: 1fr; }
+}
+

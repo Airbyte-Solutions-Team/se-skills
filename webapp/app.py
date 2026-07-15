@@ -39,6 +39,7 @@ import queue
 import re
 import subprocess
 import threading
+import urllib.parse
 import uuid
 from collections import deque
 from datetime import datetime, timezone
@@ -1498,7 +1499,8 @@ async def api_output_ask(body: OutputAsk):
         job_id = uuid.uuid4().hex[:12]
         JOBS[job_id] = {"status": "running", "ok": None, "stdout": "", "stderr": "",
                         "skill": "output-ask", "account": acct, "opportunity": body.opportunity,
-                        "opp_slug": None, "sig": ("output-ask", body.path, q[:60])}
+                        "opp_slug": None, "sig": ("output-ask", body.path, q[:60]),
+                        "started_at": datetime.now(timezone.utc).timestamp()}
         persist_warn = await _save_jobs_snapshot(job_id)
         meta = {"account": acct or "?", "opp_slug": None, "skill": "output-ask", "opportunity": body.opportunity}
         asyncio.create_task(_run_job(job_id, prompt, meta))
@@ -2157,6 +2159,7 @@ async def api_invoke(body: InvokeBody):
         "status": "running", "ok": None, "stdout": "", "stderr": "",
         "skill": skill_id, "account": account,
         "opportunity": body.opportunity, "opp_slug": opp_slug, "sig": sig,
+        "started_at": datetime.now(timezone.utc).timestamp(),
     }
     persist_warn = await _save_jobs_snapshot(job_id)
     meta = {"account": account, "opp_slug": opp_slug, "skill": skill_id, "opportunity": body.opportunity}
@@ -2214,6 +2217,547 @@ def api_jobs_for(account: str | None = None, opp_slug: str | None = None):
             continue
         out.append({"job_id": jid, **{k: v for k, v in j.items() if k not in ("sig", "stdout", "stderr")}})
     return out
+
+
+# ---------------------------------------------------------------------------
+# Team overview — lightweight aggregation for the landing page
+# ---------------------------------------------------------------------------
+
+_LONG_RUNNING_MINUTES = 5
+_ATTENTION_FAILURE_HOURS = 24
+_STALE_ACTIVITY_DAYS = 7
+_MAX_ATTENTION = 10
+_MAX_RECENT = 12
+
+
+def _output_validation_status(sidecar_path: Path) -> tuple[bool, str]:
+    """Read an output's `.md.json` sidecar and decide whether it needs attention.
+
+    Returns `(needs_attention, validation_status)`. `validation_status` is one
+    of: `valid`, `invalid`, `stale`, `incomplete`, `unknown`. A missing or
+    unreadable sidecar is treated as `unknown` and does **not** need attention,
+    so legacy outputs without modern metadata degrade safely.
+    """
+    if not sidecar_path.exists():
+        return False, "unknown"
+    try:
+        sc = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return False, "unknown"
+    if not isinstance(sc, dict):
+        return False, "unknown"
+    valid = sc.get("valid")
+    validation_status = sc.get("validation_status")
+    ref_fresh = sc.get("reference_freshness_at_generation") or []
+    stale = any(not r.get("fresh", True) for r in ref_fresh if isinstance(r, dict))
+    if valid is False or validation_status == "invalid":
+        return True, "invalid"
+    if stale:
+        return True, "stale"
+    if validation_status == "unvalidated":
+        return True, "incomplete"
+    if valid is not True:
+        return True, "incomplete"
+    return False, "valid"
+
+
+def _output_review_status(feedback_path: Path) -> tuple[bool, str]:
+    """Read an output's `.feedback.jsonl` sidecar and decide whether it is awaiting review.
+
+    Returns `(awaiting_review, review_status)`. `review_status` is one of:
+    `awaiting review`, `approved`, `commented`, `corrected`. A missing or empty
+    feedback sidecar means no human review has been recorded yet. Malformed
+    JSONL lines are skipped.
+    """
+    if not feedback_path.exists():
+        return True, "awaiting review"
+    try:
+        lines = feedback_path.read_text(encoding="utf-8").splitlines()
+    except (OSError, ValueError, TypeError):
+        return True, "awaiting review"
+    entries = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+            if isinstance(entry, dict) and entry.get("action") in ("approve", "comment", "correct"):
+                entries.append(entry)
+        except (json.JSONDecodeError, ValueError, TypeError):
+            continue
+    if not entries:
+        return True, "awaiting review"
+    latest = entries[-1]
+    action = latest.get("action")
+    if action == "approve":
+        return False, "approved"
+    if action == "comment":
+        return True, "commented"
+    if action == "correct":
+        return True, "corrected"
+    return True, "awaiting review"
+
+
+def _output_href(account: str, opp_slug: str | None, opp_name: str, path: str) -> str:
+    """Build a hash-router output-reader link with safe URL encoding."""
+    enc = urllib.parse.quote
+    slug = opp_slug or ""
+    name = opp_name or (opp_slug.capitalize() if opp_slug else account)
+    return f"#/output/{enc(account)}/{enc(slug)}/{enc(name)}/{enc(path)}"
+
+
+def _collect_output(
+    account: str,
+    opp_slug: str | None,
+    skill: str,
+    f: Path,
+    meta: dict,
+    recent_outputs: list,
+    needs_attention_outputs: list,
+) -> None:
+    """Update account metadata and global output lists for one output file."""
+    try:
+        st = f.stat()
+    except (OSError, ValueError):
+        return
+    mtime = st.st_mtime
+    meta["output_count"] += 1
+    if mtime > meta["last_updated_ts"]:
+        meta["last_updated_ts"] = mtime
+        meta["last_output"] = {
+            "path": str(f.relative_to(CUSTOMERS_DIR)),
+            "mtime": mtime,
+            "modified": datetime.fromtimestamp(mtime, tz=timezone.utc).strftime("%Y-%m-%d %H:%M"),
+            "skill": skill,
+            "filename": f.name,
+            "account": account,
+            "opp_slug": opp_slug,
+            "opp_name": opp_slug.capitalize() if opp_slug else account,
+        }
+    sidecar = f.with_suffix(f.suffix + ".json")
+    feedback = _feedback_file(f)
+    needs_attention, validation_status = _output_validation_status(sidecar)
+    awaiting_review, review_status = _output_review_status(feedback)
+
+    # Each output appears at most once in the attention list. Validation issues
+    # take precedence; otherwise a non-approved review state is shown.
+    attention_type = None
+    attention_status = None
+    if needs_attention:
+        attention_type = "attention"
+        attention_status = validation_status
+        if awaiting_review:
+            attention_status = f"{validation_status} · {review_status}"
+    elif awaiting_review:
+        attention_type = "review"
+        attention_status = review_status
+
+    if attention_type:
+        meta["needs_attention"] += 1
+        needs_attention_outputs.append({
+            "path": str(f.relative_to(CUSTOMERS_DIR)),
+            "mtime": mtime,
+            "skill": skill,
+            "filename": f.name,
+            "account": account,
+            "opp_slug": opp_slug,
+            "opp_name": opp_slug.capitalize() if opp_slug else account,
+            "type": attention_type,
+            "status": attention_status,
+            "validation_status": validation_status,
+            "review_status": review_status,
+        })
+    recent_outputs.append({
+        "path": str(f.relative_to(CUSTOMERS_DIR)),
+        "mtime": mtime,
+        "modified": datetime.fromtimestamp(mtime, tz=timezone.utc).strftime("%Y-%m-%d %H:%M"),
+        "skill": skill,
+        "filename": f.name,
+        "account": account,
+        "opp_slug": opp_slug,
+        "opp_name": opp_slug.capitalize() if opp_slug else account,
+        "needs_attention": bool(needs_attention or awaiting_review),
+        "validation_status": validation_status,
+        "review_status": review_status,
+    })
+
+
+def _walk_account_outputs(
+    account_dir: Path,
+    account: str,
+    meta: dict,
+    recent_outputs: list,
+    needs_attention_outputs: list,
+) -> None:
+    """Traverse one account's output directories and populate metadata.
+
+    Failures while reading a single file, skill directory, or opportunity are
+    caught so one bad path does not prevent the rest of the overview from
+    rendering.
+    """
+    try:
+        base = account_dir / "outputs"
+        if base.exists():
+            for skill_dir in sorted(base.iterdir()):
+                try:
+                    if not skill_dir.is_dir() or skill_dir.name.startswith("."):
+                        continue
+                    for f in sorted([*skill_dir.glob("*.md"), *skill_dir.glob("*.html")]):
+                        if any(part.startswith(".") for part in f.relative_to(skill_dir).parts):
+                            continue
+                        _collect_output(account, None, skill_dir.name, f, meta, recent_outputs, needs_attention_outputs)
+                except (OSError, ValueError, TypeError):
+                    continue
+
+        opp_root = account_dir / "opportunities"
+        if opp_root.exists():
+            for opp_dir in sorted(opp_root.iterdir()):
+                try:
+                    if not opp_dir.is_dir() or opp_dir.name.startswith("."):
+                        continue
+                    base = opp_dir / "outputs"
+                    if not base.exists():
+                        continue
+                    for skill_dir in sorted(base.iterdir()):
+                        try:
+                            if not skill_dir.is_dir() or skill_dir.name.startswith("."):
+                                continue
+                            for f in sorted([*skill_dir.glob("*.md"), *skill_dir.glob("*.html")]):
+                                if any(part.startswith(".") for part in f.relative_to(skill_dir).parts):
+                                    continue
+                                _collect_output(account, opp_dir.name, skill_dir.name, f, meta, recent_outputs, needs_attention_outputs)
+                                meta["opp_slugs"].add(opp_dir.name)
+                        except (OSError, ValueError, TypeError):
+                            continue
+                except (OSError, ValueError, TypeError):
+                    continue
+    except (OSError, ValueError, TypeError):
+        return
+
+
+def _build_overview(jobs: dict[str, dict]) -> dict:
+    """Aggregate filesystem + job state into a calm operational overview.
+
+    Keeps all computation in one pass over the workspace so the landing page
+    stays fast for the local SE workspace. Does not compute live reference
+    freshness (that remains on the output list); it only reads existing sidecars.
+    """
+    now = datetime.now(timezone.utc).timestamp()
+    members = load_team()
+    all_accounts = list_accounts()
+    active_accounts = [a for a in all_accounts if not a["archived"]]
+    archived_count = len(all_accounts) - len(active_accounts)
+
+    account_meta: dict[str, dict] = {}
+    recent_outputs: list[dict] = []
+    needs_attention_outputs: list[dict] = []
+
+    if CUSTOMERS_DIR.exists():
+        for account_dir in sorted(CUSTOMERS_DIR.iterdir()):
+            try:
+                if not account_dir.is_dir() or account_dir.name.startswith("_") or account_dir.name.startswith("."):
+                    continue
+                account = account_dir.name
+                meta: dict[str, Any] = {
+                    "output_count": 0,
+                    "last_updated_ts": 0.0,
+                    "last_output": None,
+                    "needs_attention": 0,
+                    "opp_slugs": set(),
+                }
+                _walk_account_outputs(account_dir, account, meta, recent_outputs, needs_attention_outputs)
+                # Opportunity count: actual opp directories with outputs, or one
+                # fallback bucket if the account already has outputs but no opp dirs.
+                meta["opp_count"] = max(len(meta["opp_slugs"]), 1 if meta["output_count"] > 0 else 0)
+                account_meta[account] = meta
+            except (OSError, ValueError, TypeError):
+                continue
+
+    # Running / finished jobs (shallow-copy values so the snapshot is safe).
+    running_jobs = []
+    failed_jobs = []
+    done_jobs = []
+    for jid, j in jobs.items():
+        status = j.get("status")
+        job_copy = dict(j)
+        job_copy["job_id"] = jid
+        if status == "running":
+            running_jobs.append(job_copy)
+        elif status == "error" or (status == "done" and j.get("ok") is False):
+            failed_jobs.append(job_copy)
+        elif status == "done":
+            done_jobs.append(job_copy)
+
+    # Per-account job-driven timestamps.
+    for j in [*running_jobs, *failed_jobs, *done_jobs]:
+        account = j.get("account")
+        if not account:
+            continue
+        when = j.get("finished_at") or j.get("started_at") or 0
+        meta = account_meta.get(account)
+        if meta and when > meta["last_updated_ts"]:
+            meta["last_updated_ts"] = when
+
+    # Per-member aggregates.
+    member_rows = []
+    for m in members:
+        visible = [a for a in active_accounts if a["owner"] == m["id"] or a["owner"] is None]
+        names = [a["name"] for a in visible]
+        row = {
+            "id": m["id"],
+            "name": m["name"],
+            "role": m.get("role"),
+            "email": m.get("email"),
+            "account_count": len(names),
+            "output_count": 0,
+            "needs_attention": 0,
+            "opp_count": 0,
+            "running_jobs": 0,
+            "recent_failures": 0,
+            "last_activity_ts": 0.0,
+            "last_output": None,
+        }
+        last_output_entry = None
+        for name in names:
+            am = account_meta.get(name)
+            if not am:
+                continue
+            row["output_count"] += am["output_count"]
+            row["needs_attention"] += am["needs_attention"]
+            row["opp_count"] += am["opp_count"]
+            if am["last_updated_ts"] > row["last_activity_ts"]:
+                row["last_activity_ts"] = am["last_updated_ts"]
+            if am["last_output"] and (last_output_entry is None or am["last_output"]["mtime"] > last_output_entry["mtime"]):
+                last_output_entry = am["last_output"]
+
+        for j in running_jobs:
+            if j.get("account") in names:
+                row["running_jobs"] += 1
+                started = j.get("started_at") or 0
+                if started > row["last_activity_ts"]:
+                    row["last_activity_ts"] = started
+        for j in failed_jobs:
+            if j.get("account") in names:
+                finished = j.get("finished_at")
+                if finished is None or now - finished <= _ATTENTION_FAILURE_HOURS * 3600:
+                    row["recent_failures"] += 1
+                if finished and finished > row["last_activity_ts"]:
+                    row["last_activity_ts"] = finished
+        for j in done_jobs:
+            if j.get("account") in names:
+                finished = j.get("finished_at") or 0
+                if finished > row["last_activity_ts"]:
+                    row["last_activity_ts"] = finished
+        row["last_output"] = last_output_entry
+        member_rows.append(row)
+
+    # Team summary.
+    total_outputs = sum(m["output_count"] for m in account_meta.values())
+    total_needs_attention = sum(m["needs_attention"] for m in account_meta.values())
+    recent_failure_count = sum(
+        1 for j in failed_jobs
+        if j.get("finished_at") is None or now - j["finished_at"] <= _ATTENTION_FAILURE_HOURS * 3600
+    )
+    all_activity_ts = (
+        [m["last_updated_ts"] for m in account_meta.values()] +
+        [j.get("started_at") or 0 for j in running_jobs] +
+        [j.get("finished_at") or 0 for j in [*failed_jobs, *done_jobs]]
+    )
+    global_last_activity = max(all_activity_ts) if all_activity_ts else 0.0
+
+    summary = {
+        "members": len(members),
+        "active_accounts": len(active_accounts),
+        "archived_accounts": archived_count,
+        "opportunities": sum(
+            account_meta[a["name"]]["opp_count"]
+            for a in active_accounts
+            if a["name"] in account_meta
+        ),
+        "outputs": total_outputs,
+        "running_jobs": len(running_jobs),
+        "recent_failures": recent_failure_count,
+        "needs_attention": total_needs_attention,
+        "last_activity": global_last_activity,
+    }
+
+    # Attention-needed items.
+    attention: list[dict] = []
+    for j in running_jobs:
+        account = j.get("account", "unknown")
+        opp_slug = j.get("opp_slug")
+        opp_name = j.get("opportunity") or (opp_slug.capitalize() if opp_slug else account)
+        started = j.get("started_at")
+        duration_min = int((now - started) / 60) if started else None
+        long_running = started and duration_min is not None and duration_min >= _LONG_RUNNING_MINUTES
+        attention.append({
+            "type": "long-running" if long_running else "running",
+            "level": "warn" if long_running else "info",
+            "skill": j.get("skill", "skill"),
+            "account": account,
+            "opp_slug": opp_slug,
+            "opp_name": opp_name,
+            "when": started or now,
+            "duration_min": duration_min,
+            "job_id": j.get("job_id"),
+            "href": (
+                f"#/opp/{urllib.parse.quote(account)}/{urllib.parse.quote(opp_slug or '')}/{urllib.parse.quote(opp_name)}"
+                if opp_slug else f"#/account/{urllib.parse.quote(account)}"
+            ),
+        })
+
+    for j in failed_jobs:
+        finished = j.get("finished_at")
+        if finished and now - finished > _ATTENTION_FAILURE_HOURS * 3600:
+            continue
+        account = j.get("account", "unknown")
+        opp_slug = j.get("opp_slug")
+        opp_name = j.get("opportunity") or (opp_slug.capitalize() if opp_slug else account)
+        attention.append({
+            "type": "failure",
+            "level": "error",
+            "skill": j.get("skill", "skill"),
+            "account": account,
+            "opp_slug": opp_slug,
+            "opp_name": opp_name,
+            "when": finished or now,
+            "error": (j.get("stderr") or "").splitlines()[0][:120] if j.get("stderr") else "",
+            "job_id": j.get("job_id"),
+            "href": (
+                f"#/opp/{urllib.parse.quote(account)}/{urllib.parse.quote(opp_slug or '')}/{urllib.parse.quote(opp_name)}"
+                if opp_slug else f"#/account/{urllib.parse.quote(account)}"
+            ),
+        })
+
+    for out in sorted(needs_attention_outputs, key=lambda x: x["mtime"], reverse=True)[:_MAX_ATTENTION]:
+        # Validation issues are more urgent than review queue items; stale and
+        # incomplete outputs still need attention but are less severe than invalid.
+        if out["type"] == "review":
+            level = "warn"
+        else:
+            level = "error" if out["validation_status"] == "invalid" else "warn"
+        attention.append({
+            "type": out["type"],
+            "level": level,
+            "skill": out["skill"],
+            "account": out["account"],
+            "opp_slug": out["opp_slug"],
+            "opp_name": out["opp_name"],
+            "filename": out["filename"],
+            "when": out["mtime"],
+            "status": out["status"],
+            "validation_status": out["validation_status"],
+            "review_status": out["review_status"],
+            "href": _output_href(out["account"], out["opp_slug"], out["opp_name"], out["path"]),
+        })
+
+    for a in active_accounts:
+        am = account_meta.get(a["name"])
+        if not am:
+            continue
+        last = am["last_updated_ts"]
+        if last and now - last > _STALE_ACTIVITY_DAYS * 24 * 3600 and am["output_count"] > 0:
+            attention.append({
+                "type": "stale",
+                "level": "info",
+                "account": a["name"],
+                "when": last,
+                "href": f"#/account/{urllib.parse.quote(a['name'])}",
+            })
+
+    attention.sort(key=lambda x: (0 if x["level"] == "error" else (1 if x["level"] == "warn" else 2), -x["when"]))
+    attention = attention[:_MAX_ATTENTION]
+
+    # Recent activity: outputs + job events.
+    recent: list[dict] = []
+    for out in recent_outputs:
+        recent.append({
+            "type": "output",
+            "skill": out["skill"],
+            "account": out["account"],
+            "opp_slug": out["opp_slug"],
+            "opp_name": out["opp_name"],
+            "filename": out["filename"],
+            "when": out["mtime"],
+            "needs_attention": out["needs_attention"],
+            "href": _output_href(out["account"], out["opp_slug"], out["opp_name"], out["path"]),
+        })
+
+    for j in [*running_jobs, *failed_jobs, *done_jobs]:
+        account = j.get("account", "unknown")
+        opp_slug = j.get("opp_slug")
+        opp_name = j.get("opportunity") or (opp_slug.capitalize() if opp_slug else account)
+        status = j.get("status")
+        ok = j.get("ok")
+        if status == "running":
+            when = j.get("started_at") or now
+            event_type = "job_started"
+        elif status == "error" or ok is False:
+            when = j.get("finished_at") or now
+            event_type = "job_recovered" if "Server restarted" in (j.get("stderr") or "") else "job_error"
+        else:
+            when = j.get("finished_at") or now
+            event_type = "job_done"
+        recent.append({
+            "type": event_type,
+            "skill": j.get("skill", "skill"),
+            "account": account,
+            "opp_slug": opp_slug,
+            "opp_name": opp_name,
+            "when": when,
+            "ok": j.get("ok"),
+            "job_id": j.get("job_id"),
+            "href": (
+                f"#/opp/{urllib.parse.quote(account)}/{urllib.parse.quote(opp_slug or '')}/{urllib.parse.quote(opp_name)}"
+                if opp_slug else f"#/account/{urllib.parse.quote(account)}"
+            ),
+        })
+
+    recent.sort(key=lambda x: x["when"], reverse=True)
+    recent = recent[:_MAX_RECENT]
+
+    empty = {
+        "members": not members,
+        "accounts": not active_accounts,
+        "attention": not attention,
+        "recent": not recent,
+    }
+
+    return {
+        "summary": summary,
+        "attention": attention,
+        "recent": recent,
+        "members": member_rows,
+        "empty": empty,
+    }
+
+
+@app.get("/api/overview")
+async def api_overview():
+    """Operational overview for the team landing page.
+
+    Runs the aggregation in a thread pool because it walks the filesystem and
+    may briefly block the event loop. A failure anywhere in the aggregation
+    returns a safe empty fallback rather than a 500 so the landing page still
+    renders.
+    """
+    jobs_snapshot = {k: dict(v) for k, v in JOBS.items()}
+    try:
+        return await asyncio.to_thread(_build_overview, jobs_snapshot)
+    except (OSError, ValueError, TypeError) as e:
+        logger.warning("Overview aggregation failed: %s", type(e).__name__)
+        return {
+            "summary": {
+                "members": 0, "active_accounts": 0, "archived_accounts": 0,
+                "opportunities": 0, "outputs": 0, "running_jobs": 0,
+                "recent_failures": 0, "needs_attention": 0, "last_activity": 0.0,
+            },
+            "attention": [],
+            "recent": [],
+            "members": [],
+            "empty": {"members": True, "accounts": True, "attention": True, "recent": True},
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -2720,7 +3264,8 @@ async def api_transcribe_ask(session_id: str, body: AskLive):
         JOBS[job_id] = {"status": "running", "ok": None, "stdout": "", "stderr": "",
                         "skill": "live-ask", "account": account,
                         "opportunity": opportunity,
-                        "opp_slug": opp_slug, "sig": ("live", session_id, q[:60])}
+                        "opp_slug": opp_slug, "sig": ("live", session_id, q[:60]),
+                        "started_at": datetime.now(timezone.utc).timestamp()}
         persist_warn = await _save_jobs_snapshot(job_id)
         meta = {"account": account, "opp_slug": None, "skill": "live-ask",
                 "opportunity": opportunity}
