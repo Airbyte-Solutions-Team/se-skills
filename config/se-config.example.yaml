@@ -84,3 +84,19 @@ salesforce:
   query_directory: "~/.se-skills"
   # Set false to disable SFDC reads entirely (skills degrade gracefully)
   enabled: true
+
+# ── POV Google Sheets (pov-gsheet) ──────────────────────────────────────────
+# The `pov-gsheet` skill is not bundled with `se-assistant`, which it uses to
+# query Gong, Salesforce, and Granola. Obtain `se-assistant` from your team's
+# source and place it at `~/.claude/skills/se-assistant/`; verify with:
+#   ls ~/.claude/skills/se-assistant/SKILL.md
+# Copy the shared POV template into your own Google Drive, then fill in the
+# values below. Without these, `pov-gsheet` fails early with a clear message.
+# pov_gsheet:
+#   # Google Sheets URL to copy (must be a Sheets URL, not an .xlsx)
+#   template_url: "https://docs.google.com/spreadsheets/d/.../edit"
+#   # Destination Drive "Customer" folder where prospect subfolders are created
+#   drive_target_folder_url: "https://drive.google.com/drive/u/0/folders/..."
+#   # SE contact shown on the Contacts sheet
+#   se_name: "Your Name"
+#   se_title: "Solutions Engineer"

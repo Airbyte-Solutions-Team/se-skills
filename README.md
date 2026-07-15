@@ -27,6 +27,7 @@ Built by Gary Yang (Solutions Engineer, Airbyte). Designed to be team-shareable.
 | `account-refresher` | Fast "catch me up" briefing on an account (players, history, state, open items) | "refresh me on X", "catch me up on X" |
 | `next-move` | Diagnoses where a customer sits + recommends the next skill | "where am I on X", "what's next for X" |
 | `coverage-handoff` | PTO coverage handoff — self-contained HTML page for a covering SE | "coverage handoff", "PTO handoff for X" |
+| `pov-gsheet` | Create and pre-fill a POV Success Criteria Google Sheet for a prospect | "POV sheet", "success criteria for X", "prep the POV" |
 
 Plus the shared reference (not a skill): **`_se-playbook.md`** — the SE-craft canon all skills read from.
 
@@ -83,6 +84,7 @@ deal-assessment           ← honest health read (every ~2 weeks)
 follow-up-email           ← drafts in your voice, as needed
 objection-handler         ← when a concern surfaces
 internal-prep             ← AE syncs, forecasts, exec readouts
+pov-gsheet                ← create + pre-fill a POV Success Criteria Google Sheet
 
 next-move        ← run anytime: "what should I do next on X?"
 ```
@@ -150,6 +152,23 @@ The suite assumes these MCPs are configured in `~/.claude.json`:
   }
   ```
   Skip any of these and skills degrade gracefully — no SFDC/Notion enrichment, everything else works.
+
+#### 4. `pov-gsheet` (Google Sheets POV)
+`pov-gsheet` creates a copy of a POV Success Criteria template in Google Sheets and pre-fills it from Gong/Salesforce/Granola. Before using it:
+
+1. **Install the separate `se-assistant` skill.** `pov-gsheet` depends on `se-assistant` to query Gong, Salesforce, and Granola. `se-assistant` is **not** in this repo; obtain it from your team's source and place/symlink it at `~/.claude/skills/se-assistant/`. Verify:
+   ```bash
+   ls ~/.claude/skills/se-assistant/SKILL.md
+   ```
+   If you don't have `se-assistant`, either obtain it or edit `skills/pov-gsheet/SKILL.md` to inline the data-gathering steps.
+2. **Configure `pov_gsheet` in `.se-config.yaml`.** Copy the commented block from `config/se-config.example.yaml`, uncomment it, and set your own values:
+   - `template_url` — your copy of the POV Success Criteria Google Sheet (must be a Sheets URL, not an `.xlsx`)
+   - `drive_target_folder_url` — the Drive "Customer" folder where prospect subfolders will be created
+   - `se_name` / `se_title` — the SE contact shown on the Contacts sheet
+3. **Chrome / Google authentication.** The skill uses Chrome browser automation (the `computer-use` MCP). Chrome must be signed into the Google account that owns the template and Drive folder. When Claude asks for `clipboardWrite` permission during the run, accept it. The `claude -p` invocation runs with `--permission-mode acceptEdits`; when invoked from the webapp it is flagged as `write + shell` and asks for explicit approval.
+4. **Run `./install.sh` after pulling.** This symlinks the updated `skills/pov-gsheet/SKILL.md` into `~/.claude/skills/pov-gsheet/`.
+
+`pov-gsheet` now fails early with a clear message if `se-assistant` is missing, the `pov_gsheet` config block is absent, or Chrome automation is unavailable.
 
 ### Optional enhancements
 
