@@ -326,6 +326,41 @@ async function writeClipboard(text) {
   }
 }
 
+async function assertGoogleSignedIn(page, url) {
+  if (url.includes("accounts.google.com") || url.includes("ServiceLogin")) {
+    throw new Error(
+      "Chrome is not signed into a Google account. Sign in to Chrome with an account that has access to the template and Drive folder, then retry.",
+    );
+  }
+  // Drive and Sheets sometimes redirect through an interstitial that contains a sign-in button.
+  const signInButton = page.locator('button:has-text("Sign in"), a:has-text("Sign in"), [data-test-id="sign-in-button"]').first();
+  if (await signInButton.isVisible().catch(() => false)) {
+    throw new Error(
+      "Google sign-in is required but Chrome is not signed in. Sign in and retry.",
+    );
+  }
+}
+
+async function findExistingSheet(page, folderUrl, title) {
+  await page.goto(folderUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+  await assertGoogleSignedIn(page, page.url());
+  // Drive lists files with data-tooltip or aria-label attributes. Search for the title text.
+  const locator = page.locator(`text=${title}`).first();
+  if (await locator.isVisible().catch(() => false)) {
+    const link = page.locator(`a:has-text("${title}")`).first();
+    const href = await link.getAttribute("href").catch(() => null);
+    return href ? (href.startsWith("http") ? href : `https://drive.google.com${href}`) : folderUrl;
+  }
+  return null;
+}
+
+async function verifySheetInFolder(page, folderUrl, title) {
+  await page.goto(folderUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+  await assertGoogleSignedIn(page, page.url());
+  const locator = page.locator(`text=${title}`).first();
+  return (await locator.isVisible().catch(() => false));
+}
+
 async function doRun(ctx, args) {
   let playwright;
   try {
@@ -339,17 +374,29 @@ async function doRun(ctx, args) {
   const templateId = extractSheetsId(args.templateUrl);
   const folderId = extractDriveFolderId(args.driveFolderUrl);
   const plan = buildPlan(ctx);
-  const copyUrl = buildCopyUrl(templateId, folderId, args.copyTitle || "POV Success Criteria");
+  const copyTitle = args.copyTitle || "POV Success Criteria";
+  const copyUrl = buildCopyUrl(templateId, folderId, copyTitle);
 
   const browser = await playwright.chromium.connectOverCDP(args.cdpUrl);
   const context = browser.contexts()[0] || (await browser.newContext());
   const page = await context.newPage();
 
   let finalUrl = null;
+  let finalFolderUrl = args.driveFolderUrl;
   let error = null;
+  let existingSheet = null;
   try {
+    // Check for an existing sheet with the same title before copying.
+    existingSheet = await findExistingSheet(page, args.driveFolderUrl, copyTitle);
+    if (existingSheet) {
+      throw new Error(
+        `An existing POV sheet titled "${copyTitle}" was found in the Drive folder: ${existingSheet}. Stop and ask the user whether to use it, create a new version, or stop.`,
+      );
+    }
+
     // Open the copy URL and wait for the new spreadsheet to load.
     await page.goto(copyUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await assertGoogleSignedIn(page, page.url());
     // A /copy URL either opens the new sheet directly or shows a copy dialog.
     // Wait until the URL looks like an /edit URL for a spreadsheet.
     await page.waitForFunction(
@@ -386,8 +433,14 @@ async function doRun(ctx, args) {
 
     // Verify the title.
     const title = await page.title().catch(() => "");
-    if (args.copyTitle && !title.includes(args.copyTitle)) {
+    if (copyTitle && !title.includes(copyTitle)) {
       console.warn(`Sheet title may not match expected: "${title}"`);
+    }
+
+    // Verify Drive placement.
+    const inFolder = await verifySheetInFolder(page, args.driveFolderUrl, copyTitle);
+    if (!inFolder) {
+      console.warn(`Sheet "${copyTitle}" not yet visible in the target Drive folder. It may still be copying or may need to be moved manually.`);
     }
   } catch (e) {
     error = e.message;
@@ -396,11 +449,11 @@ async function doRun(ctx, args) {
     await browser.close().catch(() => {});
   }
 
-  const folderUrl = `https://drive.google.com/drive/folders/${folderId}`;
-  const status = error ? "run-error" : "created";
+  const folderUrl = finalFolderUrl || `https://drive.google.com/drive/folders/${folderId}`;
+  const status = error ? (existingSheet ? "existing-sheet-detected" : "run-error") : "created";
   const note = error
-    ? `Run failed: ${error}. Use --dry-run to get a plan, then follow the manual clipboard steps in the skill.`
-    : "Sheet created. Verify Drive placement before reporting success.";
+    ? `Run failed: ${error}. ${existingSheet ? "An existing POV sheet was detected — ask the user how to proceed." : "Use --dry-run to get a plan, then follow the manual clipboard steps in the skill."}`
+    : `Sheet created and verified in Drive folder: ${folderUrl}`;
   const receipt = buildReceipt(ctx, args, plan, finalUrl, folderUrl, status, note);
   return receipt;
 }

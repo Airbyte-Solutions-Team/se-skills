@@ -1071,10 +1071,14 @@ def _merge_external_evidence(ctx: PovContext, evidence_list: list[ExternalEviden
             continue
 
         if fact_type == "transcript":
-            text = evidence.fact.get("text") or evidence.raw or ""
-            scope = _extract_transcript_text(str(text), evidence.source)
-            for key in ("sources", "destinations", "use_cases"):
-                _dedupe_append(ctx.technical_scope[key], scope[key], lambda s: s.name.lower())
+            # Only extract from an explicit `text` field in the fact, not from `raw`.
+            # The bridge already extracts technical systems from the transcript and emits
+            # separate `technical_system` evidence with correct source/destination kind.
+            text = evidence.fact.get("text") or ""
+            if text:
+                scope = _extract_transcript_text(str(text), evidence.source)
+                for key in ("sources", "destinations", "use_cases"):
+                    _dedupe_append(ctx.technical_scope[key], scope[key], lambda s: s.name.lower())
             continue
 
         if fact_type == "note" and evidence.raw:
