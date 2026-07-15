@@ -2960,34 +2960,104 @@ function openInvoke(account, opp = null) {
   document.getElementById("modal-title").textContent = `Invoke — ${ctx}`;
   const sel = document.getElementById("skill-select");
   sel.innerHTML = skillOptionsGrouped();
-  const blurb = document.getElementById("skill-blurb");
-  const perm = document.getElementById("skill-perm");
-  const setBlurb = () => {
+
+  const summaryEl = document.getElementById("skill-summary");
+  const detailsEl = document.getElementById("skill-details");
+  const moreBtn = document.getElementById("skill-more");
+  const prereqEl = document.getElementById("skill-prereq");
+  const permEl = document.getElementById("skill-perm");
+  const tierEl = document.getElementById("skill-tier");
+
+  const para = (text) => esc(text).split("\n").filter((l) => l.trim()).map((l) => `<p>${l}</p>`).join("");
+
+  const renderDetails = () => {
+    const h = SKILLS_HELP[sel.value] || {};
+    const parts = [];
+    if (h.description) {
+      parts.push(`<div class="skill-detail-section"><div class="skill-detail-label">What it does</div><div class="skill-detail-body">${para(h.description)}</div></div>`);
+    }
+    if (h.output_location) {
+      parts.push(`<div class="skill-detail-section"><div class="skill-detail-label">Saves to</div><div class="skill-detail-body">${esc(h.output_location)}</div></div>`);
+    }
+    if (h.triggers?.length) {
+      const chips = h.triggers.slice(0, 6).map((t) => `<code class="skill-trig">${esc(t)}</code>`).join(" ");
+      parts.push(`<div class="skill-detail-section"><div class="skill-detail-label">Triggers</div><div class="skill-detail-body">${chips}</div></div>`);
+    }
+    if (h.methodologies?.length) {
+      const chips = h.methodologies.map((m) => `<span class="skill-chip">${esc(m)}</span>`).join(" ");
+      parts.push(`<div class="skill-detail-section"><div class="skill-detail-label">Methodology</div><div class="skill-detail-body">${chips}</div></div>`);
+    }
+    detailsEl.innerHTML = parts.join("");
+  };
+
+  const setSkillInfo = () => {
     const h = SKILLS_HELP[sel.value] || {};
     const base = SKILLS.find((s) => s.id === sel.value) || {};
-    const trig = (h.triggers || []).slice(0, 4).map((t) => `<code class="trig">${esc(t)}</code>`).join(" ");
-    blurb.innerHTML = `
-      <div class="hint-what">${esc(h.description || base.blurb || "")}</div>
-      ${h.prerequisites ? `<div class="hint-line"><b>Needs:</b> ${esc(h.prerequisites.split("\n")[0]).slice(0, 160)}</div>` : ""}
-      ${h.output_location ? `<div class="hint-line"><b>Saves to:</b> <span class="muted">${esc(h.output_location)}</span></div>` : ""}
-      ${trig ? `<div class="hint-line"><b>Triggers:</b> ${trig}</div>` : ""}`;
+
+    summaryEl.textContent = h.summary || base.blurb || "";
+    renderDetails();
+    detailsEl.classList.add("hidden");
+    const hasDetails = h.description && h.description !== (h.summary || base.blurb || "");
+    moreBtn.classList.toggle("hidden", !hasDetails);
+    moreBtn.textContent = "Show details";
+
+    if (base.tier) {
+      const short = base.step ? `Step ${base.step}` : base.tier.split(" —")[0];
+      tierEl.textContent = short;
+      tierEl.title = base.tier;
+      tierEl.classList.remove("hidden");
+    } else {
+      tierEl.classList.add("hidden");
+    }
+
+    if (h.prerequisites) {
+      const lines = h.prerequisites.split("\n").map((l) => l.trim()).filter(Boolean);
+      const first = lines[0];
+      const rest = lines.slice(1).join("\n");
+      const more = rest
+        ? `<button class="linklike prereq-more" type="button">Show more</button><div class="prereq-rest hidden">${para(rest)}</div>`
+        : "";
+      prereqEl.innerHTML = `<div class="skill-disclosure-head"><span class="skill-disclosure-icon">ℹ️</span><b>Prerequisite</b></div><div class="skill-disclosure-body">${esc(first)}${more}</div>`;
+      prereqEl.classList.remove("hidden");
+      if (rest) {
+        prereqEl.querySelector(".prereq-more").onclick = (e) => {
+          const restEl = prereqEl.querySelector(".prereq-rest");
+          restEl.classList.toggle("hidden");
+          e.target.textContent = restEl.classList.contains("hidden") ? "Show more" : "Show less";
+        };
+      }
+    } else {
+      prereqEl.classList.add("hidden");
+      prereqEl.innerHTML = "";
+    }
   };
+
   const setPermissions = () => {
     const base = SKILLS.find((s) => s.id === sel.value) || {};
     const p = base.permissions || {};
     if (p.requires_approval) {
-      const parts = [];
-      if (p.write) parts.push("writes a file to the customer workspace");
-      if (p.git) parts.push("runs git commands");
-      if (p.shell) parts.push("runs shell commands");
-      perm.innerHTML = `<strong>Permissions required:</strong> this skill ${parts.join("; ")}. It runs with <code>--permission-mode acceptEdits</code>; proceed only if you trust the prompt.`;
-      perm.classList.remove("hidden");
+      const chips = [];
+      if (p.write) chips.push(`<span class="skill-perm-chip">writes a file</span>`);
+      if (p.shell) chips.push(`<span class="skill-perm-chip skill-perm-chip--warn">runs shell commands</span>`);
+      if (p.git) chips.push(`<span class="skill-perm-chip skill-perm-chip--warn">runs git commands</span>`);
+      const summary = p.summary ? `<div class="skill-perm-summary">${esc(p.summary)}</div>` : "";
+      permEl.innerHTML = `<div class="skill-disclosure-head"><span class="skill-disclosure-icon">🔒</span><b>Expected permissions</b></div><div class="skill-disclosure-body"><div class="skill-perm-chips">${chips.join("")}</div>${summary}<div class="skill-perm-mode">Runs with <code>--permission-mode acceptEdits</code>.</div></div>`;
+      permEl.classList.remove("hidden");
     } else {
-      perm.classList.add("hidden");
+      permEl.classList.add("hidden");
+      permEl.innerHTML = "";
     }
   };
-  sel.onchange = () => { setBlurb(); setPermissions(); };
-  setBlurb(); setPermissions();
+
+  moreBtn.onclick = () => {
+    detailsEl.classList.toggle("hidden");
+    const showing = !detailsEl.classList.contains("hidden");
+    moreBtn.textContent = showing ? "Hide details" : "Show details";
+    if (showing && !detailsEl.innerHTML) renderDetails();
+  };
+
+  sel.onchange = () => { setSkillInfo(); setPermissions(); };
+  setSkillInfo(); setPermissions();
   document.getElementById("skill-extra").value = "";
 
   // Runtime skill discovery — reload skills from disk without restarting the app.
@@ -3001,7 +3071,8 @@ function openInvoke(account, opp = null) {
       const prev = sel.value;
       sel.innerHTML = skillOptionsGrouped();
       if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
-      setBlurb();
+      setSkillInfo();
+      setPermissions();
       showToast("Skills reloaded", "ok");
     } catch (e) {
       showToast("Reload failed: " + e.message, "err");

@@ -2,7 +2,7 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`, mine = `gyairbyte/SE-Workflow`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: July 16, 2026 — Output-reader UI/UX clarity batch: unified Document status bar, simplified action bar, compact expandable feedback, suppressed redundant meta sections, and styled decision/risk callout cards._
+_Last updated: July 14, 2026 — Navigation and skill-invocation clarity batch: compact skill summary/details in the invoke modal, visible prerequisite and expected-permissions disclosures, tier/step badge, and responsive account/opportunity tables._
 
 ## What the app is
 Local FastAPI + vanilla-JS UI (no build step) over the SE skills suite. `cd webapp && uv run app.py` → http://127.0.0.1:8787 (needs `CPATH/LIBRARY_PATH` for portaudio on this Mac — see "Run" below). Browse team → member's accounts → an account's opportunities → generated outputs; invoke skills; ask follow-ups on outputs; Live Transcribe a Zoom call with an AI copilot.
@@ -16,6 +16,13 @@ uv run --python 3.11 app.py    # port 8787
 ```
 
 ## Built this session (newest first — see `git log`)
+- **Navigation and skill-invocation clarity batch (July 14).** Improved the account/opportunity list with responsive column hiding, truncating long names instead of clipping, and wrapped command bars on narrow screens. Revamped the **Invoke Skill** modal with a compact, scrollable body and sticky action bar, a one-line skill summary, an expandable details panel, a calm **Prerequisite** disclosure with "Show more/less" for long lists, a visible **Expected permissions** disclosure with severity-colored chips (write/shell/git) and an explicit approval note, and a tier/step badge next to the selected skill. Removed the shared `validation-banner` class from `#skill-perm` so expected permissions are not accidentally hidden by PR #21's legacy banner rule. Mapped to `IMPLEMENTATION-PLAN.md` UX-007 and extended UX-004 acceptance criteria.
+  - `webapp/static/app.js`: `openInvoke` progressive disclosure, `setSkillInfo`, `renderDetails`, `setPermissions`, `prereqLines`, `openInvoke` scrollable modal.
+  - `webapp/static/style.css`: `.modal-card` flex layout, `.skill-picker`, `.skill-tier`, `.skill-summary`, `.skill-more`, `.skill-details`, `.skill-prereq`, `.skill-perm`, `.row { flex-wrap: wrap; }`, account/opp responsive column hiding.
+  - `webapp/static/index.html`: restructured invoke modal markup, removed `validation-banner` class from `#skill-perm`, bumped `app.js?v=` cache-bust.
+  - `IMPLEMENTATION-PLAN.md`: added UX-007 and updated UX-004.
+  - `webapp/README.md` and `webapp/SESSION-LOG.md`: updated descriptions.
+  - Validation: `node --check webapp/static/app.js` passes; `uv run --extra dev pytest eval/ -q` passes; `uv run python -m eval.runner run-suite --manifest-dir eval/manifests/phase1 --executor mock` passes; `./scripts/check-sync.sh` passes.
 - **Output-reader UI/UX clarity batch (July 16).** Replaced the stacked validation and reference-freshness banners in the output reader with a single, color-coded **Document status** bar that summarizes the most important issue and expands for details. Simplified the action bar into primary (Chat), secondary (Compare, Export dropdown, Back), and destructive (Delete, with confirmation) groups. Converted the feedback panel into a compact **Review status** line with Approve/Comment/Correct actions; the form expands on demand and existing entries are color-coded by action. Suppressed redundant `Date`/`Skill` meta sections. Styled `Deal Blocker`, `What Would Close It`, and `What Would Lose It` sections as distinct callout cards. Added status badges to output-list rows and tightened responsive behavior. No backend, schema, skill, or feedback persistence changes.
   - `webapp/static/app.js`: `buildDocStatus`, `openOutput` action bar, `loadFeedbackPanel` compact panel, output-list status badges, section accent classes.
   - `webapp/static/style.css`: `.doc-status`, `.row-actions--doc`, `.out-status`, `.feedback-panel` compact styles, `.doc-section--*` callout accents, responsive reader tweaks.
