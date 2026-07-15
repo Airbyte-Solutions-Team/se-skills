@@ -6,19 +6,29 @@ description: >
   POV tracker, or anything related to preparing a POV for a prospect. Also triggers when asked to
   "fill out the POV template", "set up POV tracking for [prospect]", "create success criteria for
   [account]", "prep the POV sheet", or any variation involving POV + prospect/account name.
-  This skill uses a Google Sheets template (not XLSX) with dropdown fields and pulls data from
-  Gong calls, Salesforce, and Granola meeting notes via the se-assistant skill.
+  This skill uses a Google Sheets template (not XLSX) with dropdown fields and pulls data from the
+  existing SE workspace — prior skill outputs, workspace transcripts, and optional external evidence
+  (Salesforce, Gong, meeting notes, Gmail, Slack) when those MCP integrations are configured.
 ---
 
 # POV Google Sheets Creator
 
-Creates pre-filled Airbyte POV Success Criteria Google Sheets for prospects by pulling data from prior discovery calls and CRM records.
+Creates pre-filled Airbyte POV Success Criteria Google Sheets for prospects. It gathers context
+deterministically from the workspace, builds a structured POV context, then uses Chrome/
+computer-use (clipboard + Name Box paste) to copy the configured template, fill the seven tabs,
+and move the new sheet into the correct prospect folder in Google Drive.
+
+Before generating anything, read `~/.claude/skills/_se-playbook.md` → **Output Document Format** and
+**Source Coverage Transparency**.
 
 ## Preflight checks (fail fast)
 
-Stop immediately and report a clear, actionable error if any required dependency or configuration is missing. Do not open Chrome or copy a template until these checks pass.
+Stop immediately and report a clear, actionable error if any required dependency or configuration is
+missing. Do not open Chrome or copy a template until these checks pass.
 
-1. **Locate the SE config file.** Look for `.se-config.yaml` in the current working directory (the webapp runs `claude -p` from the workspace root). If it is missing, fall back to `$SE_WORKSPACE/.se-config.yaml` then `~/.se-skills/.se-config.yaml`.
+1. **Locate the SE config file.** The webapp runs `claude -p` from the workspace root, so start by
+   reading `.se-config.yaml` in the current directory. If it is missing, fall back to
+   `$SE_WORKSPACE/.se-config.yaml`, then `~/.se-skills/.se-config.yaml`, then `~/airbyte-work/.se-config.yaml`.
 2. **Read the `pov_gsheet` block.** It must contain:
    - `template_url` — the Google Sheets template to copy
    - `drive_target_folder_url` — the Drive "Customer" folder where prospect subfolders are created
@@ -27,10 +37,30 @@ Stop immediately and report a clear, actionable error if any required dependency
 
    If the block or any required key is missing, stop and say:
    > `pov-gsheet` is missing required configuration. Copy `config/se-config.example.yaml` to your workspace root as `.se-config.yaml`, uncomment the `pov_gsheet:` block, and set `template_url`, `drive_target_folder_url`, `se_name`, and `se_title`.
-3. **Verify `se-assistant` is installed.** Run a shell check for `~/.claude/skills/se-assistant/SKILL.md`. If it is missing, stop and say:
-   > `pov-gsheet` depends on the `se-assistant` skill, which is not bundled with this repository. Obtain it from your team's source and place it at `~/.claude/skills/se-assistant/`, then re-run. Verify with: `ls ~/.claude/skills/se-assistant/SKILL.md`.
-4. **Confirm Chrome / computer-use access is available.** The skill needs the Chrome browser automation MCP with `clipboardWrite: true`. If the first browser action fails with a missing-tool or permission error, stop and say:
-   > `pov-gsheet` needs the computer-use MCP and `clipboardWrite` permission. Make sure Chrome is running and you have accepted the permission prompt when it appears.
+3. **Confirm the account identifier is available.** The webapp passes the selected account and
+   opportunity. If invoked outside the webapp, ask for them or infer from the prompt context. The
+   account name must match the workspace customer folder name.
+4. **Confirm context-gathering is possible.** Run the deterministic context loader:
+   ```bash
+   REPO_DIR=$(cd "$(dirname "$(readlink -f ~/.claude/skills/pov-gsheet/SKILL.md)")/.." && pwd)
+   CTX_FILE="${OUT_DIR:-/tmp}/pov-gsheet-context.json"
+   python "$REPO_DIR/webapp/pov_gsheet_context.py" \
+     --account "$ACCOUNT" \
+     --opportunity "$OPPORTUNITY" \
+     --workspace "$(pwd)" \
+     --out "$CTX_FILE" --pretty
+   ```
+   If the loader cannot be found, stop and say:
+   > `pov-gsheet` cannot locate `webapp/pov_gsheet_context.py`. Run `install.sh` to symlink the skills repository into `~/.claude/skills/`.
+5. **Confirm the run is not `blocked`.** Read `CTX_FILE` and look at `status` (`complete`, `partial`, or
+   `blocked`) and `warnings`. If `blocked`, do not create a sheet. Write the local receipt and explain
+   what is missing and which upstream skill to run.
+6. **Confirm Chrome / computer-use access is available.** The Google Sheets portion of the skill needs
+   Chrome running with remote debugging on `localhost:29229` (the webapp default) and either the
+   `computer-use` MCP with `clipboardWrite: true` or the optional Node/Playwright runner
+   `webapp/scripts/pov-gsheet-runner.mjs` with Playwright installed. If the first browser action fails
+   with a missing-tool or permission error, stop and say:
+   > `pov-gsheet` needs a signed-in Google account in Chrome, the computer-use MCP with `clipboardWrite`, or a working Playwright + Chrome CDP setup. See `config/se-config.example.yaml` for setup notes.
 
 ## Configuration used by this skill
 
@@ -41,13 +71,15 @@ From `.se-config.yaml` (`pov_gsheet` block), assign these values for the rest of
 - `se_name` → `SE_NAME`
 - `se_title` → `SE_TITLE`
 
-Use these variables everywhere the original steps referenced the shared template, shared folder, or SE contact details. Do not use the placeholder URLs or example names below.
+Use these variables everywhere the original steps referenced the shared template, shared folder, or
+SE contact details. Do not use the placeholder URLs or example names below.
 
 ## Template
 
 **Source template:** `TEMPLATE_URL`
 
-This template has 7 sheets:
+This template is expected to contain exactly these 7 sheets:
+
 1. **Contacts** — Airbyte team + prospect contacts
 2. **POV Milestones** — Timeline tracking (Demo, Discovery, Success Criteria, Environment Setup, POV Execution, Wrap-up)
 3. **Business Objectives** — Strategic goals the prospect wants to achieve
@@ -56,45 +88,137 @@ This template has 7 sheets:
 6. **Feature Requests** — Product asks surfaced during discovery
 7. **Architecture Diagrams** — Placeholder for diagrams
 
+If the copied template is missing any of these tabs or the tabs are renamed, stop before pasting and
+report which tabs are missing or unexpected.
+
 ## Workflow
 
-### Step 1: Gather Prospect Data
+### Step 0: Build the structured POV context
 
-Before touching the Google Sheet, gather all available information about the prospect. Use the **se-assistant** skill to query:
+#### 0a. Gather optional external evidence
 
-1. **Salesforce** — Account details, opportunity stage, AE name, contacts
-2. **Gong calls** — Transcripts from discovery/demo calls (look for technical requirements, pain points, systems mentioned, integration patterns)
-3. **Granola meeting notes** — If available, check for recent meeting notes with the prospect
+Before running the deterministic loader, use any configured MCP integrations to retrieve POV-relevant
+facts. The loader does not call MCP tools itself; the skill must call them and pass the results as
+JSON evidence files.
 
-If `se-assistant` cannot be invoked or returns no data, stop and report which source failed. Do not invent prospect data.
+For each configured source, write a JSON file containing a list of `ExternalEvidence` objects. If an
+MCP is not configured, not reachable, or the user has not consented, write exactly one entry with
+`status: "unavailable"` and a clear `note`. Do not invent data or mark a source as "searched" if the
+tool was not actually called.
 
-Focus on extracting:
-- Prospect contacts (names, titles, emails)
-- Source systems (databases, SaaS apps, APIs)
-- Destination systems (warehouses, lakes)
-- Specific technical requirements (CDC, schema drift, performance, IaC)
-- Pain points and use cases
-- Feature requests or product gaps mentioned
-- Timeline and milestone dates
+* **Salesforce** — `mcp__salesforce__run_soql_query` (read-only SOQL). Scope to the account/opportunity.
+  Convert Account, Opportunity, and Contact records into `fact_type: prospect` / `contact` evidence.
+  File: `${OUT_DIR:-/tmp}/pov-gsheet-salesforce-evidence.json`
+* **Gong** — `mcp__gong__search_calls` scoped to the customer domain/participants and last 14 days,
+  then `gong://calls/{callId}/transcript` for each relevant call. Extract transcripts, participants,
+  and POV-relevant facts.
+  File: `${OUT_DIR:-/tmp}/pov-gsheet-gong-evidence.json`
+* **Meeting notes** (e.g. Granola) — via a configured meeting-notes MCP. Scope to the account and
+  recent date range. Extract attendees, decisions, action items, POV commitments.
+  File: `${OUT_DIR:-/tmp}/pov-gsheet-granola-evidence.json`
+* **Gmail** — via a configured Gmail MCP. Search threads for the customer domain, account name,
+  opportunity name, and POV terms within a bounded date range. Distinguish direct customer statements
+  from drafts/internal forwards. Do not persist full email bodies.
+  File: `${OUT_DIR:-/tmp}/pov-gsheet-gmail-evidence.json`
+* **Slack** — via a configured Slack MCP. Search account-relevant channels/threads for internal
+  updates, relayed requirements, engineering confirmations, POV blockers, and decisions. Mark whether
+  each fact is direct customer evidence, internal interpretation, engineering-confirmed, or unverified.
+  File: `${OUT_DIR:-/tmp}/pov-gsheet-slack-evidence.json`
 
-Track which sources were checked and which fields could not be found — you will need them for the receipt.
+Each evidence object must carry:
 
-### Step 2: Copy the Template
+```yaml
+source: "salesforce" | "gong" | "granola" | "gmail" | "slack"
+source_id: "<record/call/message id or safe URL>"
+retrieved_at: "2026-07-14T00:00:00Z"
+account_name: "<Account>"
+opportunity_name: "<Opportunity>"
+direct_customer: true | false  # true for customer statements, false for internal interpretation
+fact_type: "prospect" | "contact" | "business_objective" | "technical_system" | "success_criterion" | "milestone" | "feature_request" | "requirement" | "transcript" | "note" | "unknown"
+fact: {}  # payload keyed to the target model fields
+raw: "<short verbatim snippet>"  # optional, PII-safe
+status: "ok" | "unavailable" | "skipped"
+note: "<human-readable provenance>"
+```
 
-Open `TEMPLATE_URL` in Chrome and make a copy:
-1. Navigate to `TEMPLATE_URL`
-2. Use File > Make a copy
-3. Rename the copy to: `Airbyte || [Prospect Name] - POV Success Criteria`
+#### 0b. Run the deterministic context loader
 
-### Step 3: Fill the Sheets Using the Clipboard Paste Method
+The loader merges workspace sources, optional Salesforce `sf` CLI output, and the JSON evidence
+files into a single `PovContext`. It is deterministic and produces one JSON file the rest of the run
+consumes.
 
-Google Sheets editing via browser automation requires a specific technique that works reliably. The method below avoids validation popup errors and cell misalignment issues.
+```bash
+REPO_DIR=$(cd "$(dirname "$(readlink -f ~/.claude/skills/pov-gsheet/SKILL.md)")/.." && pwd)
+OUT_DIR="${OUT_DIR:-/tmp}"
+CTX_FILE="$OUT_DIR/pov-gsheet-context.json"
+
+python "$REPO_DIR/webapp/pov_gsheet_context.py" \
+  --account "$ACCOUNT" \
+  --opportunity "$OPPORTUNITY" \
+  --workspace "$(pwd)" \
+  --salesforce-evidence "$OUT_DIR/pov-gsheet-salesforce-evidence.json" \
+  --gong-evidence "$OUT_DIR/pov-gsheet-gong-evidence.json" \
+  --granola-evidence "$OUT_DIR/pov-gsheet-granola-evidence.json" \
+  --gmail-evidence "$OUT_DIR/pov-gsheet-gmail-evidence.json" \
+  --slack-evidence "$OUT_DIR/pov-gsheet-slack-evidence.json" \
+  --out "$CTX_FILE" --pretty
+```
+
+Inspect the context JSON. It has these top-level keys:
+
+```yaml
+prospect:                # account, opportunity, stage, owner, se_name, se_title, dates
+contacts:                # internal (Airbyte) and prospect contact lists
+business_objectives:     # list of customer-derived objectives
+technical_scope:         # sources, destinations, use_cases, requirements, dependencies
+success_criteria:        # list of validation criteria
+milestones:              # list of POV milestones with statuses
+feature_requests:        # list of product asks
+architecture_notes:      # list of notes / placeholders
+unknowns:                # list of unresolved items
+source_coverage:         # which sources were checked, available, material
+status:                  # complete | partial | blocked
+warnings:                # human-readable gaps
+```
+
+If `status == "blocked"`, do not proceed to Google Sheets. Write the local receipt (see Step 4) and
+explain which upstream skill to run (e.g., `biz-qual`, `tech-qual`, `poc-plan`, `connector-feasibility`).
+
+### Step 1: Copy the Template
+
+Open `TEMPLATE_URL` in Chrome and make a copy. The fastest reliable path is the `/copy` URL with the
+prospect subfolder as the destination:
+
+```
+https://docs.google.com/spreadsheets/d/<TEMPLATE_ID>/copy?copyDestination=<FOLDER_ID>&title=Airbyte%20%7C%7C%20<Prospect>%20-%20POV%20Success%20Criteria
+```
+
+If that creates the copy directly in the target folder, confirm the title. If it creates a "Copy of …"
+file in My Drive instead, rename it to `Airbyte || [Prospect Name] - POV Success Criteria` and move it
+(see Step 3).
+
+If you cannot use the `/copy` URL, open `TEMPLATE_URL` and use **File > Make a copy**.
+
+### Step 2: Fill the Sheets Using the Clipboard Paste Method
+
+Google Sheets editing via browser automation requires a specific technique that works reliably. The
+method below avoids validation popup errors and cell misalignment issues.
 
 #### The Reliable Editing Method
 
 **Prerequisites:**
-- Request computer-use access with `clipboardWrite: true`
-- Have the Chrome MCP tools available
+
+- Request computer-use access with `clipboardWrite: true`.
+- Have the Chrome MCP tools available, **or** use the optional Node/Playwright runner:
+  ```bash
+  node "$REPO_DIR/webapp/scripts/pov-gsheet-runner.mjs" \
+    --context "$CTX_FILE" \
+    --template-url "$TEMPLATE_URL" \
+    --drive-folder-url "$DRIVE_TARGET_FOLDER_URL" \
+    --copy-title "Airbyte || $ACCOUNT - POV Success Criteria" \
+    --run
+  ```
+  If Playwright is not installed or the run fails, fall back to the manual clipboard steps below.
 
 **For each cell or range you need to fill:**
 
@@ -108,15 +232,17 @@ Google Sheets editing via browser automation requires a specific technique that 
    - For multi-cell ranges: use TSV format (tabs between columns, newlines between rows)
    - Example TSV for a 3-column, 2-row paste:
      ```
-     Value1	Value2	Value3\nValue4	Value5	Value6
+     Value1	Value2	Value3
+     Value4	Value5	Value6
      ```
 
-3. **Paste with Cmd+V** (or Ctrl+V on Windows):
+3. **Paste with Cmd+V** (or Ctrl+V on Windows/Linux):
    - The data flows into cells starting from the active cell
    - Tabs map to column separators
    - Newlines map to row separators
 
 **Important notes on dropdowns:**
+
 - Google Sheets dropdown cells accept pasted text that matches valid options
 - You MUST use the EXACT dropdown values below — any other text will show as "Invalid"
 - Known valid dropdown values in this template:
@@ -129,6 +255,7 @@ Google Sheets editing via browser automation requires a specific technique that 
   - **Airbyte Product Area** (Feature Requests): "Connectors", "Platform", "Cloud", "Enterprise"
 
 **CRITICAL — Dropdown value mapping guidance for In-scope Apps:**
+
 - When filling Column C (App / System Role), map each app to its primary use case number:
   - Use Case #1 = Primary/core data pipeline use case (e.g., database replication, warehouse loading)
   - Use Case #2 = Secondary use case (e.g., CRM/SaaS integrations)
@@ -139,179 +266,205 @@ Google Sheets editing via browser automation requires a specific technique that 
   - "Other means of integration" = Database connectors (CDC, replication), warehouse loads, file transfers, Iceberg, or any non-API method
 
 #### What NOT to do
+
 - Don't try typing directly into cells with Tab to advance — it's unreliable
 - Don't use the Google Sheets API (requires OAuth tokens not available in browser context)
 - Don't use `navigator.clipboard.writeText()` from JavaScript — it fails with "Document not focused"
 - Don't manually click each cell and type — too slow and error-prone
 
-### Step 4: Sheet-by-Sheet Fill Guide
+### Step 3: Sheet-by-Sheet Fill Guide
+
+Use the structured context (`$CTX_FILE`) as the single source of truth. Do not invent data.
 
 #### Contacts Sheet
+
 - **Row 3-6 (Airbyte team):** AE name + title, `SE_NAME` (`SE_TITLE`), and any other Airbyte contacts
-- **Row 11+ (Prospect contacts):** Names, titles, emails from Salesforce contacts and Gong call participants
+  from `contacts.internal`.
+- **Row 11+ (Prospect contacts):** Names, titles, emails from `contacts.prospect`. Only include contacts
+  with a supported name; do not invent emails or roles.
 
 #### POV Milestones Sheet
-- Fill dates and statuses for milestones that have occurred (Demo, Technical Discovery)
-- Set "Success Criteria" milestone to current date with "In Progress" status
-- Leave future milestones as "Not Started"
+
+Use `milestones` from the context. For the default milestone list (Demo, Discovery, Success Criteria,
+Environment Setup, POV Execution, Wrap-up):
+
+- Fill dates and statuses for milestones that have occurred
+- Set the "Success Criteria" milestone to the current date with "In Progress" status
+- Set all genuinely future milestones to "Not Started"
+- Do not invent exact dates
 
 #### Business Objectives Sheet
-- Extract 2-4 business objectives from call transcripts
-- Common patterns: "reduce data pipeline maintenance", "improve data freshness", "consolidate ELT tooling", "enable self-service analytics"
+
+Use `business_objectives` from the context (2–4 concise customer-specific objectives). Each objective
+should map to one row. Include the supporting evidence/source where the sheet has a place for it.
 
 #### POV - Success Criteria Sheet
-This is the most important sheet. Structure it as:
 
-**Section 1: Initial Setup (Row 1 header)**
-- List each connector (source and destination) as a row
-- Include validation criteria, In-scope = "Yes", Priority = "Must Have" / "Nice to Have" / "Out of Scope"
+This is the most important sheet. Use `success_criteria` from the context.
 
-**Section 2+: Use Cases (separate header rows)**
-- Group related requirements under use case headers
-- Each requirement gets: Feature description, Validation/Acceptance criteria, In-scope, Priority, Notes
-- Common Airbyte use cases:
-  - CDC reliability & performance (Debezium, LSN tracking, auto-resync)
-  - Schema drift management (detection, notification, propagation)
-  - Performance benchmarking (throughput, latency targets)
-  - Infrastructure as Code (Terraform provider coverage)
-  - Monitoring & observability (alerting, logging, dashboards)
+Group related criteria under use-case headers when `use_case` is present. For each row include:
+
+- Feature or capability (from `feature_or_capability`)
+- Validation method (from `validation_method`)
+- Acceptance threshold (from `acceptance_threshold`; if null, label `TBD — confirm with customer`)
+- In-scope (from `in_scope`; default "Yes")
+- Priority (from `priority`; default "Must Have")
+- Notes/dependencies (from `notes` or `evidence`)
+
+If a criterion is not testable as written (e.g., "Validate CDC works well"), rephrase it to a measurable
+statement such as "Replicate inserts, updates, and deletes from SQL Server to Snowflake with no
+unexplained record loss during the agreed test window."
 
 #### In-scope Apps Sheet
-- List each source and destination system
-- Columns: A = In-scope App / System name, B = Source or Destination (dropdown), C = App / System Role (dropdown: Use Case #1/2/3), D = Integration Type (dropdown: API / OAuth / Other means of integration)
-- Column C mapping: assign each app to its primary use case number (Use Case #1 for core pipelines, #2 for secondary, #3 for exploratory)
-- Column D mapping: use "API" for REST/SaaS connectors, "OAuth" for OAuth-based, "Other means of integration" for database CDC, replication, warehouse loads, file transfers, Iceberg, etc.
-- DO NOT use free-text values like "CDC (Debezium)", "Database Replication", "API (REST)", "Warehouse Load" — these are NOT valid dropdown options and will show as Invalid
+
+Use `technical_scope.sources`, `technical_scope.destinations`, and `technical_scope.use_cases`.
+
+Columns:
+
+- A = In-scope App / System name
+- B = Source or Destination (dropdown)
+- C = App / System Role (dropdown: Use Case #1 / #2 / #3)
+- D = Integration Type (dropdown)
+- E = Notes
+
+Use exact dropdown values. Do not use free-text like "CDC (Debezium)", "Database Replication",
+"API (REST)", or "Warehouse Load".
 
 #### Feature Requests Sheet
-- List any product gaps or feature requests mentioned in calls
-- Include: Date, Airbyte Product Area, Task/Description, Priority
 
-### Step 5: Move to Prospect Folder (REQUIRED — every PoV sheet)
+Use `feature_requests` from the context. Include only supported product gaps or asks.
+Columns:
 
-Every PoV sheet MUST end up inside a prospect-specific subfolder under the canonical Drive target. There is no exception. The shape is:
+- A = Date
+- B = Airbyte Product Area (dropdown)
+- C = Task / Description
+- D = Priority
+
+#### Architecture Diagrams Sheet
+
+Preserve placeholders or add concise notes describing what diagram is needed. Do not fabricate an
+architecture diagram from incomplete context.
+
+### Step 4: Move to Prospect Folder (REQUIRED — every PoV sheet)
+
+Every PoV sheet MUST end up inside a prospect-specific subfolder under the canonical Drive target.
 
 ```
-Sales (shared drive)
-  └─ Customer
-       └─ [Prospect Name]            ← create if it does not exist
-            └─ Airbyte || [Prospect Name] - POV Success Criteria
+Configured customer target folder
+└── [Prospect Name]
+    └── Airbyte || [Prospect Name] - POV Success Criteria
 ```
 
-**Canonical target folder URL (the `Customer` folder):** `DRIVE_TARGET_FOLDER_URL`
+**Canonical target folder URL:** `DRIVE_TARGET_FOLDER_URL`
 
-#### 5.1 Open the target folder in a second Chrome tab
+#### 4.1 Open the target folder in a second Chrome tab
 
-Use `tabs_create_mcp` to open a new tab, then `navigate` to `DRIVE_TARGET_FOLDER_URL`. Keep this tab alongside the sheet tab — you'll use it to create the subfolder and to confirm the move at the end.
+Keep this tab alongside the sheet tab.
 
-#### 5.2 Check for an existing prospect subfolder
+#### 4.2 Check for an existing prospect subfolder
 
-Look for a subfolder named exactly after the prospect (e.g. `Power Digital Marketing`, `Wise PLC`). Folder name should match the prospect name as it appears in Salesforce, with no `Inc`, `Ltd`, or other legal suffix unless that is part of the SFDC account name.
+Look for a subfolder named exactly after the prospect. If it exists, skip to **4.4**. If it does not
+exist, create it.
 
-- If it exists, skip to **5.4** (move into existing subfolder).
-- If it does not exist, continue to **5.3**.
+#### 4.3 Create the prospect subfolder
 
-#### 5.3 Create the prospect subfolder
+1. Click `+ New` > `New folder`.
+2. Name it exactly as the prospect appears in the workspace.
+3. Click `Create`.
+4. Open the new folder and copy its URL.
 
-In the target Drive tab:
+#### 4.4 Move the sheet into the prospect subfolder
 
-1. Click the `+ New` button in the top-left sidebar.
-2. Click `New folder`.
-3. Replace the default `Untitled folder` text with the prospect name (exactly as it appears in SFDC).
-4. Click `Create`.
-5. After creation, double-click the new folder to navigate INTO it. Note the URL — it will look like `https://drive.google.com/drive/u/0/folders/[NEW_SUBFOLDER_ID]`. Copy that URL; you'll paste it into the Move dialog in 5.4.
+1. Switch to the sheet tab.
+2. Open the Move dialog (folder-with-arrow icon next to the title).
+3. Paste the new subfolder URL (or the existing one) into the search field.
+4. Select the folder and click `Move`.
+5. If prompted `Change ownership to a shared drive?`, confirm.
 
-#### 5.4 Move the sheet into the prospect subfolder
+#### 4.5 Cross-shared-drive constraint
 
-Switch back to the sheet tab. Open the Move dialog (the folder-with-arrow icon next to the title).
+Moving directly from one Shared Drive to another is blocked. The template copy must be in **My Drive**
+when you run Step 4. If the copy landed in another shared drive, make a new copy into the prospect
+subfolder (the file ID will change) and delete the original.
 
-1. Click the search icon (magnifying glass) at the right side of the tab strip.
-2. Click into the `Search folders or paste URL` input.
-3. Paste the new subfolder URL from 5.3 (or the prospect name if it already existed).
-4. The folder will appear as a result. Single-click to select.
-5. Click `Move`.
-6. If Drive prompts `Change ownership to a shared drive?`, click `Move` again to confirm the cross-drive ownership change. This is the expected prompt when moving from My Drive (where the template-copy lands by default) into the `Sales` shared drive.
+#### 4.6 Verify
 
-#### 5.5 IMPORTANT — cross-shared-drive constraint
+Refresh the Drive tab. Confirm:
 
-The standard Move dialog blocks moves from one Shared Drive directly to another (e.g. from the `Company` shared drive to the `Sales` shared drive). The `Sales` drive will appear greyed out in the Shared Drives picker.
+- The prospect subfolder exists under the customer folder.
+- The sheet is inside that subfolder.
+- The sheet's title reads `Airbyte || [Prospect Name] - POV Success Criteria`.
 
-This is why the workflow assumes the template copy is sitting in **My Drive** when Step 5 runs. My Drive → `Sales` shared drive is allowed; `Company` shared drive → `Sales` shared drive is not. Do NOT pre-move the copy into another shared drive before Step 5, or you will be stuck. If you find the sheet already lives in another shared drive, the only recourse is `File > Make a copy` into the prospect subfolder followed by deleting the original (the file ID will change).
+Do not report success while the file remains in My Drive or another temporary location.
 
-#### 5.6 Verify
+### Step 5: Write a Local Receipt
 
-Refresh the target Drive tab. Confirm:
-
-- The prospect subfolder exists under `Sales > Customer`.
-- The sheet is inside that subfolder (open the folder and look).
-- The sheet's title in the tab still reads `Airbyte || [Prospect Name] - POV Success Criteria`.
-
-**Deprecated path — do NOT use:** `Company > 4_Sales > 4. Customers > [Prospect Name]`. Old PoV sheets live there for historical reasons; new ones do not.
-
-### Step 6: Share the Link
-
-Provide the user with the direct link to the completed Google Sheet.
-
-### Step 7: Write a Local Receipt
-
-The external Google Sheet is the primary artifact, but the SE workflow also needs a local record that the run happened, what inputs were available, and what still needs to be filled. Write a Markdown receipt before finishing.
+The external Google Sheet is the primary artifact, but the SE workflow also needs a local record that
+the run happened, what inputs were available, and what still needs to be filled.
 
 **Where to save:**
+
 - If the invocation provided an `{out_dir}` path (the webapp does: `{out_dir}/pov-gsheet/`), save it there.
-- If no `{out_dir}` is provided, save under `{workspace_root}/customers/<Account>/outputs/pov-gsheet/` (or `{workspace_root}/customers/<Account>/opportunities/<Opportunity>/outputs/pov-gsheet/` if an opportunity was given).
+- If no `out_dir` is provided, save under `customers/<Account>/outputs/pov-gsheet/` (or
+  `customers/<Account>/opportunities/<Opportunity>/outputs/pov-gsheet/` if an opportunity was given).
 - Create the `pov-gsheet/` subfolder if it does not exist.
 
 **Filename:** `pov-gsheet-YYYY-MM-DD-<Prospect-Name>.md` (use `v2`, `v3`, etc. for same-day reruns).
 
-**Receipt content (follow the shared output-document format):**
+**Receipt content (follow `~/.claude/skills/_se-playbook.md` → Output Document Format):**
 
 ```markdown
-# <Account> — POV Google Sheet: created
-**Date:** <Month DD, YYYY> · **Sheet URL:** <url> · **Status:** created
+# <Account> — POV Google Sheet: <Status>
+**Date:** <Month DD, YYYY> · **Sheet URL:** <url> · **Status:** <Status>
 
 ### At a Glance
-- **Google Sheet URL:** <url>
+- **Google Sheet URL:** <final verified URL>
 - **Prospect:** <prospect name>
-- **Status:** created
+- **Status:** <created | created with gaps | blocked>
 - **SE:** SE_NAME (SE_TITLE)
-- **Drive Folder:** DRIVE_TARGET_FOLDER_URL
+- **Drive Folder:** <final verified folder URL>
 
 ## Receipt
-- **Prospect data sources checked:** Salesforce, Gong, Granola (list which ones returned data)
-- **Inputs used:** [list of what was actually pre-filled from the sources]
-- **Unresolved fields:** [list fields that could not be filled and why — e.g., "No Granola notes found", "AE not in SFDC contacts"]
+- **Prospect data sources checked:** [list each source from `source_coverage` with available: true/false]
+- **Inputs used:** [what was actually pre-filled from the sources]
+- **Unresolved fields:** [what could not be filled and why]
 - **Drive move completed:** Yes / No (with subfolder path)
 - **Sheet title:** `Airbyte || [Prospect Name] - POV Success Criteria`
 
 ## Source Coverage
-- `.se-config.yaml` (`pov_gsheet` block): read
-- `se-assistant` skill: invoked for [Salesforce / Gong / Granola — list results]
-- Chrome browser automation: used for copy, fill, move
-- Google Sheets template: copied from TEMPLATE_URL
-- Google Drive target: DRIVE_TARGET_FOLDER_URL
+[Mirror the `source_coverage` list from the structured POV context. For each entry show source name, available yes/no, freshness/path, whether it was material, and any note.]
 ```
 
-If any required source could not be reached, set the `Status` in At a Glance to `created with gaps` and explain in `Unresolved fields`.
+If the run was `blocked` or `partial`, set `Status` accordingly and explain the missing evidence in
+`Unresolved fields`. Do not claim the sheet was created unless Drive placement was verified.
 
-## Navigation Tips
+## Scope boundaries
 
-**Switching between sheet tabs:**
-- Use `find` tool to locate sheet tab buttons at the bottom of the page
-- Click the appropriate tab to switch sheets
+Do not:
 
-**Scrolling within the Move dialog:**
-- The Move dialog in Google Sheets can be finicky with breadcrumb navigation
-- A more reliable approach: open Google Drive in a separate tab, search for the file, and use the Move option from there (right-click > Organize or toolbar Move icon)
+- Import external dependency skills or their personal database files
+- Use personal `~/Documents/...` paths or any Ryan-specific configuration
+- Call external note-taking or call-transcript MCP tools that are not configured in this environment
+- Invent prospect contacts, emails, or roles
+- Invent customer requirements from generic Airbyte knowledge
+- Overwrite an existing POV sheet automatically
+- Replace `poc-plan` or other qualification skills
+- Add a general Google Sheets framework
 
 ## Data Source Reference
 
-This skill works best in combination with the **se-assistant** skill which provides access to:
-- **DuckDB database** at `~/Documents/Claude/sales-data/db/db_sales_data.duckdb`
-  - Salesforce: opportunities, accounts, contacts
-  - Gong: call transcripts, topics, trackers, participants
-- **Granola meeting notes** via the Granola MCP tools
-- **generate_pov.py** script for automated POV data extraction
+This skill uses repository-native sources only:
+
+- **Workspace account/opportunity metadata** — folder structure, `.sfdc-name`, `.se-config.yaml`
+- **Prior skill outputs** — `biz-qual`, `tech-qual`, `poc-plan`, `deal-assessment`, `connector-feasibility`, `post-call`, `account-refresher`, etc.
+- **Workspace transcripts** — files in `customers/_transcripts/`
+- **Salesforce** — optional, via the `sf` CLI if `salesforce.enabled: true`
+
+The deterministic loader is `webapp/pov_gsheet_context.py`. It builds the structured POV context and
+records source coverage. It does not require external dependency skills, note-taking tools, or personal
+databases.
 
 ## Changelog
 
-- 2026-07-15 — Added preflight checks, `.se-config.yaml` configuration, fail-early behavior, and local receipt output.
+- 2026-07-15 — Ported from external dependency skill to repository-native context loader; removed external databases and personal-path references.
+- 2026-07-15 — Added `.se-config.yaml` `pov_gsheet` block, preflight checks, and structured POV context output.

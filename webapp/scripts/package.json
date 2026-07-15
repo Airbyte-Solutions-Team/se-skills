@@ -1,0 +1,10 @@
+{
+  "name": "se-skills-scripts",
+  "version": "0.1.0",
+  "description": "Optional Node helpers for the SE Skills webapp",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "playwright": "^1.61.1"
+  }
+}

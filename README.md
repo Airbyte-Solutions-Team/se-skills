@@ -139,7 +139,7 @@ Skills read this for the workspace paths, `[SE name]` placeholder, call attribut
 The suite assumes these MCPs are configured in `~/.claude.json`:
 - **Gong** (transcripts) — skills pull AE call transcripts automatically. Configured if you use the team Gong MCP.
 - **Notion** (optional) — `post-call` and `objection-handler` write to customer Notion pages.
-- **Salesforce** (optional, high-value) — CRM enrichment:
+- **Salesforce** (optional, high-value) — CRM enrichment (SOQL via MCP or the `sf` CLI fallback):
   ```bash
   npm install -g @salesforce/cli          # the sf CLI (NOT brew — deprecated/Gatekeeper)
   sf org login web --alias airbyte-prod --set-default   # browser SSO auth
@@ -154,21 +154,33 @@ The suite assumes these MCPs are configured in `~/.claude.json`:
   Skip any of these and skills degrade gracefully — no SFDC/Notion enrichment, everything else works.
 
 #### 4. `pov-gsheet` (Google Sheets POV)
-`pov-gsheet` creates a copy of a POV Success Criteria template in Google Sheets and pre-fills it from Gong/Salesforce/Granola. Before using it:
+`pov-gsheet` creates a copy of a POV Success Criteria template in Google Sheets and pre-fills it from the SE workspace: prior skill outputs (`biz-qual`, `tech-qual`, `poc-plan`, `deal-assessment`, `connector-feasibility`, `post-call`, `account-refresher`), workspace transcripts, optional Salesforce `sf` CLI data, and optional JSON evidence files from configured MCP integrations (Salesforce, Gong, meeting notes, Gmail, Slack). It does **not** import the original `se-assistant` skill or use DuckDB/personal paths.
 
-1. **Install the separate `se-assistant` skill.** `pov-gsheet` depends on `se-assistant` to query Gong, Salesforce, and Granola. `se-assistant` is **not** in this repo; obtain it from your team's source and place/symlink it at `~/.claude/skills/se-assistant/`. Verify:
-   ```bash
-   ls ~/.claude/skills/se-assistant/SKILL.md
-   ```
-   If you don't have `se-assistant`, either obtain it or edit `skills/pov-gsheet/SKILL.md` to inline the data-gathering steps.
-2. **Configure `pov_gsheet` in `.se-config.yaml`.** Copy the commented block from `config/se-config.example.yaml`, uncomment it, and set your own values:
+`pov-gsheet` is currently **partially operational** in this repo:
+- The deterministic context loader, receipt format, source-coverage reporting, and dry-run plan are implemented and tested.
+- The external MCP integrations are wired through a normalized evidence path, but they require configured MCP servers and a signed-in Google account to verify end-to-end.
+- Google Sheets / Drive automation uses Chrome browser automation (the `computer-use` MCP or `webapp/scripts/pov-gsheet-runner.mjs`) and cannot be verified until Chrome is signed into the Google account that owns the template and Drive folder.
+
+Before using it:
+
+1. **Configure `pov_gsheet` in `.se-config.yaml`.** Copy the commented block from `config/se-config.example.yaml`, uncomment it, and set your own values:
    - `template_url` — your copy of the POV Success Criteria Google Sheet (must be a Sheets URL, not an `.xlsx`)
    - `drive_target_folder_url` — the Drive "Customer" folder where prospect subfolders will be created
    - `se_name` / `se_title` — the SE contact shown on the Contacts sheet
-3. **Chrome / Google authentication.** The skill uses Chrome browser automation (the `computer-use` MCP). Chrome must be signed into the Google account that owns the template and Drive folder. When Claude asks for `clipboardWrite` permission during the run, accept it. The `claude -p` invocation runs with `--permission-mode acceptEdits`; when invoked from the webapp it is flagged as `write + shell` and asks for explicit approval.
-4. **Run `./install.sh` after pulling.** This symlinks the updated `skills/pov-gsheet/SKILL.md` into `~/.claude/skills/pov-gsheet/`.
+2. **Configure MCP integrations if you want external context.** Only configure sources you have consent to read. The skill will record which sources were searched, unavailable, or skipped:
+   - **Salesforce** — `mcp__salesforce__run_soql_query` (or `sf` CLI fallback).
+   - **Gong** — `mcp__gong__search_calls` + `gong://calls/{callId}/transcript`.
+   - **Meeting notes** (e.g., Granola-compatible MCP) — list meetings, transcripts, attendees, decisions, action items.
+   - **Gmail** — a configured Gmail MCP with scoped thread search; the skill only extracts POV-relevant facts and does not persist full bodies.
+   - **Slack** — a configured Slack MCP with scoped channel/thread search; it distinguishes direct customer evidence from internal interpretation.
+3. **Chrome / Google authentication.** The skill uses Chrome browser automation (the `computer-use` MCP, or the optional `webapp/scripts/pov-gsheet-runner.mjs` Playwright helper). Chrome must be signed into the Google account that owns the template and Drive folder. When Claude asks for `clipboardWrite` permission during the run, accept it. The `claude -p` invocation runs with `--permission-mode acceptEdits`; when invoked from the webapp it is flagged as `write + shell` and asks for explicit approval.
+4. **(Optional) Install Playwright for the Node helper.** If you prefer the helper over manual `computer-use` steps:
+   ```bash
+   cd webapp/scripts && npm install
+   ```
+5. **Run `./install.sh` after pulling.** This symlinks the updated `skills/pov-gsheet/SKILL.md` into `~/.claude/skills/pov-gsheet/`.
 
-`pov-gsheet` now fails early with a clear message if `se-assistant` is missing, the `pov_gsheet` config block is absent, or Chrome automation is unavailable.
+`pov-gsheet` fails early if the `pov_gsheet` config block is absent, the deterministic context loader cannot find workspace data, or Chrome automation is unavailable. It writes a local Markdown receipt alongside the generated Google Sheet. The receipt's `source-coverage` section lists each source as `searched`, `unavailable`, or `skipped` — never inventing searches.
 
 ### Optional enhancements
 
