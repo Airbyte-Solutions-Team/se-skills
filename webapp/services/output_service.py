@@ -106,6 +106,9 @@ class OutputService:
         can warn the SE when an output looks incomplete.
         """
         customers_dir = customers_dir or self.customers_dir
+        account = self._safe_name(account)
+        if opp:
+            opp = self._safe_name(opp)
         base = (
             (customers_dir / account / "opportunities" / opp / "outputs")
             if opp
@@ -169,6 +172,40 @@ class OutputService:
                 items.append(entry)
         items.sort(key=lambda x: x["mtime"], reverse=True)
         return items
+
+    def count_outputs(
+        self,
+        account: str,
+        opp: str | None = None,
+        *,
+        customers_dir: Path | None = None,
+    ) -> int:
+        """Count the saved skill outputs for an account/opportunity."""
+        customers_dir = customers_dir or self.customers_dir
+        account = self._safe_name(account)
+        if opp:
+            opp = self._safe_name(opp)
+        base = (
+            (customers_dir / account / "opportunities" / opp / "outputs")
+            if opp
+            else (customers_dir / account / "outputs")
+        )
+        if not base.exists():
+            return 0
+
+        count = 0
+        for skill_dir in sorted(base.iterdir()):
+            if not skill_dir.is_dir() or skill_dir.name.startswith("."):
+                continue
+            for f in sorted([*skill_dir.glob("*.md"), *skill_dir.glob("*.html")]):
+                if any(part.startswith(".") for part in f.relative_to(skill_dir).parts):
+                    continue
+                try:
+                    resolve_within(customers_dir, str(f.relative_to(customers_dir)))
+                except ValueError:
+                    continue
+                count += 1
+        return count
 
     def read_output_content(self, path: str, customers_dir: Path | None = None) -> str:
         target = self._resolve_output(path, customers_dir)

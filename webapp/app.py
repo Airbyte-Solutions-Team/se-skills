@@ -58,9 +58,11 @@ import persistence
 import security
 import soql
 
+from routes.accounts import router as accounts_router
 from routes.jobs import router as jobs_router
 from routes.outputs import router as outputs_router
 from routes.feedback import router as feedback_router
+from services.account_service import AccountService
 from services.feedback_service import FeedbackService
 from services.job_service import JobService
 from services.output_service import OutputService
@@ -256,71 +258,6 @@ def _titlecase_folder(name: str) -> str:
     return "-".join(part.capitalize() for part in re.split(r"[^A-Za-z0-9]+", name.strip()) if part)
 
 
-# ---------------------------------------------------------------------------
-# Team members — from team-members.yaml, falling back to the local SE config
-# ---------------------------------------------------------------------------
-def load_team() -> list[dict]:
-    if TEAM_FILE.exists():
-        data = yaml.safe_load(TEAM_FILE.read_text()) or {}
-        members = data.get("members", [])
-        if members:
-            return members
-    # Fallback: just the local SE from .se-config.yaml
-    if SE_CONFIG.exists():
-        cfg = yaml.safe_load(SE_CONFIG.read_text()) or {}
-        return [{"id": "me", "name": cfg.get("name", "Me"), "email": cfg.get("email", "")}]
-    return [{"id": "me", "name": "Me", "email": ""}]
-
-
-def member_by_id(member_id: str) -> dict | None:
-    return next((m for m in load_team() if m.get("id") == member_id), None)
-
-
-def _member_id_from_name(name: str, existing_ids: set[str]) -> str:
-    """Stable, unique id from a display name (e.g. 'Ryan Waskewich' -> 'ryan-waskewich')."""
-    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "member"
-    mid, n = base, 2
-    while mid in existing_ids:
-        mid = f"{base}-{n}"; n += 1
-    return mid
-
-
-def save_team(members: list[dict]) -> None:
-    TEAM_FILE.write_text(yaml.safe_dump({"members": members}, sort_keys=False, allow_unicode=True))
-
-
-# ---------------------------------------------------------------------------
-# Accounts & outputs — read straight from the filesystem the skills produce
-# ---------------------------------------------------------------------------
-def list_accounts() -> list[dict]:
-    """All customer folders. (v1: accounts are workspace-wide, tagged by owner in account meta.)"""
-    if not CUSTOMERS_DIR.exists():
-        return []
-    out = []
-    for d in sorted(CUSTOMERS_DIR.iterdir()):
-        if not d.is_dir() or d.name.startswith("_") or d.name.startswith("."):
-            continue
-        out.append({"name": d.name, "owner": _read_owner(d), "archived": _is_archived(d)})
-    return out
-
-
-def _owner_file(account_dir: Path) -> Path:
-    return account_dir / ".owner"
-
-
-def _read_owner(account_dir: Path) -> str | None:
-    f = _owner_file(account_dir)
-    return f.read_text().strip() if f.exists() else None
-
-
-def _archived_file(account_dir: Path) -> Path:
-    return account_dir / ".archived"
-
-
-def _is_archived(account_dir: Path) -> bool:
-    return _archived_file(account_dir).exists()
-
-
 def _sfdc_name_file(account_dir: Path) -> Path:
     return account_dir / ".sfdc-name"
 
@@ -346,73 +283,6 @@ def _sfdc_like_prefix(account: str) -> str:
         return soql.soql_like_prefix(real)
     first = next((p for p in re.split(r"[^A-Za-z0-9]+", account) if p), account)
     return soql.soql_like_prefix(first)
-
-
-# ---------------------------------------------------------------------------
-# Per-member preferences (e.g. which AEs to pull accounts for). Small JSON file
-# per member, mirroring the .owner/.archived single-purpose-file pattern.
-# ---------------------------------------------------------------------------
-def _member_prefs_file(member_id: str) -> Path:
-    return WEBAPP_DIR / ".member-prefs" / f"{_safe(member_id)}.json"
-
-
-def _read_member_prefs(member_id: str) -> dict:
-    f = _member_prefs_file(member_id)
-    if not f.exists():
-        return {}
-    try:
-        return json.loads(f.read_text()) or {}
-    except (json.JSONDecodeError, OSError):
-        return {}
-
-
-def _write_member_prefs(member_id: str, prefs: dict) -> None:
-    f = _member_prefs_file(member_id)
-    f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text(json.dumps(prefs, indent=2))
-
-
-def _account_meta(account_dir: Path) -> dict:
-    """Lightweight, filesystem-only card metadata: last-updated + output count.
-    Counts BOTH the legacy account-level outputs/ AND every per-opportunity
-    outputs/ folder, so the account total = the sum across its opportunities."""
-    count = 0
-    latest = 0.0
-    # candidate output roots: account-level + each opportunity's outputs/
-    roots = [account_dir / "outputs"]
-    opp_dir = account_dir / "opportunities"
-    if opp_dir.exists():
-        roots += [d / "outputs" for d in opp_dir.iterdir() if d.is_dir()]
-    for outputs_dir in roots:
-        if not outputs_dir.exists():
-            continue
-        for f in outputs_dir.rglob("*.md"):
-            if any(part.startswith(".") for part in f.relative_to(outputs_dir).parts):
-                continue  # skip hidden dirs like .runs (job-result cache, not outputs)
-            count += 1
-            latest = max(latest, f.stat().st_mtime)
-    return {
-        "output_count": count,
-        "last_updated": (
-            datetime.fromtimestamp(latest, tz=timezone.utc).strftime("%Y-%m-%d") if latest else None
-        ),
-        "last_updated_ts": latest or None,
-    }
-
-
-def accounts_for_member(member_id: str) -> dict:
-    """Accounts owned by this member, plus unowned ones — split into active and archived.
-    Each account is enriched with filesystem card metadata (last-updated, output count)."""
-    all_accounts = list_accounts()
-    visible = [a for a in all_accounts if a["owner"] == member_id or a["owner"] is None]
-    for a in visible:
-        a.update(_account_meta(CUSTOMERS_DIR / a["name"]))
-    # owned first, then unowned; within each, most-recently-updated first
-    visible.sort(key=lambda a: (a["owner"] != member_id, -(a["last_updated_ts"] or 0), a["name"].lower()))
-    return {
-        "active": [a for a in visible if not a["archived"]],
-        "archived": [a for a in visible if a["archived"]],
-    }
 
 
 def _slug(name: str) -> str:
@@ -645,7 +515,7 @@ async def sfdc_list_aes(member_id: str) -> list[str]:
     """All distinct AE names (Opportunity.Owner.Name) on open, future-dated opps
     org-wide, so the SE can pick any AE to pull accounts for. `member_id` is kept
     for the endpoint's 404 guard. Best-effort []."""
-    if not member_by_id(member_id):
+    if not account_service.member_by_id(member_id):
         return []
     today = datetime.now().strftime("%Y-%m-%d")
     soql = (
@@ -664,7 +534,7 @@ async def sfdc_accounts_for_member(member_id: str, ae_names: list[str]) -> dict:
     """Open, future-dated opportunities where SE_Name__c = this member OR
     Owner.Name is one of `ae_names`. Deduped to the best opp per account and
     split into new_business / renewals. Best-effort: {} buckets on failure."""
-    member = member_by_id(member_id)
+    member = account_service.member_by_id(member_id)
     if not member:
         return {"new_business": [], "renewals": []}
     name = _sf_quote(member.get("name", ""))
@@ -726,36 +596,7 @@ app = FastAPI(title="SE Skills — Local Hub")
 app.include_router(jobs_router)
 
 
-@app.get("/api/members")
-def api_members():
-    return load_team()
-
-
-class CreateMember(BaseModel):
-    name: str
-    role: str | None = None
-    email: str | None = None
-
-
-@app.post("/api/members")
-def api_create_member(body: CreateMember):
-    name = (body.name or "").strip()
-    if not name:
-        raise HTTPException(400, "Name is required")
-    members = load_team()
-    existing = {m.get("id") for m in members}
-    mid = _member_id_from_name(name, existing)
-    member = {"id": mid, "name": name, "email": (body.email or "").strip(), "role": (body.role or "Solutions Engineer").strip()}
-    members.append(member)
-    save_team(members)
-    return member
-
-
-@app.get("/api/members/{member_id}/accounts")
-def api_member_accounts(member_id: str):
-    if not member_by_id(member_id):
-        raise HTTPException(404, "Unknown member")
-    return accounts_for_member(member_id)
+app.include_router(accounts_router)
 
 
 @app.post("/api/sfdc/stage-amount")
@@ -769,269 +610,46 @@ async def api_sfdc_stage_amount(body: dict):
     return await sfdc_stage_amount(safe_names)
 
 
-class CreateAccount(BaseModel):
-    name: str
-    owner: str | None = None
-    sfdc_name: str | None = None  # true SFDC Account.Name, for exact opp matching
-
-
-@app.post("/api/accounts")
-def api_create_account(body: CreateAccount):
-    folder = _titlecase_folder(_safe(body.name))
-    if not folder:
-        raise HTTPException(400, "Empty account name")
-    acc_dir = CUSTOMERS_DIR / folder
-    created = not acc_dir.exists()
-    (acc_dir / "outputs").mkdir(parents=True, exist_ok=True)
-    (acc_dir / "raw").mkdir(parents=True, exist_ok=True)
-    if body.owner:
-        _owner_file(acc_dir).write_text(_safe(body.owner))
-    # Capture the real SFDC name so opp lookups match punctuated names exactly.
-    if body.sfdc_name and body.sfdc_name.strip():
-        _sfdc_name_file(acc_dir).write_text(body.sfdc_name.strip())
-    return {"name": folder, "created": created, "owner": body.owner}
-
-
 # ---------------------------------------------------------------------------
 # Auto-populate accounts from Salesforce — endpoints
 # ---------------------------------------------------------------------------
-@app.get("/api/members/{member_id}/sfdc-aes")
-async def api_sfdc_aes(member_id: str):
-    """AE names (from live SFDC) selectable for this member's account pull,
-    plus the member's previously-saved selection."""
-    if not member_by_id(member_id):
-        raise HTTPException(404, "Unknown member")
-    aes = await sfdc_list_aes(member_id)
-    selected = _read_member_prefs(member_id).get("selected_aes", [])
-    return {"aes": aes, "selected": selected}
-
-
 class SelectedAes(BaseModel):
     selected: list[str] = []
-
-
-@app.post("/api/members/{member_id}/sfdc-aes")
-def api_save_sfdc_aes(member_id: str, body: SelectedAes):
-    """Persist which AEs this member wants to pull accounts for."""
-    if not member_by_id(member_id):
-        raise HTTPException(404, "Unknown member")
-    prefs = _read_member_prefs(member_id)
-    prefs["selected_aes"] = [a for a in body.selected if isinstance(a, str) and a.strip()]
-    _write_member_prefs(member_id, prefs)
-    return {"ok": True, "selected": prefs["selected_aes"]}
 
 
 class PullAccounts(BaseModel):
     aes: list[str] = []
 
 
+@app.get("/api/members/{member_id}/sfdc-aes")
+async def api_sfdc_aes(member_id: str):
+    """AE names (from live SFDC) selectable for this member's account pull,
+    plus the member's previously-saved selection."""
+    if not account_service.member_by_id(member_id):
+        raise HTTPException(404, "Unknown member")
+    aes = await sfdc_list_aes(member_id)
+    selected = account_service.read_member_prefs(member_id).get("selected_aes", [])
+    return {"aes": aes, "selected": selected}
+
+
+@app.post("/api/members/{member_id}/sfdc-aes")
+def api_save_sfdc_aes(member_id: str, body: SelectedAes):
+    """Persist which AEs this member wants to pull accounts for."""
+    if not account_service.member_by_id(member_id):
+        raise HTTPException(404, "Unknown member")
+    prefs = account_service.read_member_prefs(member_id)
+    prefs["selected_aes"] = [a for a in body.selected if isinstance(a, str) and a.strip()]
+    account_service.save_member_prefs(member_id, prefs)
+    return {"ok": True, "selected": prefs["selected_aes"]}
+
+
 @app.post("/api/members/{member_id}/sfdc-accounts")
 async def api_sfdc_accounts(member_id: str, body: PullAccounts):
     """Open, future-dated opps for this member, split new_business / renewals."""
-    if not member_by_id(member_id):
+    if not account_service.member_by_id(member_id):
         raise HTTPException(404, "Unknown member")
     aes = [a for a in body.aes if isinstance(a, str) and a.strip()]
     return await sfdc_accounts_for_member(member_id, aes)
-
-
-class BulkCreateAccounts(BaseModel):
-    accounts: list[CreateAccount]
-
-
-@app.post("/api/bulk-create-accounts")
-def api_bulk_create_accounts(body: BulkCreateAccounts):
-    """Create several account folders at once (from the SFDC pull), reusing the
-    same folder/.owner creation as the single-create endpoint."""
-    results = []
-    for acc in body.accounts:
-        try:
-            r = api_create_account(acc)
-            results.append({**r, "ok": True})
-        except HTTPException as e:
-            results.append({"name": acc.name, "ok": False, "error": e.detail})
-    return {"created": sum(1 for r in results if r.get("ok") and r.get("created")), "results": results}
-
-
-@app.get("/api/accounts/{account}")
-def api_account(account: str):
-    """Lightweight account meta — used by the frontend to build breadcrumbs
-    (Team → owner → account → …)."""
-    account = _safe(account)
-    acc_dir = CUSTOMERS_DIR / account
-    if not acc_dir.exists():
-        raise HTTPException(404, "Unknown account")
-    return {"name": account, "owner": _read_owner(acc_dir)}
-
-
-@app.get("/api/accounts/{account}/outputs")
-def api_outputs(account: str, opp: str | None = None):
-    account = _safe(account)
-    if opp:
-        opp = _safe(opp)  # opp slug is also path-segment safe
-    return output_service.list_outputs(account, opp)
-
-
-@app.get("/api/accounts/{account}/opportunities")
-async def api_opportunities(account: str):
-    """SFDC opportunities for an account + per-opp local output counts.
-    Falls back to a single synthetic 'General' opp if SFDC is unavailable so
-    the account is still usable offline."""
-    account = _safe(account)
-    opps = await sfdc_opportunities(account)
-    if not opps:
-        # offline / no SFDC: present one default opportunity bucket
-        opps = [{"name": "General", "slug": "general", "stage": None, "stage_num": None,
-                 "amount": None, "close_date": None, "type": None, "is_closed": None, "ae": None}]
-    # attach local output counts per opp
-    for o in opps:
-        odir = CUSTOMERS_DIR / account / "opportunities" / o["slug"] / "outputs"
-        cnt = len(list(odir.rglob("*.md"))) if odir.exists() else 0
-        o["output_count"] = cnt
-    return opps
-
-
-class SetOwner(BaseModel):
-    owner: str
-
-
-@app.post("/api/accounts/{account}/owner")
-def api_set_owner(account: str, body: SetOwner):
-    """Claim/assign ownership of an account (writes the .owner file)."""
-    account = _safe(account)
-    acc_dir = CUSTOMERS_DIR / account
-    if not acc_dir.is_dir():
-        raise HTTPException(404, "Unknown account")
-    _owner_file(acc_dir).write_text(_safe(body.owner))
-    return {"name": account, "owner": body.owner}
-
-
-@app.post("/api/accounts/{account}/archive")
-def api_archive(account: str):
-    account = _safe(account)
-    acc_dir = CUSTOMERS_DIR / account
-    if not acc_dir.is_dir():
-        raise HTTPException(404, "Unknown account")
-    # Flag file only — data stays exactly in place, fully reversible.
-    _archived_file(acc_dir).write_text(
-        datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    )
-    return {"name": account, "archived": True}
-
-
-@app.post("/api/accounts/{account}/unarchive")
-def api_unarchive(account: str):
-    account = _safe(account)
-    acc_dir = CUSTOMERS_DIR / account
-    if not acc_dir.is_dir():
-        raise HTTPException(404, "Unknown account")
-    f = _archived_file(acc_dir)
-    if f.exists():
-        f.unlink()
-    return {"name": account, "archived": False}
-
-
-import shutil  # noqa: E402
-
-
-@app.delete("/api/accounts/{account}")
-def api_delete_account(account: str):
-    """Delete is RECOVERABLE: move the account folder to 01-customers/_trash/
-    rather than hard-deleting. Never destroys customer data outright."""
-    account = _safe(account)
-    acc_dir = CUSTOMERS_DIR / account
-    if not acc_dir.is_dir():
-        raise HTTPException(404, "Unknown account")
-    return _do_delete(account)
-
-
-def _do_delete(account: str) -> dict:
-    acc_dir = CUSTOMERS_DIR / account
-    trash = CUSTOMERS_DIR / "_trash"
-    trash.mkdir(exist_ok=True)
-    stamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d-%H%M%S")
-    dest = trash / f"{account}__{stamp}"
-    shutil.move(str(acc_dir), str(dest))
-    return {"name": account, "deleted": True, "trash_id": dest.name}
-
-
-# ── Bulk actions (multi-select) ───────────────────────────────────────────
-class BulkBody(BaseModel):
-    accounts: list[str]
-    owner: str | None = None  # for transfer / make-owner
-
-
-@app.post("/api/bulk/{action}")
-def api_bulk(action: str, body: BulkBody):
-    """Apply an action to many accounts at once.
-    action ∈ archive | unarchive | delete | set-owner."""
-    names = [_safe(n) for n in body.accounts]
-    if not names:
-        raise HTTPException(400, "No accounts given")
-    results = []
-    for name in names:
-        acc_dir = CUSTOMERS_DIR / name
-        if not acc_dir.is_dir():
-            results.append({"name": name, "ok": False, "error": "not found"})
-            continue
-        try:
-            if action == "archive":
-                _archived_file(acc_dir).write_text(datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
-            elif action == "unarchive":
-                f = _archived_file(acc_dir)
-                if f.exists():
-                    f.unlink()
-            elif action == "delete":
-                _do_delete(name)
-            elif action == "set-owner":
-                if not body.owner:
-                    raise ValueError("owner required for set-owner")
-                _owner_file(acc_dir).write_text(_safe(body.owner))
-            else:
-                raise HTTPException(400, f"Unknown bulk action: {action}")
-            results.append({"name": name, "ok": True})
-        except HTTPException:
-            raise
-        except Exception as e:
-            results.append({"name": name, "ok": False, "error": str(e)})
-    return {"action": action, "owner": body.owner, "results": results,
-            "ok": sum(1 for r in results if r["ok"]), "failed": sum(1 for r in results if not r["ok"])}
-
-
-TRASH_DIR = CUSTOMERS_DIR / "_trash"
-_TRASH_ID = re.compile(r"^[A-Za-z0-9 ._-]+__\d{8}-\d{6}$")  # <account>__<stamp>
-
-
-@app.get("/api/trash")
-def api_list_trash():
-    """Deleted accounts available to restore."""
-    if not TRASH_DIR.exists():
-        return []
-    out = []
-    for d in sorted(TRASH_DIR.iterdir(), reverse=True):
-        if not d.is_dir() or "__" not in d.name:
-            continue
-        orig, _, stamp = d.name.rpartition("__")
-        try:
-            deleted_at = datetime.strptime(stamp, "%Y%m%d-%H%M%S").strftime("%Y-%m-%d %H:%M")
-        except ValueError:
-            deleted_at = stamp
-        out.append({"trash_id": d.name, "name": orig, "deleted_at": deleted_at})
-    return out
-
-
-@app.post("/api/trash/{trash_id}/restore")
-def api_restore(trash_id: str):
-    if not _TRASH_ID.match(trash_id):
-        raise HTTPException(400, "Invalid trash id")
-    src = TRASH_DIR / trash_id
-    if not src.is_dir():
-        raise HTTPException(404, "Not in trash")
-    orig = trash_id.rpartition("__")[0]
-    dest = CUSTOMERS_DIR / orig
-    if dest.exists():
-        raise HTTPException(409, f"An account named {orig} already exists — rename or remove it first.")
-    shutil.move(str(src), str(dest))
-    return {"name": orig, "restored": True}
 
 
 class OutputAsk(BaseModel):
@@ -1347,11 +965,27 @@ job_service = JobService(
     persist_run=output_service.persist_run,
 )
 
+account_service = AccountService(
+    customers_dir=CUSTOMERS_DIR,
+    webapp_dir=WEBAPP_DIR,
+    output_service=output_service,
+    job_service=job_service,
+    safe_name=_safe,
+    titlecase=_titlecase_folder,
+    slug=_slug,
+    team_file=TEAM_FILE,
+    member_prefs_dir=WEBAPP_DIR / ".member-prefs",
+    se_config_file=SE_CONFIG,
+    sfdc_opportunities=sfdc_opportunities,
+)
+
 # Make the services reachable from route dependencies.
 app.state.output_service = output_service
 app.state.feedback_service = feedback_service
 app.state.job_service = job_service
+app.state.account_service = account_service
 
+app.include_router(accounts_router)
 app.include_router(outputs_router)
 app.include_router(feedback_router)
 @app.get("/api/plan")
@@ -1496,8 +1130,8 @@ def _build_overview(jobs: dict[str, dict]) -> dict:
     freshness (that remains on the output list); it only reads existing sidecars.
     """
     now = datetime.now(timezone.utc).timestamp()
-    members = load_team()
-    all_accounts = list_accounts()
+    members = account_service.load_team()
+    all_accounts = account_service.list_accounts()
     active_accounts = [a for a in all_accounts if not a["archived"]]
     archived_count = len(all_accounts) - len(active_accounts)
 
