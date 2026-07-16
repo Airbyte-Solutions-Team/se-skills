@@ -41,6 +41,14 @@ class JobService:
     def get_job(self, job_id: str) -> dict | None:
         return self.jobs.get(job_id)
 
+    def overview_jobs(self) -> dict[str, dict]:
+        """Return a shallow copy of all jobs for landing-page aggregation.
+
+        Includes `stdout`/`stderr` because the overview uses the first line of
+        `stderr` for failed-job attention items.
+        """
+        return {job_id: dict(job) for job_id, job in self.jobs.items()}
+
     def list_jobs(
         self,
         account: str | None = None,

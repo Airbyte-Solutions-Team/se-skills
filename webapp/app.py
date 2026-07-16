@@ -39,7 +39,6 @@ import queue
 import re
 import subprocess
 import threading
-import urllib.parse
 import uuid
 from collections import deque
 from datetime import datetime, timezone
@@ -62,7 +61,9 @@ from routes.accounts import router as accounts_router
 from routes.jobs import router as jobs_router
 from routes.outputs import router as outputs_router
 from routes.feedback import router as feedback_router
+from routes.overview import router as overview_router
 from services.account_service import AccountService
+from services.overview_service import OverviewService
 from services.feedback_service import FeedbackService
 from services.job_service import JobService
 from services.output_service import OutputService
@@ -985,9 +986,17 @@ app.state.feedback_service = feedback_service
 app.state.job_service = job_service
 app.state.account_service = account_service
 
+overview_service = OverviewService(
+    account_service=account_service,
+    output_service=output_service,
+    job_service=job_service,
+)
+app.state.overview_service = overview_service
+
 app.include_router(accounts_router)
 app.include_router(outputs_router)
 app.include_router(feedback_router)
+app.include_router(overview_router)
 @app.get("/api/plan")
 def api_plan(account: str, skill: str, opp_slug: str | None = None):
     """Return the prerequisite plan for a proposed skill invocation.
@@ -1109,321 +1118,6 @@ def api_jobs_for(account: str | None = None, opp_slug: str | None = None) -> lis
 async def _save_jobs_snapshot(source_job_id: str | None = None) -> str | None:
     """Persist the jobs snapshot and manage per-job persistence warnings."""
     return await job_service.save_snapshot(source_job_id)
-
-
-# ---------------------------------------------------------------------------
-# Team overview — lightweight aggregation for the landing page
-# ---------------------------------------------------------------------------
-
-_LONG_RUNNING_MINUTES = 5
-_ATTENTION_FAILURE_HOURS = 24
-_STALE_ACTIVITY_DAYS = 7
-_MAX_ATTENTION = 10
-_MAX_RECENT = 12
-
-
-def _build_overview(jobs: dict[str, dict]) -> dict:
-    """Aggregate filesystem + job state into a calm operational overview.
-
-    Keeps all computation in one pass over the workspace so the landing page
-    stays fast for the local SE workspace. Does not compute live reference
-    freshness (that remains on the output list); it only reads existing sidecars.
-    """
-    now = datetime.now(timezone.utc).timestamp()
-    members = account_service.load_team()
-    all_accounts = account_service.list_accounts()
-    active_accounts = [a for a in all_accounts if not a["archived"]]
-    archived_count = len(all_accounts) - len(active_accounts)
-
-    account_meta: dict[str, dict] = {}
-    recent_outputs: list[dict] = []
-    needs_attention_outputs: list[dict] = []
-
-    recent_outputs, needs_attention_outputs, account_meta = output_service.walk_all_outputs(CUSTOMERS_DIR)
-    # Running / finished jobs (shallow-copy values so the snapshot is safe).
-    running_jobs = []
-    failed_jobs = []
-    done_jobs = []
-    for jid, j in jobs.items():
-        status = j.get("status")
-        job_copy = dict(j)
-        job_copy["job_id"] = jid
-        if status == "running":
-            running_jobs.append(job_copy)
-        elif status == "error" or (status == "done" and j.get("ok") is False):
-            failed_jobs.append(job_copy)
-        elif status == "done":
-            done_jobs.append(job_copy)
-
-    # Per-account job-driven timestamps.
-    for j in [*running_jobs, *failed_jobs, *done_jobs]:
-        account = j.get("account")
-        if not account:
-            continue
-        when = j.get("finished_at") or j.get("started_at") or 0
-        meta = account_meta.get(account)
-        if meta and when > meta["last_updated_ts"]:
-            meta["last_updated_ts"] = when
-
-    # Per-member aggregates.
-    member_rows = []
-    for m in members:
-        visible = [a for a in active_accounts if a["owner"] == m["id"] or a["owner"] is None]
-        names = [a["name"] for a in visible]
-        row = {
-            "id": m["id"],
-            "name": m["name"],
-            "role": m.get("role"),
-            "email": m.get("email"),
-            "account_count": len(names),
-            "output_count": 0,
-            "needs_attention": 0,
-            "opp_count": 0,
-            "running_jobs": 0,
-            "recent_failures": 0,
-            "last_activity_ts": 0.0,
-            "last_output": None,
-        }
-        last_output_entry = None
-        for name in names:
-            am = account_meta.get(name)
-            if not am:
-                continue
-            row["output_count"] += am["output_count"]
-            row["needs_attention"] += am["needs_attention"]
-            row["opp_count"] += am["opp_count"]
-            if am["last_updated_ts"] > row["last_activity_ts"]:
-                row["last_activity_ts"] = am["last_updated_ts"]
-            if am["last_output"] and (last_output_entry is None or am["last_output"]["mtime"] > last_output_entry["mtime"]):
-                last_output_entry = am["last_output"]
-
-        for j in running_jobs:
-            if j.get("account") in names:
-                row["running_jobs"] += 1
-                started = j.get("started_at") or 0
-                if started > row["last_activity_ts"]:
-                    row["last_activity_ts"] = started
-        for j in failed_jobs:
-            if j.get("account") in names:
-                finished = j.get("finished_at")
-                if finished is None or now - finished <= _ATTENTION_FAILURE_HOURS * 3600:
-                    row["recent_failures"] += 1
-                if finished and finished > row["last_activity_ts"]:
-                    row["last_activity_ts"] = finished
-        for j in done_jobs:
-            if j.get("account") in names:
-                finished = j.get("finished_at") or 0
-                if finished > row["last_activity_ts"]:
-                    row["last_activity_ts"] = finished
-        row["last_output"] = last_output_entry
-        member_rows.append(row)
-
-    # Team summary.
-    total_outputs = sum(m["output_count"] for m in account_meta.values())
-    total_needs_attention = sum(m["needs_attention"] for m in account_meta.values())
-    recent_failure_count = sum(
-        1 for j in failed_jobs
-        if j.get("finished_at") is None or now - j["finished_at"] <= _ATTENTION_FAILURE_HOURS * 3600
-    )
-    all_activity_ts = (
-        [m["last_updated_ts"] for m in account_meta.values()] +
-        [j.get("started_at") or 0 for j in running_jobs] +
-        [j.get("finished_at") or 0 for j in [*failed_jobs, *done_jobs]]
-    )
-    global_last_activity = max(all_activity_ts) if all_activity_ts else 0.0
-
-    summary = {
-        "members": len(members),
-        "active_accounts": len(active_accounts),
-        "archived_accounts": archived_count,
-        "opportunities": sum(
-            account_meta[a["name"]]["opp_count"]
-            for a in active_accounts
-            if a["name"] in account_meta
-        ),
-        "outputs": total_outputs,
-        "running_jobs": len(running_jobs),
-        "recent_failures": recent_failure_count,
-        "needs_attention": total_needs_attention,
-        "last_activity": global_last_activity,
-    }
-
-    # Attention-needed items.
-    attention: list[dict] = []
-    for j in running_jobs:
-        account = j.get("account", "unknown")
-        opp_slug = j.get("opp_slug")
-        opp_name = j.get("opportunity") or (opp_slug.capitalize() if opp_slug else account)
-        started = j.get("started_at")
-        duration_min = int((now - started) / 60) if started else None
-        long_running = started and duration_min is not None and duration_min >= _LONG_RUNNING_MINUTES
-        attention.append({
-            "type": "long-running" if long_running else "running",
-            "level": "warn" if long_running else "info",
-            "skill": j.get("skill", "skill"),
-            "account": account,
-            "opp_slug": opp_slug,
-            "opp_name": opp_name,
-            "when": started or now,
-            "duration_min": duration_min,
-            "job_id": j.get("job_id"),
-            "href": (
-                f"#/opp/{urllib.parse.quote(account)}/{urllib.parse.quote(opp_slug or '')}/{urllib.parse.quote(opp_name)}"
-                if opp_slug else f"#/account/{urllib.parse.quote(account)}"
-            ),
-        })
-
-    for j in failed_jobs:
-        finished = j.get("finished_at")
-        if finished and now - finished > _ATTENTION_FAILURE_HOURS * 3600:
-            continue
-        account = j.get("account", "unknown")
-        opp_slug = j.get("opp_slug")
-        opp_name = j.get("opportunity") or (opp_slug.capitalize() if opp_slug else account)
-        attention.append({
-            "type": "failure",
-            "level": "error",
-            "skill": j.get("skill", "skill"),
-            "account": account,
-            "opp_slug": opp_slug,
-            "opp_name": opp_name,
-            "when": finished or now,
-            "error": (j.get("stderr") or "").splitlines()[0][:120] if j.get("stderr") else "",
-            "job_id": j.get("job_id"),
-            "href": (
-                f"#/opp/{urllib.parse.quote(account)}/{urllib.parse.quote(opp_slug or '')}/{urllib.parse.quote(opp_name)}"
-                if opp_slug else f"#/account/{urllib.parse.quote(account)}"
-            ),
-        })
-
-    for out in sorted(needs_attention_outputs, key=lambda x: x["mtime"], reverse=True)[:_MAX_ATTENTION]:
-        # Validation issues are more urgent than review queue items; stale and
-        # incomplete outputs still need attention but are less severe than invalid.
-        if out["type"] == "review":
-            level = "warn"
-        else:
-            level = "error" if out["validation_status"] == "invalid" else "warn"
-        attention.append({
-            "type": out["type"],
-            "level": level,
-            "skill": out["skill"],
-            "account": out["account"],
-            "opp_slug": out["opp_slug"],
-            "opp_name": out["opp_name"],
-            "filename": out["filename"],
-            "when": out["mtime"],
-            "status": out["status"],
-            "validation_status": out["validation_status"],
-            "review_status": out["review_status"],
-            "href": output_service.output_href(out["account"], out["opp_slug"], out["opp_name"], out["path"]),
-        })
-
-    for a in active_accounts:
-        am = account_meta.get(a["name"])
-        if not am:
-            continue
-        last = am["last_updated_ts"]
-        if last and now - last > _STALE_ACTIVITY_DAYS * 24 * 3600 and am["output_count"] > 0:
-            attention.append({
-                "type": "stale",
-                "level": "info",
-                "account": a["name"],
-                "when": last,
-                "href": f"#/account/{urllib.parse.quote(a['name'])}",
-            })
-
-    attention.sort(key=lambda x: (0 if x["level"] == "error" else (1 if x["level"] == "warn" else 2), -x["when"]))
-    attention = attention[:_MAX_ATTENTION]
-
-    # Recent activity: outputs + job events.
-    recent: list[dict] = []
-    for out in recent_outputs:
-        recent.append({
-            "type": "output",
-            "skill": out["skill"],
-            "account": out["account"],
-            "opp_slug": out["opp_slug"],
-            "opp_name": out["opp_name"],
-            "filename": out["filename"],
-            "when": out["mtime"],
-            "needs_attention": out["needs_attention"],
-            "href": output_service.output_href(out["account"], out["opp_slug"], out["opp_name"], out["path"]),
-        })
-
-    for j in [*running_jobs, *failed_jobs, *done_jobs]:
-        account = j.get("account", "unknown")
-        opp_slug = j.get("opp_slug")
-        opp_name = j.get("opportunity") or (opp_slug.capitalize() if opp_slug else account)
-        status = j.get("status")
-        ok = j.get("ok")
-        if status == "running":
-            when = j.get("started_at") or now
-            event_type = "job_started"
-        elif status == "error" or ok is False:
-            when = j.get("finished_at") or now
-            event_type = "job_recovered" if "Server restarted" in (j.get("stderr") or "") else "job_error"
-        else:
-            when = j.get("finished_at") or now
-            event_type = "job_done"
-        recent.append({
-            "type": event_type,
-            "skill": j.get("skill", "skill"),
-            "account": account,
-            "opp_slug": opp_slug,
-            "opp_name": opp_name,
-            "when": when,
-            "ok": j.get("ok"),
-            "job_id": j.get("job_id"),
-            "href": (
-                f"#/opp/{urllib.parse.quote(account)}/{urllib.parse.quote(opp_slug or '')}/{urllib.parse.quote(opp_name)}"
-                if opp_slug else f"#/account/{urllib.parse.quote(account)}"
-            ),
-        })
-
-    recent.sort(key=lambda x: x["when"], reverse=True)
-    recent = recent[:_MAX_RECENT]
-
-    empty = {
-        "members": not members,
-        "accounts": not active_accounts,
-        "attention": not attention,
-        "recent": not recent,
-    }
-
-    return {
-        "summary": summary,
-        "attention": attention,
-        "recent": recent,
-        "members": member_rows,
-        "empty": empty,
-    }
-
-
-@app.get("/api/overview")
-async def api_overview():
-    """Operational overview for the team landing page.
-
-    Runs the aggregation in a thread pool because it walks the filesystem and
-    may briefly block the event loop. A failure anywhere in the aggregation
-    returns a safe empty fallback rather than a 500 so the landing page still
-    renders.
-    """
-    jobs_snapshot = {k: dict(v) for k, v in job_service.jobs.items()}
-    try:
-        return await asyncio.to_thread(_build_overview, jobs_snapshot)
-    except (OSError, ValueError, TypeError) as e:
-        logger.warning("Overview aggregation failed: %s", type(e).__name__)
-        return {
-            "summary": {
-                "members": 0, "active_accounts": 0, "archived_accounts": 0,
-                "opportunities": 0, "outputs": 0, "running_jobs": 0,
-                "recent_failures": 0, "needs_attention": 0, "last_activity": 0.0,
-            },
-            "attention": [],
-            "recent": [],
-            "members": [],
-            "empty": {"members": True, "accounts": True, "attention": True, "recent": True},
-        }
 
 
 # ---------------------------------------------------------------------------
