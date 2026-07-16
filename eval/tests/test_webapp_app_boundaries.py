@@ -1,8 +1,8 @@
-"""Deterministic tests for external-input boundaries and output encoding in `webapp/app.py`.
+"""Deterministic tests for external-input boundaries and output encoding.
 
 These tests focus on enforceable limits (Pydantic `max_length`) and output encoding
-(`_html_escape`, `_upsert_handover_card`) rather than natural-language prompt
-sanitization, which is intentionally out of scope.
+(`OutputService._html_escape`, `OutputService._upsert_handover_card`) rather than
+natural-language prompt sanitization, which is intentionally out of scope.
 """
 
 import pytest
@@ -12,16 +12,27 @@ from webapp.app import (
     AskLive,
     InvokeBody,
     OutputAsk,
-    OutputPdf,
-    PushToRepo,
     StartLive,
-    _html_escape,
     _safe,
     _sf_quote,
     _sfdc_like_prefix,
     _titlecase_folder,
-    _upsert_handover_card,
 )
+from webapp.routes.outputs import OutputPdf, PushToRepo
+from webapp.services.output_service import OutputService
+
+
+def _svc() -> OutputService:
+    return OutputService(
+        customers_dir=None,
+        workspace=None,
+        repo_root=None,
+        se_config=lambda: {},
+        safe_name=lambda n: n,
+        slug=lambda n: n,
+        run_cmd=None,
+        internal_repo=None,
+    )
 
 
 class TestModelBoundaries:
@@ -70,7 +81,7 @@ class TestModelBoundaries:
 
 def test_html_escape_encodes_markup_characters() -> None:
     """`_html_escape` turns HTML metacharacters into entities."""
-    assert _html_escape("a < b & c > d") == "a &lt; b &amp; c &gt; d"
+    assert OutputService._html_escape("a < b & c > d") == "a &lt; b &amp; c &gt; d"
 
 
 def test_safe_rejects_path_metacharacters() -> None:
@@ -119,7 +130,8 @@ def test_upsert_handover_card_escapes_meta_and_account() -> None:
     description = 'A <b>test</b> description'
     meta = '<img src=x onerror=alert(1)>'
     account_slug = _titlecase_folder(account).lower()
-    result = _upsert_handover_card(base, account, account_slug, description, meta)
+    svc = _svc()
+    result = svc._upsert_handover_card(base, account, account_slug, description, meta)
 
     assert "<script>" not in result
     assert "<img" not in result

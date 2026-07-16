@@ -47,22 +47,24 @@ from pathlib import Path
 
 import yaml
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from typing import Any, Literal
+from typing import Any
 
-import golden
 import md_render
 import orchestrator
-import output_schema
 import persistence
-import reference_freshness
 import security
 import soql
 
 from routes.jobs import router as jobs_router
+from routes.outputs import router as outputs_router
+from routes.feedback import router as feedback_router
+from services.feedback_service import FeedbackService
 from services.job_service import JobService
+from services.output_service import OutputService
+from services.path_utils import resolve_within
 
 logger = logging.getLogger(__name__)
 
@@ -417,72 +419,6 @@ def _slug(name: str) -> str:
     """Filesystem-safe slug for an opportunity name."""
     s = re.sub(r"[^A-Za-z0-9]+", "-", (name or "").strip()).strip("-")
     return s[:80] or "opportunity"
-
-
-def list_outputs(account: str, opp: str | None = None) -> list[dict]:
-    """Saved skill outputs, newest first. If `opp` given, scope to that
-    opportunity's outputs; otherwise the account-level outputs folder
-    (legacy / account-wide).
-
-    Each Markdown output gets a `.json` sidecar with parsed metadata and
-    validation results; the list exposes `valid` / `validation_errors` so the UI
-    can warn the SE when an output looks incomplete."""
-    base = (CUSTOMERS_DIR / account / "opportunities" / opp / "outputs") if opp \
-        else (CUSTOMERS_DIR / account / "outputs")
-    if not base.exists():
-        return []
-    items = []
-    for skill_dir in sorted(base.iterdir()):
-        if not skill_dir.is_dir() or skill_dir.name.startswith("."):
-            continue  # skip hidden dirs like .runs (internal run-result cache)
-        skill = skill_dir.name
-        for f in sorted([*skill_dir.glob("*.md"), *skill_dir.glob("*.html")]):
-            st = f.stat()
-            entry: dict[str, Any] = {
-                "skill": skill,
-                "filename": f.name,
-                "path": str(f.relative_to(CUSTOMERS_DIR)),
-                "ext": f.suffix.lstrip("."),  # "md" or "html" — UI uses this for the View action
-                "mtime": st.st_mtime,
-                "modified": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).strftime("%Y-%m-%d %H:%M"),
-                "size": st.st_size,
-            }
-            if f.suffix == ".md":
-                try:
-                    meta = output_schema.read_or_parse_sidecar(f, skill)
-                    # Reference freshness is only computed for skills with a known
-                    # product-data dependency so non-product skills do not pay the
-                    # filesystem scan cost on every listing.
-                    if output_schema.skill_has_schema(skill):
-                        current = reference_freshness.compute_reference_freshness(
-                            _se_config(), WORKSPACE, WEBAPP_DIR.parent, skill=skill
-                        )
-                        meta.reference_changed_since_generation = (
-                            reference_freshness.compare_to_generation(
-                                current, meta.reference_freshness_at_generation
-                            )
-                        )
-                    else:
-                        meta.reference_changed_since_generation = []
-                    entry["valid"] = meta.valid
-                    entry["validation_status"] = meta.validation_status
-                    entry["validation_errors"] = meta.validation_errors
-                    entry["missing_sections"] = meta.missing_sections
-                    entry["reference_freshness_at_generation"] = (
-                        [r.model_dump() for r in meta.reference_freshness_at_generation]
-                        if meta.reference_freshness_at_generation is not None
-                        else None
-                    )
-                    entry["reference_changed_since_generation"] = (
-                        [c.model_dump() for c in meta.reference_changed_since_generation]
-                        if meta.reference_changed_since_generation is not None
-                        else None
-                    )
-                except (OSError, ValueError, TypeError):
-                    logger.warning("Could not parse sidecar for %s", f)
-            items.append(entry)
-    items.sort(key=lambda x: x["mtime"], reverse=True)
-    return items
 
 
 async def sfdc_opportunities(account: str) -> list[dict]:
@@ -932,7 +868,7 @@ def api_outputs(account: str, opp: str | None = None):
     account = _safe(account)
     if opp:
         opp = _safe(opp)  # opp slug is also path-segment safe
-    return list_outputs(account, opp)
+    return output_service.list_outputs(account, opp)
 
 
 @app.get("/api/accounts/{account}/opportunities")
@@ -1098,384 +1034,6 @@ def api_restore(trash_id: str):
     return {"name": orig, "restored": True}
 
 
-@app.get("/api/output", response_class=PlainTextResponse)
-def api_output_content(path: str):
-    # path is relative to CUSTOMERS_DIR; resolve and confirm it stays inside
-    target = (CUSTOMERS_DIR / path).resolve()
-    if not str(target).startswith(str(CUSTOMERS_DIR.resolve())) or not target.is_file():
-        raise HTTPException(404, "Not found")
-    return target.read_text()
-
-
-@app.get("/api/output/meta")
-def api_output_meta(path: str):
-    """Return parsed metadata and schema-validation results for a Markdown output."""
-    target = (CUSTOMERS_DIR / path).resolve()
-    if not str(target).startswith(str(CUSTOMERS_DIR.resolve())) or not target.is_file():
-        raise HTTPException(404, "Not found")
-    skill = target.parent.name
-    try:
-        meta = output_schema.read_or_parse_sidecar(target, skill)
-        if output_schema.skill_has_schema(skill):
-            current = reference_freshness.compute_reference_freshness(
-                _se_config(), WORKSPACE, WEBAPP_DIR.parent, skill=skill
-            )
-            meta.reference_changed_since_generation = (
-                reference_freshness.compare_to_generation(
-                    current, meta.reference_freshness_at_generation
-                )
-            )
-        else:
-            meta.reference_changed_since_generation = []
-        return meta.model_dump()
-    except (OSError, ValueError, TypeError) as e:
-        raise HTTPException(500, f"Could not parse output metadata: {e}")
-
-
-@app.get("/api/output/html", response_class=HTMLResponse)
-def api_output_html(path: str):
-    """Serve a generated .html output with text/html so it renders in the
-    browser (e.g. a coverage-handoff page opened in a new tab)."""
-    target = (CUSTOMERS_DIR / path).resolve()
-    if not str(target).startswith(str(CUSTOMERS_DIR.resolve())) or not target.is_file():
-        raise HTTPException(404, "Not found")
-    if target.suffix != ".html":
-        raise HTTPException(400, "Not an HTML output")
-    return HTMLResponse(target.read_text())
-
-
-@app.get("/api/output/repo-path")
-def api_output_repo_path(account: str, member: str = ""):
-    """Suggested internal.airbyte.ai target path for a handoff HTML page:
-    src/solutions-team/members/<member-slug>/accounts/<account-slug>/index.html"""
-    account = _safe(account)
-    member_slug = _slug(member).lower() if member else "<your-member-slug>"
-    account_slug = _slug(account.replace("-", " ")).lower()
-    rel = f"accounts/{account_slug}/index.html"
-    full = f"src/solutions-team/members/{member_slug}/{rel}"
-    return {"relative": rel, "full": full, "account_slug": account_slug, "member_slug": member_slug}
-
-
-# ---------------------------------------------------------------------------
-# Push a coverage-handoff HTML to internal.airbyte.ai as a one-click PR.
-# Branches off origin/main (never touches local main), writes the account page,
-# inserts/replaces the member's handover.html card, commits, pushes, opens a PR.
-# ---------------------------------------------------------------------------
-class PushToRepo(BaseModel):
-    path: str = Field(max_length=500)                  # output .html, relative to CUSTOMERS_DIR
-    account: str = Field(max_length=120)               # account name (for slug + card text)
-    member: str = Field(default="", max_length=120)    # owner member display name (for the member-slug folder)
-    description: str = Field(default="", max_length=2_000)  # card description (optional; server derives if blank)
-    meta: str = Field(default="", max_length=1_000)      # card meta line (optional; server derives if blank)
-
-
-def _html_escape(s: str) -> str:
-    """Escape text destined for HTML card markup."""
-    return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
-def _parse_handoff_stats(html: str) -> dict:
-    """Best-effort extraction of card facts from a coverage-handoff page:
-    deal size + stage from the header `.stat .num`/`.label` blocks, coverage
-    window from the `.coverage-banner` `.cv` block. All optional."""
-    stats: dict[str, str] = {}
-    # <div class="stat"><div class="num">$45K</div><div class="label">Deal Size</div></div>
-    for num, label in re.findall(
-        r'<div class="stat">\s*<div class="num">(.*?)</div>\s*<div class="label">(.*?)</div>',
-        html, re.DOTALL,
-    ):
-        stats[label.strip().lower()] = num.strip()
-    # <div class="cv"><span class="label">Coverage Window</span><span class="value">...</span></div>
-    for label, value in re.findall(
-        r'<div class="cv">\s*<span class="label">(.*?)</span>\s*<span class="value">(.*?)</span>',
-        html, re.DOTALL,
-    ):
-        stats["cv:" + label.strip().lower()] = value.strip()
-    return stats
-
-
-def _build_card_meta(stats: dict) -> str:
-    """Assemble the card meta line from parsed stats. Mirrors the manual PR:
-    `<Deal Size> · Stage <N> · Coverage <window>`. Omits parts we couldn't find."""
-    parts = []
-    if stats.get("deal size"):
-        parts.append(stats["deal size"])
-    if stats.get("stage"):
-        parts.append(f"Stage {stats['stage']}")
-    cv = stats.get("cv:coverage window")
-    if cv:
-        parts.append(f"Coverage {cv}")
-    return " &middot; ".join(parts)
-
-
-def _upsert_handover_card(handover_html: str, account: str, account_slug: str,
-                          description: str, meta: str) -> str:
-    """Insert (or replace) the account's nav-card in a member's handover.html.
-    Replaces an existing `<a href="accounts/<slug>/" ...>...</a>` block if present;
-    otherwise inserts a new card as the first child of `<div class="nav-grid">`."""
-    acct_e = _html_escape(account)
-    desc_e = _html_escape(description) or f"Coverage handoff for {acct_e}."
-    meta_e = _html_escape(meta) if meta else ""
-    meta_inner = f'<span class="badge">Active</span>' + (f" &nbsp; {meta_e}" if meta_e else "")
-    card = (
-        f'    <a href="accounts/{account_slug}/" class="nav-card">\n'
-        f'      <div class="accent-bar"></div>\n'
-        f'      <span class="arrow">&rarr;</span>\n'
-        f'      <h2>{acct_e}</h2>\n'
-        f'      <p>{desc_e}</p>\n'
-        f'      <div class="meta">{meta_inner}</div>\n'
-        f'    </a>'
-    )
-    # Replace an existing card for this account, if present.
-    existing = re.compile(
-        r'[ \t]*<a href="accounts/' + re.escape(account_slug) + r'/"[^>]*>.*?</a>',
-        re.DOTALL,
-    )
-    if existing.search(handover_html):
-        return existing.sub(card, handover_html, count=1)
-    # Otherwise insert as the first child of the nav-grid.
-    grid = re.compile(r'(<div class="nav-grid">[^\n]*\n)')
-    if not grid.search(handover_html):
-        raise HTTPException(500, 'Could not find `<div class="nav-grid">` in handover.html')
-    return grid.sub(lambda m: m.group(1) + card + "\n", handover_html, count=1)
-
-
-@app.post("/api/output/push-to-repo")
-async def api_push_to_repo(body: PushToRepo):
-    # 1. Resolve + validate the source handoff HTML.
-    src = (CUSTOMERS_DIR / body.path).resolve()
-    if not str(src).startswith(str(CUSTOMERS_DIR.resolve())) or not src.is_file():
-        raise HTTPException(404, "Output not found")
-    if src.suffix != ".html":
-        raise HTTPException(400, "Only .html outputs can be pushed to the internal repo")
-    handoff_html = src.read_text()
-
-    # 2. Compute the target path inside the internal repo.
-    repo = _internal_repo()
-    if not (repo / ".git").exists():
-        raise HTTPException(400, f"internal repo not cloned at {repo}")
-    account = _safe(body.account)
-    member_slug = _slug(body.member).lower() if body.member else ""
-    if not member_slug:
-        raise HTTPException(400, "member (owner) is required to place the account page")
-    account_slug = _slug(account.replace("-", " ")).lower()
-    member_dir = repo / "src" / "solutions-team" / "members" / member_slug
-    handover_path = member_dir / "handover.html"
-    if not handover_path.is_file():
-        raise HTTPException(400, f"No handover.html for member '{member_slug}' — expected {handover_path}")
-    account_dir = member_dir / "accounts" / account_slug
-    index_path = account_dir / "index.html"
-
-    # 3. Sync clone: fetch origin/main and branch fresh off it (never touch local main).
-    await _run_cmd(["git", "fetch", "origin", "main"], repo)
-    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    branch = f"se/coverage-handoff-{account_slug}-{ts}"
-    await _run_cmd(["git", "checkout", "-B", branch, "origin/main"], repo)
-
-    # 4. Write the account page.
-    account_dir.mkdir(parents=True, exist_ok=True)
-    index_path.write_text(handoff_html)
-
-    # 5. Update the member's handover.html card (auto-fill from the handoff if blank).
-    stats = _parse_handoff_stats(handoff_html)
-    meta = body.meta.strip() or _build_card_meta(stats)
-    description = body.description.strip()
-    handover_path.write_text(
-        _upsert_handover_card(handover_path.read_text(), account, account_slug, description, meta)
-    )
-
-    # 6. Commit, push, open a PR.
-    rel_index = str(index_path.relative_to(repo))
-    rel_handover = str(handover_path.relative_to(repo))
-    await _run_cmd(["git", "add", rel_index, rel_handover], repo)
-    commit_msg = (
-        f"docs(solutions-team): add {account} coverage handoff ({account_slug})\n\n"
-        "Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
-    )
-    await _run_cmd(["git", "commit", "-m", commit_msg], repo)
-    await _run_cmd(["git", "push", "-u", "origin", branch], repo)
-    pr_body = (
-        f"Auto-generated coverage handoff for **{account}**, added under "
-        f"`members/{member_slug}/accounts/{account_slug}/` with a card in "
-        f"`{member_slug}/handover.html`.\n\n"
-        "Generated from the SE-skills webapp coverage-handoff skill.\n\n"
-        "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
-    )
-    _, pr_out, _ = await _run_cmd([
-        "gh", "pr", "create", "--repo", "airbytehq/internal.airbyte.ai",
-        "--head", branch, "--base", "main",
-        "--title", f"docs(solutions-team): add {account} coverage handoff",
-        "--body", pr_body,
-    ], repo)
-    pr_url = pr_out.strip().splitlines()[-1] if pr_out.strip() else ""
-    return {"pr_url": pr_url, "branch": branch, "target": rel_index}
-
-
-@app.get("/api/output/push-status")
-async def api_push_status(account: str):
-    """Is there already an OPEN PR for this account's handoff? Used by the UI to
-    warn before opening a duplicate. Matches our branch convention
-    `se/coverage-handoff-<account_slug>-*`. Merged/closed PRs don't count (they're
-    not open), so a re-push after merge/close proceeds cleanly. Best-effort: any
-    gh/repo failure returns {open_pr: null} so the push flow is never blocked."""
-    repo = _internal_repo()
-    if not (repo / ".git").exists():
-        return {"open_pr": None}
-    try:
-        account_slug = _slug(_safe(account).replace("-", " ")).lower()
-    except HTTPException:
-        return {"open_pr": None}
-    # Our branches are `se/coverage-handoff-<slug>-<ts>`; the one-off manual branch
-    # was `se/coverage-handoff-<slug>` (no suffix). Match both.
-    branch_base = f"se/coverage-handoff-{account_slug}"
-    try:
-        # `head:` search qualifier matches the branch name; --state open scopes it.
-        proc = await asyncio.create_subprocess_exec(
-            "gh", "pr", "list", "--repo", "airbytehq/internal.airbyte.ai",
-            "--state", "open", "--search", f"head:{branch_base}",
-            "--json", "number,url,headRefName", "--limit", "20",
-            cwd=str(repo),
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=25)
-        if proc.returncode != 0:
-            return {"open_pr": None}
-        prs = json.loads(out or "[]")
-    except Exception:
-        return {"open_pr": None}
-    # `head:` is a substring-ish match; confirm the branch is exactly our base or a
-    # timestamped variant `…-<YYYYMMDD-HHMMSS>` — NOT a different account whose slug
-    # merely starts with this one (e.g. `rithm` vs `rithm-capital`).
-    ts_suffix = re.compile(re.escape(branch_base) + r"-\d{8}-\d{6}$")
-    for pr in prs:
-        ref = pr.get("headRefName") or ""
-        if ref == branch_base or ts_suffix.match(ref):
-            return {"open_pr": {"number": pr.get("number"), "url": pr.get("url")}}
-    return {"open_pr": None}
-
-
-@app.get("/api/output/pdf")
-def api_output_pdf(path: str):
-    """Render a generated output .md to a clean PDF (server-side, via headless
-    Chrome — page breaks per section, no browser print chrome). Returns the PDF
-    bytes as an attachment."""
-    target = (CUSTOMERS_DIR / path).resolve()
-    if not str(target).startswith(str(CUSTOMERS_DIR.resolve())) or not target.is_file():
-        raise HTTPException(404, "Not found")
-    if target.suffix not in (".md", ".html"):
-        raise HTTPException(400, "Only .md or .html outputs can be exported to PDF")
-    import pdf_render
-    try:
-        text = target.read_text()
-        data = pdf_render.render_html_pdf(text) if target.suffix == ".html" else pdf_render.render_pdf(text)
-    except RuntimeError as e:        # Chrome missing
-        raise HTTPException(503, security.redact_sensitive(str(e)))
-    except subprocess.SubprocessError as e:
-        raise HTTPException(500, security.redact_sensitive(f"PDF render failed: {e}"))
-    fname = target.stem + ".pdf"
-    return Response(
-        content=data,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
-    )
-
-
-@app.get("/api/output/internal-html")
-def api_output_internal_html(path: str):
-    """Render a generated output .md to a self-contained internal.airbyte.ai
-    (rs-group) HTML page — the same design system as coverage-handoff, but
-    generic across skills (each H2 section renders as a card, in the doc's own
-    order; nothing is dropped or reordered). Returns the HTML as an attachment
-    the SE drops into the internal.airbyte.ai repo and PRs (no auto-push)."""
-    target = (CUSTOMERS_DIR / path).resolve()
-    if not str(target).startswith(str(CUSTOMERS_DIR.resolve())) or not target.is_file():
-        raise HTTPException(404, "Not found")
-    if target.suffix != ".md":
-        raise HTTPException(400, "Only .md outputs can be exported to internal HTML")
-    import internal_html
-    # Customer = the first path segment (the account folder), de-slugged for display.
-    rel = target.relative_to(CUSTOMERS_DIR.resolve())
-    customer = rel.parts[0].replace("-", " ") if rel.parts else ""
-    try:
-        doc = internal_html.render_internal_html(target.read_text(), customer=customer)
-    except Exception as e:  # best-effort render; surface rather than 500 silently
-        raise HTTPException(500, security.redact_sensitive(f"Internal HTML render failed: {e}"))
-    return Response(
-        content=doc,
-        media_type="text/html; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{target.stem}.html"'},
-    )
-
-
-class OutputPdf(BaseModel):
-    path: str = Field(max_length=500)              # output file, relative to CUSTOMERS_DIR
-    append_md: str = Field(default="", max_length=20_000)  # extra markdown appended below the doc (follow-up Q&A)
-
-
-@app.post("/api/output/pdf")
-def api_output_pdf_post(body: OutputPdf):
-    """Same as the GET, but renders the doc PLUS client-supplied markdown
-    (the follow-up Q&A thread) — "Download with Q&A". Nothing is written to disk."""
-    target = (CUSTOMERS_DIR / body.path).resolve()
-    if not str(target).startswith(str(CUSTOMERS_DIR.resolve())) or not target.is_file():
-        raise HTTPException(404, "Not found")
-    if target.suffix != ".md":
-        raise HTTPException(400, "Only .md outputs can be exported to PDF")
-    import pdf_render
-    md = target.read_text() + (body.append_md or "")
-    try:
-        data = pdf_render.render_pdf(md)
-    except RuntimeError as e:        # Chrome missing
-        raise HTTPException(503, security.redact_sensitive(str(e)))
-    except subprocess.SubprocessError as e:
-        raise HTTPException(500, security.redact_sensitive(f"PDF render failed: {e}"))
-    return Response(
-        content=data,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{target.stem}.pdf"'},
-    )
-
-
-class OutputRender(BaseModel):
-    md: str = Field(max_length=2_000_000)
-
-
-class OutputRenderResponse(BaseModel):
-    html: str
-
-
-@app.post("/api/output/render")
-def api_output_render(body: OutputRender) -> OutputRenderResponse:
-    """Shared Markdown -> HTML renderer for the web reader.
-
-    PDF export and the internal.airbyte.ai HTML export use the same
-    `md_render.markdown_to_body_html` function directly; this endpoint lets
-    the browser get identical, sanitized HTML without a second parser.
-    """
-    return OutputRenderResponse(html=md_render.markdown_to_body_html(body.md))
-
-
-@app.delete("/api/output")
-def api_delete_output(path: str):
-    """Delete is RECOVERABLE: move the output .md into 01-customers/_trash/
-    rather than hard-deleting. The relative path is flattened into the trash
-    filename (slashes → __) and timestamped so it stays traceable."""
-    target = (CUSTOMERS_DIR / path).resolve()
-    root = CUSTOMERS_DIR.resolve()
-    if not str(target).startswith(str(root)) or not target.is_file():
-        raise HTTPException(404, "Not found")
-    if target.suffix != ".md":
-        raise HTTPException(400, "Only generated .md outputs can be deleted here")
-    trash = CUSTOMERS_DIR / "_trash"
-    trash.mkdir(exist_ok=True)
-    stamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d-%H%M%S")
-    rel = target.relative_to(root)
-    flat = str(rel).replace("/", "__")
-    dest = trash / f"{stamp}__{flat}"
-    shutil.move(str(target), str(dest))
-    return {"path": path, "deleted": True, "trash_id": dest.name}
-
-
 class OutputAsk(BaseModel):
     path: str = Field(max_length=500)             # output file, relative to CUSTOMERS_DIR
     question: str = Field(max_length=5_000)
@@ -1487,8 +1045,11 @@ class OutputAsk(BaseModel):
 async def api_output_ask(body: OutputAsk):
     """Follow-up Q&A against an opened output doc. Quick → Claude API (doc as
     context); deep (codebase/connectors) → claude -p. Mirrors the live ask."""
-    target = (CUSTOMERS_DIR / body.path).resolve()
-    if not str(target).startswith(str(CUSTOMERS_DIR.resolve())) or not target.is_file():
+    try:
+        target = resolve_within(CUSTOMERS_DIR, body.path)
+    except ValueError:
+        raise HTTPException(404, "Not found")
+    if not target.is_file():
         raise HTTPException(404, "Not found")
     q = (body.question or "").strip()
     if not q:
@@ -1546,212 +1107,6 @@ async def api_output_ask(body: OutputAsk):
             yield {"event": "error", "data": json.dumps({"error": security.redact_sensitive(str(e))})}
 
     return EventSourceResponse(gen())
-
-
-class OutputFeedback(BaseModel):
-    path: str = Field(max_length=500)              # output file, relative to CUSTOMERS_DIR
-    action: Literal["approve", "comment", "correct"]
-    comment: str = Field(default="", max_length=2_000)
-    author: str = Field(default="", max_length=100)
-
-
-def _feedback_file(target: Path) -> Path:
-    """Sidecar JSONL file that stores review/feedback entries for an output."""
-    return target.with_suffix(".feedback.jsonl")
-
-
-@app.get("/api/output/feedback")
-def api_output_feedback_get(path: str):
-    """Return all review/feedback entries recorded for a generated output."""
-    target = (CUSTOMERS_DIR / path).resolve()
-    root = CUSTOMERS_DIR.resolve()
-    if not str(target).startswith(str(root)) or not target.is_file():
-        raise HTTPException(404, "Not found")
-    fb = _feedback_file(target)
-    if not fb.exists():
-        return {"path": path, "entries": []}
-    entries = []
-    for line in fb.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            entries.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return {"path": path, "entries": entries}
-
-
-@app.post("/api/output/feedback")
-def api_output_feedback_post(body: OutputFeedback):
-    """Record an SE's review/approval/correction feedback on a generated output.
-
-    Feedback is stored as newline-delimited JSON next to the output file so it
-    travels with the doc and can be surfaced on subsequent reads. It does not
-    modify the original generated Markdown.
-    """
-    target = (CUSTOMERS_DIR / body.path).resolve()
-    root = CUSTOMERS_DIR.resolve()
-    if not str(target).startswith(str(root)) or not target.is_file():
-        raise HTTPException(404, "Not found")
-    if target.suffix != ".md":
-        raise HTTPException(400, "Only generated .md outputs can receive feedback")
-
-    entry = {
-        "timestamp": datetime.now(tz=timezone.utc).isoformat(),
-        "action": body.action,
-        "comment": (body.comment or "").strip(),
-        "author": (body.author or "").strip(),
-    }
-    fb = _feedback_file(target)
-    fb.parent.mkdir(parents=True, exist_ok=True)
-    with fb.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(entry) + "\n")
-    return {"path": body.path, "entry": entry, "feedback_file": str(fb.relative_to(root))}
-
-
-class OutputGolden(BaseModel):
-    path: str = Field(max_length=500)      # output Markdown file, relative to CUSTOMERS_DIR
-    scenario: str = Field(default="", max_length=100)
-    text: str | None = Field(default=None, max_length=2_000_000)
-    confirm_synthetic: bool = Field(default=False)
-
-
-@app.get("/api/golden/manifests")
-def api_golden_manifests(skill: str):
-    """Return the Phase 1 manifest scenarios that exercise a given skill.
-
-    Only fixtures saved under one of these scenario IDs are exercised by the
-    deterministic regression suite.
-    """
-    return {"skill": skill, "scenarios": golden.manifest_scenarios(skill)}
-
-
-@app.post("/api/output/golden")
-def api_output_golden_post(body: OutputGolden):
-    """Promote a generated output to an active golden regression fixture.
-
-    The SE reviews and edits the Markdown in a modal, confirms the content is
-    synthetic, and selects a manifest scenario. The fixture is only saved when
-    the scenario is exercised by a Phase 1 manifest, so CI actually diffs it.
-    """
-    target = (CUSTOMERS_DIR / body.path).resolve()
-    root = CUSTOMERS_DIR.resolve()
-    if not str(target).startswith(str(root)) or not target.is_file() or target.suffix != ".md":
-        raise HTTPException(404, "Not found")
-
-    if not body.confirm_synthetic:
-        raise HTTPException(
-            400,
-            "Confirm that this content is synthetic and contains no customer or confidential data.",
-        )
-
-    meta = output_schema.read_or_parse_sidecar(target, target.parent.name)
-    skill = (meta.skill or target.parent.name) if meta else target.parent.name
-
-    scenario = (body.scenario or target.stem).strip()
-    if not scenario:
-        scenario = target.stem
-    # Sanitize scenario to a safe filename.
-    scenario = re.sub(r"[^\w\-]+", "_", scenario).strip("_").lower()[:100] or target.stem
-
-    active_scenarios = golden.manifest_scenarios(skill)
-    if scenario not in active_scenarios:
-        raise HTTPException(
-            400,
-            f"Scenario '{scenario}' is not exercised by a Phase 1 manifest for skill '{skill}'. "
-            f"Choose one of: {', '.join(active_scenarios) or 'none'}.",
-        )
-
-    text = body.text if body.text is not None else target.read_text(encoding="utf-8")
-    golden_path = golden.save_golden(skill, scenario, text)
-    try:
-        golden_rel = str(golden_path.relative_to(Path(__file__).resolve().parent.parent))
-    except ValueError:
-        golden_rel = str(golden_path)
-    return {
-        "path": body.path,
-        "skill": skill,
-        "scenario": scenario,
-        "golden_path": golden_rel,
-        "active": True,
-    }
-
-
-class OutputDiff(BaseModel):
-    left: str = Field(max_length=500)   # older output path, relative to CUSTOMERS_DIR
-    right: str = Field(max_length=500)  # newer output path, relative to CUSTOMERS_DIR
-
-
-def _diff_lines(left_text: str, right_text: str) -> list[dict]:
-    """Return a side-by-side line diff of two Markdown texts.
-
-    Each row is `{"left": str|None, "right": str|None, "type": "equal|delete|insert|replace"}`.
-    `left`/`right` are plain strings (not HTML-escaped) so the caller can decide encoding.
-    """
-    from itertools import zip_longest
-    import difflib
-
-    left_lines = left_text.splitlines()
-    right_lines = right_text.splitlines()
-    sm = difflib.SequenceMatcher(None, left_lines, right_lines)
-    rows: list[dict] = []
-    for tag, i1, i2, j1, j2 in sm.get_opcodes():
-        if tag == "equal":
-            for a, b in zip_longest(left_lines[i1:i2], right_lines[j1:j2]):
-                rows.append({"left": a, "right": b, "type": "equal"})
-        elif tag == "delete":
-            for line in left_lines[i1:i2]:
-                rows.append({"left": line, "right": None, "type": "delete"})
-        elif tag == "insert":
-            for line in right_lines[j1:j2]:
-                rows.append({"left": None, "right": line, "type": "insert"})
-        elif tag == "replace":
-            for a, b in zip_longest(left_lines[i1:i2], right_lines[j1:j2]):
-                rows.append({"left": a, "right": b, "type": "replace"})
-    return rows
-
-
-@app.post("/api/output/diff")
-def api_output_diff(body: OutputDiff):
-    """Return a side-by-side diff of two generated Markdown outputs.
-
-    Designed for `deal-assessment` trend / what-changed views, but works for any
-    two `.md` outputs under the same customer. The response contains both a
-    deterministic semantic comparison (using parsed sidecar metadata) and a
-    fallback raw Markdown line diff for auditability.
-    """
-    root = CUSTOMERS_DIR.resolve()
-    target_left = (CUSTOMERS_DIR / body.left).resolve()
-    target_right = (CUSTOMERS_DIR / body.right).resolve()
-    if (
-        not str(target_left).startswith(str(root))
-        or not str(target_right).startswith(str(root))
-        or not target_left.is_file()
-        or not target_right.is_file()
-    ):
-        raise HTTPException(404, "Not found")
-    if target_left.suffix != ".md" or target_right.suffix != ".md":
-        raise HTTPException(400, "Only generated .md outputs can be diffed")
-    left_text = target_left.read_text(encoding="utf-8")
-    right_text = target_right.read_text(encoding="utf-8")
-
-    semantic = None
-    try:
-        left_meta = output_schema.read_or_parse_sidecar(target_left, target_left.parent.name)
-        right_meta = output_schema.read_or_parse_sidecar(target_right, target_right.parent.name)
-        semantic = output_schema.semantic_diff(left_meta, right_meta)
-    except (OSError, ValueError, TypeError) as e:
-        logger.warning("Could not build semantic diff for %s / %s: %s", body.left, body.right, e)
-
-    return {
-        "left": body.left,
-        "right": body.right,
-        "left_title": target_left.name,
-        "right_title": target_right.name,
-        "semantic": semantic,
-        "rows": _diff_lines(left_text, right_text),
-    }
 
 
 @app.get("/api/skills")
@@ -1973,102 +1328,32 @@ def _build_prompt(body: InvokeBody, account: str, out_dir) -> str:
     return prompt
 
 
-def _runs_dir(account: str, opp_slug: str | None) -> Path | None:
-    """Hidden per-opportunity folder holding the last result of each skill run.
-    One file per skill (overwritten on re-run) — so e.g. next-move always has
-    exactly one record. Hidden (.runs) so it never shows in the outputs list.
-    Returns None when there's no opportunity scope (nothing to persist)."""
-    if not opp_slug:
-        return None
-    return CUSTOMERS_DIR / account / "opportunities" / opp_slug / "outputs" / ".runs"
-
-
-def _output_dir(account: str, opp_slug: str | None, skill: str) -> Path | None:
-    """Directory where a skill's Markdown output files are saved."""
-    if not opp_slug:
-        return None
-    return CUSTOMERS_DIR / account / "opportunities" / opp_slug / "outputs" / skill
-
-
-def _sidecar_for_md(md_path: Path) -> Path:
-    """Sidecar JSON path for a Markdown output file."""
-    return md_path.with_suffix(md_path.suffix + ".json")
-
-
-def _persist_run(account: str, opp_slug: str | None, skill: str, record: dict) -> None:
-    d = _runs_dir(account, opp_slug)
-    if not d:
-        return
-    d.mkdir(parents=True, exist_ok=True)
-    # one file per skill id — overwrite on re-run
-    safe_skill = re.sub(r"[^A-Za-z0-9._-]", "-", skill or "freeform")
-    (d / f"{safe_skill}.json").write_text(json.dumps(record))
-    _write_output_sidecar(account, opp_slug, skill)
-
-
-def _write_output_sidecar(account: str, opp_slug: str | None, skill: str) -> None:
-    """Parse the most recent Markdown output for this run and write its `.json` sidecar."""
-    out_dir = _output_dir(account, opp_slug, skill)
-    if not out_dir or not out_dir.exists():
-        return
-    md_files = [f for f in out_dir.glob("*.md") if f.is_file()]
-    if not md_files:
-        return
-    newest = max(md_files, key=lambda p: p.stat().st_mtime)
-    try:
-        text = newest.read_text(encoding="utf-8")
-    except OSError:
-        logger.warning("Could not read output %s for sidecar", newest)
-        return
-    metadata = output_schema.parse_output(skill, text)
-    try:
-        metadata.reference_freshness_at_generation = (
-            reference_freshness.compute_reference_freshness(
-                _se_config(), WORKSPACE, WEBAPP_DIR.parent, skill=skill
-            )
-        )
-        metadata.reference_changed_since_generation = []
-    except Exception:
-        logger.exception("Could not compute reference freshness for %s", newest)
-        metadata.reference_freshness_at_generation = []
-        metadata.reference_changed_since_generation = []
-    try:
-        output_schema.write_sidecar(newest, metadata)
-    except OSError:
-        logger.warning("Could not write sidecar for %s", newest)
-
-
-def _latest_run(account: str, opp_slug: str | None) -> dict | None:
-    """The most recently finished run for this opportunity (newest across all
-    skill files). Read on page load so a result survives navigating away and
-    even a server restart."""
-    d = _runs_dir(account, opp_slug)
-    if not d or not d.exists():
-        return None
-    best = None
-    for f in d.glob("*.json"):
-        try:
-            rec = json.loads(f.read_text())
-        except Exception:
-            continue
-        if best is None or (rec.get("finished_at", 0) > best.get("finished_at", 0)):
-            best = rec
-    return best
-
-
-# Shared job-service instance. Routes and skill-invocation handlers use this
-# module-level object so the in-memory registry survives imports/reloads.
+# Shared service instances. Routes and skill-invocation handlers use these
+# module-level objects so the in-memory registries survive imports/reloads.
+output_service = OutputService(
+    CUSTOMERS_DIR,
+    WORKSPACE,
+    WEBAPP_DIR.parent,
+    se_config=_se_config,
+    safe_name=_safe,
+    slug=_slug,
+    run_cmd=_run_cmd,
+    internal_repo=_internal_repo,
+)
+feedback_service = FeedbackService(CUSTOMERS_DIR)
 job_service = JobService(
     WORKSPACE,
     model_for=_model_for,
-    persist_run=_persist_run,
+    persist_run=output_service.persist_run,
 )
 
-
-# Make the service reachable from route dependencies.
+# Make the services reachable from route dependencies.
+app.state.output_service = output_service
+app.state.feedback_service = feedback_service
 app.state.job_service = job_service
 
-
+app.include_router(outputs_router)
+app.include_router(feedback_router)
 @app.get("/api/plan")
 def api_plan(account: str, skill: str, opp_slug: str | None = None):
     """Return the prerequisite plan for a proposed skill invocation.
@@ -2164,7 +1449,7 @@ def api_last_run(account: str, opp_slug: str | None = None):
     result survive both navigation and a server restart. 204 if none."""
     account = _safe(account)
     opp_slug = _safe(opp_slug) if opp_slug else None
-    rec = _latest_run(account, opp_slug)
+    rec = output_service.latest_run(account, opp_slug)
     if not rec:
         return Response(status_code=204)  # empty body — see note in /active
     return rec
@@ -2203,213 +1488,6 @@ _MAX_ATTENTION = 10
 _MAX_RECENT = 12
 
 
-def _output_validation_status(sidecar_path: Path) -> tuple[bool, str]:
-    """Read an output's `.md.json` sidecar and decide whether it needs attention.
-
-    Returns `(needs_attention, validation_status)`. `validation_status` is one
-    of: `valid`, `invalid`, `stale`, `incomplete`, `unvalidated`, `unknown`. A
-    missing or unreadable sidecar is treated as `unknown` and does **not** need
-    attention. `unvalidated` means the skill has no output schema and the file
-    was parsed successfully; it does **not** need attention.
-    """
-    if not sidecar_path.exists():
-        return False, "unknown"
-    try:
-        sc = json.loads(sidecar_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
-        return False, "unknown"
-    if not isinstance(sc, dict):
-        return False, "unknown"
-    valid = sc.get("valid")
-    validation_status = sc.get("validation_status")
-    ref_fresh = sc.get("reference_freshness_at_generation") or []
-    stale = any(not r.get("fresh", True) for r in ref_fresh if isinstance(r, dict))
-    if valid is False or validation_status == "invalid":
-        return True, "invalid"
-    if stale:
-        return True, "stale"
-    if valid is not True:
-        return True, "incomplete"
-    if validation_status == "unvalidated":
-        return False, "unvalidated"
-    return False, "valid"
-
-
-def _output_review_status(feedback_path: Path) -> tuple[bool, str]:
-    """Read an output's `.feedback.jsonl` sidecar and decide whether it is awaiting review.
-
-    Returns `(awaiting_review, review_status)`. `review_status` is one of:
-    `awaiting review`, `approved`, `commented`, `corrected`. A missing or empty
-    feedback sidecar means no human review has been recorded yet. Malformed
-    JSONL lines are skipped.
-    """
-    if not feedback_path.exists():
-        return True, "awaiting review"
-    try:
-        lines = feedback_path.read_text(encoding="utf-8").splitlines()
-    except (OSError, ValueError, TypeError):
-        return True, "awaiting review"
-    entries = []
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            entry = json.loads(line)
-            if isinstance(entry, dict) and entry.get("action") in ("approve", "comment", "correct"):
-                entries.append(entry)
-        except (json.JSONDecodeError, ValueError, TypeError):
-            continue
-    if not entries:
-        return True, "awaiting review"
-    latest = entries[-1]
-    action = latest.get("action")
-    if action == "approve":
-        return False, "approved"
-    if action == "comment":
-        return True, "commented"
-    if action == "correct":
-        return True, "corrected"
-    return True, "awaiting review"
-
-
-def _output_href(account: str, opp_slug: str | None, opp_name: str, path: str) -> str:
-    """Build a hash-router output-reader link with safe URL encoding."""
-    enc = urllib.parse.quote
-    slug = opp_slug or ""
-    name = opp_name or (opp_slug.capitalize() if opp_slug else account)
-    return f"#/output/{enc(account)}/{enc(slug)}/{enc(name)}/{enc(path)}"
-
-
-def _collect_output(
-    account: str,
-    opp_slug: str | None,
-    skill: str,
-    f: Path,
-    meta: dict,
-    recent_outputs: list,
-    needs_attention_outputs: list,
-) -> None:
-    """Update account metadata and global output lists for one output file."""
-    try:
-        st = f.stat()
-    except (OSError, ValueError):
-        return
-    mtime = st.st_mtime
-    meta["output_count"] += 1
-    if mtime > meta["last_updated_ts"]:
-        meta["last_updated_ts"] = mtime
-        meta["last_output"] = {
-            "path": str(f.relative_to(CUSTOMERS_DIR)),
-            "mtime": mtime,
-            "modified": datetime.fromtimestamp(mtime, tz=timezone.utc).strftime("%Y-%m-%d %H:%M"),
-            "skill": skill,
-            "filename": f.name,
-            "account": account,
-            "opp_slug": opp_slug,
-            "opp_name": opp_slug.capitalize() if opp_slug else account,
-        }
-    sidecar = f.with_suffix(f.suffix + ".json")
-    feedback = _feedback_file(f)
-    needs_attention, validation_status = _output_validation_status(sidecar)
-    awaiting_review, review_status = _output_review_status(feedback)
-
-    # Each output appears at most once in the attention list. Validation issues
-    # take precedence; otherwise a non-approved review state is shown.
-    attention_type = None
-    attention_status = None
-    if needs_attention:
-        attention_type = "attention"
-        attention_status = validation_status
-        if awaiting_review:
-            attention_status = f"{validation_status} · {review_status}"
-    elif awaiting_review:
-        attention_type = "review"
-        attention_status = review_status
-
-    if attention_type:
-        meta["needs_attention"] += 1
-        needs_attention_outputs.append({
-            "path": str(f.relative_to(CUSTOMERS_DIR)),
-            "mtime": mtime,
-            "skill": skill,
-            "filename": f.name,
-            "account": account,
-            "opp_slug": opp_slug,
-            "opp_name": opp_slug.capitalize() if opp_slug else account,
-            "type": attention_type,
-            "status": attention_status,
-            "validation_status": validation_status,
-            "review_status": review_status,
-        })
-    recent_outputs.append({
-        "path": str(f.relative_to(CUSTOMERS_DIR)),
-        "mtime": mtime,
-        "modified": datetime.fromtimestamp(mtime, tz=timezone.utc).strftime("%Y-%m-%d %H:%M"),
-        "skill": skill,
-        "filename": f.name,
-        "account": account,
-        "opp_slug": opp_slug,
-        "opp_name": opp_slug.capitalize() if opp_slug else account,
-        "needs_attention": bool(needs_attention or awaiting_review),
-        "validation_status": validation_status,
-        "review_status": review_status,
-    })
-
-
-def _walk_account_outputs(
-    account_dir: Path,
-    account: str,
-    meta: dict,
-    recent_outputs: list,
-    needs_attention_outputs: list,
-) -> None:
-    """Traverse one account's output directories and populate metadata.
-
-    Failures while reading a single file, skill directory, or opportunity are
-    caught so one bad path does not prevent the rest of the overview from
-    rendering.
-    """
-    try:
-        base = account_dir / "outputs"
-        if base.exists():
-            for skill_dir in sorted(base.iterdir()):
-                try:
-                    if not skill_dir.is_dir() or skill_dir.name.startswith("."):
-                        continue
-                    for f in sorted([*skill_dir.glob("*.md"), *skill_dir.glob("*.html")]):
-                        if any(part.startswith(".") for part in f.relative_to(skill_dir).parts):
-                            continue
-                        _collect_output(account, None, skill_dir.name, f, meta, recent_outputs, needs_attention_outputs)
-                except (OSError, ValueError, TypeError):
-                    continue
-
-        opp_root = account_dir / "opportunities"
-        if opp_root.exists():
-            for opp_dir in sorted(opp_root.iterdir()):
-                try:
-                    if not opp_dir.is_dir() or opp_dir.name.startswith("."):
-                        continue
-                    base = opp_dir / "outputs"
-                    if not base.exists():
-                        continue
-                    for skill_dir in sorted(base.iterdir()):
-                        try:
-                            if not skill_dir.is_dir() or skill_dir.name.startswith("."):
-                                continue
-                            for f in sorted([*skill_dir.glob("*.md"), *skill_dir.glob("*.html")]):
-                                if any(part.startswith(".") for part in f.relative_to(skill_dir).parts):
-                                    continue
-                                _collect_output(account, opp_dir.name, skill_dir.name, f, meta, recent_outputs, needs_attention_outputs)
-                                meta["opp_slugs"].add(opp_dir.name)
-                        except (OSError, ValueError, TypeError):
-                            continue
-                except (OSError, ValueError, TypeError):
-                    continue
-    except (OSError, ValueError, TypeError):
-        return
-
-
 def _build_overview(jobs: dict[str, dict]) -> dict:
     """Aggregate filesystem + job state into a calm operational overview.
 
@@ -2427,27 +1505,7 @@ def _build_overview(jobs: dict[str, dict]) -> dict:
     recent_outputs: list[dict] = []
     needs_attention_outputs: list[dict] = []
 
-    if CUSTOMERS_DIR.exists():
-        for account_dir in sorted(CUSTOMERS_DIR.iterdir()):
-            try:
-                if not account_dir.is_dir() or account_dir.name.startswith("_") or account_dir.name.startswith("."):
-                    continue
-                account = account_dir.name
-                meta: dict[str, Any] = {
-                    "output_count": 0,
-                    "last_updated_ts": 0.0,
-                    "last_output": None,
-                    "needs_attention": 0,
-                    "opp_slugs": set(),
-                }
-                _walk_account_outputs(account_dir, account, meta, recent_outputs, needs_attention_outputs)
-                # Opportunity count: actual opp directories with outputs, or one
-                # fallback bucket if the account already has outputs but no opp dirs.
-                meta["opp_count"] = max(len(meta["opp_slugs"]), 1 if meta["output_count"] > 0 else 0)
-                account_meta[account] = meta
-            except (OSError, ValueError, TypeError):
-                continue
-
+    recent_outputs, needs_attention_outputs, account_meta = output_service.walk_all_outputs(CUSTOMERS_DIR)
     # Running / finished jobs (shallow-copy values so the snapshot is safe).
     running_jobs = []
     failed_jobs = []
@@ -2623,7 +1681,7 @@ def _build_overview(jobs: dict[str, dict]) -> dict:
             "status": out["status"],
             "validation_status": out["validation_status"],
             "review_status": out["review_status"],
-            "href": _output_href(out["account"], out["opp_slug"], out["opp_name"], out["path"]),
+            "href": output_service.output_href(out["account"], out["opp_slug"], out["opp_name"], out["path"]),
         })
 
     for a in active_accounts:
@@ -2655,7 +1713,7 @@ def _build_overview(jobs: dict[str, dict]) -> dict:
             "filename": out["filename"],
             "when": out["mtime"],
             "needs_attention": out["needs_attention"],
-            "href": _output_href(out["account"], out["opp_slug"], out["opp_name"], out["path"]),
+            "href": output_service.output_href(out["account"], out["opp_slug"], out["opp_name"], out["path"]),
         })
 
     for j in [*running_jobs, *failed_jobs, *done_jobs]:

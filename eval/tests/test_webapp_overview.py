@@ -1,6 +1,6 @@
 """Deterministic tests for the `/api/overview` aggregation rules.
 
-These tests call `_build_overview` directly with a monkeypatched `CUSTOMERS_DIR`
+These tests call `app._build_overview` directly with a monkeypatched `CUSTOMERS_DIR`
 and `TEAM_FILE` so they do not touch the real workspace. They verify that the
 landing-page aggregation keeps human review workflow state (from
 `.feedback.jsonl`) distinct from output validation state (from `.md.json`), and
@@ -246,13 +246,13 @@ def test_overview_skips_missing_output_file(tmp_path, monkeypatch) -> None:
     d.mkdir(parents=True, exist_ok=True)
     md = d / "next-move-2026-07-14.md"
     md.write_text("# Output\n")
-    # _collect_output is called with a real Path; if we delete the file after
+    # collect_output is called with a real Path; if we delete the file after
     # constructing the path but before the call, it should return without raising.
     md.unlink()
     meta = {"output_count": 0, "last_updated_ts": 0.0, "last_output": None, "needs_attention": 0, "opp_slugs": set()}
     recent = []
     attention = []
-    app._collect_output("Acme", None, "next-move", md, meta, recent, attention)
+    app.output_service.collect_output("Acme", None, "next-move", md, meta, recent, attention, customers_dir=customers)
 
     assert meta["output_count"] == 0
     assert meta["needs_attention"] == 0
