@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field
+from .path_utils import resolve_within
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +44,16 @@ class FeedbackService:
         return md_path.with_suffix(".feedback.jsonl")
 
     def _resolve_output(self, path: str) -> Path:
-        """Resolve `path` under the customer workspace and confirm it stays inside."""
-        target = (self.customers_dir / path).resolve()
-        if not str(target).startswith(str(self.customers_dir.resolve())) or not target.is_file():
+        """Resolve `path` under the customer workspace and confirm it stays inside.
+
+        Absolute paths, `..` traversal, and symlinks that escape the customer
+        workspace are rejected. Only existing `.md` files are accepted.
+        """
+        try:
+            target = resolve_within(self.customers_dir, path)
+        except ValueError:
+            raise FeedbackError(404, "Not found")
+        if not target.is_file():
             raise FeedbackError(404, "Not found")
         if target.suffix != ".md":
             raise FeedbackError(400, "Feedback is only supported for .md outputs")

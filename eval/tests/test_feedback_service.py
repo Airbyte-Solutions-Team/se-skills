@@ -91,6 +91,37 @@ def test_route_feedback_404_on_missing(tmp_path: Path) -> None:
     assert exc.value.status_code == 404
 
 
+def test_feedback_traversal_rejected(tmp_path: Path) -> None:
+    svc = FeedbackService(tmp_path)
+    with pytest.raises(FeedbackError) as exc:
+        svc.read_feedback("../etc/passwd")
+    assert exc.value.status_code == 404
+
+
+def test_feedback_absolute_path_rejected(tmp_path: Path) -> None:
+    svc = FeedbackService(tmp_path)
+    with pytest.raises(FeedbackError) as exc:
+        svc.read_feedback("/etc/passwd")
+    assert exc.value.status_code == 404
+
+
+def test_feedback_symlinked_file_outside_rejected(tmp_path: Path) -> None:
+    svc = FeedbackService(tmp_path)
+    rel = "Acme/outputs/skill/file.md"
+    f = tmp_path / rel
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("# Safe\n", encoding="utf-8")
+
+    outside = tmp_path.parent / "outside.md"
+    outside.write_text("# outside\n", encoding="utf-8")
+    link = tmp_path / "Acme" / "outputs" / "skill" / "link.md"
+    link.symlink_to(outside)
+
+    with pytest.raises(FeedbackError) as exc:
+        svc.read_feedback("Acme/outputs/skill/link.md")
+    assert exc.value.status_code == 404
+
+
 def test_feedback_routes_expose_original_path() -> None:
     paths = {(r.path, tuple(sorted(r.methods))) for r in feedback_routes.router.routes}
     assert ("/api/output/feedback", ("GET",)) in paths

@@ -64,6 +64,7 @@ from routes.feedback import router as feedback_router
 from services.feedback_service import FeedbackService
 from services.job_service import JobService
 from services.output_service import OutputService
+from services.path_utils import resolve_within
 
 logger = logging.getLogger(__name__)
 
@@ -1044,8 +1045,11 @@ class OutputAsk(BaseModel):
 async def api_output_ask(body: OutputAsk):
     """Follow-up Q&A against an opened output doc. Quick → Claude API (doc as
     context); deep (codebase/connectors) → claude -p. Mirrors the live ask."""
-    target = (CUSTOMERS_DIR / body.path).resolve()
-    if not str(target).startswith(str(CUSTOMERS_DIR.resolve())) or not target.is_file():
+    try:
+        target = resolve_within(CUSTOMERS_DIR, body.path)
+    except ValueError:
+        raise HTTPException(404, "Not found")
+    if not target.is_file():
         raise HTTPException(404, "Not found")
     q = (body.question or "").strip()
     if not q:

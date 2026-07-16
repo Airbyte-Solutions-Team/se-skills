@@ -27,6 +27,8 @@ import pdf_render
 import reference_freshness
 import security
 
+from .path_utils import resolve_within
+
 logger = logging.getLogger(__name__)
 
 
@@ -69,12 +71,16 @@ class OutputService:
     def _resolve_output(self, path: str, customers_dir: Path | None = None) -> Path:
         """Resolve `path` under the customer workspace and confirm it stays inside.
 
-        `path` is relative to `customers_dir`; absolute paths or `..` traversal are
-        rejected. Returns the resolved `Path` if it is an existing file.
+        `path` is relative to `customers_dir`; absolute paths, `..` traversal, or
+        symlinks that escape `customers_dir` are rejected. Returns the resolved
+        `Path` if it is an existing file.
         """
         customers_dir = customers_dir or self.customers_dir
-        target = (customers_dir / path).resolve()
-        if not str(target).startswith(str(customers_dir.resolve())) or not target.is_file():
+        try:
+            target = resolve_within(customers_dir, path)
+        except ValueError:
+            raise OutputError(404, "Not found")
+        if not target.is_file():
             raise OutputError(404, "Not found")
         return target
 
@@ -115,11 +121,16 @@ class OutputService:
                 continue
             skill = skill_dir.name
             for f in sorted([*skill_dir.glob("*.md"), *skill_dir.glob("*.html")]):
-                st = f.stat()
+                try:
+                    rel = str(f.relative_to(customers_dir))
+                    resolve_within(customers_dir, rel)
+                    st = f.stat()
+                except (OSError, ValueError):
+                    continue
                 entry: dict[str, Any] = {
                     "skill": skill,
                     "filename": f.name,
-                    "path": str(f.relative_to(customers_dir)),
+                    "path": rel,
                     "ext": f.suffix.lstrip("."),
                     "mtime": st.st_mtime,
                     "modified": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).strftime("%Y-%m-%d %H:%M"),
@@ -191,13 +202,11 @@ class OutputService:
         return target.read_text()
 
     def delete_output(self, path: str, customers_dir: Path | None = None) -> dict:
-        customers_dir = customers_dir or self.customers_dir
-        target = (customers_dir / path).resolve()
-        root = customers_dir.resolve()
-        if not str(target).startswith(str(root)) or not target.is_file():
-            raise OutputError(404, "Not found")
+        target = self._resolve_output(path, customers_dir)
         if target.suffix != ".md":
             raise OutputError(400, "Only generated .md outputs can be deleted here")
+        customers_dir = customers_dir or self.customers_dir
+        root = customers_dir.resolve()
         trash = customers_dir / "_trash"
         trash.mkdir(exist_ok=True)
         stamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d-%H%M%S")
@@ -494,15 +503,12 @@ class OutputService:
     # -----------------------------------------------------------------------
     def diff_outputs(self, body, customers_dir: Path | None = None) -> dict:
         customers_dir = customers_dir or self.customers_dir
-        root = customers_dir.resolve()
-        target_left = (customers_dir / body.left).resolve()
-        target_right = (customers_dir / body.right).resolve()
-        if (
-            not str(target_left).startswith(str(root))
-            or not str(target_right).startswith(str(root))
-            or not target_left.is_file()
-            or not target_right.is_file()
-        ):
+        try:
+            target_left = resolve_within(customers_dir, body.left)
+            target_right = resolve_within(customers_dir, body.right)
+        except ValueError:
+            raise OutputError(404, "Not found")
+        if not target_left.is_file() or not target_right.is_file():
             raise OutputError(404, "Not found")
         if target_left.suffix != ".md" or target_right.suffix != ".md":
             raise OutputError(400, "Only generated .md outputs can be diffed")
@@ -579,8 +585,9 @@ class OutputService:
             return
         newest = max(md_files, key=lambda p: p.stat().st_mtime)
         try:
+            resolve_within(self.customers_dir, str(newest.relative_to(self.customers_dir)))
             text = newest.read_text(encoding="utf-8")
-        except OSError:
+        except (OSError, ValueError):
             logger.warning("Could not read output %s for sidecar", newest)
             return
         metadata = output_schema.parse_output(skill, text)
@@ -618,7 +625,10 @@ class OutputService:
         best = None
         for f in d.glob("*.json"):
             try:
+                resolve_within(self.customers_dir, str(f.relative_to(self.customers_dir)))
                 rec = json.loads(f.read_text())
+            except (OSError, ValueError):
+                continue
             except Exception:
                 continue
             if best is None or (rec.get("finished_at", 0) > best.get("finished_at", 0)):
@@ -702,11 +712,13 @@ class OutputService:
         customers_dir: Path | None = None,
     ) -> None:
         """Update account metadata and global output lists for one output file."""
+        customers_dir = customers_dir or self.customers_dir
         try:
+            rel = str(f.relative_to(customers_dir))
+            resolve_within(customers_dir, rel)
             st = f.stat()
         except (OSError, ValueError):
             return
-        customers_dir = customers_dir or self.customers_dir
         mtime = st.st_mtime
         meta["output_count"] += 1
         if mtime > meta["last_updated_ts"]:
