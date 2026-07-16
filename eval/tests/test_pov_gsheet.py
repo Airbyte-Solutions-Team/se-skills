@@ -413,10 +413,10 @@ def test_output_schema_pov_gsheet_registered() -> None:
 
 def test_pov_gsheet_permission_profile_declared(repo_root: Path) -> None:
     """The webapp grants write + shell permissions to pov-gsheet (it touches files and the browser)."""
-    app_py = (repo_root / "webapp" / "app.py").read_text(encoding="utf-8")
-    assert '"pov-gsheet"' in app_py
+    svc_py = (repo_root / "webapp" / "services" / "skill_runtime_service.py").read_text(encoding="utf-8")
+    assert '"pov-gsheet"' in svc_py
     # The SKILL_PERMISSIONS line must grant write and shell, and not grant git.
-    m = re.search(r'"pov-gsheet":\s*PermissionProfile\(([^)]+)\)', app_py)
+    m = re.search(r'"pov-gsheet":\s*PermissionProfile\(([^)]+)\)', svc_py)
     assert m, "pov-gsheet permission profile not found"
     profile = m.group(1)
     assert "write=True" in profile

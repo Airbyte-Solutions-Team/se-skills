@@ -1,7 +1,7 @@
 """Deterministic tests for ORCH-001: deterministic prerequisite planner.
 
-Tests both the `orchestrator` module and the `GET /api/plan` / `POST /api/invoke`
-routes that expose it.
+Tests both the `orchestrator` module and the `SkillRuntimeService` planning and
+invocation methods that expose it.
 """
 
 from __future__ import annotations
@@ -11,9 +11,10 @@ from pathlib import Path
 
 import pytest
 
-import output_schema
 import orchestrator
-import webapp.app as app
+import output_schema
+from services.skill_runtime_service import SkillRuntimeService
+from webapp import config as app_config
 
 
 def _write_transcript(customers_dir: Path, account: str, name: str, text: str) -> Path:
@@ -132,78 +133,106 @@ def test_check_prerequisites_poc_plan_rejects_invalid_upstream(tmp_path: Path) -
     assert any("tech-qual" in m for m in plan.missing)
 
 
+class _FakeOutputService:
+    def __init__(self, customers_dir: Path) -> None:
+        self.customers_dir = customers_dir
+
+    def opp_outputs_dir(self, account: str, opp_slug: str) -> Path:
+        d = self.customers_dir / account / "opportunities" / opp_slug / "outputs"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+
+class _FakeJobService:
+    def __init__(self) -> None:
+        self.jobs = {}
+        self.launch_calls = []
+
+    def find_reused_job(self, sig):
+        return None
+
+    async def launch(self, *, account, opp_slug, skill, opportunity, sig, prompt, meta):
+        self.launch_calls.append({
+            "account": account,
+            "opp_slug": opp_slug,
+            "skill": skill,
+            "opportunity": opportunity,
+            "sig": sig,
+            "prompt": prompt,
+            "meta": meta,
+        })
+        return "job-123", None
+
+
+def _runtime_svc(tmp_path: Path) -> tuple[SkillRuntimeService, _FakeJobService]:
+    customers = tmp_path / "customers"
+    customers.mkdir(parents=True, exist_ok=True)
+    output_svc = _FakeOutputService(customers)
+    job_svc = _FakeJobService()
+    return SkillRuntimeService(
+        customers_dir=customers,
+        workspace=tmp_path,
+        output_service=output_svc,
+        job_service=job_svc,
+        se_config=app_config._se_config,
+        se_config_clear=app_config._se_config_clear,
+        safe_name=lambda n: n,
+        skills_dir=app_config.SUITE_SKILLS_DIR,
+        skills_dirs=app_config.SKILLS_DIRS,
+    ), job_svc
+
+
 def test_api_plan_returns_prerequisite_status(monkeypatch, tmp_path: Path) -> None:
     customers = tmp_path / "customers"
-    monkeypatch.setattr(app, "CUSTOMERS_DIR", customers)
+    svc, _ = _runtime_svc(tmp_path)
     _write_transcript(customers, "Acme", "Acme-07.14.26.txt", "call")
 
-    data = app.api_plan(account="Acme", skill="biz-qual")
+    data = svc.plan("biz-qual", "Acme", None)
     assert data["skill"] == "biz-qual"
     assert data["ready"] is True
     assert data["can_override"] is True
 
 
 def test_api_plan_blocks_poc_plan_without_upstream(monkeypatch, tmp_path: Path) -> None:
-    customers = tmp_path / "customers"
-    monkeypatch.setattr(app, "CUSTOMERS_DIR", customers)
+    svc, _ = _runtime_svc(tmp_path)
 
-    data = app.api_plan(account="Acme", skill="poc-plan", opp_slug="intro")
+    data = svc.plan("poc-plan", "Acme", "intro")
     assert data["ready"] is False
     assert data["missing"]
 
 
 def test_api_invoke_blocks_without_override(monkeypatch, tmp_path: Path) -> None:
-    customers = tmp_path / "customers"
-    monkeypatch.setattr(app, "CUSTOMERS_DIR", customers)
-    app.job_service.jobs = {}
+    svc, _ = _runtime_svc(tmp_path)
 
-    async def _noop(*args, **kwargs):
-        pass
-
-    monkeypatch.setattr(app.job_service, "save_snapshot", _noop)
-    monkeypatch.setattr(app.job_service, "_run_job", lambda *args, **kwargs: None)
-    monkeypatch.setattr("asyncio.create_task", lambda coro, *, name=None: None)
-
-    body = app.InvokeBody(account="Acme", skill="poc-plan", opportunity="intro", opp_slug="intro")
-    resp = asyncio.run(app.api_invoke(body))
-    data = resp.body if hasattr(resp, "body") else resp
-    # JSONResponse has a `.body` bytes attribute; decode it.
-    if isinstance(data, bytes):
-        import json
-        data = json.loads(data)
-    elif hasattr(data, "body"):
-        data = json.loads(data.body)
-    assert data["blocked"] is True
-    assert "prerequisites" in data
-    assert "job_id" not in data
-
-
-def test_api_invoke_allows_override(monkeypatch, tmp_path: Path) -> None:
-    customers = tmp_path / "customers"
-    monkeypatch.setattr(app, "CUSTOMERS_DIR", customers)
-    app.job_service.jobs = {}
-
-    async def _noop(*args, **kwargs):
-        pass
-
-    monkeypatch.setattr(app.job_service, "save_snapshot", _noop)
-    monkeypatch.setattr(app.job_service, "_run_job", lambda *args, **kwargs: None)
-    monkeypatch.setattr("asyncio.create_task", lambda coro, *, name=None: None)
-
-    body = app.InvokeBody(
+    result = asyncio.run(svc.invoke(
         account="Acme",
         skill="poc-plan",
         opportunity="intro",
         opp_slug="intro",
+        extra=None,
+        freeform=None,
+        override_prerequisites=False,
+        approve_permissions=False,
+    ))
+    assert result["blocked"] is True
+    assert "prerequisites" in result
+    assert "job_id" not in result
+
+
+def test_api_invoke_allows_override(monkeypatch, tmp_path: Path) -> None:
+    svc, job_svc = _runtime_svc(tmp_path)
+
+    result = asyncio.run(svc.invoke(
+        account="Acme",
+        skill="poc-plan",
+        opportunity="intro",
+        opp_slug="intro",
+        extra=None,
+        freeform=None,
         override_prerequisites=True,
         approve_permissions=True,
-    )
-    resp = asyncio.run(app.api_invoke(body))
-    data = resp.body if hasattr(resp, "body") else resp
-    if isinstance(data, bytes):
-        import json
-        data = json.loads(data)
-    elif hasattr(data, "body"):
-        data = json.loads(data.body)
-    assert data.get("job_id")
-    assert "blocked" not in data
+    ))
+    assert result.get("job_id")
+    assert "blocked" not in result
+    assert len(job_svc.launch_calls) == 1
+    assert job_svc.launch_calls[0]["skill"] == "poc-plan"

@@ -200,31 +200,31 @@ def test_start_live_model_rejects_long_labels() -> None:
 
 
 def test_api_job_returns_persistence_warning() -> None:
-    app.job_service.jobs = {"j1": {"status": "running", "persistence_warning": "warn text"}}
+    app.app.state.job_service.jobs = {"j1": {"status": "running", "persistence_warning": "warn text"}}
     try:
-        resp = app.api_job("j1")
+        resp = app.app.state.job_service.get_job("j1")
         assert resp["persistence_warning"] == "warn text"
     finally:
-        app.job_service.jobs = {}
+        app.app.state.job_service.jobs = {}
 
 
 def test_save_jobs_snapshot_warns_and_clears(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(app.job_service, "workspace", tmp_path)
-    app.job_service.jobs = {"j1": {"status": "running"}}
+    monkeypatch.setattr(app.app.state.job_service, "workspace", tmp_path)
+    app.app.state.job_service.jobs = {"j1": {"status": "running"}}
     try:
         # Failure path: returns warning and attaches it to the job.
         monkeypatch.setattr(persistence, "save_jobs", lambda jobs, ws: False)
-        warn = asyncio.run(app._save_jobs_snapshot("j1"))
+        warn = asyncio.run(app.app.state.job_service.save_snapshot("j1"))
         assert warn is not None
-        assert app.job_service.jobs["j1"].get("persistence_warning") == warn
+        assert app.app.state.job_service.jobs["j1"].get("persistence_warning") == warn
 
         # Success path: clears the warning and returns None.
         monkeypatch.setattr(persistence, "save_jobs", lambda jobs, ws: True)
-        cleared = asyncio.run(app._save_jobs_snapshot("j1"))
+        cleared = asyncio.run(app.app.state.job_service.save_snapshot("j1"))
         assert cleared is None
-        assert "persistence_warning" not in app.job_service.jobs["j1"]
+        assert "persistence_warning" not in app.app.state.job_service.jobs["j1"]
     finally:
-        app.job_service.jobs = {}
+        app.app.state.job_service.jobs = {}
 
 
 def test_transcription_service_active_returns_labels_and_recovered(tmp_path) -> None:

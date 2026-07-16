@@ -602,6 +602,18 @@ class OutputService:
             return None
         return self.customers_dir / account / "opportunities" / opp_slug / "outputs" / ".runs"
 
+    def opp_outputs_dir(self, account: str, opp_slug: str) -> Path:
+        """Return (and create) the per-opportunity outputs directory for skill prompts.
+
+        `account` and `opp_slug` are validated through `_safe_name` so this can be
+        called with raw route input.
+        """
+        safe_account = self._safe_name(account)
+        safe_opp = self._safe_name(opp_slug)
+        d = self.customers_dir / safe_account / "opportunities" / safe_opp / "outputs"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
     def _output_dir(self, account: str, opp_slug: str | None, skill: str) -> Path | None:
         if not opp_slug:
             return None

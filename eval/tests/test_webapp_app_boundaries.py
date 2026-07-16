@@ -9,11 +9,8 @@ import pytest
 from pydantic import ValidationError
 
 from integrations.salesforce import SalesforceIntegration
-from webapp.app import (
-    InvokeBody,
-    _safe,
-    _titlecase_folder,
-)
+from webapp.config import _safe, _titlecase_folder
+from webapp.routes.skills import InvokeBody
 from webapp.routes.transcription import AskLive, StartLive
 from webapp.routes.ask import OutputAsk
 from webapp.routes.outputs import OutputPdf, PushToRepo
