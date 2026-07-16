@@ -35,12 +35,8 @@ import asyncio
 import json
 import logging
 import os
-import queue
 import re
 import subprocess
-import threading
-import uuid
-from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -49,11 +45,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from typing import Any
 
-import md_render
 import orchestrator
-import persistence
 import security
 
 from integrations.salesforce import SalesforceIntegration
@@ -64,13 +57,14 @@ from routes.feedback import router as feedback_router
 from routes.overview import router as overview_router
 from routes.ask import router as ask_router
 from routes.salesforce import router as salesforce_router
+from routes.transcription import router as transcription_router
 from services.account_service import AccountService
-from services.ask_service import AskService, DEEP_HINTS, anthropic_api_key
+from services.ask_service import AskService, anthropic_api_key
 from services.overview_service import OverviewService
 from services.feedback_service import FeedbackService
 from services.job_service import JobService
 from services.output_service import OutputService
-from services.path_utils import resolve_within
+from services.transcription_service import TranscriptionService
 
 logger = logging.getLogger(__name__)
 
@@ -663,12 +657,23 @@ ask_service = AskService(
 )
 app.state.ask_service = ask_service
 
+transcription_service = TranscriptionService(
+    customers_dir=CUSTOMERS_DIR,
+    workspace=WORKSPACE,
+    safe_name=_safe,
+    titlecase=_titlecase_folder,
+    whisper_model=os.environ.get("SE_WHISPER_MODEL", "small"),
+)
+app.state.transcription_service = transcription_service
+
+
 app.include_router(accounts_router)
 app.include_router(outputs_router)
 app.include_router(feedback_router)
 app.include_router(overview_router)
 app.include_router(salesforce_router)
 app.include_router(ask_router)
+app.include_router(transcription_router)
 
 
 @app.get("/api/plan")
@@ -794,590 +799,6 @@ async def _save_jobs_snapshot(source_job_id: str | None = None) -> str | None:
     return await job_service.save_snapshot(source_job_id)
 
 
-# ---------------------------------------------------------------------------
-# Live Transcribe — capture Mac audio, transcribe with faster-whisper, stream
-# segments to the browser over SSE, and answer questions against the rolling
-# transcript (quick → Claude API; deep → claude -p via the job system).
-#
-# Audio libs (sounddevice, faster_whisper, numpy) and the Claude SDK are
-# imported LAZILY inside the session so the rest of the app boots even if the
-# user hasn't installed PortAudio/BlackHole yet.
-# ---------------------------------------------------------------------------
-SESSIONS: dict[str, "LiveSession"] = {}
-
-TARGET_SR = 16000          # whisper wants 16k mono
-WINDOW_SEC = 5.0           # transcribe ~5s windows
-SILENCE_RMS = 0.004        # skip near-silent windows
-WHISPER_MODEL = os.environ.get("SE_WHISPER_MODEL", "small")  # tiny/base/small/medium
-
-_WHISPER = None            # lazily-loaded shared model
-
-
-def _get_whisper():
-    global _WHISPER
-    if _WHISPER is None:
-        from faster_whisper import WhisperModel  # lazy
-        _WHISPER = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
-    return _WHISPER
-
-
-class _Channel:
-    """One capture stream (sounddevice) → 16k mono windows → faster-whisper.
-    `label` is the speaker tag for segments from this channel (e.g. You/Call)."""
-
-    def __init__(self, device_index, label, on_segment):
-        import sounddevice as sd  # lazy
-        import numpy as np
-        self.np = np
-        self.label = label
-        self.on_segment = on_segment      # callback(label, text) — runs in worker thread
-        self._stop = threading.Event()
-        self._q: "queue.Queue" = queue.Queue()
-        info = sd.query_devices(device_index, "input")
-        self.src_sr = int(info["default_samplerate"])
-        self.in_ch = info["max_input_channels"]
-
-        def cb(indata, frames, time_info, status):  # audio thread
-            mono = indata.mean(axis=1) if indata.ndim > 1 and indata.shape[1] > 1 else indata.reshape(-1)
-            if self.src_sr != TARGET_SR:
-                n_out = max(1, int(len(mono) * TARGET_SR / self.src_sr))
-                mono = np.interp(np.linspace(0, len(mono), n_out, endpoint=False),
-                                 np.arange(len(mono)), mono).astype(np.float32)
-            self._q.put(mono.astype(np.float32))
-
-        self._stream = sd.InputStream(device=device_index, channels=self.in_ch,
-                                      samplerate=self.src_sr, dtype="float32",
-                                      callback=cb, blocksize=int(self.src_sr * 0.1))
-        self._worker = threading.Thread(target=self._run, daemon=True)
-
-    def start(self):
-        self._stream.start()
-        self._worker.start()
-
-    def _run(self):
-        import collections
-        model = _get_whisper()
-        buf = collections.deque(); buflen = 0
-        need = int(TARGET_SR * WINDOW_SEC)
-        while not self._stop.is_set() or not self._q.empty():
-            try:
-                buf.append(self._q.get(timeout=0.3)); buflen += len(buf[-1])
-            except queue.Empty:
-                pass
-            if buflen >= need:
-                window = self.np.concatenate(list(buf)); buf.clear(); buflen = 0
-                if float(self.np.sqrt(self.np.mean(window ** 2))) < SILENCE_RMS:
-                    continue
-                try:
-                    segs, _ = model.transcribe(window, language="en", beam_size=1)
-                    text = " ".join(s.text.strip() for s in segs).strip()
-                except Exception:
-                    text = ""
-                if text:
-                    self.on_segment(self.label, text)
-
-    def stop(self):
-        self._stop.set()
-        try:
-            self._stream.stop(); self._stream.close()
-        except Exception:
-            pass
-
-
-# Echo de-dupe: when capturing with open speakers, the mic ("You") also hears
-# the call's audio ("Call"), producing a near-duplicate line ~1s apart. We hold
-# each "You" segment briefly; if a near-identical "Call" segment shows up in the
-# window, the "You" line is an echo and is suppressed. "Call" emits immediately.
-ECHO_HOLD_SEC = 2.5
-ECHO_SIM = 0.5   # token-overlap to call two near-simultaneous lines an echo.
-                 # 0.5 catches garbled echoes (the two channels transcribe a bit
-                 # differently) while real back-and-forth dialogue scores ~0.1–0.3.
-
-
-def _text_similarity(a: str, b: str) -> float:
-    """Jaccard overlap of lowercased word sets — cheap, good enough for echoes."""
-    wa = set(re.findall(r"[a-z0-9]+", (a or "").lower()))
-    wb = set(re.findall(r"[a-z0-9]+", (b or "").lower()))
-    if not wa or not wb:
-        return 0.0
-    return len(wa & wb) / len(wa | wb)
-
-
-class LiveSession:
-    def __init__(self, account, opp_slug, mic_device, call_device,
-                 mic_label="You", call_label="Call", opportunity=None,
-                 recovered=False, segments=None, started_at=None, session_id=None):
-        self.session_id = session_id
-        self.account = account
-        self.opp_slug = opp_slug
-        self.opportunity = opportunity
-        self.mic_device = mic_device
-        self.call_device = call_device
-        self.mic_label = (mic_label or "You").strip() or "You"
-        self.call_label = (call_label or "Call").strip() or "Call"
-        self.labeled = call_device is not None
-        self.recovered = recovered
-        self.ended = recovered  # recovered sessions are no longer capturing audio
-        self.started_at = started_at or datetime.now(timezone.utc)
-        self.persistence_warning: str | None = None
-        self.segments: list[dict] = list(segments or [])
-        self.queue: asyncio.Queue = asyncio.Queue()
-        self._lock = threading.Lock()
-        self._recent_call: deque = deque(maxlen=12)   # (monotonic_ts, text) for echo matching
-        self._pending_you: list = []                  # held mic segs awaiting echo check
-        self.channels: list[_Channel] = []
-        if recovered:
-            try:
-                self.loop = asyncio.get_running_loop()
-            except RuntimeError:
-                self.loop = None
-        else:
-            self.loop = asyncio.get_running_loop()
-            self.__post_channels(mic_device, call_device)
-
-    def _emit(self, seg):
-        self.segments.append(seg)
-        if self.loop is not None:
-            self.loop.call_soon_threadsafe(self.queue.put_nowait, seg)
-        self._persist()
-
-    def _persist(self):
-        if self.session_id:
-            ok = persistence.save_session(self.to_dict(), WORKSPACE)
-            if ok:
-                self.persistence_warning = None
-            else:
-                self.persistence_warning = "Live transcript will not survive a server restart because state could not be saved."
-
-    def _flush_pending_you(self, now):
-        """Emit any held mic segments older than the hold window that were not
-        matched by a call echo."""
-        still = []
-        for ts, seg in self._pending_you:
-            if now - ts >= ECHO_HOLD_SEC:
-                self._emit(seg)
-            else:
-                still.append((ts, seg))
-        self._pending_you = still
-
-    def _on_segment(self, label, text):          # called from worker threads
-        import time
-        now = time.monotonic()
-        seg = {"t": datetime.now(timezone.utc).strftime("%H:%M:%S"), "speaker": label, "text": text}
-        with self._lock:
-            self._flush_pending_you(now)
-            if not self.labeled:
-                self._emit(seg); return
-            if label == self.call_label:
-                # drop any held mic segment that this call line echoes
-                self._pending_you = [
-                    (ts, s) for (ts, s) in self._pending_you
-                    if _text_similarity(s["text"], text) < ECHO_SIM
-                ]
-                self._recent_call.append((now, text))
-                self._emit(seg)
-            else:  # mic label — suppress if it echoes a recent call; else hold briefly
-                if any(now - cts <= ECHO_HOLD_SEC and _text_similarity(text, ctext) >= ECHO_SIM
-                       for cts, ctext in self._recent_call):
-                    return  # echo of the call audio — drop
-                self._pending_you.append((now, seg))
-
-    def __post_channels(self, mic_device, call_device):
-        if self.labeled:
-            self.channels.append(_Channel(mic_device, self.mic_label, self._on_segment))
-            self.channels.append(_Channel(call_device, self.call_label, self._on_segment))
-        else:
-            self.channels.append(_Channel(mic_device, self.mic_label, self._on_segment))
-
-    def start(self):
-        for c in self.channels:
-            c.start()
-
-    def stop(self):
-        for c in self.channels:
-            c.stop()
-        # flush any held mic segments that never got an echo match
-        with self._lock:
-            for _ts, seg in self._pending_you:
-                self._emit(seg)
-            self._pending_you = []
-
-    def transcript_text(self) -> str:
-        header = f"# Live transcript — {self.account} — {self.started_at.astimezone().strftime('%B %d, %Y %H:%M')}\n"
-        header += f"# mic-label: {self.mic_label}\n"
-        if self.labeled:
-            header += f"# call-label: {self.call_label}\n"
-        header += "\n"
-        lines = []
-        for s in self.segments:
-            who = f"{s['speaker']}: " if s["speaker"] else ""
-            lines.append(f"[{s['t']}] {who}{s['text']}")
-        return header + "\n".join(lines) + "\n"
-
-    def to_dict(self) -> dict:
-        return {
-            "session_id": self.session_id,
-            "account": self.account,
-            "opp_slug": self.opp_slug,
-            "opportunity": self.opportunity,
-            "mic_device": self.mic_device,
-            "call_device": self.call_device,
-            "mic_label": self.mic_label,
-            "call_label": self.call_label,
-            "labeled": self.labeled,
-            "recovered": self.recovered,
-            "ended": self.ended,
-            "started_at": self.started_at.timestamp(),
-            "segments": list(self.segments),
-        }
-
-    @classmethod
-    def from_state(cls, data: dict) -> "LiveSession":
-        started_at = datetime.fromtimestamp(data["started_at"], tz=timezone.utc)
-        return cls(
-            account=data["account"],
-            opp_slug=data.get("opp_slug"),
-            mic_device=data.get("mic_device", 0),
-            call_device=data.get("call_device"),
-            mic_label=data.get("mic_label", "You"),
-            call_label=data.get("call_label", "Call"),
-            opportunity=data.get("opportunity"),
-            recovered=True,
-            segments=data.get("segments", []),
-            started_at=started_at,
-            session_id=data.get("session_id"),
-        )
-
-
-@app.get("/api/audio-devices")
-def api_audio_devices():
-    """Input devices for the mic/call pickers. Flags BlackHole presence."""
-    try:
-        import sounddevice as sd
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(500, security.redact_sensitive(f"Audio capture unavailable: {e}. Run `brew install portaudio` and reinstall deps."))
-    devices, has_blackhole = [], False
-    for i, d in enumerate(sd.query_devices()):
-        if d["max_input_channels"] > 0:
-            name = d["name"]
-            if "blackhole" in name.lower() or "aggregate" in name.lower():
-                has_blackhole = True
-            devices.append({"index": i, "name": name,
-                            "channels": d["max_input_channels"],
-                            "sample_rate": int(d["default_samplerate"])})
-    return {"devices": devices, "has_blackhole": has_blackhole, "model": WHISPER_MODEL}
-
-
-class StartLive(BaseModel):
-    account: str = Field(max_length=120)
-    opp_slug: str | None = Field(default=None, max_length=120)
-    opportunity: str | None = Field(default=None, max_length=200)
-    mic_device: int
-    call_device: int | None = None
-    mic_label: str | None = Field(default="You", max_length=80)
-    call_label: str | None = Field(default="Call", max_length=80)
-
-
-@app.post("/api/transcribe/start")
-async def api_transcribe_start(body: StartLive):
-    account = _safe(body.account)
-    opp_slug = _safe(body.opp_slug) if body.opp_slug else None
-    try:
-        sess = LiveSession(
-            account, opp_slug, body.mic_device, body.call_device,
-            mic_label=body.mic_label or "You",
-            call_label=body.call_label or "Call",
-            opportunity=body.opportunity,
-        )
-        sess.start()
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(500, security.redact_sensitive(f"Could not start capture: {e}"))
-    sid = uuid.uuid4().hex[:12]
-    sess.session_id = sid
-    SESSIONS[sid] = sess
-    session_ok = await asyncio.to_thread(persistence.save_session, sess.to_dict(), WORKSPACE)
-    if not session_ok:
-        sess.persistence_warning = "Live transcript will not survive a server restart because state could not be saved."
-    return {"session_id": sid, "labeled": sess.labeled,
-            "mic_label": sess.mic_label, "call_label": sess.call_label,
-            **({"persistence_warning": sess.persistence_warning} if sess.persistence_warning else {})}
-
-
-@app.get("/api/transcribe/active")
-def api_transcribe_active(account: str, opp_slug: str | None = None):
-    """If a live session is active or recovered for this opportunity, return it
-    so the page can reconnect or save it. 204 if none."""
-    account = _safe(account)
-    opp_slug = _safe(opp_slug) if opp_slug else None
-    for sid, sess in SESSIONS.items():
-        if sess.account == account and sess.opp_slug == opp_slug:
-            return {"session_id": sid, "labeled": sess.labeled,
-                    "started_at": sess.started_at.timestamp(),
-                    "segments": list(sess.segments),
-                    "mic_label": sess.mic_label, "call_label": sess.call_label,
-                    "recovered": sess.recovered,
-                    **({"persistence_warning": sess.persistence_warning} if sess.persistence_warning else {})}
-    # 204 No Content must have an EMPTY body — a serialized `null` (4 bytes)
-    # trips Starlette's "content longer than Content-Length" check.
-    return Response(status_code=204)
-
-
-def _parse_saved_transcript(text: str) -> dict:
-    """Parse a saved transcript file back into segments and speaker labels.
-
-    Saved format (one per line): `[HH:MM:SS] Speaker: text`. Leading `#` header
-    lines are skipped; `# mic-label:` and `# call-label:` set the expected
-    speaker names (falling back to `You` / `Call`). Lines that don't match the
-    pattern are appended to the previous segment (whisper sometimes wraps long
-    utterances). A colon in the body text is protected by only accepting a known
-    speaker label as the prefix.
-    """
-    mic_label, call_label = "You", "Call"
-    segs: list[dict] = []
-    line_re = re.compile(r"^\[(\d{2}:\d{2}:\d{2})\]\s*(?:([^\n:]+?):\s)?(.*)$")
-    label_re = re.compile(r"^#\s*(mic-label|call-label):\s*(.+)$", re.IGNORECASE)
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        if line.startswith("#"):
-            m = label_re.match(line)
-            if m:
-                value = m.group(2).strip()
-                if m.group(1).lower() == "mic-label":
-                    mic_label = value or mic_label
-                else:
-                    call_label = value or call_label
-            continue
-        m = line_re.match(line)
-        if m:
-            speaker = (m.group(2) or "").strip()
-            body = m.group(3)
-            if speaker and speaker not in {mic_label, call_label}:
-                # the prefix was text, not a speaker label
-                body = f"{speaker}: {body}"
-                speaker = ""
-            segs.append({"t": m.group(1), "speaker": speaker, "text": body})
-        elif segs:
-            segs[-1]["text"] += " " + line
-    return {"segments": segs, "mic_label": mic_label, "call_label": call_label}
-
-
-def _transcript_path(account: str, name: str) -> Path:
-    """Resolve a saved-transcript filename safely under _transcripts/, scoped to
-    the account so one opp can't load another's files."""
-    name = _safe(name)
-    if not name.endswith(".txt"):
-        raise HTTPException(400, "Not a transcript file")
-    cust = _titlecase_folder(account)
-    if not name.startswith(cust + "-"):
-        raise HTTPException(403, "Transcript does not belong to this account")
-    path = (CUSTOMERS_DIR / "_transcripts" / name).resolve()
-    if path.parent != (CUSTOMERS_DIR / "_transcripts").resolve():
-        raise HTTPException(400, "Invalid path")
-    return path
-
-
-@app.get("/api/transcripts")
-def api_list_transcripts(account: str):
-    """List saved transcripts for this account, newest first (by filename date
-    then mtime). Powers the 'Past transcripts' list on the transcribe page."""
-    account = _safe(account)
-    cust = _titlecase_folder(account)
-    tdir = CUSTOMERS_DIR / "_transcripts"
-    if not tdir.exists():
-        return {"transcripts": []}
-    items = []
-    for p in tdir.glob(f"{cust}-*.txt"):
-        try:
-            items.append({"name": p.name, "mtime": p.stat().st_mtime,
-                          "size": p.stat().st_size})
-        except OSError:
-            pass
-    items.sort(key=lambda x: (x["name"], x["mtime"]), reverse=True)
-    return {"transcripts": items}
-
-
-@app.get("/api/transcripts/{name}")
-def api_load_transcript(name: str, account: str):
-    """Load one saved transcript as segments + raw text so the page can render
-    it read-only and the copilot can answer questions about it."""
-    path = _transcript_path(account, name)
-    if not path.exists():
-        raise HTTPException(404, "Transcript not found")
-    text = path.read_text()
-    parsed = _parse_saved_transcript(text)
-    return {"name": name, "segments": parsed["segments"], "transcript": text,
-            "mic_label": parsed["mic_label"], "call_label": parsed["call_label"]}
-
-
-@app.get("/api/transcribe/{session_id}/stream")
-async def api_transcribe_stream(session_id: str):
-    from sse_starlette.sse import EventSourceResponse
-    sess = SESSIONS.get(session_id)
-    if not sess:
-        raise HTTPException(404, "Unknown session")
-
-    async def gen():
-        # replay any segments already captured (e.g. reconnect)
-        for seg in list(sess.segments):
-            yield {"event": "segment", "data": json.dumps(seg)}
-        if sess.recovered:
-            # Audio capture is gone after a restart; don't hold the connection open.
-            return
-        while session_id in SESSIONS:
-            try:
-                seg = await asyncio.wait_for(sess.queue.get(), timeout=15)
-                yield {"event": "segment", "data": json.dumps(seg)}
-            except asyncio.TimeoutError:
-                yield {"event": "ping", "data": "{}"}  # keep-alive
-
-    return EventSourceResponse(gen())
-
-
-
-
-
-class AskLive(BaseModel):
-    question: str = Field(max_length=5_000)
-    # File-backed ask: when the session_id is the "file" sentinel, the page is
-    # querying a SAVED transcript (reopened), not a live recording. The client
-    # passes the transcript name + account so the server loads it from disk.
-    transcript_name: str | None = Field(default=None, max_length=500)
-    account: str | None = Field(default=None, max_length=120)
-    opportunity: str | None = Field(default=None, max_length=200)
-
-
-@app.post("/api/transcribe/{session_id}/ask")
-async def api_transcribe_ask(session_id: str, body: AskLive):
-    q = (body.question or "").strip()
-    if not q:
-        raise HTTPException(400, "Empty question")
-
-    # Resolve the transcript + context from either a LIVE session or a SAVED
-    # file. session_id == "file" means the page reopened a saved transcript.
-    if session_id == "file":
-        if not body.transcript_name or not body.account:
-            raise HTTPException(400, "File ask requires transcript_name + account")
-        path = _transcript_path(_safe(body.account), body.transcript_name)
-        if not path.exists():
-            raise HTTPException(404, "Transcript not found")
-        full = path.read_text()
-        account, opportunity, opp_slug = body.account, body.opportunity, None
-        live = False
-    else:
-        sess = SESSIONS.get(session_id)
-        if not sess:
-            raise HTTPException(404, "Unknown session")
-        full = sess.transcript_text()
-        account, opportunity, opp_slug = sess.account, getattr(sess, "opportunity", None), sess.opp_slug
-        live = True
-
-    # Live: tail window (recent context matters most, transcript still growing).
-    # Saved: send the whole thing — the SE is reviewing a finished call and
-    # questions may target anything in it. Cap generously to bound token cost.
-    transcript = full[-12000:] if live else full[-60000:]
-    deep = any(h in q.lower() for h in DEEP_HINTS)
-
-    if deep:
-        # Route to claude -p (full repo + skill access) via the job system.
-        when = "LIVE during a customer call" if live else "reviewing a saved call transcript"
-        tlabel = "live call transcript so far" if live else "full saved call transcript"
-        prompt = (
-            f"You are assisting a Solutions Engineer {when} for the account "
-            f"'{account}'{(', opportunity ' + repr(opportunity)) if opportunity else ''}. "
-            f"Here is the {tlabel}:\n\n{transcript}\n\n"
-            f"The SE asks: {q}\n\n"
-            f"Answer concisely and practically. If it involves Airbyte connectors, "
-            f"deployment, or the codebase, use the relevant SE skills / inspect the repo as needed."
-        )
-        job_id, persist_warn = await job_service.launch(
-            account=account or "?",
-            opp_slug=None,
-            skill="live-ask",
-            opportunity=opportunity,
-            sig=("live", session_id, q[:60]),
-            prompt=prompt,
-            meta={"account": account or "?", "opp_slug": None, "skill": "live-ask",
-                  "opportunity": opportunity},
-        )
-        return {"mode": "deep", "job_id": job_id,
-                **({"persistence_warning": persist_warn} if persist_warn else {})}
-
-    # Quick path → Claude API streaming (SSE).
-    api_key = anthropic_api_key()
-    if not api_key:
-        # No key → tell the client to re-route as deep so the ask-bar still works.
-        return JSONResponse({"mode": "needs_deep",
-                             "reason": "No ANTHROPIC_API_KEY for the quick path — re-ask routes to claude -p."})
-
-    from fastapi.responses import StreamingResponse
-
-    # Emit raw SSE frames via a plain StreamingResponse rather than
-    # EventSourceResponse: sse_starlette's disconnect-polling can race a
-    # fetch()+getReader() client and close the stream before any token is
-    # delivered (curl is unaffected, the browser sees an empty body). A plain
-    # streaming response just writes chunks — the wire format is identical, so
-    # the existing front-end parser (event:/data: split on \n\n) is unchanged.
-    def _frame(event: str, data: dict) -> bytes:
-        return f"event: {event}\ndata: {json.dumps(data)}\n\n".encode()
-
-    async def gen():
-        acc = ""
-        try:
-            from anthropic import AsyncAnthropic
-            client = AsyncAnthropic(api_key=api_key)
-            system = ("You are a Solutions Engineer's live call copilot. Answer briefly and "
-                      "directly from the call transcript provided. If the question needs the "
-                      "Airbyte codebase or a deep skill, say so in one line.")
-            async with client.messages.stream(
-                model=_model_for("live-ask"),
-                max_tokens=700,
-                system=system,
-                messages=[{"role": "user", "content":
-                           f"Transcript:\n\n{transcript}\n\nQuestion: {q}"}],
-            ) as stream:
-                async for text in stream.text_stream:
-                    acc += text
-                    yield _frame("token", {"text": text, "html": md_render.markdown_to_body_html(acc)})
-            yield _frame("done", {})
-        except Exception as e:  # noqa: BLE001
-            yield _frame("error", {"error": security.redact_sensitive(str(e))})
-
-    return StreamingResponse(gen(), media_type="text/event-stream",
-                             headers={"cache-control": "no-store", "x-accel-buffering": "no"})
-
-
-
-
-
-
-@app.post("/api/transcribe/{session_id}/stop")
-def api_transcribe_stop(session_id: str):
-    sess = SESSIONS.pop(session_id, None)
-    if not sess:
-        raise HTTPException(404, "Unknown session")
-    sess.stop()
-    text = sess.transcript_text()
-    # Save to _transcripts/<Customer>-MM.DD.YY.txt (the convention post-call consumes).
-    transcripts_dir = CUSTOMERS_DIR / "_transcripts"
-    transcripts_dir.mkdir(parents=True, exist_ok=True)
-    cust = _titlecase_folder(sess.account)
-    datestr = sess.started_at.astimezone().strftime("%m.%d.%y")
-    base = f"{cust}-{datestr}"
-    path = transcripts_dir / f"{base}.txt"
-    n = 2
-    while path.exists():
-        path = transcripts_dir / f"{base}-v{n}.txt"; n += 1
-    path.write_text(text)
-    delete_ok = persistence.delete_session(session_id, WORKSPACE)
-    result = {"saved_to": str(path), "segments": len(sess.segments),
-              "chars": len(text), "transcript": text}
-    if not delete_ok:
-        result["persistence_warning"] = "The saved transcript was written, but the session state file could not be removed; it may reappear on restart."
-    return result
-
-
 # Favicon: inline SVG (also linked in index.html <head>). Serving it here too
 # silences the browser's default GET /favicon.ico even for clients that ignore
 # the <link>. Must be registered before the catch-all static mount below.
@@ -1397,16 +818,6 @@ async def favicon() -> Response:
 # Serve the static frontend at root
 app.mount("/", StaticFiles(directory=str(WEBAPP_DIR / "static"), html=True), name="static")
 
-
-# Recover any live-transcribe sessions that were persisted before a restart.
-# Done at module load so the recovered sessions are available immediately.
-for _sess_data in persistence.load_sessions(WORKSPACE):
-    try:
-        _recovered = LiveSession.from_state(_sess_data)
-        if _recovered.session_id:
-            SESSIONS[_recovered.session_id] = _recovered
-    except Exception:
-        pass  # corrupted session file — ignore and continue
 
 
 if __name__ == "__main__":
