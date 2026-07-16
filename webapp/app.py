@@ -55,13 +55,14 @@ import md_render
 import orchestrator
 import persistence
 import security
-import soql
 
+from integrations.salesforce import SalesforceIntegration
 from routes.accounts import router as accounts_router
 from routes.jobs import router as jobs_router
 from routes.outputs import router as outputs_router
 from routes.feedback import router as feedback_router
 from routes.overview import router as overview_router
+from routes.salesforce import router as salesforce_router
 from services.account_service import AccountService
 from services.overview_service import OverviewService
 from services.feedback_service import FeedbackService
@@ -259,31 +260,10 @@ def _titlecase_folder(name: str) -> str:
     return "-".join(part.capitalize() for part in re.split(r"[^A-Za-z0-9]+", name.strip()) if part)
 
 
-def _sfdc_name_file(account_dir: Path) -> Path:
-    return account_dir / ".sfdc-name"
 
 
-def _read_sfdc_name(account: str) -> str | None:
-    """The true SFDC Account.Name captured at create time, if any. Folder names
-    are lossy (punctuation stripped for filesystem safety), so we cannot rebuild
-    the SFDC name from the folder — we store it verbatim instead."""
-    f = _sfdc_name_file(CUSTOMERS_DIR / account)
-    return f.read_text().strip() if f.exists() else None
 
 
-def _sfdc_like_prefix(account: str) -> str:
-    """A SOQL-LIKE-safe prefix for matching this account's opportunities.
-
-    Prefers the stored real SFDC name (exact). Falls back — for folders created
-    before we captured it — to the first alphanumeric token of the folder, which
-    survives punctuation loss (e.g. 'Octus-Fka-Reorg-Research' -> 'Octus') far
-    better than the old hyphen->space reconstruction, which never matched a name
-    like 'Octus (fka Reorg Research)'."""
-    real = _read_sfdc_name(account)
-    if real:
-        return soql.soql_like_prefix(real)
-    first = next((p for p in re.split(r"[^A-Za-z0-9]+", account) if p), account)
-    return soql.soql_like_prefix(first)
 
 
 def _slug(name: str) -> str:
@@ -292,48 +272,6 @@ def _slug(name: str) -> str:
     return s[:80] or "opportunity"
 
 
-async def sfdc_opportunities(account: str) -> list[dict]:
-    """All SFDC opportunities for an account (not just the 'best' one).
-    Each: name, stage, stage_num, amount, close_date, type, is_closed, ae, slug.
-    Best-effort; returns [] if SFDC unavailable."""
-    sf = _sf_config()
-    if not sf.get("enabled", True):
-        return []
-    alias = sf.get("org_alias", "airbyte-prod")
-    like = _sfdc_like_prefix(account)
-    soql = (
-        "SELECT Name, StageName, Stage_Number__c, Amount, CloseDate, Type, "
-        "IsClosed, Owner.Name "
-        f"FROM Opportunity WHERE Account.Name LIKE '{like}%' ORDER BY CloseDate DESC"
-    )
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "sf", "data", "query", "--query", soql, "--target-org", alias, "--json",
-            cwd=str(WORKSPACE),
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=25)
-        if proc.returncode != 0:
-            return []
-        import json as _json
-        records = _json.loads(out).get("result", {}).get("records", [])
-    except Exception:
-        return []
-    opps = []
-    for r in records:
-        name = r.get("Name") or "Opportunity"
-        opps.append({
-            "name": name,
-            "slug": _slug(name),
-            "stage": r.get("StageName"),
-            "stage_num": r.get("Stage_Number__c"),
-            "amount": r.get("Amount"),
-            "close_date": r.get("CloseDate"),
-            "type": r.get("Type"),
-            "is_closed": r.get("IsClosed"),
-            "ae": ((r.get("Owner") or {}).get("Name")),
-        })
-    return opps
 
 
 # ---------------------------------------------------------------------------
@@ -370,8 +308,6 @@ def _model_for(use: str) -> str:
     return models.get(use) or models.get("default") or DEFAULT_CLAUDE_MODEL
 
 
-def _sf_config() -> dict:
-    return _se_config().get("salesforce", {}) or {}
 
 
 def _internal_repo() -> Path:
@@ -406,188 +342,13 @@ async def _run_cmd(args: list[str], cwd: Path, timeout: int = 120) -> tuple[int,
     return rc, so, se
 
 
-async def sfdc_stage_amount(account_names: list[str]) -> dict:
-    """Return {account_name: {stage, stage_num, amount, ae}} for the most relevant
-    open (else latest) opportunity per account. One query for all names. Best-effort.
-    `ae` is the Salesforce Account/Opportunity Owner. Returns {} on any failure."""
-    sf = _sf_config()
-    if not sf.get("enabled", True) or not account_names:
-        return {}
-    alias = sf.get("org_alias", "airbyte-prod")
-    likes = " OR ".join(
-        f"Account.Name LIKE '{_sfdc_like_prefix(n)}%'" for n in account_names[:50]
-    )
-    soql = (
-        "SELECT Account.Name, StageName, Stage_Number__c, Amount, CloseDate, "
-        "IsClosed, Type, Owner.Name "
-        f"FROM Opportunity WHERE {likes} ORDER BY CloseDate DESC"
-    )
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "sf", "data", "query", "--query", soql, "--target-org", alias, "--json",
-            cwd=str(WORKSPACE),
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=25)
-        if proc.returncode != 0:
-            return {}
-        import json as _json
-        records = _json.loads(out).get("result", {}).get("records", [])
-    except Exception:
-        return {}
-
-    by_acct: dict[str, dict] = {}
-    # Exact map from stored SFDC name → folder (authoritative), plus a lossy
-    # token/prefix map for legacy folders with no captured .sfdc-name.
-    exact_for = {}
-    prefix_for = {}
-    for n in account_names:
-        real = _read_sfdc_name(n)
-        if real:
-            exact_for[real.lower()] = n
-        prefix_for[_sfdc_like_prefix(n).lower()] = n
-    for r in records:
-        acct_name = ((r.get("Account") or {}).get("Name") or "").lower()
-        folder = exact_for.get(acct_name)
-        if not folder:
-            folder = next((fn for key, fn in prefix_for.items()
-                           if acct_name.startswith(key) or key.startswith(acct_name)), None)
-        if not folder:
-            continue
-        cand = {
-            "stage": r.get("StageName"),
-            "stage_num": r.get("Stage_Number__c"),
-            "amount": r.get("Amount"),
-            "ae": ((r.get("Owner") or {}).get("Name")),
-            "type": r.get("Type"),
-            "close_date": r.get("CloseDate"),
-            "is_closed": r.get("IsClosed"),
-            "open": not r.get("IsClosed"),
-            "renewal": (r.get("Type") == "Renewal"),
-        }
-        cur = by_acct.get(folder)
-        def score(c): return (2 if c["open"] and not c["renewal"] else (1 if c["open"] else 0))
-        if cur is None or score(cand) > score(cur):
-            by_acct[folder] = cand
-    return {
-        k: {"stage": v["stage"], "stage_num": v["stage_num"], "amount": v["amount"],
-            "ae": v["ae"], "type": v["type"], "close_date": v["close_date"], "is_closed": v["is_closed"]}
-        for k, v in by_acct.items()
-    }
 
 
-# ---------------------------------------------------------------------------
-# Auto-populate accounts from Salesforce.
-#
-# Airbyte SFDC model: the AE owns the Opportunity (Owner.Name); the SE is tagged
-# separately via the custom SE_Name__c field. So "my accounts" for an SE means
-# opps where SE_Name__c = me OR Owner.Name is one of my AEs — restricted to open
-# opps with a future close date. The AE list is derived live from SFDC (not a
-# static config), so it can never go stale.
-# ---------------------------------------------------------------------------
-async def _sf_query(soql: str) -> list[dict] | None:
-    """Run a SOQL query via the `sf` CLI. Returns records, or None on any
-    failure (not-authed, disabled, timeout). Mirrors the inline pattern used by
-    sfdc_opportunities/sfdc_stage_amount so all SFDC access goes through `sf`."""
-    sf = _sf_config()
-    if not sf.get("enabled", True):
-        return None
-    alias = sf.get("org_alias", "airbyte-prod")
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "sf", "data", "query", "--query", soql, "--target-org", alias, "--json",
-            cwd=str(WORKSPACE),
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=25)
-        if proc.returncode != 0:
-            return None
-        return json.loads(out).get("result", {}).get("records", [])
-    except Exception:
-        return None
 
 
-def _sf_quote(value: str) -> str:
-    """Escape `value` for use as a SOQL single-quoted string literal."""
-    return soql.soql_string_literal(value or "")
 
 
-async def sfdc_list_aes(member_id: str) -> list[str]:
-    """All distinct AE names (Opportunity.Owner.Name) on open, future-dated opps
-    org-wide, so the SE can pick any AE to pull accounts for. `member_id` is kept
-    for the endpoint's 404 guard. Best-effort []."""
-    if not account_service.member_by_id(member_id):
-        return []
-    today = datetime.now().strftime("%Y-%m-%d")
-    soql = (
-        "SELECT Owner.Name FROM Opportunity "
-        f"WHERE IsClosed = false AND CloseDate >= {today} "
-        "ORDER BY Owner.Name"
-    )
-    records = await _sf_query(soql)
-    if not records:
-        return []
-    aes = {((r.get("Owner") or {}).get("Name") or "").strip() for r in records}
-    return sorted(a for a in aes if a)
 
-
-async def sfdc_accounts_for_member(member_id: str, ae_names: list[str]) -> dict:
-    """Open, future-dated opportunities where SE_Name__c = this member OR
-    Owner.Name is one of `ae_names`. Deduped to the best opp per account and
-    split into new_business / renewals. Best-effort: {} buckets on failure."""
-    member = account_service.member_by_id(member_id)
-    if not member:
-        return {"new_business": [], "renewals": []}
-    name = _sf_quote(member.get("name", ""))
-    today = datetime.now().strftime("%Y-%m-%d")
-    clauses = [f"SE_Name__c = '{name}'"]
-    quoted_aes = [f"'{_sf_quote(a)}'" for a in ae_names if a]
-    if quoted_aes:
-        clauses.append(f"Owner.Name IN ({', '.join(quoted_aes)})")
-    where_owner = " OR ".join(clauses)
-    soql = (
-        "SELECT Account.Name, Amount, StageName, Stage_Number__c, CloseDate, "
-        "Type, Owner.Name, SE_Name__c FROM Opportunity "
-        f"WHERE IsClosed = false AND CloseDate >= {today} "
-        f"AND ({where_owner}) ORDER BY Account.Name"
-    )
-    records = await _sf_query(soql)
-    if not records:
-        return {"new_business": [], "renewals": []}
-
-    # dedupe to the best opp per account (prefer open non-renewal, same score()
-    # idea as sfdc_stage_amount).
-    def score(rec: dict) -> int:
-        return 1 if rec.get("Type") != "Renewal" else 0
-
-    by_acct: dict[str, dict] = {}
-    for r in records:
-        acct = ((r.get("Account") or {}).get("Name") or "").strip()
-        if not acct:
-            continue
-        cur = by_acct.get(acct)
-        if cur is None or score(r) > score(cur):
-            by_acct[acct] = r
-
-    new_business, renewals = [], []
-    for acct, r in sorted(by_acct.items()):
-        folder = _titlecase_folder(acct)
-        renewal = (r.get("Type") == "Renewal")
-        item = {
-            "name": folder,
-            "account_name": acct,
-            "amount": r.get("Amount"),
-            "stage": r.get("StageName"),
-            "stage_num": r.get("Stage_Number__c"),
-            "close_date": r.get("CloseDate"),
-            "type": r.get("Type"),
-            "ae": ((r.get("Owner") or {}).get("Name")),
-            "se": r.get("SE_Name__c"),
-            "renewal": renewal,
-            "exists": (CUSTOMERS_DIR / folder).exists(),
-        }
-        (renewals if renewal else new_business).append(item)
-    return {"new_business": new_business, "renewals": renewals}
 
 
 # ---------------------------------------------------------------------------
@@ -600,57 +361,19 @@ app.include_router(jobs_router)
 app.include_router(accounts_router)
 
 
-@app.post("/api/sfdc/stage-amount")
-async def api_sfdc_stage_amount(body: dict):
-    """Batched SFDC stage+amount for a list of account names. Best-effort; the UI
-    calls this after rendering cards and fills in the line if it resolves."""
-    names = body.get("accounts", [])
-    if not isinstance(names, list):
-        raise HTTPException(400, "accounts must be a list")
-    safe_names = [_safe(n) for n in names if isinstance(n, str)]
-    return await sfdc_stage_amount(safe_names)
 
 
 # ---------------------------------------------------------------------------
 # Auto-populate accounts from Salesforce — endpoints
 # ---------------------------------------------------------------------------
-class SelectedAes(BaseModel):
-    selected: list[str] = []
 
 
-class PullAccounts(BaseModel):
-    aes: list[str] = []
 
 
-@app.get("/api/members/{member_id}/sfdc-aes")
-async def api_sfdc_aes(member_id: str):
-    """AE names (from live SFDC) selectable for this member's account pull,
-    plus the member's previously-saved selection."""
-    if not account_service.member_by_id(member_id):
-        raise HTTPException(404, "Unknown member")
-    aes = await sfdc_list_aes(member_id)
-    selected = account_service.read_member_prefs(member_id).get("selected_aes", [])
-    return {"aes": aes, "selected": selected}
 
 
-@app.post("/api/members/{member_id}/sfdc-aes")
-def api_save_sfdc_aes(member_id: str, body: SelectedAes):
-    """Persist which AEs this member wants to pull accounts for."""
-    if not account_service.member_by_id(member_id):
-        raise HTTPException(404, "Unknown member")
-    prefs = account_service.read_member_prefs(member_id)
-    prefs["selected_aes"] = [a for a in body.selected if isinstance(a, str) and a.strip()]
-    account_service.save_member_prefs(member_id, prefs)
-    return {"ok": True, "selected": prefs["selected_aes"]}
 
 
-@app.post("/api/members/{member_id}/sfdc-accounts")
-async def api_sfdc_accounts(member_id: str, body: PullAccounts):
-    """Open, future-dated opps for this member, split new_business / renewals."""
-    if not account_service.member_by_id(member_id):
-        raise HTTPException(404, "Unknown member")
-    aes = [a for a in body.aes if isinstance(a, str) and a.strip()]
-    return await sfdc_accounts_for_member(member_id, aes)
 
 
 class OutputAsk(BaseModel):
@@ -966,6 +689,14 @@ job_service = JobService(
     persist_run=output_service.persist_run,
 )
 
+salesforce_integration = SalesforceIntegration(
+    customers_dir=CUSTOMERS_DIR,
+    workspace=WORKSPACE,
+    sf_config=lambda: _se_config().get("salesforce", {}) or {},
+    titlecase=_titlecase_folder,
+    slug=_slug,
+)
+
 account_service = AccountService(
     customers_dir=CUSTOMERS_DIR,
     webapp_dir=WEBAPP_DIR,
@@ -977,7 +708,7 @@ account_service = AccountService(
     team_file=TEAM_FILE,
     member_prefs_dir=WEBAPP_DIR / ".member-prefs",
     se_config_file=SE_CONFIG,
-    sfdc_opportunities=sfdc_opportunities,
+    sfdc_opportunities=salesforce_integration.opportunities_for_account,
 )
 
 # Make the services reachable from route dependencies.
@@ -985,6 +716,7 @@ app.state.output_service = output_service
 app.state.feedback_service = feedback_service
 app.state.job_service = job_service
 app.state.account_service = account_service
+app.state.salesforce_integration = salesforce_integration
 
 overview_service = OverviewService(
     account_service=account_service,
@@ -997,6 +729,9 @@ app.include_router(accounts_router)
 app.include_router(outputs_router)
 app.include_router(feedback_router)
 app.include_router(overview_router)
+app.include_router(salesforce_router)
+
+
 @app.get("/api/plan")
 def api_plan(account: str, skill: str, opp_slug: str | None = None):
     """Return the prerequisite plan for a proposed skill invocation.

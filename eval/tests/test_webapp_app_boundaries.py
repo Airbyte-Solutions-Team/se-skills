@@ -8,14 +8,13 @@ natural-language prompt sanitization, which is intentionally out of scope.
 import pytest
 from pydantic import ValidationError
 
+from integrations.salesforce import SalesforceIntegration
 from webapp.app import (
     AskLive,
     InvokeBody,
     OutputAsk,
     StartLive,
     _safe,
-    _sf_quote,
-    _sfdc_like_prefix,
     _titlecase_folder,
 )
 from webapp.routes.outputs import OutputPdf, PushToRepo
@@ -101,26 +100,43 @@ def test_titlecase_folder_normalizes_punctuation() -> None:
     assert _titlecase_folder("Octus (fka Reorg Research)") == "Octus-Fka-Reorg-Research"
 
 
+def _slug(name: str) -> str:
+    import re
+    return re.sub(r"[^A-Za-z0-9-]+", "-", (name or "").strip()).strip("-") or "opportunity"
+
+
 def test_sf_quote_uses_soql_string_literal() -> None:
-    """`_sf_quote` delegates to the SOQL helper for `=`/`IN` literals."""
-    assert _sf_quote("O'Brien") == r"O\'Brien"
-    assert _sf_quote('A"B') == r'A\"B'  # backslash-escaped double quote
+    """`_quote` delegates to the SOQL helper for `=`/`IN` literals."""
+    assert SalesforceIntegration._quote("O'Brien") == r"O\'Brien"
+    assert SalesforceIntegration._quote('A"B') == r'A\"B'  # backslash-escaped double quote
 
 
 def test_sfdc_like_prefix_uses_soql_like_prefix(tmp_path, monkeypatch) -> None:
     """`_sfdc_like_prefix` uses the stored real SFDC name and escapes LIKE wildcards."""
-    from webapp import app as app_module
-
-    monkeypatch.setattr(app_module, "CUSTOMERS_DIR", tmp_path / "customers")
-    account_dir = app_module.CUSTOMERS_DIR / "Acme"
+    customers = tmp_path / "customers"
+    account_dir = customers / "Acme"
     account_dir.mkdir(parents=True)
     (account_dir / ".sfdc-name").write_text("50%_Acme")
-    assert _sfdc_like_prefix("Acme") == r"50\%\_Acme"
+    sf = SalesforceIntegration(
+        customers_dir=customers,
+        workspace=tmp_path,
+        sf_config=lambda: {},
+        titlecase=_titlecase_folder,
+        slug=_slug,
+    )
+    assert sf._sfdc_like_prefix("Acme") == r"50\%\_Acme"
 
 
-def test_sfdc_like_prefix_falls_back_to_first_token() -> None:
+def test_sfdc_like_prefix_falls_back_to_first_token(tmp_path, monkeypatch) -> None:
     """When no `.sfdc-name` exists, `_sfdc_like_prefix` falls back to the first token."""
-    assert _sfdc_like_prefix("Acme-Co") == "Acme"
+    sf = SalesforceIntegration(
+        customers_dir=tmp_path / "customers",
+        workspace=tmp_path,
+        sf_config=lambda: {},
+        titlecase=_titlecase_folder,
+        slug=_slug,
+    )
+    assert sf._sfdc_like_prefix("Acme-Co") == "Acme"
 
 
 def test_upsert_handover_card_escapes_meta_and_account() -> None:
