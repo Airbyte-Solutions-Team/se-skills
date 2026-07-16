@@ -14,12 +14,16 @@ dev = [
     "markdown>=3.5",
     "nh3>=0.2.18",
     "keyring>=25.0",
+    "httpx>=0.25",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["eval"]
 pythonpath = [".", "webapp"]
-filterwarnings = ["ignore::DeprecationWarning"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::starlette.exceptions.StarletteDeprecationWarning",
+]
 markers = [
     "model_dependent: tests that invoke a language model (skipped by default)",
     "slow: tests that take more than a few seconds",
