@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-import webapp.app as app
+from services.ask_service import _anthropic_key_from_keyring, anthropic_api_key
 from webapp.security import redact_sensitive
 
 
@@ -107,19 +107,19 @@ def test_redact_sensitive_redacts_multiple_secrets_in_one_string() -> None:
 def test_anthropic_key_prefers_environment_variable(monkeypatch) -> None:
     """The env var ANTHROPIC_API_KEY takes precedence over the keyring."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-env")
-    monkeypatch.setattr(app, "_anthropic_key_from_keyring", lambda: "sk-ant-ring")
-    assert app._anthropic_api_key() == "sk-ant-env"
+    monkeypatch.setattr("services.ask_service._anthropic_key_from_keyring", lambda: "sk-ant-ring")
+    assert anthropic_api_key() == "sk-ant-env"
 
 
 def test_anthropic_key_falls_back_to_keyring(monkeypatch) -> None:
     """When the env var is absent, the app reads from the OS keyring."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.setattr(app, "_anthropic_key_from_keyring", lambda: "sk-ant-ring")
-    assert app._anthropic_api_key() == "sk-ant-ring"
+    monkeypatch.setattr("services.ask_service._anthropic_key_from_keyring", lambda: "sk-ant-ring")
+    assert anthropic_api_key() == "sk-ant-ring"
 
 
 def test_anthropic_key_returns_none_when_missing(monkeypatch) -> None:
     """If no env var and no keyring value exists, the quick path is disabled."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.setattr(app, "_anthropic_key_from_keyring", lambda: None)
-    assert app._anthropic_api_key() is None
+    monkeypatch.setattr("services.ask_service._anthropic_key_from_keyring", lambda: None)
+    assert anthropic_api_key() is None
