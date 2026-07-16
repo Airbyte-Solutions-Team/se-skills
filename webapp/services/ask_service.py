@@ -129,16 +129,14 @@ class AskService:
 
     def _quick_stream(
         self,
-        context: str,
-        question: str,
+        *,
+        use: str,
+        max_tokens: int,
+        system: str,
+        content: str,
     ) -> AsyncIterable[dict]:
-        """Stream a quick answer over SSE."""
-        model = self.model_for("quick-ask")
-        system = (
-            "You are a Solutions Engineer's copilot. Answer the follow-up briefly and directly "
-            "from the document provided. If the question needs the Airbyte codebase or a deep "
-            "skill, say so in one line."
-        )
+        """Stream a quick answer over SSE for the configured use/model."""
+        model = self.model_for(use)
 
         async def gen() -> AsyncIterable[dict]:
             try:
@@ -148,9 +146,9 @@ class AskService:
                 acc = ""
                 async with client.messages.stream(
                     model=model,
-                    max_tokens=self.quick_max_tokens,
+                    max_tokens=max_tokens,
                     system=system,
-                    messages=[{"role": "user", "content": f"Document:\n\n{context}\n\nFollow-up question: {question}"}],
+                    messages=[{"role": "user", "content": content}],
                 ) as stream:
                     async for text in stream.text_stream:
                         acc += text
@@ -220,7 +218,84 @@ class AskService:
                 reason="No ANTHROPIC_API_KEY for the quick path — re-ask routes to claude -p.",
             )
 
-        return AskResult(kind="quick", stream=self._quick_stream(context, q))
+        return AskResult(
+            kind="quick",
+            stream=self._quick_stream(
+                use="quick-ask",
+                max_tokens=self.quick_max_tokens,
+                system=(
+                    "You are a Solutions Engineer's copilot. Answer the follow-up briefly and directly "
+                    "from the document provided. If the question needs the Airbyte codebase or a deep "
+                    "skill, say so in one line."
+                ),
+                content=f"Document:\n\n{context}\n\nFollow-up question: {q}",
+            ),
+        )
+
+    async def transcript_ask(
+        self,
+        *,
+        transcript: str,
+        question: str,
+        account: str | None,
+        opportunity: str | None,
+        live: bool,
+        session_id: str,
+    ) -> AskResult:
+        """Answer a follow-up question about a live or saved call transcript."""
+        q = (question or "").strip()
+        if not q:
+            raise AskError(400, "Empty question")
+
+        context = transcript[-12000:] if live else transcript[-60000:]
+
+        if self._is_deep(q):
+            when = "LIVE during a customer call" if live else "reviewing a saved call transcript"
+            tlabel = "live call transcript so far" if live else "full saved call transcript"
+            prompt = (
+                f"You are assisting a Solutions Engineer {when} for the account "
+                f"'{account or '?'}'{(', opportunity ' + repr(opportunity)) if opportunity else ''}. "
+                f"Here is the {tlabel}:\n\n{context}\n\n"
+                f"The SE asks: {q}\n\n"
+                f"Answer concisely and practically. If it involves Airbyte connectors, "
+                f"deployment, or the codebase, use the relevant SE skills / inspect the repo as needed."
+            )
+            job_id, persist_warn = await self.job_service.launch(
+                account=account or "?",
+                opp_slug=None,
+                skill="live-ask",
+                opportunity=opportunity,
+                sig=("live", session_id, q[:60]),
+                prompt=prompt,
+                meta={
+                    "account": account or "?",
+                    "opp_slug": None,
+                    "skill": "live-ask",
+                    "opportunity": opportunity,
+                },
+            )
+            return AskResult(kind="deep", job_id=job_id, persistence_warning=persist_warn)
+
+        if not self.api_key():
+            return AskResult(
+                kind="needs_deep",
+                reason="No ANTHROPIC_API_KEY for the quick path — re-ask routes to claude -p.",
+            )
+
+        system = (
+            "You are a Solutions Engineer's live call copilot. Answer briefly and "
+            "directly from the call transcript provided. If the question needs the "
+            "Airbyte codebase or a deep skill, say so in one line."
+        )
+        return AskResult(
+            kind="quick",
+            stream=self._quick_stream(
+                use="live-ask",
+                max_tokens=700,
+                system=system,
+                content=f"Transcript:\n\n{context}\n\nQuestion: {q}",
+            ),
+        )
 
     def ai_status(self) -> bool:
         """Return whether the fast quick-ask path is available."""
