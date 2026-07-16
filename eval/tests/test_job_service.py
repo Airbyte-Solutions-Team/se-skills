@@ -347,7 +347,6 @@ def test_route_api_jobs_response_shape(tmp_path, monkeypatch) -> None:
     from webapp.routes import jobs as routes_jobs
 
     svc = JobService(tmp_path, model_for=_model_for, persist_run=_noop_persist)
-    monkeypatch.setattr(app_module, "job_service", svc)
     fake_request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(job_service=svc)))
     svc.jobs = {
         "abc123": {
@@ -373,14 +372,3 @@ def test_route_api_jobs_response_shape(tmp_path, monkeypatch) -> None:
     # Confirm the router still registered the exact URL patterns.
     assert app_module.app.url_path_for("api_jobs_for") == "/api/jobs"
     assert app_module.app.url_path_for("api_job", job_id="abc123") == "/api/jobs/abc123"
-
-
-def test_compatibility_wrappers_delegate(service: JobService, monkeypatch) -> None:
-    """24. Compatibility wrappers delegate to the service."""
-    from webapp import app as app_module
-
-    monkeypatch.setattr(app_module, "job_service", service)
-    service.jobs = {"j1": {"status": "running", "persistence_warning": "warn", "stdout": "out", "stderr": "err", "sig": ("a",)}}
-
-    assert app_module.api_job("j1")["persistence_warning"] == "warn"
-    assert app_module.api_jobs_for() == [{"job_id": "j1", "status": "running", "persistence_warning": "warn"}]

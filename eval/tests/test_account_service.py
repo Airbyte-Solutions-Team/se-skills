@@ -14,7 +14,7 @@ import yaml
 from services.account_service import AccountError, AccountService
 from services.job_service import JobService
 from services.output_service import OutputService
-from webapp.app import _safe, _slug, _titlecase_folder
+from webapp.config import _safe, _slug, _titlecase_folder
 
 
 @pytest.fixture

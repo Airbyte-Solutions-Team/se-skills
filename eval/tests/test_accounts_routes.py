@@ -9,7 +9,8 @@ from fastapi.testclient import TestClient
 from services.account_service import AccountError, AccountService
 from services.job_service import JobService
 from services.output_service import OutputService
-from webapp.app import _safe, _slug, _titlecase_folder, app
+from webapp.app import app
+from webapp.config import _safe, _slug, _titlecase_folder
 
 
 def _test_account_svc(tmp_path: Path) -> AccountService:

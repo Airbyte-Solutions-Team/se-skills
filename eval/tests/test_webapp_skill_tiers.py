@@ -2,12 +2,30 @@
 
 import pytest
 
-from webapp.app import TIER_ANYTIME, TIER_LATE, TIER_META, TIER_WORKFLOW, discover_skills
+from services.skill_runtime_service import (
+    TIER_ANYTIME,
+    TIER_LATE,
+    TIER_META,
+    TIER_WORKFLOW,
+    SkillRuntimeService,
+)
+from webapp.config import SUITE_SKILLS_DIR
 
 
 @pytest.fixture
 def skills_list():
-    return discover_skills()
+    svc = SkillRuntimeService(
+        customers_dir=SUITE_SKILLS_DIR,
+        workspace=SUITE_SKILLS_DIR,
+        output_service=None,
+        job_service=None,
+        se_config=lambda: {},
+        se_config_clear=lambda: None,
+        safe_name=lambda n: n,
+        skills_dir=SUITE_SKILLS_DIR,
+        skills_dirs=[SUITE_SKILLS_DIR],
+    )
+    return svc.discover_skills()
 
 
 @pytest.fixture

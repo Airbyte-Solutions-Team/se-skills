@@ -411,6 +411,19 @@ class TranscriptionService:
     # ------------------------------------------------------------------
     # Public lifecycle
     # ------------------------------------------------------------------
+    def shutdown(self) -> None:
+        """Stop any active audio channels so the process can exit cleanly.
+
+        Recovered sessions have no live channels, so this is a no-op for them.
+        This does not persist transcripts; that is the caller's responsibility
+        via `stop_session`.
+        """
+        for sess in list(self.sessions.values()):
+            try:
+                sess.stop()
+            except Exception:
+                pass
+
     def audio_devices(self) -> dict[str, Any]:
         """Input devices for the mic/call pickers. Flags BlackHole presence."""
         try:

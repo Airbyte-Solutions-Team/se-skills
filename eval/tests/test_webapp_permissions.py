@@ -3,22 +3,59 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 
 import pytest
 
-import app
+from services.skill_runtime_service import SkillRuntimeService
+from webapp import config as app_config
 
 
-def _decode_json_response(resp):
-    """Decode a FastAPI JSONResponse body for assertions."""
-    data = resp.body
-    if isinstance(data, bytes):
-        return json.loads(data)
-    if hasattr(data, "body"):
-        return json.loads(data.body)
-    return data
+class _FakeOutputService:
+    def __init__(self, customers_dir: Path) -> None:
+        self.customers_dir = customers_dir
+
+    def opp_outputs_dir(self, account: str, opp_slug: str) -> Path:
+        d = self.customers_dir / account / "opportunities" / opp_slug / "outputs"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+
+class _FakeJobService:
+    def __init__(self) -> None:
+        self.jobs = {}
+        self.launch_calls = []
+
+    def find_reused_job(self, sig):
+        return None
+
+    async def launch(self, *, account, opp_slug, skill, opportunity, sig, prompt, meta):
+        self.launch_calls.append({
+            "account": account,
+            "opp_slug": opp_slug,
+            "skill": skill,
+            "opportunity": opportunity,
+            "sig": sig,
+            "prompt": prompt,
+            "meta": meta,
+        })
+        return "job-123", None
+
+
+def _runtime_svc(tmp_path: Path) -> SkillRuntimeService:
+    customers = tmp_path / "customers"
+    customers.mkdir(parents=True, exist_ok=True)
+    return SkillRuntimeService(
+        customers_dir=customers,
+        workspace=tmp_path,
+        output_service=_FakeOutputService(customers),
+        job_service=_FakeJobService(),
+        se_config=app_config._se_config,
+        se_config_clear=app_config._se_config_clear,
+        safe_name=lambda n: n,
+        skills_dir=app_config.SUITE_SKILLS_DIR,
+        skills_dirs=app_config.SKILLS_DIRS,
+    )
 
 
 @pytest.mark.parametrize(
@@ -33,7 +70,8 @@ def _decode_json_response(resp):
     ],
 )
 def test_permission_profile_classifies_skills(skill, freeform, expected_write, expected_shell, expected_git):
-    profile = app._permission_profile(skill, freeform=freeform)
+    svc = _runtime_svc(Path("/tmp"))
+    profile = svc._permission_profile(skill, freeform=freeform)
     data = profile.model_dump()
     assert data["write"] is expected_write
     assert data["shell"] is expected_shell
@@ -43,7 +81,8 @@ def test_permission_profile_classifies_skills(skill, freeform, expected_write, e
 
 
 def test_permission_profile_defaults_unknown_skill_to_write():
-    profile = app._permission_profile("not-a-skill")
+    svc = _runtime_svc(Path("/tmp"))
+    profile = svc._permission_profile("not-a-skill")
     data = profile.model_dump()
     assert data["write"] is True
     assert data["shell"] is False
@@ -52,7 +91,8 @@ def test_permission_profile_defaults_unknown_skill_to_write():
 
 
 def test_api_permissions_returns_profile_for_known_skill():
-    data = app.api_permissions(skill="connector-feasibility").model_dump()
+    svc = _runtime_svc(Path("/tmp"))
+    data = svc.permission_for("connector-feasibility")
     assert data["write"] is True
     assert data["shell"] is True
     assert data["git"] is True
@@ -61,79 +101,91 @@ def test_api_permissions_returns_profile_for_known_skill():
 
 
 def test_api_permissions_returns_broad_profile_for_freeform():
-    data = app.api_permissions(freeform=True).model_dump()
+    svc = _runtime_svc(Path("/tmp"))
+    data = svc.permission_for(None, freeform=True)
     assert data["write"] is True
     assert data["shell"] is True
     assert data["git"] is True
 
 
 def test_api_permissions_rejects_unknown_skill():
+    svc = _runtime_svc(Path("/tmp"))
     with pytest.raises(Exception):
-        app.api_permissions(skill="not-a-skill")
-
-
-def _patch_invoke(monkeypatch, tmp_path: Path):
-    customers = tmp_path / "customers"
-    monkeypatch.setattr(app, "CUSTOMERS_DIR", customers)
-    app.job_service.jobs = {}
-
-    async def _noop(*args, **kwargs):
-        pass
-
-    monkeypatch.setattr(app.job_service, "save_snapshot", _noop)
-    monkeypatch.setattr(app.job_service, "_run_job", lambda *args, **kwargs: None)
-    monkeypatch.setattr("asyncio.create_task", lambda coro, *, name=None: None)
-    return customers
+        svc.permission_for("not-a-skill")
 
 
 def test_api_invoke_blocks_without_permission_approval(monkeypatch, tmp_path: Path):
-    _patch_invoke(monkeypatch, tmp_path)
+    svc = _runtime_svc(tmp_path)
 
-    body = app.InvokeBody(account="Acme", skill="prep-call")
-    resp = asyncio.run(app.api_invoke(body))
-    data = _decode_json_response(resp)
+    result = asyncio.run(svc.invoke(
+        account="Acme",
+        skill="prep-call",
+        opportunity=None,
+        opp_slug=None,
+        extra=None,
+        freeform=None,
+        override_prerequisites=False,
+        approve_permissions=False,
+    ))
 
-    assert data["blocked"] is True
-    assert "permissions" in data
-    assert data["permissions"]["write"] is True
-    assert "job_id" not in data
+    assert result["blocked"] is True
+    assert "permissions" in result
+    assert result["permissions"]["write"] is True
+    assert "job_id" not in result
 
 
 def test_api_invoke_runs_after_permission_approval(monkeypatch, tmp_path: Path):
-    _patch_invoke(monkeypatch, tmp_path)
+    svc = _runtime_svc(tmp_path)
 
-    body = app.InvokeBody(account="Acme", skill="prep-call", approve_permissions=True)
-    resp = asyncio.run(app.api_invoke(body))
-    data = _decode_json_response(resp)
+    result = asyncio.run(svc.invoke(
+        account="Acme",
+        skill="prep-call",
+        opportunity=None,
+        opp_slug=None,
+        extra=None,
+        freeform=None,
+        override_prerequisites=False,
+        approve_permissions=True,
+    ))
 
-    assert data.get("job_id")
-    assert "blocked" not in data
+    assert result.get("job_id")
+    assert "blocked" not in result
 
 
 def test_api_invoke_blocks_freeform_without_permission_approval(monkeypatch, tmp_path: Path):
-    _patch_invoke(monkeypatch, tmp_path)
+    svc = _runtime_svc(tmp_path)
 
-    body = app.InvokeBody(account="Acme", freeform="Summarize the latest call")
-    resp = asyncio.run(app.api_invoke(body))
-    data = _decode_json_response(resp)
+    result = asyncio.run(svc.invoke(
+        account="Acme",
+        skill=None,
+        opportunity=None,
+        opp_slug=None,
+        extra=None,
+        freeform="Summarize the latest call",
+        override_prerequisites=False,
+        approve_permissions=False,
+    ))
 
-    assert data["blocked"] is True
-    assert data["permissions"]["write"] is True
-    assert data["permissions"]["shell"] is True
-    assert data["permissions"]["git"] is True
-    assert "job_id" not in data
+    assert result["blocked"] is True
+    assert result["permissions"]["write"] is True
+    assert result["permissions"]["shell"] is True
+    assert result["permissions"]["git"] is True
+    assert "job_id" not in result
 
 
 def test_api_invoke_freeform_runs_after_permission_approval(monkeypatch, tmp_path: Path):
-    _patch_invoke(monkeypatch, tmp_path)
+    svc = _runtime_svc(tmp_path)
 
-    body = app.InvokeBody(
+    result = asyncio.run(svc.invoke(
         account="Acme",
+        skill=None,
+        opportunity=None,
+        opp_slug=None,
+        extra=None,
         freeform="Summarize the latest call",
+        override_prerequisites=False,
         approve_permissions=True,
-    )
-    resp = asyncio.run(app.api_invoke(body))
-    data = _decode_json_response(resp)
+    ))
 
-    assert data.get("job_id")
-    assert "blocked" not in data
+    assert result.get("job_id")
+    assert "blocked" not in result

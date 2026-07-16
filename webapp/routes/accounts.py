@@ -1,7 +1,7 @@
 """Member, account, and opportunity HTTP routes for the SE Skills webapp."""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from services.account_service import AccountError, AccountService
@@ -118,6 +118,22 @@ async def api_opportunities(account: str, request: Request) -> list[dict]:
         return await _get_account_service(request).list_opportunities(account)
     except AccountError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+
+@router.get("/api/accounts/{account}/last-run")
+def api_last_run(account: str, opp_slug: str | None = None, request: Request = None):
+    """Return the most recent .runs/<name>.json for this account/opportunity."""
+    svc = _get_account_service(request)
+    output_svc = _get_output_service(request)
+    try:
+        safe_account = svc.safe_name(account)
+        safe_opp = svc.safe_name(opp_slug) if opp_slug else None
+    except AccountError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    rec = output_svc.latest_run(safe_account, safe_opp)
+    if not rec:
+        return Response(status_code=204)
+    return rec
 
 
 @router.post("/api/accounts/{account}/owner")
