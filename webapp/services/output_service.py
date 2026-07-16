@@ -240,8 +240,8 @@ class OutputService:
 
     def delete_output(self, path: str, customers_dir: Path | None = None) -> dict:
         target = self._resolve_output(path, customers_dir)
-        if target.suffix != ".md":
-            raise OutputError(400, "Only generated .md outputs can be deleted here")
+        if target.suffix not in (".md", ".html"):
+            raise OutputError(400, "Only generated .md or .html outputs can be deleted here")
         customers_dir = customers_dir or self.customers_dir
         root = customers_dir.resolve()
         trash = customers_dir / "_trash"

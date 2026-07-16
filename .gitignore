@@ -32,3 +32,6 @@ eval/**/*.pyc
 *.egg-info/
 uv.lock
 
+# Playwright MCP screenshot/snapshot cache (verification only)
+.playwright-mcp/
+

@@ -637,11 +637,63 @@ function overviewRecentSubtitle(item) {
   return parts.join(" · ");
 }
 
-function summaryCard(value, label, level = "neutral") {
-  return `<div class="summary-item${level ? " summary-item--" + level : ""}">
+function summaryCard(value, label, level = "neutral", panel = "") {
+  // `panel` makes the tile a clickable drill-in target; without it the tile is display-only.
+  const clickable = panel ? " summary-item--clickable" : "";
+  const attr = panel ? ` role="button" tabindex="0" data-panel="${esc(panel)}"` : "";
+  return `<div class="summary-item${level ? " summary-item--" + level : ""}${clickable}"${attr}>
     <span class="summary-value">${esc(String(value ?? "—"))}</span>
     <span class="summary-label">${esc(label)}</span>
   </div>`;
+}
+
+// Shared renderers for the overview drill-in panels (also usable elsewhere).
+function renderAttentionList(attention, empty) {
+  if (empty || !attention.length) {
+    return emptyBox({ icon: "✓", title: "Nothing needs attention", body: "No running jobs, recent failures, or outputs needing attention." });
+  }
+  return `<div class="attention-list">${attention.map((item) => `
+    <a class="attention-item attention-item--${item.level}" href="${esc(item.href)}">
+      <span class="attention-dot" aria-hidden="true"></span>
+      <span class="attention-main">
+        <span class="attention-title">${overviewAttentionTitle(item)}</span>
+        <span class="attention-sub">${overviewAttentionSubtitle(item)}</span>
+      </span>
+      <span class="attention-when" title="${fullDate(item.when)}">${item.when ? relTime(item.when) : ""}</span>
+    </a>`).join("")}</div>`;
+}
+
+function renderRecentList(recent, empty) {
+  if (empty || !recent.length) {
+    return emptyBox({ icon: "⊘", title: "No recent activity", body: "Run a skill or generate an output to see activity here." });
+  }
+  return `<div class="recent-list">${recent.map((item) => `
+    <div class="recent-item">
+      <span class="recent-dot recent-dot--${item.type.startsWith("job_error") ? "error" : (item.type === "output" && item.needs_attention ? "warn" : (item.type.startsWith("job") ? "info" : "neutral"))}" aria-hidden="true"></span>
+      <span class="recent-main">
+        <span class="recent-title">${overviewRecentTitle(item)}</span>
+        <span class="recent-sub">${overviewRecentSubtitle(item)}</span>
+      </span>
+      <a class="ghost small" href="${esc(item.href)}">Open</a>
+    </div>`).join("")}</div>`;
+}
+
+// A member-scoped list for the accounts/opportunities/outputs drill-in tiles:
+// the overview payload doesn't carry per-item lists, so we summarize by member
+// and link into the existing member page for the full breakdown.
+function renderMemberBreakdown(members, metric) {
+  const rows = members
+    .map((m) => ({ m, n: m[metric] || 0 }))
+    .filter((r) => r.n > 0)
+    .sort((a, b) => b.n - a.n);
+  if (!rows.length) {
+    return emptyBox({ icon: "⊘", title: "Nothing here yet", body: "No matching items across the team." });
+  }
+  return `<div class="panel-breakdown">${rows.map(({ m, n }) => `
+    <a class="panel-breakdown-row" href="#/member/${encodeURIComponent(m.id)}">
+      <span class="panel-breakdown-name">${esc(m.name)}</span>
+      <span class="panel-breakdown-count"><strong>${n}</strong></span>
+    </a>`).join("")}</div>`;
 }
 
 // ---- Page: members --------------------------------------------------------
@@ -672,43 +724,19 @@ async function pageMembers() {
       ${summaryCard(summary.members ?? members.length, "Members")}
       ${summaryCard(summary.active_accounts, "Accounts")}
       ${summaryCard(summary.opportunities, "Opportunities")}
-      ${summaryCard(summary.outputs, "Outputs")}
-      ${summaryCard(summary.running_jobs, "Running", summary.running_jobs ? "info" : "neutral")}
-      ${summaryCard(summary.recent_failures, "Failed", summary.recent_failures ? "error" : "neutral")}
-      ${summaryCard(summary.needs_attention, "Needs attention", summary.needs_attention ? "warn" : "neutral")}
+      ${summaryCard(summary.outputs, "Outputs", "neutral", "outputs")}
+      ${summaryCard(summary.running_jobs, "Running", summary.running_jobs ? "info" : "neutral", "running")}
+      ${summaryCard(summary.recent_failures, "Failed", summary.recent_failures ? "error" : "neutral", "failed")}
+      ${summaryCard(summary.needs_attention, "Needs attention", summary.needs_attention ? "warn" : "neutral", "attention")}
     </div>
 
-    <section class="overview-section">
-      <h2>Needs attention</h2>
-      <div id="attention-list" class="attention-list">
-        ${empty.attention ? emptyBox({ icon: "✓", title: "Nothing needs attention", body: "No running jobs, recent failures, or outputs needing attention." }) : attention.map((item) => `
-          <a class="attention-item attention-item--${item.level}" href="${esc(item.href)}">
-            <span class="attention-dot" aria-hidden="true"></span>
-            <span class="attention-main">
-              <span class="attention-title">${overviewAttentionTitle(item)}</span>
-              <span class="attention-sub">${overviewAttentionSubtitle(item)}</span>
-            </span>
-            <span class="attention-when" title="${fullDate(item.when)}">${item.when ? relTime(item.when) : ""}</span>
-          </a>`).join("")}
-      </div>
-    </section>
+    <div class="overview-tabs">
+      <button class="ghost small overview-tab" data-panel="recent">Recent activity</button>
+    </div>
 
-    <section class="overview-section">
-      <h2>Recent activity</h2>
-      <div id="recent-list" class="recent-list">
-        ${empty.recent ? emptyBox({ icon: "⊘", title: "No recent activity", body: "Run a skill or generate an output to see activity here." }) : recent.map((item) => `
-          <div class="recent-item">
-            <span class="recent-dot recent-dot--${item.type.startsWith("job_error") ? "error" : (item.type === "output" && item.needs_attention ? "warn" : (item.type.startsWith("job") ? "info" : "neutral"))}" aria-hidden="true"></span>
-            <span class="recent-main">
-              <span class="recent-title">${overviewRecentTitle(item)}</span>
-              <span class="recent-sub">${overviewRecentSubtitle(item)}</span>
-            </span>
-            <a class="ghost small" href="${esc(item.href)}">Open</a>
-          </div>`).join("")}
-      </div>
-    </section>
+    <div id="overview-panel" class="overview-panel hidden"></div>
 
-    <section class="overview-section">
+    <section class="overview-section" id="members-section">
       <h2>Team members</h2>
       ${empty.members ? emptyBox({ icon: "⊘", title: "No team members", body: "Add a team member to get started.", actions: `<button class="primary small" id="empty-add-member">Add team member</button>` }) : ""}
       <div class="member-grid" id="member-grid">
@@ -764,6 +792,50 @@ async function pageMembers() {
       pageMembers(); // refresh
     } catch (e) { alert("Could not add member: " + e.message); }
   };
+
+  // ── Drill-in panels: clicking a stat tile (or the Recent activity tab)
+  //    reveals the matching list below the tiles; clicking the active one closes it.
+  const panel = document.getElementById("overview-panel");
+  const membersSection = document.getElementById("members-section");
+  const panelTitles = {
+    outputs: "Outputs by member", running: "Running jobs",
+    failed: "Recent failures", attention: "Needs attention", recent: "Recent activity",
+  };
+  const panelBody = (which) => {
+    switch (which) {
+      case "attention": return renderAttentionList(attention, empty.attention);
+      case "recent": return renderRecentList(recent, empty.recent);
+      case "failed": return renderAttentionList(attention.filter((i) => i.type === "failure"), false);
+      case "running": return renderAttentionList(attention.filter((i) => i.type === "running" || i.type === "long-running"), false);
+      case "outputs": return renderMemberBreakdown(members, "output_count");
+      default: return "";
+    }
+  };
+  let activePanel = null;
+  const openPanel = (which) => {
+    if (activePanel === which) { // toggle closed → bring the members grid back
+      panel.classList.add("hidden");
+      if (membersSection) membersSection.classList.remove("hidden");
+      activePanel = null;
+      syncActive();
+      return;
+    }
+    activePanel = which;
+    panel.innerHTML = `<div class="overview-panel-head"><h2>${esc(panelTitles[which] || which)}</h2><button class="ghost small" id="panel-close">✕</button></div>${panelBody(which)}`;
+    panel.classList.remove("hidden");
+    if (membersSection) membersSection.classList.add("hidden"); // panel takes over the main area
+    document.getElementById("panel-close").onclick = () => openPanel(which); // same key = toggle closed
+    syncActive();
+  };
+  const syncActive = () => {
+    view.querySelectorAll("[data-panel]").forEach((el) => {
+      el.classList.toggle("is-active", el.dataset.panel === activePanel);
+    });
+  };
+  view.querySelectorAll("[data-panel]").forEach((el) => {
+    el.onclick = () => openPanel(el.dataset.panel);
+    el.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPanel(el.dataset.panel); } };
+  });
 }
 
 // ---- Page: member's accounts ---------------------------------------------
@@ -862,7 +934,9 @@ async function pageMember(memberId, tab = "active") {
         </div>
         <div class="acct-cell acct-cell-stage">
           <span class="acct-stage">${stageCell(a._sfdc)}</span>
-          <span class="acct-sub">${dateCell(a._sfdc?.close_date) || "<span class=\"muted\">—</span>"}</span>
+        </div>
+        <div class="acct-cell acct-cell-close">
+          <span class="acct-close">${dateCell(a._sfdc?.close_date) || "<span class=\"muted\">—</span>"}</span>
         </div>
         <div class="acct-cell acct-cell-updated">${accountUpdated(a)}</div>
         <div class="acct-cell acct-cell-outputs"><span class="acct-out-count${a.output_count ? "" : " muted"}">${a.output_count || "—"}</span></div>
@@ -903,6 +977,7 @@ async function pageMember(memberId, tab = "active") {
       <div class="acct-row-main no-link">
         ${hCell("name", "Account", "acct-cell-main")}
         ${hCell("stage", "Stage", "acct-cell-stage")}
+        ${hCell("close", "Close Date", "acct-cell-close")}
         ${hCell("updated", "Updated", "acct-cell-updated")}
         ${hCell("outputs", "Outputs", "acct-cell-outputs")}
         ${hCell("owner", "Owner", "acct-cell-owner")}
@@ -1316,9 +1391,9 @@ async function pageMember(memberId, tab = "active") {
           api(`/api/jobs?account=${encodeURIComponent(acct)}`).catch(() => []),
         ]);
         drawer.dataset.loaded = "1";
-        const activityByOpp = activityByOpp(jobs, acct);
+        const activityByOppSlug = activityByOpp(jobs, acct);
         drawer.innerHTML = opps.length
-          ? `<div class="opp-list">${oppHeaderRow()}${opps.map((o) => oppRow(acct, o, activityByOpp[o.slug])).join("")}</div>`
+          ? `<div class="opp-list">${oppHeaderRow()}${opps.map((o) => oppRow(acct, o, activityByOppSlug[o.slug])).join("")}</div>`
           : `<div class="opp-drawer-loading muted">No opportunities found.</div>`;
       }
     };

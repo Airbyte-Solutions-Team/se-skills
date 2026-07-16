@@ -334,8 +334,14 @@ def test_get_job_returns_full_record(service: JobService) -> None:
 
 
 def test_service_loads_at_init_and_marks_running_as_error(tmp_path) -> None:
-    """Initialization triggers recovery semantics."""
-    persistence.save_jobs({"j1": {"status": "running", "account": "Acme"}}, tmp_path)
+    """Initialization triggers recovery semantics for a genuinely-started job.
+
+    (A running record with no started_at is an orphan and is dropped instead —
+    see test_persistence_drops_never_started_running_jobs.)"""
+    persistence.save_jobs(
+        {"j1": {"status": "running", "account": "Acme", "started_at": 1_700_000_000.0}},
+        tmp_path,
+    )
     svc = JobService(tmp_path, model_for=_model_for, persist_run=_noop_persist)
     assert svc.get_job("j1")["status"] == "error"
 

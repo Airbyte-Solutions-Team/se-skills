@@ -67,11 +67,11 @@ body:has(.doc-layout) .bar { max-width: 1500px; }
 .acct-row:last-child { border-bottom: none; }
 .acct-row:not(.acct-head):hover { background: var(--panel-hover); }
 
-/* the clickable main area = a 5-column grid with two-line cells:
-   Account | Stage | Updated | Outputs | Owner */
+/* the clickable main area = a 6-column grid:
+   Account | Stage | Close Date | Updated | Outputs | Owner */
 .acct-row-main {
   flex: 1; display: grid;
-  grid-template-columns: minmax(180px, 2fr) 110px 100px 70px 90px;
+  grid-template-columns: minmax(160px, 1.6fr) 110px 100px 100px 70px 90px;
   align-items: start; gap: 12px;
   padding: 13px 16px; text-decoration: none; color: inherit; min-width: 0;
 }
@@ -83,8 +83,13 @@ body:has(.doc-layout) .bar { max-width: 1500px; }
 .acct-name { font-weight: 600; font-size: 15px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .acct-cell-stage { align-items: flex-start; }
 .acct-stage { font-size: 14px; color: var(--text); }
+.acct-cell-close { align-items: flex-start; }
+.acct-close { font-size: 13px; color: var(--text); white-space: nowrap; }
 .acct-updated { font-size: 13px; color: var(--text); }
 .acct-out-count { font-size: 13px; font-weight: 600; }
+/* owner cell: keep the pill sized to its content and vertically centered
+   (the cell is a flex column; default align-items:stretch would balloon the pill) */
+.acct-cell-owner { align-items: flex-start; }
 
 /* activity status chips */
 .activity { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; white-space: nowrap; }
@@ -189,7 +194,9 @@ body:has(.doc-layout) .bar { max-width: 1500px; }
 /* Responsive table prioritization — hide lower-value columns on narrow viewports
    so the remaining fields stay readable without redesigning the row layout. */
 @media (max-width: 1100px) {
+  /* drop Close Date first — lower-value than Updated */
   .acct-row-main { grid-template-columns: minmax(160px, 2fr) 100px 100px 70px 90px; }
+  .acct-cell-close { display: none; }
   .opp-row { grid-template-columns: minmax(160px, 2fr) 100px 90px 70px; }
 }
 @media (max-width: 900px) {
@@ -1104,6 +1111,29 @@ a.live-btn { text-decoration: none; display: inline-flex; align-items: center; }
 .summary-item--info { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); background: color-mix(in srgb, var(--accent) 6%, var(--panel)); }
 .summary-item--warn { border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); background: color-mix(in srgb, var(--warn) 8%, var(--panel)); }
 .summary-item--error { border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); background: color-mix(in srgb, var(--danger) 8%, var(--panel)); }
+/* clickable drill-in tiles */
+.summary-item--clickable { cursor: pointer; transition: border-color .15s ease, background .15s ease, transform .1s ease; }
+.summary-item--clickable:hover { border-color: var(--accent); background: var(--panel-hover); }
+.summary-item--clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.summary-item.is-active { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+
+/* Recent-activity entry point (no count tile) */
+.overview-tabs { display: flex; gap: 8px; margin: 4px 0 0; }
+.overview-tab.is-active { color: var(--accent); border-color: var(--accent); }
+
+/* the drill-in panel that opens under the tiles */
+.overview-panel { margin: 14px 0 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+.overview-panel.hidden { display: none; }
+.overview-panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.overview-panel-head h2 { font-size: 15px; font-weight: 600; margin: 0; color: var(--text); }
+
+/* per-member count breakdown (accounts/opps/outputs tiles) */
+.panel-breakdown { display: flex; flex-direction: column; gap: 6px; }
+.panel-breakdown-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; text-decoration: none; color: inherit; }
+.panel-breakdown-row:hover { background: var(--panel-hover); }
+.panel-breakdown-name { font-size: 14px; font-weight: 500; color: var(--text); }
+.panel-breakdown-count { font-size: 14px; color: var(--muted); }
+.panel-breakdown-count strong { color: var(--text); font-size: 15px; }
 
 .attention-list { display: flex; flex-direction: column; gap: 8px; }
 .attention-item {

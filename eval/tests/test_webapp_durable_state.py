@@ -38,6 +38,7 @@ def test_persistence_roundtrips_jobs_and_marks_running_as_lost(tmp_path) -> None
         "def456": {
             "status": "running", "ok": None, "stdout": "", "stderr": "",
             "skill": "poc-plan", "account": "Acme",
+            "started_at": 1_700_000_000.0,  # genuinely started → recoverable as error
             "sig": ("a", "b", "c", 2),
         },
     }
@@ -49,6 +50,28 @@ def test_persistence_roundtrips_jobs_and_marks_running_as_lost(tmp_path) -> None
     assert "re-run" in loaded["def456"]["stderr"].lower()
     assert loaded["def456"]["sig"] == ("a", "b", "c", 2)
     assert (tmp_path / ".state" / "jobs.json").exists()
+
+
+def test_persistence_drops_never_started_running_jobs(tmp_path) -> None:
+    # An orphaned record marked "running" but with no started_at never actually
+    # launched (crash/half-write). It must be dropped, not resurrected as a phantom
+    # failure that pollutes the "Recent failures" dashboard.
+    jobs = {
+        "good": {
+            "status": "running", "ok": None, "stdout": "", "stderr": "",
+            "skill": "deal-assessment", "account": "Acme",
+            "started_at": 1_700_000_000.0, "sig": ("a", 1),
+        },
+        "orphan": {
+            "status": "running", "ok": None, "stdout": "", "stderr": "",
+            "skill": "deal-assessment", "account": "11880",
+            "sig": ("a", 2),  # no started_at
+        },
+    }
+    persistence.save_jobs(jobs, tmp_path)
+    loaded = persistence.load_jobs(tmp_path)
+    assert "orphan" not in loaded
+    assert loaded["good"]["status"] == "error"  # genuinely-started job still recovered
 
 
 def test_persistence_filters_transient_fields_from_jobs_snapshot(tmp_path) -> None:

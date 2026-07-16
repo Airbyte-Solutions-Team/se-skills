@@ -107,6 +107,11 @@ def load_jobs(workspace: Path) -> dict[str, dict]:
         if not isinstance(rec, dict):
             continue
         if rec.get("status") == "running":
+            # A job with no start time never actually launched (an orphaned record
+            # from a crash/half-write). Resurrecting it as "error" manufactures a
+            # failure that never happened, so drop it instead of recovering it.
+            if not rec.get("started_at"):
+                continue
             rec["status"] = "error"
             rec["ok"] = False
             # Mark the job as finished at recovery time so the UI can still treat

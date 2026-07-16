@@ -92,11 +92,25 @@ def test_delete_output_moves_md_to_trash(tmp_path: Path) -> None:
     assert (tmp_path / "_trash").is_dir()
 
 
-def test_delete_output_rejects_non_md(tmp_path: Path) -> None:
+def test_delete_output_moves_html_to_trash(tmp_path: Path) -> None:
+    # Coverage-handoff outputs are .html; they must be deletable (moved to _trash).
     svc = _svc(tmp_path)
-    f = tmp_path / "Acme" / "outputs" / "next-move" / "handover.html"
+    rel = "Acme/outputs/coverage-handoff/coverage-handoff-2026-07-07-Acme.html"
+    f = tmp_path / rel
     f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text("<html></html>")
+    f.write_text("<!DOCTYPE html><html><body>Handoff</body></html>", encoding="utf-8")
+    result = svc.delete_output(rel)
+    assert result["deleted"] is True
+    assert not f.exists()
+    assert (tmp_path / "_trash").is_dir()
+
+
+def test_delete_output_rejects_other_types(tmp_path: Path) -> None:
+    # Only .md and .html are deletable here; sidecars (.json) and anything else are rejected.
+    svc = _svc(tmp_path)
+    f = tmp_path / "Acme" / "outputs" / "next-move" / "next-move-2026-07-14.md.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("{}")
     with pytest.raises(OutputError) as exc:
         svc.delete_output(str(f.relative_to(tmp_path)))
     assert exc.value.status_code == 400
