@@ -62,8 +62,10 @@ from routes.jobs import router as jobs_router
 from routes.outputs import router as outputs_router
 from routes.feedback import router as feedback_router
 from routes.overview import router as overview_router
+from routes.ask import router as ask_router
 from routes.salesforce import router as salesforce_router
 from services.account_service import AccountService
+from services.ask_service import AskService, DEEP_HINTS, anthropic_api_key
 from services.overview_service import OverviewService
 from services.feedback_service import FeedbackService
 from services.job_service import JobService
@@ -376,79 +378,7 @@ app.include_router(accounts_router)
 
 
 
-class OutputAsk(BaseModel):
-    path: str = Field(max_length=500)             # output file, relative to CUSTOMERS_DIR
-    question: str = Field(max_length=5_000)
-    account: str | None = Field(default=None, max_length=120)
-    opportunity: str | None = Field(default=None, max_length=200)
 
-
-@app.post("/api/output/ask")
-async def api_output_ask(body: OutputAsk):
-    """Follow-up Q&A against an opened output doc. Quick → Claude API (doc as
-    context); deep (codebase/connectors) → claude -p. Mirrors the live ask."""
-    try:
-        target = resolve_within(CUSTOMERS_DIR, body.path)
-    except ValueError:
-        raise HTTPException(404, "Not found")
-    if not target.is_file():
-        raise HTTPException(404, "Not found")
-    q = (body.question or "").strip()
-    if not q:
-        raise HTTPException(400, "Empty question")
-    doc = target.read_text()[-16000:]   # tail if very long
-    acct = body.account or ""
-    deep = any(h in q.lower() for h in _DEEP_HINTS)
-
-    if deep:
-        prompt = (
-            f"A Solutions Engineer is reviewing this generated document"
-            f"{(' for the account ' + repr(acct)) if acct else ''}"
-            f"{(', opportunity ' + repr(body.opportunity)) if body.opportunity else ''} and has a follow-up question.\n\n"
-            f"=== DOCUMENT ===\n{doc}\n=== END DOCUMENT ===\n\n"
-            f"Follow-up question: {q}\n\n"
-            f"Answer concisely and practically. If it involves Airbyte connectors, deployment, or the "
-            f"codebase, use the relevant SE skills / inspect the repo as needed."
-        )
-        job_id, persist_warn = await job_service.launch(
-            account=acct or "?",
-            opp_slug=None,
-            skill="output-ask",
-            opportunity=body.opportunity,
-            sig=("output-ask", body.path, q[:60]),
-            prompt=prompt,
-            meta={"account": acct or "?", "opp_slug": None, "skill": "output-ask", "opportunity": body.opportunity},
-        )
-        return {"mode": "deep", "job_id": job_id,
-                **({"persistence_warning": persist_warn} if persist_warn else {})}
-
-    api_key = _anthropic_api_key()
-    if not api_key:
-        return JSONResponse({"mode": "needs_deep",
-                             "reason": "No ANTHROPIC_API_KEY for the quick path — re-ask routes to claude -p."})
-
-    from sse_starlette.sse import EventSourceResponse
-
-    async def gen():
-        acc = ""
-        try:
-            from anthropic import AsyncAnthropic
-            client = AsyncAnthropic(api_key=api_key)
-            system = ("You are a Solutions Engineer's copilot. Answer the follow-up briefly and directly "
-                      "from the document provided. If the question needs the Airbyte codebase or a deep "
-                      "skill, say so in one line.")
-            async with client.messages.stream(
-                model=_model_for("quick-ask"), max_tokens=800, system=system,
-                messages=[{"role": "user", "content": f"Document:\n\n{doc}\n\nFollow-up question: {q}"}],
-            ) as stream:
-                async for text in stream.text_stream:
-                    acc += text
-                    yield {"event": "token", "data": json.dumps({"text": text, "html": md_render.markdown_to_body_html(acc)})}
-            yield {"event": "done", "data": "{}"}
-        except Exception as e:  # noqa: BLE001
-            yield {"event": "error", "data": json.dumps({"error": security.redact_sensitive(str(e))})}
-
-    return EventSourceResponse(gen())
 
 
 @app.get("/api/skills")
@@ -725,11 +655,20 @@ overview_service = OverviewService(
 )
 app.state.overview_service = overview_service
 
+ask_service = AskService(
+    output_service=output_service,
+    job_service=job_service,
+    api_key=anthropic_api_key,
+    model_for=_model_for,
+)
+app.state.ask_service = ask_service
+
 app.include_router(accounts_router)
 app.include_router(outputs_router)
 app.include_router(feedback_router)
 app.include_router(overview_router)
 app.include_router(salesforce_router)
+app.include_router(ask_router)
 
 
 @app.get("/api/plan")
@@ -1296,10 +1235,7 @@ async def api_transcribe_stream(session_id: str):
     return EventSourceResponse(gen())
 
 
-# Heuristic: questions that need the codebase / a skill go to claude -p.
-_DEEP_HINTS = ("codebase", "connector", "feasib", "troubleshoot", "schema", "api ",
-               "rate limit", "cdc", "deployment", "self-managed", "repo", "error",
-               "poc", "meddpicc", "qualif", "edge case")
+
 
 
 class AskLive(BaseModel):
@@ -1341,7 +1277,7 @@ async def api_transcribe_ask(session_id: str, body: AskLive):
     # Saved: send the whole thing — the SE is reviewing a finished call and
     # questions may target anything in it. Cap generously to bound token cost.
     transcript = full[-12000:] if live else full[-60000:]
-    deep = any(h in q.lower() for h in _DEEP_HINTS)
+    deep = any(h in q.lower() for h in DEEP_HINTS)
 
     if deep:
         # Route to claude -p (full repo + skill access) via the job system.
@@ -1369,7 +1305,7 @@ async def api_transcribe_ask(session_id: str, body: AskLive):
                 **({"persistence_warning": persist_warn} if persist_warn else {})}
 
     # Quick path → Claude API streaming (SSE).
-    api_key = _anthropic_api_key()
+    api_key = anthropic_api_key()
     if not api_key:
         # No key → tell the client to re-route as deep so the ask-bar still works.
         return JSONResponse({"mode": "needs_deep",
@@ -1412,42 +1348,8 @@ async def api_transcribe_ask(session_id: str, body: AskLive):
                              headers={"cache-control": "no-store", "x-accel-buffering": "no"})
 
 
-def _anthropic_key_from_keyring() -> str | None:
-    """Best-effort: read ANTHROPIC_API_KEY from the OS keyring via the
-    `keyring` module. Any backend error (missing service, locked keychain,
-    unsupported platform) is treated as "no key" so the app degrades to the
-    deep `claude -p` path.
-    """
-    try:
-        import keyring
-        import keyring.errors
-
-        return keyring.get_password("se-skills", "ANTHROPIC_API_KEY")
-    except (ImportError, keyring.errors.KeyringError, RuntimeError, OSError):
-        return None
-    except Exception:
-        return None
 
 
-def _anthropic_api_key() -> str | None:
-    """Return the Anthropic API key for the quick ask-bar path.
-
-    Priority: `ANTHROPIC_API_KEY` environment variable, then the OS keyring.
-    No plaintext `~/.mcp/*.env` files are read.
-    """
-    return os.environ.get("ANTHROPIC_API_KEY") or _anthropic_key_from_keyring()
-
-
-@app.get("/api/ai-status")
-def api_ai_status():
-    """Report whether the fast ⚡ ask-bar path is available.
-
-    The Anthropic key is optional — without it, questions fall back to the
-    slower claude -p deep path. The front-end uses this to show a badge so the
-    SE knows which mode they're in instead of wondering why answers are slow.
-    """
-    has_key = bool(_anthropic_api_key())
-    return {"quick_path": has_key}
 
 
 @app.post("/api/transcribe/{session_id}/stop")
