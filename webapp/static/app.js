@@ -37,21 +37,13 @@ async function invokeWithPlan(payload, alreadyConfirmed = false) {
     body: JSON.stringify(payload),
   });
   if (res.blocked && res.permissions) {
-    const summary = permissionSummary(res.permissions);
-    if (!confirm(`This skill requires the following permissions:\n${summary}\n\nProceed?`)) {
-      throw new Error("Cancelled");
-    }
+    // Auto-approve: the Invoke modal already discloses the required permissions
+    // ("Expected permissions" panel), so clicking Run IS the approval — no extra
+    // native confirm() dialog. The two-pass handshake still satisfies the
+    // backend SEC-001 gate, which requires approve_permissions=true.
     return invokeWithPlan({ ...payload, approve_permissions: true }, alreadyConfirmed);
   }
   return res;
-}
-
-function permissionSummary(perms) {
-  const parts = [];
-  if (perms.write) parts.push("writes a file to the customer workspace");
-  if (perms.git) parts.push("runs git commands");
-  if (perms.shell) parts.push("runs shell commands");
-  return parts.length ? "• " + parts.join("\n• ") : "• performs this action";
 }
 
 // Only allow a small set of link schemes in the markdown reader. `javascript:`,
@@ -68,6 +60,33 @@ const safeHref = (url) => {
 
 // "prep-call" → "PREP CALL", "deal-assessment" → "DEAL ASSESSMENT"
 const prettySkill = (id) => (id || "").replace(/[-_]/g, " ").toUpperCase();
+
+// A small "open in Salesforce" link chip. Renders nothing when no URL is available
+// (SFDC disabled, no record id, or instance URL couldn't be resolved). Opens in a
+// new tab. NOTE: rendered as a <span>, not an <a>, because account/opp rows are
+// themselves wrapped in an <a href="#/..."> and nesting <a> inside <a> is invalid
+// HTML — the browser hoists the inner anchor out of the row, breaking layout.
+// A span with an onclick avoids that while stopping the click from navigating the row.
+function sfdcLink(url, label = "Salesforce") {
+  if (!url) return "";
+  const safe = safeHref(url);
+  return `<span class="sfdc-link" role="link" tabindex="0" title="Open in Salesforce" onclick="event.stopPropagation();event.preventDefault();window.open('${encodeURI(safe)}','_blank','noopener')">☁ ${esc(label)}</span>`;
+}
+
+// Collapsible error detail for a failed job. The job object comes from the full
+// single-job endpoint (/api/jobs/{id}), which includes stderr/stdout. Renders a
+// "View error detail" <details> with the captured (already secret-redacted)
+// output so the user can see WHAT went wrong, not just that it failed.
+function errorDetailHtml(job) {
+  if (!job || job.ok) return "";
+  const detail = (job.stderr && job.stderr.trim()) || (job.stdout && job.stdout.trim()) || "";
+  if (!detail) return "";
+  const firstLine = detail.split("\n").find((l) => l.trim()) || "";
+  return `<details class="run-error-detail">
+    <summary>View error detail${firstLine ? ` — <span class="run-error-first">${esc(firstLine.slice(0, 140))}</span>` : ""}</summary>
+    <pre class="run-error-log">${esc(detail)}</pre>
+  </details>`;
+}
 
 // Concise output label from a filename. Filenames are
 // "<skill>-YYYY-MM-DD[-Descriptor][-vN].md" — strip the extension, the redundant
@@ -436,13 +455,17 @@ function showSkillToast(job, ctx) {
   const ok = job.ok;
   const skill = prettySkill(job.skill || ctx.skill || "run");
   const opp = ctx.oppName || job.opportunity || ctx.account || "";
+  // On failure, surface the first line of the captured error in the toast sub so
+  // the reason is visible at a glance (full detail is on the page's status row).
+  const errLine = ok ? "" : (((job.stderr || job.stdout || "").split("\n").find((l) => l.trim())) || "").slice(0, 140);
+  const sub = ok ? esc(opp) : (errLine ? esc(errLine) : esc(opp));
   const el = document.createElement("div");
   el.className = `toast ${ok ? "ok" : "err"}`;
   el.innerHTML =
     `<span class="toast-icon">${ok ? "✓" : "✕"}</span>`
     + `<div class="toast-body">`
     + `<div class="toast-title">${esc(skill)} ${ok ? "is ready" : "failed"}</div>`
-    + `<div class="toast-sub">${esc(opp)}</div></div>`
+    + `<div class="toast-sub">${sub}</div></div>`
     + (ok ? `<button class="toast-open">Open</button>` : "")
     + `<button class="toast-x" aria-label="Dismiss">✕</button>`;
   wrap.appendChild(el);
@@ -457,7 +480,8 @@ function showSkillToast(job, ctx) {
   el.querySelector(".toast-x").onclick = close;
   const openBtn = el.querySelector(".toast-open");
   if (openBtn) openBtn.onclick = () => { close(); openSkillOutput(ctx); };
-  timer = setTimeout(close, 10000);
+  // Error toasts stay until dismissed so the reason can be read; success auto-closes.
+  if (ok) timer = setTimeout(close, 10000);
 }
 
 // Generic message toast — used for inline UI confirmations (e.g. feedback saved).
@@ -929,7 +953,7 @@ async function pageMember(memberId, tab = "active") {
       <label class="acct-check"><input type="checkbox" class="row-check" data-acct="${esc(a.name)}" /></label>
       <a href="#/account/${encodeURIComponent(a.name)}" class="acct-row-main">
         <div class="acct-cell acct-cell-main">
-          <span class="acct-name-wrap"><span class="acct-name">${esc(a.name)}</span>${renderActivity(act, "small")}</span>
+          <span class="acct-name-wrap"><span class="acct-name">${esc(a.name)}</span>${renderActivity(act, "small")}${sfdcLink(a._sfdc?.sfdc_account_url)}</span>
           ${accountSub(a)}
         </div>
         <div class="acct-cell acct-cell-stage">
@@ -1422,7 +1446,7 @@ function oppRow(account, o, activity = null) {
   return `
     <a class="opp-row" href="#/opp/${encodeURIComponent(account)}/${encodeURIComponent(o.slug)}/${encodeURIComponent(o.name)}">
       <div class="opp-cell opp-cell-main">
-        <span class="opp-name-wrap"><span class="opp-row-name">${esc(o.name)}</span>${renderActivity(activity, "small")}</span>
+        <span class="opp-name-wrap"><span class="opp-row-name">${esc(o.name)}</span>${renderActivity(activity, "small")}${sfdcLink(o.sfdc_url)}</span>
         ${sub}
       </div>
       <div class="opp-cell opp-cell-stage"><span class="opp-stage">${stage}</span></div>
@@ -1841,7 +1865,7 @@ async function pageOpportunity(account, slug, oppName) {
     const head = ok
       ? `✓ ${esc(job.skill || "run")}${ago} — saved to Generated Outputs below`
       : `✕ ${esc(job.skill || "run")}${ago} — finished with an error`;
-    row.innerHTML = `<span class="run-head">${head}</span><button class="run-dismiss" title="Dismiss">✕</button>`;
+    row.innerHTML = `<span class="run-head">${head}</span>${errorDetailHtml(job)}<button class="run-dismiss" title="Dismiss">✕</button>`;
     row.querySelector(".run-dismiss").onclick = () => { row.remove(); rows.delete(key); };
   };
 

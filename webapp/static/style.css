@@ -79,8 +79,12 @@ body:has(.doc-layout) .bar { max-width: 1500px; }
 .acct-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .acct-cell .acct-sub { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .acct-cell-main { gap: 3px; }
-.acct-name-wrap { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.acct-name-wrap { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: nowrap; }
+.acct-name-wrap .acct-name { flex: 0 1 auto; }
 .acct-name { font-weight: 600; font-size: 15px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* "open in Salesforce" link chip next to an account/opportunity name */
+.sfdc-link { flex: 0 0 auto; font-size: 11px; font-weight: 500; color: var(--accent); text-decoration: none; border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; white-space: nowrap; opacity: .85; }
+.sfdc-link:hover { opacity: 1; border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .acct-cell-stage { align-items: flex-start; }
 .acct-stage { font-size: 14px; color: var(--text); }
 .acct-cell-close { align-items: flex-start; }
@@ -465,6 +469,16 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 .status.running { color: var(--warn); }
 .status.ok { color: var(--accent2); }
 .status.err { color: #ff6b6b; }
+/* a failed status row carries an expandable error detail — lay it out in a column
+   so the <details> log can grow below the headline + dismiss button. */
+.status.err:has(.run-error-detail) { flex-direction: column; align-items: stretch; }
+.status.err:has(.run-error-detail) .run-dismiss { position: absolute; top: 8px; right: 8px; }
+.status.err:has(.run-error-detail) { position: relative; padding-right: 36px; }
+.run-error-detail { margin-top: 6px; color: var(--text); }
+.run-error-detail summary { cursor: pointer; color: var(--muted); font-size: 13px; font-weight: 500; }
+.run-error-detail summary:hover { color: var(--text); }
+.run-error-detail .run-error-first { color: #ff9a9a; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.run-error-log { margin: 8px 0 2px; padding: 10px 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.5; color: var(--text); white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow: auto; }
 /* post-run preview — full page width; collapsed by default with a fade, expandable */
 .output { margin-top: 14px; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 18px 22px; overflow: hidden; }
 .output.collapsed { max-height: 180px; position: relative; }

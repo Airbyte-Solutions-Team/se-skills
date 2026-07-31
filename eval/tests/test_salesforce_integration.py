@@ -148,7 +148,11 @@ def test_stage_and_amount_prefers_open_non_renewal(tmp_path: Path, monkeypatch) 
             },
         ]
 
+    async def no_instance_url() -> None:
+        return None
+
     monkeypatch.setattr(sf, "_run_query", fake_query)
+    monkeypatch.setattr(sf, "instance_url", no_instance_url)
     result = _run(sf.stage_and_amount_for_accounts(["Acme-Corp"]))
     assert result == {
         "Acme-Corp": {
@@ -159,6 +163,8 @@ def test_stage_and_amount_prefers_open_non_renewal(tmp_path: Path, monkeypatch) 
             "type": "New Business",
             "close_date": "2026-07-01",
             "is_closed": False,
+            "sfdc_account_id": None,
+            "sfdc_account_url": None,
         }
     }
 

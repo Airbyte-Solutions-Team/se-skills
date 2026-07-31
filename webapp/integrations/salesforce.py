@@ -69,6 +69,49 @@ class SalesforceIntegration:
     def _org_alias(self) -> str:
         return self._config().get("org_alias", "airbyte-prod")
 
+    async def instance_url(self) -> str | None:
+        """Return the org's Salesforce base URL (e.g. https://airbyte.my.salesforce.com),
+        used to build Lightning record links. Prefers an explicit `instance_url` in the
+        `salesforce:` config; otherwise derives it once from `sf org display --json` and
+        caches it. Returns None if unavailable (links then degrade to plain text."""
+        explicit = self._config().get("instance_url")
+        if explicit:
+            return str(explicit).rstrip("/")
+        if not self.is_enabled():
+            return None
+        cached = getattr(self, "_instance_url_cache", "__unset__")
+        if cached != "__unset__":
+            return cached
+        url: str | None = None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "sf", "org", "display", "--target-org", self._org_alias(), "--json",
+                cwd=str(self.workspace),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=self._timeout)
+            if proc.returncode == 0:
+                # `sf` may prepend a non-JSON update-warning line; parse from the first `{`.
+                text = out.decode(errors="replace")
+                brace = text.find("{")
+                if brace != -1:
+                    data = json.loads(text[brace:])
+                    raw = (data.get("result") or {}).get("instanceUrl")
+                    if raw:
+                        url = str(raw).rstrip("/")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Salesforce instance_url lookup failed: %s", exc)
+        self._instance_url_cache = url
+        return url
+
+    @staticmethod
+    def lightning_record_url(base_url: str | None, object_name: str, record_id: str | None) -> str | None:
+        """Build a Lightning record URL, or None if base_url/record_id is missing."""
+        if not base_url or not record_id:
+            return None
+        return f"{base_url}/lightning/r/{object_name}/{record_id}/view"
+
     # -----------------------------------------------------------------------
     # Sidecar helpers
     # -----------------------------------------------------------------------
@@ -141,16 +184,19 @@ class SalesforceIntegration:
             return []
         like = self._sfdc_like_prefix(account)
         query = (
-            "SELECT Name, StageName, Stage_Number__c, Amount, CloseDate, Type, "
-            "IsClosed, Owner.Name "
+            "SELECT Id, Name, StageName, Stage_Number__c, Amount, CloseDate, Type, "
+            "IsClosed, Owner.Name, Account.Id "
             f"FROM Opportunity WHERE Account.Name LIKE '{like}%' ORDER BY CloseDate DESC"
         )
         records = await self._run_query(query)
         if not records:
             return []
+        base_url = await self.instance_url()
         opps = []
         for r in records:
             name = r.get("Name") or "Opportunity"
+            opp_id = r.get("Id")
+            acct_id = (r.get("Account") or {}).get("Id")
             opps.append({
                 "name": name,
                 "slug": self._slug(name),
@@ -161,6 +207,10 @@ class SalesforceIntegration:
                 "type": r.get("Type"),
                 "is_closed": r.get("IsClosed"),
                 "ae": ((r.get("Owner") or {}).get("Name")),
+                "sfdc_id": opp_id,
+                "sfdc_account_id": acct_id,
+                "sfdc_url": self.lightning_record_url(base_url, "Opportunity", opp_id),
+                "sfdc_account_url": self.lightning_record_url(base_url, "Account", acct_id),
             })
         return opps
 
@@ -179,13 +229,14 @@ class SalesforceIntegration:
             f"Account.Name LIKE '{self._sfdc_like_prefix(n)}%'" for n in names
         )
         query = (
-            "SELECT Account.Name, StageName, Stage_Number__c, Amount, CloseDate, "
+            "SELECT Account.Name, Account.Id, StageName, Stage_Number__c, Amount, CloseDate, "
             "IsClosed, Type, Owner.Name "
             f"FROM Opportunity WHERE {likes} ORDER BY CloseDate DESC"
         )
         records = await self._run_query(query)
         if not records:
             return {}
+        base_url = await self.instance_url()
 
         # Exact map from stored SFDC name -> folder, plus a lossy token/prefix map
         # for legacy folders with no captured `.sfdc-name`.
@@ -220,6 +271,7 @@ class SalesforceIntegration:
                 "type": r.get("Type"),
                 "close_date": r.get("CloseDate"),
                 "is_closed": r.get("IsClosed"),
+                "sfdc_account_id": (r.get("Account") or {}).get("Id"),
                 "open": not r.get("IsClosed"),
                 "renewal": (r.get("Type") == "Renewal"),
             }
@@ -238,6 +290,8 @@ class SalesforceIntegration:
                 "type": v["type"],
                 "close_date": v["close_date"],
                 "is_closed": v["is_closed"],
+                "sfdc_account_id": v.get("sfdc_account_id"),
+                "sfdc_account_url": self.lightning_record_url(base_url, "Account", v.get("sfdc_account_id")),
             }
             for k, v in by_acct.items()
         }
