@@ -292,6 +292,8 @@ Then estimate peak concurrency using the empirical sync duration defaults below,
 
 **Example**: 45 hourly API connections -> 45 * (5.5 / 60) = ~4.1 concurrent API jobs. 30 hourly DB connections -> 30 * (3.3 / 60) = ~1.7 concurrent DB jobs. Workers = ceil(4.1 / 5) + ceil(1.7 / 2) = 1 + 1 = **2 workers**.
 
+**Peak / maintenance window burst check**: When the user mentions a peak window or maintenance window, always compute a worst-case burst where every daily (or less frequent) sync in that window starts at the same moment. Add the resulting concurrent jobs to the sub-hourly and hourly steady-state concurrency and report the worst-case workers. This is especially important when daily syncs are scheduled with `0 H * * *` cron expressions that pile up at the top of the hour.
+
 Always caveat that this is an estimate — once on the platform, actual CPU-based billing data is more accurate.
 
 ### Queue Risk Analysis (Enforcement)

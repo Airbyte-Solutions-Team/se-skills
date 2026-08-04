@@ -1,0 +1,13 @@
+{
+  "command": [
+    "claude",
+    "-p",
+    "Use the worker-analysis skill for Acme. Analyze the OSS export at /home/ubuntu/repos/se-skills/eval/fixtures/worker_analysis_workspace.json. The export is from workspace ws-synthetic-001. Identify peak concurrency, long-running jobs, failed or retried jobs, and provide worker recommendations.",
+    "--model",
+    "claude-sonnet-4-6",
+    "--bare",
+    "--dangerously-skip-permissions"
+  ],
+  "returncode": 0,
+  "stderr": ""
+}

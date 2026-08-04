@@ -1,0 +1,13 @@
+{
+  "command": [
+    "claude",
+    "-p",
+    "Use the worker-analysis skill for Acme. Estimate workers for a prospect with 45 connections: 30 are SaaS APIs (Salesforce, HubSpot, Stripe) and 15 are databases (Postgres, MySQL). Sync frequencies: 20% every 15 min, 30% hourly, 50% daily. Average sync duration 10 minutes. Peak window 2-6 AM UTC. Need data fresh within 1 hour for key reports. Growth to 80 connections in 6 months. Two environments (prod and staging). No initial load. Recurring incremental workload.",
+    "--model",
+    "claude-sonnet-4-6",
+    "--bare",
+    "--dangerously-skip-permissions"
+  ],
+  "returncode": 0,
+  "stderr": ""
+}

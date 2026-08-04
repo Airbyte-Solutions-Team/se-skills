@@ -65,7 +65,7 @@ class WorkerCalculator:
         total_capacity = api_capacity + db_capacity
 
         # Round up to get workers needed
-        workers_required = ceil(total_capacity)
+        workers_required = ceil(api_capacity) + ceil(db_capacity)
 
         return {
             "mode": "measured",
@@ -188,7 +188,7 @@ class WorkerCalculator:
         total_capacity = api_capacity + db_capacity
 
         # Round up to get workers needed
-        workers_required = ceil(total_capacity)
+        workers_required = ceil(api_capacity) + ceil(db_capacity)
 
         return {
             "mode": "estimate",

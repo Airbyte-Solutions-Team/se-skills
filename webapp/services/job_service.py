@@ -121,7 +121,17 @@ class JobService:
         """Run `claude -p` for `job_id`, updating status, output, and run records."""
         job = self.jobs[job_id]
         model = self.model_for(meta.get("skill", "default"))
-        cmd = ["claude", "-p", prompt, "--model", model, "--permission-mode", "acceptEdits"]
+        permission_mode = meta.get("permission_mode", "auto")
+        cmd = [
+            "claude",
+            "-p",
+            prompt,
+            "--model",
+            model,
+            "--bare",
+            "--permission-mode",
+            permission_mode,
+        ]
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,

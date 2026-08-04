@@ -66,6 +66,7 @@ class PermissionProfile(BaseModel):
     write: bool = True
     shell: bool = False
     git: bool = False
+    permission_mode: str = "auto"  # passed to `claude --permission-mode`
 
     def requires_approval(self) -> bool:
         return self.write or self.shell or self.git
@@ -75,6 +76,7 @@ class SkillPermission(BaseModel):
     write: bool = True
     shell: bool = False
     git: bool = False
+    permission_mode: str = "auto"
     requires_approval: bool = True
     summary: str = ""
 
@@ -91,6 +93,7 @@ class SkillPermission(BaseModel):
             write=profile.write,
             shell=profile.shell,
             git=profile.git,
+            permission_mode=profile.permission_mode,
             requires_approval=profile.requires_approval(),
             summary="; ".join(caps) if caps else "performs this action",
         )
@@ -102,7 +105,7 @@ SKILL_PERMISSIONS: dict[str, PermissionProfile] = {
     "connector-feasibility": PermissionProfile(write=True, shell=True, git=True),
     "freeform": PermissionProfile(write=True, shell=True, git=True),
     "pov-gsheet": PermissionProfile(write=True, shell=True, git=False),
-    "worker-analysis": PermissionProfile(write=True, shell=True, git=False),
+    "worker-analysis": PermissionProfile(write=True, shell=True, git=False, permission_mode="bypassPermissions"),
 }
 
 
@@ -405,12 +408,14 @@ class SkillRuntimeService:
         if not freeform and skill not in self.skill_ids:
             raise SkillRuntimeError(400, f"Unknown skill: {skill}")
 
-        out_dir = None
         if safe_opp:
             try:
                 out_dir = self.output_service.opp_outputs_dir(safe_account, safe_opp)
             except OutputError as exc:
                 raise SkillRuntimeError(exc.status_code, exc.detail) from exc
+        else:
+            out_dir = self.customers_dir / safe_account / "outputs"
+            out_dir.mkdir(parents=True, exist_ok=True)
 
         # Deterministic prerequisite check. Free-form instructions and explicit
         # overrides skip the planner.
@@ -456,6 +461,7 @@ class SkillRuntimeService:
                     "opp_slug": safe_opp,
                     "skill": skill_id,
                     "opportunity": opportunity,
+                    "permission_mode": profile.permission_mode,
                 },
             )
         except HTTPException as exc:

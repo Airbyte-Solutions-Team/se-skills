@@ -34,9 +34,20 @@ sys.path.insert(0, str(SRC_DIR))
 
 
 def _questionnaire(args: argparse.Namespace) -> int:
-    from mode2_prospect_questionnaire import run_questionnaire
+    from mode2_prospect_questionnaire import estimate_from_questionnaire
 
-    return run_questionnaire()
+    result = estimate_from_questionnaire(
+        total_connections=args.connections,
+        db_file_percent=args.db_percent,
+        api_percent=args.api_percent,
+        sub_hourly_percent=args.sub_hourly_percent,
+        hourly_percent=args.hourly_percent,
+        daily_percent=args.daily_percent,
+        sync_duration_minutes=args.avg_duration,
+        maintenance_window_hours=args.maintenance_window,
+    )
+    print(json.dumps({"mode": "2A_questionnaire", "result": result}, indent=2, default=str))
+    return 0
 
 
 def _custom_estimate(args: argparse.Namespace) -> int:
@@ -125,22 +136,31 @@ def _oss_export(args: argparse.Namespace) -> int:
 
 
 def _workspace(args: argparse.Namespace) -> int:
-    from analyze_org_workspaces import analyze_org_workspaces
+    from analyze_org_workspaces import analyze_workspaces
 
     if not args.workspace_id and not args.org_id:
         print("error: --workspace-id or --org-id required", file=sys.stderr)
         return 2
 
-    result = analyze_org_workspaces(
-        organization_id=args.org_id,
-        workspace_id=args.workspace_id,
-        client_id=args.client_id,
-        client_secret=args.client_secret,
-        days=args.days,
-        output_dir=args.output_dir,
-    )
-    print(json.dumps(result, indent=2))
-    return 0
+    workspace_ids = []
+    if args.workspace_id:
+        workspace_ids.append(args.workspace_id)
+    if args.org_id:
+        # The library does not support org-wide workspace enumeration; caller must supply IDs.
+        print("error: --org-id is not supported by the CLI; use --workspace-id", file=sys.stderr)
+        return 2
+
+    try:
+        result = analyze_workspaces(
+            workspace_ids=workspace_ids,
+            client_id=args.client_id,
+            client_secret=args.client_secret,
+        )
+        print(json.dumps(result, indent=2, default=str))
+        return 0
+    except Exception as exc:
+        print(f"error: workspace analysis failed: {exc}", file=sys.stderr)
+        return 1
 
 
 def _report(args: argparse.Namespace) -> int:
@@ -167,8 +187,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Worker analysis toolkit runner")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    # Interactive questionnaire (preserves original prompts)
-    subparsers.add_parser("questionnaire", help="Run interactive prospect questionnaire")
+    # Questionnaire-based estimate from CLI args
+    q = subparsers.add_parser("questionnaire", help="Estimate from prospect questionnaire answers")
+    q.add_argument("--connections", type=int, default=50)
+    q.add_argument("--api-percent", type=float, default=50)
+    q.add_argument("--db-percent", type=float, default=50)
+    q.add_argument("--sub-hourly-percent", type=float, default=20)
+    q.add_argument("--hourly-percent", type=float, default=30)
+    q.add_argument("--daily-percent", type=float, default=50)
+    q.add_argument("--avg-duration", type=float, default=8)
+    q.add_argument("--maintenance-window", type=float, default=4)
 
     # Quick estimate from CLI args
     est = subparsers.add_parser("estimate", help="Quick ballpark estimate")

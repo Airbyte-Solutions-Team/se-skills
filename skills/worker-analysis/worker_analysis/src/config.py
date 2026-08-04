@@ -82,7 +82,7 @@ DEFAULT_SYNC_DURATION_MINUTES = 30  # For estimation mode
 
 # Time intervals for sync frequencies
 SYNC_INTERVALS = {
-    "sub_hourly": 30,    # minutes
+    "sub_hourly": 15,    # minutes (15 is the common Airbyte sub-hourly cadence)
     "hourly": 60,        # minutes
     "daily": 1440        # minutes (24 hours)
 }
