@@ -10,12 +10,19 @@ free-form or otherwise unplannable).
 from __future__ import annotations
 
 import logging
+import os
 import re
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 import output_schema
+
+try:
+    import yaml
+except ImportError:
+    yaml = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +47,7 @@ class PlanResult(BaseModel):
     missing: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     upstream: dict[str, UpstreamStatus] = Field(default_factory=dict)
+    modes: dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +93,7 @@ SKILL_PREREQUISITES: dict[str, list[dict]] = {
     "internal-prep": [],
     "coverage-handoff": [],
     "next-move": [],
+    "worker-analysis": [{"kind": "worker_config"}],
 }
 
 
@@ -180,6 +189,75 @@ def _check_upstream(
     return True, [], status
 
 
+def _load_worker_analysis_config(customers_dir: Path) -> dict[str, Any]:
+    """Load the `worker_analysis` block from .se-config.yaml (or an env override)."""
+    cfg: dict[str, Any] = {}
+
+    # Prefer a config file in the workspace root (parent of customers/)
+    candidates = [
+        customers_dir.parent / ".se-config.yaml",
+        Path.home() / ".se-skills" / ".se-config.yaml",
+        Path.home() / "airbyte-work" / ".se-config.yaml",
+    ]
+    for candidate in candidates:
+        if candidate.exists() and yaml is not None:
+            try:
+                raw = yaml.safe_load(candidate.read_text()) or {}
+                if isinstance(raw, dict):
+                    cfg = raw.get("worker_analysis", {}) or {}
+                    break
+            except (OSError, ValueError):
+                pass
+
+    return cfg
+
+
+def _check_worker_analysis_modes(customers_dir: Path) -> dict[str, Any]:
+    """Return mode-aware readiness for worker-analysis.
+
+    Questionnaire mode is always available. Workspace/API and Metabase modes depend
+    on credentials/config; Datadog is optional. Missing optional dependencies are
+    reported as warnings so the UI can still launch questionnaire mode.
+    """
+    cfg = _load_worker_analysis_config(customers_dir)
+
+    modes: dict[str, Any] = {
+        "questionnaire": {"ready": True, "required": False, "missing": []},
+        "workspace": {"ready": False, "required": False, "missing": []},
+        "metabase": {"ready": False, "required": False, "missing": []},
+        "datadog": {"ready": False, "required": False, "missing": []},
+    }
+
+    client_id = cfg.get("airbyte_cloud_client_id") or os.environ.get("AIRBYTE_CLOUD_CLIENT_ID")
+    client_secret = cfg.get("airbyte_cloud_client_secret") or os.environ.get("AIRBYTE_CLOUD_CLIENT_SECRET")
+    if client_id and client_secret:
+        modes["workspace"]["ready"] = True
+    else:
+        modes["workspace"]["missing"].append(
+            "Airbyte Cloud client id/secret are required for workspace analysis. "
+            "Set them in .se-config.yaml worker_analysis or env AIRBYTE_CLOUD_CLIENT_ID / AIRBYTE_CLOUD_CLIENT_SECRET."
+        )
+
+    bigquery_project = cfg.get("bigquery_project")
+    if bigquery_project and bigquery_project != "<your-bigquery-project>":
+        modes["metabase"]["ready"] = True
+    else:
+        modes["metabase"]["missing"].append(
+            "BigQuery project/dataset are required for Metabase billing analysis. "
+            "Set them in .se-config.yaml worker_analysis."
+        )
+
+    datadog_url = cfg.get("datadog_dashboard_url")
+    if datadog_url:
+        modes["datadog"]["ready"] = True
+    else:
+        modes["datadog"]["missing"].append(
+            "Datadog dashboard URL is optional; set worker_analysis.datadog_dashboard_url to include deep links."
+        )
+
+    return modes
+
+
 def check_prerequisites(
     skill: str,
     account: str,
@@ -197,11 +275,21 @@ def check_prerequisites(
     warnings: list[str] = []
     upstream: dict[str, UpstreamStatus] = {}
 
+    modes: dict[str, Any] | None = None
     for rule in rules:
         kind = rule["kind"]
         if kind == "transcript":
             if not _has_transcript(customers_dir, account):
                 missing.append("At least one customer transcript is required.")
+        elif kind == "worker_config":
+            modes = _check_worker_analysis_modes(customers_dir)
+            if modes:
+                if not modes["workspace"]["ready"]:
+                    warnings.append("Workspace/API analysis is unavailable without Airbyte Cloud credentials.")
+                if not modes["metabase"]["ready"]:
+                    warnings.append("Metabase billing analysis is unavailable without a configured BigQuery project.")
+                if not modes["datadog"]["ready"]:
+                    warnings.append("Datadog deep links are unavailable without a configured dashboard URL.")
         elif kind == "upstream":
             for uskill in rule.get("skills", []):
                 ok, msgs, status = _check_upstream(
@@ -220,4 +308,5 @@ def check_prerequisites(
         missing=missing,
         warnings=warnings,
         upstream=upstream,
+        modes=modes,
     )

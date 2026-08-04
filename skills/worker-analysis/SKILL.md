@@ -10,6 +10,22 @@ description: >
 
 Analyze, estimate, and optimize Airbyte Data Worker usage.
 
+## SE Suite Configuration
+
+Before running workspace or Metabase analysis, read `.se-config.yaml` and use the `worker_analysis` block:
+
+```yaml
+worker_analysis:
+  bigquery_project: "<your-bigquery-project>"   # default: airbyte-data-prod
+  bigquery_dataset: "<your-dataset>"             # default: airbyte_warehouse
+  metabase_database_id: 2                         # default billing database
+  datadog_dashboard_url: "<optional-dashboard>"
+  airbyte_cloud_client_id: "<client-id>"
+  airbyte_cloud_client_secret: "<client-secret>"
+```
+
+All SQL examples below use `{bigquery_project}.{bigquery_dataset}` for project-qualified tables and `{bigquery_dataset}` for dataset-only tables. Substitute from config before running queries. If the config block is missing, ask the user for these values rather than guessing.
+
 ## Billing Formula (Ground Truth)
 
 The platform computes data workers from CPU resource requests, NOT from connection counts or connector types:
@@ -18,7 +34,7 @@ The platform computes data workers from CPU resource requests, NOT from connecti
 
 Each sync job tracks three CPU components: source connector CPU, destination connector CPU, and orchestrator CPU. These are summed into hourly buckets and the maximum within each bucket determines the data workers for that hour. There is no distinction between API and DB connectors in the billing formula.
 
-Source: `DataWorkerUsage.calculateDataWorkers()` in `airbyte-platform-internal` — `oss/airbyte-data/src/main/kotlin/io/airbyte/data/repositories/entities/DataWorkerUsage.kt`
+Source: Airbyte platform `DataWorkerUsage` billing logic (internal Kotlin source in the `DataWorkerUsage` entity).
 
 ### How Hourly Bucketing Works
 
@@ -51,18 +67,18 @@ To identify connections with CPU overrides, query BigQuery:
 ```sql
 SELECT c.connection_id, c.connection_name, c.cpu_request,
        c.source_connector_name, c.destination_connector_name
-FROM `airbyte-data-prod.airbyte_warehouse.connection` c
+FROM `{bigquery_project}.{bigquery_dataset}.connection` c
 WHERE c.organization_id = '<ORG_ID>'
   AND c.connection_status = 'active'
   AND c.cpu_request IS NOT NULL
 ORDER BY c.cpu_request DESC
 ```
 
-For a full CPU bump impact analysis (DW comparison, risk assessment, charts), use the `analyze_cpu_bumps` playbook in `devin/playbooks/`.
+For a full CPU bump impact analysis (DW comparison, risk assessment, charts), use the `references/analyze-cpu-bumps.md` playbook in this skill directory.
 
 ### Known Bug Fix: CPU Leak at Hour Boundaries (March 2026)
 
-PR [#18753](https://github.com/airbytehq/airbyte-platform-internal/pull/18753) fixed a bug where `incrementExistingDataWorkerUsageBucket` and `decrementExistingDataWorkerUsageBucket` could silently update 0 rows at hour boundaries. The root cause was that `findMostRecentUsageBucket` uses `bucket_start <= :bucketStart` to locate the most recent bucket, but the subsequent UPDATE targets `DATE_TRUNC('hour', :bucketStart)`. At hour boundaries, the SELECT could find a bucket from the previous hour while the UPDATE targets the current (not-yet-existing) hour, causing CPU values to be permanently "leaked" into the carry-forward system.
+A 2026 platform bug fix resolved a case where the hourly-bucket UPDATE targeted the current hour while the SELECT could match the previous hour, causing CPU values to be permanently "leaked" into the carry-forward system. Use the documented `bucket_start <= :bucketStart` / `DATE_TRUNC('hour', :bucketStart)` behavior to explain why hour-boundary leaks can occur.
 
 The fix checks the affected row count and falls back to creating a new bucket when 0 rows are updated. If analyzing historical data for a customer that shows a persistent phantom CPU floor, this bug may be the cause. A separate SQL migration was planned to reset accumulated phantom values for affected organizations.
 
@@ -890,7 +906,7 @@ This page is only included when enforcement mode is active. If enforcement is no
      - Success query: `sum:airbyte.entitlement_retrieval{env:prod,success:true,organization_id:{org_id}}.as_count()`
      - Failure query: `sum:airbyte.entitlement_retrieval{env:prod,success:false,organization_id:{org_id}}.as_count()`
      - Display: success rate percentage, failure count
-   - **Dashboard Link:** Include `https://app.datadoghq.com/dashboard/ai9-xqs-feq/subodh-data-worker-insights` for deep-dive investigation
+   - **Dashboard Link:** Include the configured `{datadog_dashboard_url}` for deep-dive investigation if one is set in `.se-config.yaml`; otherwise omit the link.
    - Note: "Live telemetry from Datadog — covers the last 7 days of real-time enforcement events."
 
 ### Page 8: Growth & Capacity Planning
@@ -1050,7 +1066,7 @@ For OSS/prospect estimation reports, the sweep-line algorithm for estimating wor
 
 ## Supporting Code
 
-The Python analysis modules are maintained at: `github.com/Airbyte-Solutions-Team/worker-toolkit`
+The Python analysis modules are located at `~/.claude/skills/worker-analysis/worker_analysis/` (or the equivalent `skills/worker-analysis/worker_analysis/` in the se-skills repo). Run them with `python3 ~/.claude/skills/worker-analysis/scripts/run_worker_analysis.py <mode>`.
 
 This includes:
 - Worker calculation engine

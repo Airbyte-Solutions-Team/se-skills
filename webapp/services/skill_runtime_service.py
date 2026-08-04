@@ -102,6 +102,7 @@ SKILL_PERMISSIONS: dict[str, PermissionProfile] = {
     "connector-feasibility": PermissionProfile(write=True, shell=True, git=True),
     "freeform": PermissionProfile(write=True, shell=True, git=True),
     "pov-gsheet": PermissionProfile(write=True, shell=True, git=False),
+    "worker-analysis": PermissionProfile(write=True, shell=True, git=False),
 }
 
 
