@@ -107,7 +107,7 @@ Airbyte now enforces data worker limits — syncs queue when an org's usage meet
 Activate enforcement mode when ANY of these conditions are met:
 
 1. **User explicitly asks** — e.g., "analyze with enforcement", "queue risk for [customer]", "will [customer] have queueing issues?"
-2. **Customer matches an enforcement rollout cohort** — see phase lists below
+2. **Customer matches an enforcement rollout cohort** — use the internal enforcement rollout tracker or the user's explicit declaration
 
 When enforcement mode is active:
 - Queue Risk Analysis is included (see "Queue Risk Analysis" section below)
@@ -116,19 +116,7 @@ When enforcement mode is active:
 
 ### Enforcement Rollout Phase Lists
 
-These customer lists are from the March 2026 rollout plan. They will become stale. When the LaunchDarkly MCP auth is fixed, auto-detection should replace these lists. Until then, if a customer isn't on a list but the user says enforcement is active, trust the user.
-
-**Phase 1 — Under Capacity (0 days over in last 30):**
-Cart.com, Demandbase, Accruent, Curaleaf, Demonware, Thales, Perdue, Paxos, Emma Sleep, Citation Group, Alter Domus, Foodics, Chime, Kaluza, Expel, Project Management Institute, Skillz, Giving Home Health Care, Invesco, Ginetai Inc.
-
-**Phase 2 — Near Capacity (1–14 days over):**
-TerrAscend, Samaritan Ministries International, Raylo, eblusolutions.com, BTS, Fora Travel, finanzen.net, PetDesk, DataCamp, Bumble Inc, SumUp, Jazwares, Symend, Multi Health, Marigold, Cloudinary
-
-**Phase 3 — Over Capacity (15–29 days over):**
-KORTX, Octus, Blue Elephant Media, Norstella, Nuvo, Coast, Gladly, Rakuten Viki, reef.ai, Shionogi, Ya Ya Creations, Mercury
-
-**Phase 4 — Always Over (30/30 days):**
-Rithm Capital Corp, Miro, deacero.com, Kuda, WeWork, Evolve, PacSun, Envato, MR MARVIS, Birdeye, Spendesk, Recharge, Kibeeri, Silverfin, Smartwyre, HeliosX, Uphold, TransnetYX, Stuart, idealo, Inmarsat, Pylon, Preply, fueled.io, Infopro Digital, sternpinball.com, myPOS, usebounce.com, healf, Mitratech Holdings, Usercentrics, Ingersoll Rand
+Customer-specific rollout cohort lists are maintained in the internal Airbyte enforcement rollout tracker and are not reproduced here. When the LaunchDarkly MCP auth is fixed, auto-detection should replace manual lookup. Until then, if a customer isn't on a known list but the user says enforcement is active, trust the user.
 
 ### Known Gaps (v1 Limitations)
 
