@@ -56,6 +56,7 @@ SKILL_PRESENTATION: dict[str, dict[str, Any]] = {
     "internal-prep": {"label": "Internal Prep", "blurb": "AE sync / forecast / exec-readout prep (internal)", "tier": TIER_ANYTIME, "step": None, "order": 24},
     "coverage-handoff": {"label": "Coverage Handoff", "blurb": "PTO handoff for a covering SE", "tier": TIER_ANYTIME, "step": None, "order": 25},
     "pov-gsheet": {"label": "POV Google Sheet", "blurb": "Create and pre-fill a POV Success Criteria Google Sheet", "tier": TIER_ANYTIME, "step": None, "order": 26},
+    "worker-analysis": {"label": "Worker Analysis", "blurb": "Analyze, estimate, and optimize Airbyte Data Worker usage", "tier": TIER_ANYTIME, "step": None, "order": 27},
     # Router (unnumbered)
     "next-move": {"label": "Next Move", "blurb": "Not sure what to run? This inspects the deal and tells you", "tier": TIER_META, "step": None, "order": 30},
 }
