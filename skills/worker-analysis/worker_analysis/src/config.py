@@ -67,7 +67,7 @@ DATABASE_CONNECTORS = [
 # API connectors (typically faster, less resource intensive)
 API_CONNECTORS = [
     "stripe", "salesforce", "hubspot", "github", "gitlab", "slack",
-    "google-analytics", "facebook-marketing", "google-ads", "linkedin-ads",
+    "google-analytics", "google-sheets", "facebook-marketing", "google-ads", "linkedin-ads",
     "shopify", "zendesk", "intercom", "jira", "confluence",
     "twilio", "sendgrid", "mailchimp", "asana", "notion",
     "airtable", "typeform", "surveymonkey", "square", "servicenow"
