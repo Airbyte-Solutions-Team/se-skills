@@ -1,144 +1,156 @@
-All three analyses completed cleanly. Here is the full worker sizing for **Acme**.
+Clean run. Now let me walk through everything end-to-end.
 
 ---
 
-## Acme — Data Worker Estimation
+## Acme — Prospect Worker Sizing Estimate
 
-**PDF generated:** `Acme_Worker_Estimation_20260804.pdf`
-*(Safe to share externally — queuing narrative, no internal formulas)*
+> ⚠️ **Estimation caveat:** This uses the statistical estimation model (API/5 + DB/2), **not** the CPU-based billing formula. The CPU formula requires actual platform data. Once Acme is live on Airbyte Cloud, use Metabase billing data for the authoritative number.
 
 ---
 
-### Input Summary
+### Inputs Confirmed
 
 | Parameter | Value |
 |---|---|
 | Total connections | 50 |
-| Connector mix | 35 API (Salesforce, HubSpot, Stripe, Shopify, Zendesk) · 15 DB (Postgres, MySQL, Snowflake) |
-| Schedule mix | 40% hourly (20 conns) · 25% every 15 min (12 conns) · 35% daily (17 conns) |
-| Avg sync duration | 12 min |
-| Peak window | 1–5 AM UTC |
+| API connectors (Salesforce, HubSpot, Stripe, Shopify, Zendesk) | 35 — **70%** |
+| Database connectors (Postgres, MySQL, Snowflake) | 15 — **30%** |
+| Sub-hourly (every 15 min) | 25% → **12 connections** |
+| Hourly | 40% → **20 connections** |
+| Daily | 35% → **18 connections** |
+| Avg sync duration | 12 minutes |
+| Freshness window (1–5 AM UTC peak drain target) | **240 minutes** (4-hour window) |
 | Environments | 2 (prod + staging) |
-| Workload type | Recurring incremental, no initial load |
-| Growth | → 80 connections in 6 months |
+| Growth target | 80 connections |
 
 ---
 
-### Estimation Model Used
+### Connection Matrix
 
-> **Estimation Formula:** `ceil(Concurrent API / 5) + ceil(Concurrent DB / 2)` — statistical heuristic, not the CPU-based billing formula. Once Acme is live, actual Metabase billing data becomes the source of truth.
+| Type | Sub-hourly (15 min) | Hourly | Daily | Total |
+|---|---|---|---|---|
+| **API** | 8 | 14 | 13 | **35** |
+| **DB/File** | 4 | 6 | 5 | **15** |
+| **Total** | **12** | **20** | **18** | **50** |
 
 ---
 
-### 1 · Steady-State Worker Estimate (50 connections)
+### Seven Sizing Views (Deterministic)
 
-The calculator distributes the 12-minute average duration across frequency intervals and connector types:
-
-| Bucket | API concurrent | DB concurrent |
+| # | Sizing View | Workers |
 |---|---|---|
-| Sub-hourly (12 conns @ 15 min) | 8 × (12/15) = **6.4** | 3 × (12/15) = **2.4** |
-| Hourly (20 conns @ 60 min) | 14 × (12/60) = **2.8** | 6 × (12/60) = **1.2** |
-| Daily (17 conns @ 1440 min) | 11 × (12/1440) ≈ **0.09** | 5 × (12/1440) ≈ **0.04** |
-| **Total concurrent** | **9.3** | **3.6** |
-
-```
-Workers = ceil(9.3 / 5) + ceil(3.6 / 2) = 2 + 2 = 4 Data Workers
-```
-
-**→ Steady-state: 4 workers (prod only)**
+| 1 | Steady-state requirement | **5** |
+| 2 | Peak-window drain requirement | **2** |
+| 3 | Worst-case simultaneous burst | **10** |
+| 4 | Production-only requirement | **5** |
+| 5 | Combined prod + staging requirement | **7** |
+| 6 | Future-growth requirement (80 connections) | **10** |
+| 7 | 🎯 **Recommended contract / deployment capacity** | **10** |
 
 ---
 
-### 2 · Critical Reports — Hourly Batch (Queuing Analysis)
+### How Each Number Was Derived
 
-The 20 hourly connections (40% of 50) are the critical report syncs that must complete within the 60-minute window. The queuing calculator treats this as a drain-the-queue problem:
+#### View 1 — Steady-State (5 workers)
+Assumes schedules are spread evenly across their intervals — the best-case normal operation.
 
 ```
-20 syncs × 12 min avg = 240 sync-minutes of work in 60 min
-Minimum concurrent slots needed ≈ 240 / 60 = 4 slots → 1 worker (5 API slots)
+API concurrent  = 8×(12/15) + 14×(12/60) + 13×(12/1440)
+               = 6.40 + 2.80 + 0.11 = 9.31
+
+DB concurrent   = 4×(12/15) + 6×(12/60) + 5×(12/1440)
+               = 3.20 + 1.20 + 0.04 = 4.44
+
+Workers = ceil(9.31 / 5) + ceil(4.44 / 2)
+        = ceil(1.86) + ceil(2.22)
+        = 2 + 3 = 5
 ```
 
-| Option | Workers | API Slots | Drain Time | Margin | P90 fits? |
-|---|---|---|---|---|---|
-| **Minimum** | **1** | **5** | **49.5 min** | **10.5 min** | No |
-| **With headroom** | **2** | **10** | **24.5 min** | **35.5 min** | **Yes** |
+#### View 2 — Peak-Window Drain (2 workers)
+Minimum workers needed to drain all 18 daily syncs inside the 4-hour (240-minute) 1–5 AM window:
 
-The 20 critical hourly syncs clear the 60-minute window with just **1 worker**, but P90 durations (15 min) only fit safely with **2 workers**. Because Acme requires reliable hourly delivery, **2 workers ensures the critical batch lands on time even on slow nights.**
+```
+API daily drain = ceil((13 × 12) / 240) = ceil(0.65) = 1 slot → ceil(1/5) = 1 worker
+DB daily drain  = ceil((5  × 12) / 240) = ceil(0.25) = 1 slot → ceil(1/2) = 1 worker
+Total drain = 1 + 1 = 2
+```
+With the generous 4-hour freshness window, peak-window drain is **not the binding constraint**. All 18 daily syncs complete well within the window at 2 workers.
+
+#### View 3 — Worst-Case Burst (10 workers)
+All 18 daily syncs fire simultaneously (e.g., misconfigured schedules or a backfill) while sub-hourly and hourly syncs continue at steady state:
+
+```
+API concurrent  = 8×(12/15) + 14×(12/60) + 13 (all daily at once)
+               = 6.40 + 2.80 + 13.00 = 22.20
+
+DB concurrent   = 4×(12/15) + 6×(12/60) + 5
+               = 3.20 + 1.20 + 5.00 = 9.40
+
+Workers = ceil(22.20 / 5) + ceil(9.40 / 2)
+        = 5 + 5 = 10
+```
+This is the ceiling Acme must be prepared for if schedules cluster.
+
+#### View 4 — Production-Only (5 workers)
+Identical to steady-state — single environment, no staging overhead.
+
+#### View 5 — Combined Prod + Staging (7 workers)
+Staging is modelled as daily-only (full refresh pattern) with the same connector mix:
+
+```
+Staging API  = 35 × (12/1440) = 0.292 → ceil(0.292/5) = 1 worker
+Staging DB   = 15 × (12/1440) = 0.125 → ceil(0.125/2) = 1 worker
+Staging total = 2
+
+Combined = 5 (prod steady) + 2 (staging) = 7
+```
+
+#### View 6 — Future Growth at 80 Connections (10 workers)
+Same 70/30 API/DB and 25/40/35 frequency ratios at 80 connections:
+- Prod steady-state scales to **8 workers**
+- Staging scales to **2 workers**
+- Combined at growth: **8 + 2 = 10**
+
+#### View 7 — Recommended Contract Capacity (10 workers)
+Decision logic applied by the calculator:
+
+```
+Burst delta    = max(0, burst_workers − combined_steady) = max(0, 10 − 7) = 3
+Burst headroom = min(2, 3) = 2        ← capped at 2
+Base headroom  = 1 (daily syncs exist, multiple environments)
+Effective headroom = max(1, 2) = 2
+
+With headroom:   combined_steady + headroom = 7 + 2 = 9
+Growth floor:    future_combined = 10
+
+Recommended = max(9, 10) = 10
+```
+
+The **future growth path drives the recommendation** — at 80 connections, combined prod+staging naturally lands at 10 workers, which also satisfies the headroom buffer above the current baseline.
 
 ---
 
-### 3 · Peak Window Burst Check (1–5 AM UTC) ⚠️
+### Key Observations for the Acme Conversation
 
-**Worst case: all 17 daily connections fire at 1:00 AM simultaneously** (common with `0 1 * * *` cron expressions that pile up at the top of the hour):
-
-```
-API peak = 9.2 (sub-hourly + hourly SS) + 11 (daily burst) = 20.2 concurrent
-DB  peak = 3.6 (sub-hourly + hourly SS) + 5  (daily burst) = 8.6  concurrent
-
-Peak workers = ceil(20.2 / 5) + ceil(8.6 / 2) = 5 + 5 = 10 Data Workers
-```
-
-**→ Worst-case peak: 10 workers for prod alone**
-
-**Why this matters:** With only 4 workers contracted, any daily syncs that pile up at 1 AM will queue behind the running sub-hourly and hourly load. This can delay critical report syncs.
-
-**Mitigation — stagger the daily syncs across the 4-hour window:**
-
-```
-# Instead of all daily syncs at 0 1 * * *:
-Salesforce (daily) → 0 1 * * *      # 1:00 AM
-HubSpot    (daily) → 0 2 * * *      # 2:00 AM
-Postgres   (daily) → 30 1 * * *     # 1:30 AM
-Snowflake  (daily) → 30 2 * * *     # 2:30 AM
-MySQL      (daily) → 0 3 * * *      # 3:00 AM
-```
-
-Spreading 17 daily syncs evenly across the 1–5 AM window (240 minutes) at 12 min/sync means at most 1–2 daily syncs running at any given moment, dropping the burst ceiling back to **~5–6 workers**.
-
----
-
-### 4 · Two-Environment Sizing (Prod + Staging)
-
-Staging typically mirrors production connections but runs off-peak or at reduced frequency (~50% of prod concurrent load):
-
-| State | Prod | Staging | **Total** |
-|---|---|---|---|
-| Steady-state | 4 w | 2 w | **6 workers** |
-| Peak burst (daily pile-up) | 10 w | 5 w | **≤ 15 workers** |
-| Peak burst (with staggering) | 5–6 w | 3 w | **≤ 9 workers** |
-
----
-
-### 5 · Growth Scenario (50 → 80 connections, 6 months)
-
-| Scenario | API conns | DB conns | API concurrent | DB concurrent | Workers (steady) | Workers (peak burst) |
-|---|---|---|---|---|---|---|
-| **Current: 50 conns** | 35 | 15 | 9.3 | 3.6 | **4** | **10** |
-| **Growth: 80 conns** | 56 | 24 | 15.8 | 6.7 | **8** | **15** |
-
-At 80 connections with two environments: **12 workers steady-state, up to 15 workers peak burst in prod.**
-
----
-
-### Sizing Recommendation Summary
-
-| Use Case | Recommended Workers |
+| Observation | Detail |
 |---|---|
-| Prod only — steady-state (launch) | **4** |
-| Prod — with headroom for critical hourly reliability | **5** |
-| Prod — peak burst covered (worst-case daily pile-up) | **10** (avoidable with staggering → **5–6**) |
-| **Prod + Staging — launch recommendation** | **6–7** |
-| Prod + Staging — 6-month growth (80 conns) | **12–14** |
-
-**Recommended contract at launch: 5 workers for prod + 2 for staging = 7 workers total.** This covers steady-state load with headroom, ensures the 20 critical hourly syncs always land on time (2 workers are enough for the batch), and handles moderate daily bursts. Staggering the 17 daily syncs across the 1–5 AM window keeps the burst ceiling well below 7 workers.
-
-**At the 6-month mark (80 connections):** plan to step up to **12–14 workers** to maintain the same headroom ratio.
+| **Schedule clustering is the #1 risk** | Steady-state is only 5 workers, but an uncoordinated daily burst hits 10. Staggering the 18 daily syncs across the 1–5 AM window prevents worst-case spikes. |
+| **The 4-hour drain window is generous** | At 2 drain workers, all 18 daily syncs complete in the window with capacity to spare. No need to over-provision for freshness. |
+| **Staging adds 2 workers** | A daily-pattern staging environment is lean. If staging runs full-frequency (same as prod), re-run with `--environments` and staging scheduled identically — expect staging to mirror prod. |
+| **70% API mix is favorable** | API connectors (Salesforce, Zendesk, HubSpot, Stripe, Shopify) require 5 concurrent per worker vs. 2 for DB. The high API fraction keeps per-worker utilization efficient. |
+| **Growth to 80 connections lands exactly at 10 workers** | No additional contract expansion needed in the 6-month horizon — the 10-worker contract covers both today's burst ceiling and the full growth target. |
+| **MySQL CPU quirk** | If Acme has CPU overrides on MySQL connections (a common performance request), the orchestrator retains its 1.0 CPU default rather than matching the override. Verify actual per-container values via Datadog `avg:kubernetes.cpu.requests{ab_connection_id:<ID>} by {kube_container_name}` after onboarding. |
 
 ---
 
-### Key Caveats
+### Final Recommendation
 
-1. **Statistical estimate, not CPU billing.** Airbyte Cloud bills using `(maxSourceCPU + maxDestCPU + maxOrchestratorCPU) / 8`. This estimate uses the `ceil(API/5) + ceil(DB/2)` heuristic. Once live, actual Metabase billing data is the source of truth and numbers should be re-validated.
-2. **No initial load means no burst risk at go-live.** Incremental-only mode keeps sync durations predictable.
-3. **Schedule spreading is the highest-leverage lever.** The difference between 10 workers (uncoordinated daily pile-up) and 5 workers (staggered) is entirely in cron expression design — no additional cost.
-4. **Staging sizing is approximate.** If staging runs the full schedule at full frequency, treat it as another prod environment and double the numbers.
+> **Contract Acme at 10 Data Workers.**
+
+This single number:
+- Covers **normal operations** (5 workers steady-state, prod only)
+- Covers **both environments** comfortably (7 workers combined)
+- Absorbs a **worst-case schedule cluster** (10 workers burst)
+- **Future-proofs growth to 80 connections** in 6 months without a contract renegotiation
+
+Once Acme is live, pull actual hourly CPU billing data from Metabase (`organization_data_worker_usage_daily` + `workspace_data_worker_usage_hourly`) to validate this estimate against the ground-truth `(maxSourceCPU + maxDestCPU + maxOrchestratorCPU) / 8` formula. The estimation model tends to be conservative for well-staggered API-heavy workloads, so actual usage may land slightly below 10 under normal operations.

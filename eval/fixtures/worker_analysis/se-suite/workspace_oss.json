@@ -6,7 +6,9 @@
     "--model",
     "claude-sonnet-4-6",
     "--bare",
-    "--dangerously-skip-permissions"
+    "--dangerously-skip-permissions",
+    "--append-system-prompt-file",
+    "/home/ubuntu/repos/se-skills/skills/worker-analysis/SKILL.md"
   ],
   "returncode": 0,
   "stderr": ""

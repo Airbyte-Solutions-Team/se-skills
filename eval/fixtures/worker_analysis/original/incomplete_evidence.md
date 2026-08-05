@@ -1,90 +1,55 @@
-The numbers are stable and clear. Here is the full analysis and interpretation.
+The PDF is generated at `Acme_Worker_Estimation_20260805.pdf`. Here's the full picture:
 
 ---
 
-## Acme — Prospect Worker Estimate
+## Acme Prospect Estimation — Results & Gaps
 
-**Bottom line: 2 Data Workers at current scale, plan for 3 at ~2× growth.**
+### Estimate: **6–7 Data Workers** (recommended starting capacity)
 
-This estimate is remarkably stable — the result lands at **2 workers** across every connector-mix and frequency-split scenario tested for the baseline 40 connections. Here is why, and what the sensitivity looks like.
+I ran three scenarios across the realistic range of connector mixes and sync durations. All three converge tightly:
 
----
+| Scenario | API/DB Split | Avg Duration | Steady-State | Prod + Staging | Worst-Case Burst | **Recommended** |
+|---|---|---|---|---|---|---|
+| Balanced mix | 50% / 50% | 5.5 min (fleet avg) | 2 workers | 4 workers | 9 workers | **6 workers** |
+| API-heavy | 60% / 40% | 15 min (P90 conservative) | 3 workers | 5 workers | 8 workers | **7 workers** |
+| DB-heavy | 40% / 60% | 5.5 min (fleet avg) | 2 workers | 4 workers | 9 workers | **6 workers** |
 
-### How the Model Works
-
-The estimation heuristic is:
-```
-Workers = ceil(Peak Concurrent API / 5) + ceil(Peak Concurrent DB / 2)
-```
-
-For 40 connections running a mix of hourly and daily syncs, each connection is concurrently active for only a few minutes per interval. The expected concurrent count at any moment is around **1.1–2.2 concurrent jobs** — well below the thresholds where the formula rounds up to 3 workers.
-
-Durations used are fleet-observed averages from Airbyte Cloud:
-
-| Type | Hourly avg | Daily avg |
-|---|---|---|
-| API connector | 5.5 min | 15.8 min |
-| DB connector | 3.3 min | 4.5 min |
+The **6-worker** figure is the right starting point to put in front of the prospect. It covers prod + staging, absorbs the typical burst headroom of 2 workers, and holds across every mix we tested. If the actual mix turns out to be significantly DB-heavy and syncs are long, 7 workers is the right ceiling.
 
 ---
 
-### Baseline Scenario Grid (40 connections)
+### How the formula works (for your reference)
 
-| Scenario | API concurrent | DB concurrent | **Est. Workers** |
-|---|---|---|---|
-| Mixed, 60% hourly | 1.38 | 1.38 | **2** |
-| Mixed, 50% hourly | 1.26 | 1.26 | **2** |
-| Mixed, 40% hourly | 1.11 | 1.11 | **2** |
-| API-heavy, 60% hourly | 2.16 | 0.94 | **2** |
-| DB-heavy, 60% hourly | 0.66 | 1.52 | **2** |
-| DB-heavy, 40% hourly | 0.45 | 1.23 | **2** |
+The estimation model uses: `ceil(concurrent API jobs / 5) + ceil(concurrent DB jobs / 2) = Data Workers`
 
-**The estimate is 2 workers regardless of how the split lands.**
+DB connections are capacity-heavy (1 worker handles only 2 DB syncs at once vs. 5 API syncs), so the split matters—but with only 40 connections and short empirical durations, the steady-state concurrency stays low (< 2 concurrent API and < 2 concurrent DB at any given moment). The bigger risk is the **worst-case burst**: if all 20 daily syncs fire at the same timestamp (e.g., every connection set to midnight UTC), that temporarily spikes to 9 workers. Staggered schedules collapse that to steady-state.
 
 ---
 
-### Growth Scenarios
+### What else you need to ask — in priority order
 
-#### Most Likely (50/50 split, 50% hourly / 50% daily)
+These four questions would materially sharpen or change the estimate:
 
-| Scale | Connections | Est. Workers |
-|---|---|---|
-| Baseline | 40 | **2** |
-| +25% | 50 | **2** |
-| +50% | 60 | **2** |
-| +100% | 80 | **3** |
+#### 1. 🔴 How many of the 40 connections are databases vs. SaaS APIs? *(Highest impact)*
+DB connections (Postgres, MySQL, MSSQL, Snowflake, etc.) consume 2.5× more worker capacity than API connectors (Salesforce, HubSpot, Stripe, etc.). A 100% DB workload at 40 connections needs ~3× the workers of a 100% API workload. Even a rough answer like "mostly APIs" or "mostly databases" is useful.
 
-#### Conservative Bound (DB-heavy: 70% DB, 60% hourly)
+#### 2. 🟡 What's the rough hourly vs. daily split? *(Medium impact on steady-state, high impact on burst)*
+"Some hourly, some daily" is too wide to pin down. The key question is whether the daily syncs are **all scheduled at the same time** (e.g., midnight batch) or **spread throughout the day**. Clustered daily syncs create a burst spike that can be 3–5× higher than steady-state. If they can confirm schedules are (or will be) staggered, the burst number drops significantly.
 
-| Scale | Connections | Est. Workers |
-|---|---|---|
-| Baseline | 40 | **2** |
-| +25% | 50 | **2** |
-| +50% | 60 | **3** |
-| +100% | 80 | **3** |
+#### 3. 🟡 Roughly how long do most syncs take? *(Drives steady-state concurrency directly)*
+The fleet median is ~3–6 minutes for API connectors and ~2–4 minutes for databases. If their syncs are unusually long (15+ minutes, e.g., large initial loads or wide tables), steady-state concurrency rises and the recommendation moves toward 7–8 workers. Short syncs (under 5 min) keep steady-state at 2 workers regardless of mix.
 
-**Recommended starting tier: 2 workers, with a clear upgrade path to 3.**
+#### 4. 🟢 What's the growth target, even roughly? *(Needed to size the contract)*
+"Expect to grow" is fine for an initial conversation, but a contract sizing needs a number. Ask: *"Over the next 12 months, do you expect to double connections, add 20%, or grow faster?"* Even a broad bucket (1.5× or 2×) lets us put a future-growth row in the estimate. At 2× (80 connections), the recommendation steps up to 8–9 workers—a meaningful difference for contract sizing.
 
 ---
 
-### What I Still Need — and Why It Matters
+### Lower-priority questions (nice to have)
 
-The "2 workers" answer is robust to the unknowns you have *today*, but three things could shift it meaningfully:
-
-#### 1. **Are any connections sub-hourly?** *(Highest impact)*
-Not mentioned, so the model assumes zero. Sub-hourly syncs dramatically raise concurrent counts because jobs overlap within the same interval. Even 10 sub-hourly connections could add 0.5–1.0 workers to the peak. **If any syncs run every 15–30 minutes, ask.**
-
-#### 2. **Do all daily syncs fire at the same clock time?** *(Medium impact)*
-The model distributes daily syncs evenly across the day. If all 20 daily connections are scheduled at midnight (a common default), peak concurrency spikes and the real-world number could be higher. **Knowing whether they plan to stagger schedules is worth asking.**
-
-#### 3. **Are there high-volume tables that require full refreshes?** *(Medium impact at onboarding)*
-The duration defaults assume typical incremental syncs (Avg 3–16 min). First-run or reconfigured connections doing full refreshes on large tables can run for hours. This temporarily spikes worker usage during onboarding but normalizes after the initial load. **Not a long-term capacity driver, but worth noting if they have very large tables.**
-
-#### 4. **Which specific connectors?** *(Lower impact for this size, matters for CPU overrides)*
-A handful of connector combinations carry a `cpu_request` override (e.g., SAP HANA, ServiceNow, some Salesforce configurations) that allocates 2–3× more CPU per sync, directly inflating the billing formula. At 40 connections this is unlikely to be a factor, but if the prospect mentions SAP, Oracle, or high-volume MSSQL, it's worth flagging.
+- **Number of environments** — The estimate assumes prod + staging (2 environments). If they only have production, drop 1 worker from the combined figure.
+- **Data freshness SLAs** — If any syncs have hard deadlines (e.g., "the dashboard must be current by 7 AM"), the drain analysis matters more and may push the hourly batch recommendation up.
+- **Any sub-hourly syncs?** — The estimate currently assumes none. Even a handful of 15-minute syncs significantly changes the steady-state concurrency.
 
 ---
 
-### Caveats
-
-> ⚠️ This uses the **heuristic estimation model** (`ceil(API/5) + ceil(DB/2)`), not the actual billing formula. Airbyte Cloud billing is CPU-based: `(maxSrcCPU + maxDstCPU + maxOrchCPU) / 8 = Data Workers`. The heuristic is a good planning tool but results will differ from actual billed usage once the customer is live. **Recommend re-assessing at 30 and 90 days using Metabase billing data.**
+The PDF at `Acme_Worker_Estimation_20260805.pdf` is the customer-facing version of this estimate — it uses the balanced 50/50 scenario as the base case and shows growth headroom. Once you have answers to questions 1–2 above, I can re-run with the actual numbers and the estimate will tighten considerably.

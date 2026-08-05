@@ -270,10 +270,46 @@ When estimating for a new prospect, ask:
 1. Total number of connections expected
 2. Percentage that are Database/File vs API connectors
 3. Percentage running sub-hourly / hourly / daily
-4. (Optional) Average sync duration in minutes
-5. (Optional) Maintenance window hours
+4. Average sync duration in minutes (default 30)
+5. Target freshness window for daily batches in minutes (default 60)
+6. Number of environments (default 2: production + staging)
+7. Future growth connection target, if known
+8. (Optional) Maintenance window hours
 
-Then estimate peak concurrency using the empirical sync duration defaults below, and apply the estimation formula.
+Then **run the deterministic questionnaire calculator** so the numbers are always computed the same way:
+
+```bash
+uv run --script scripts/run_worker_analysis.py questionnaire \
+  --connections <TOTAL> \
+  --api-percent <API %> \
+  --db-percent <DB %> \
+  --sub-hourly-percent <PCT> \
+  --hourly-percent <PCT> \
+  --daily-percent <PCT> \
+  --avg-duration <MINUTES> \
+  --freshness-minutes <MINUTES> \
+  --environments <COUNT> \
+  --growth-connections <TARGET>
+```
+
+The script returns a `result.sizing` object. **Always present the seven sizing views exactly as returned**, do not collapse them into one number, and use them as the basis for the final recommendation:
+
+| Field | Meaning |
+|---|---|
+| `steady_state_workers` | Long-run average concurrency |
+| `peak_window_drain_workers` | Workers needed to drain the daily batch within the freshness window |
+| `worst_case_burst_workers` | All daily syncs start simultaneously at the peak window |
+| `production_only_workers` | Same as steady state (prod) |
+| `combined_prod_staging_workers` | Prod steady + one staging environment |
+| `future_growth_workers` | Combined prod + staging at the growth target |
+| `recommended_contract_or_deployment_workers` | Final recommendation = `max(combined + headroom, future_growth_workers)` |
+
+**Decision logic for the final recommendation** (already applied by the script):
+- Start from `combined_prod_staging_workers`.
+- Add headroom: at least 1 when daily syncs or multiple environments exist, and up to 2 to absorb part of the burst delta.
+- Compare with `future_growth_workers` and recommend the larger of the two.
+
+
 
 **Empirical Sync Duration Defaults** (based on Airbyte Cloud data, last 30 days, median/avg/P90 in minutes):
 
@@ -288,11 +324,7 @@ Then estimate peak concurrency using the empirical sync duration defaults below,
 | Database | Every 12h | 3.0 | 6.5 | 14.0 |
 | Database | Every 24h | 2.1 | 4.5 | 5.8 |
 
-**How to estimate concurrency**: For each frequency group, calculate `connections * (avg_duration / schedule_interval)`. This gives the expected number of concurrent jobs at any point. Use avg duration for moderate estimates or P90 for conservative estimates.
-
-**Example**: 45 hourly API connections -> 45 * (5.5 / 60) = ~4.1 concurrent API jobs. 30 hourly DB connections -> 30 * (3.3 / 60) = ~1.7 concurrent DB jobs. Workers = ceil(4.1 / 5) + ceil(1.7 / 2) = 1 + 1 = **2 workers**.
-
-**Peak / maintenance window burst check**: When the user mentions a peak window or maintenance window, always compute a worst-case burst where every daily (or less frequent) sync in that window starts at the same moment. Add the resulting concurrent jobs to the sub-hourly and hourly steady-state concurrency and report the worst-case workers. This is especially important when daily syncs are scheduled with `0 H * * *` cron expressions that pile up at the top of the hour.
+The burst check is now part of the deterministic calculator above; do not compute it from scratch. If the prospect gives a peak or maintenance window, pass it through `--avg-duration` and `--freshness-minutes` and report `worst_case_burst_workers`.
 
 Always caveat that this is an estimate — once on the platform, actual CPU-based billing data is more accurate.
 

@@ -15,6 +15,7 @@ import pytest
 import orchestrator
 from connector_classifier import ConnectorClassifier
 from job_overlap_analyzer import analyze_job_overlaps
+from questionnaire_calculator import analyze_questionnaire
 from queuing_calculator import calculate_drain_time
 from services.skill_runtime_service import SKILL_PERMISSIONS, SkillRuntimeService
 from worker_calculator import WorkerCalculator
@@ -311,7 +312,144 @@ def test_skill_discovery_lists_worker_analysis(repo_root: Path) -> None:
     assert "worker-analysis" in service.skill_ids
 
 
-def test_permission_profile_includes_shell() -> None:
+def test_permission_profile_includes_shell_and_not_git() -> None:
     profile = SKILL_PERMISSIONS["worker-analysis"]
     assert profile.write is True
     assert profile.shell is True
+    assert profile.git is False
+
+
+def test_questionnaire_calculator_exposes_all_sizing_views() -> None:
+    result = analyze_questionnaire(
+        total_connections=45,
+        api_percent=66.67,
+        db_percent=33.33,
+        sub_hourly_percent=20,
+        hourly_percent=30,
+        daily_percent=50,
+        sync_duration_minutes=10,
+        freshness_minutes=60,
+        environments=2,
+        growth_connections=80,
+    )
+    required_views = [
+        "steady_state_workers",
+        "peak_window_drain_workers",
+        "worst_case_burst_workers",
+        "production_only_workers",
+        "combined_prod_staging_workers",
+        "future_growth_workers",
+        "recommended_contract_or_deployment_workers",
+    ]
+    for view in required_views:
+        assert view in result, f"missing sizing view: {view}"
+        assert isinstance(result[view], int), f"{view} must be an integer"
+
+
+def test_questionnaire_calculator_complete_fixture_matches_original_recommendation() -> None:
+    """Complete-questionnaire fixture should recommend 8 workers for prod+staging."""
+    result = analyze_questionnaire(
+        total_connections=45,
+        api_percent=66.67,
+        db_percent=33.33,
+        sub_hourly_percent=20,
+        hourly_percent=30,
+        daily_percent=50,
+        sync_duration_minutes=10,
+        freshness_minutes=60,
+        environments=2,
+        growth_connections=80,
+    )
+    assert result["steady_state_workers"] == 4
+    assert result["worst_case_burst_workers"] == 11
+    assert result["combined_prod_staging_workers"] == 6
+    assert result["future_growth_workers"] == 8
+    assert result["recommended_contract_or_deployment_workers"] == 8
+
+
+def test_questionnaire_calculator_burst_is_distinct_and_nonzero() -> None:
+    """Burst must be calculated separately and must not equal steady state."""
+    result = analyze_questionnaire(
+        total_connections=45,
+        api_percent=66.67,
+        db_percent=33.33,
+        sub_hourly_percent=20,
+        hourly_percent=30,
+        daily_percent=50,
+        sync_duration_minutes=10,
+    )
+    assert result["worst_case_burst_workers"] > result["steady_state_workers"]
+    assert result["worst_case_burst_concurrency"]["api_concurrent"] > result["steady_state_concurrency"]["api_concurrent"]
+    assert result["worst_case_burst_concurrency"]["db_concurrent"] > result["steady_state_concurrency"]["db_concurrent"]
+
+
+def test_questionnaire_calculator_is_deterministic_across_repeated_calls() -> None:
+    """The deterministic calculation must be identical across repeated runs."""
+    inputs = dict(
+        total_connections=45,
+        api_percent=66.67,
+        db_percent=33.33,
+        sub_hourly_percent=20,
+        hourly_percent=30,
+        daily_percent=50,
+        sync_duration_minutes=10,
+        freshness_minutes=60,
+        environments=2,
+        growth_connections=80,
+    )
+    first = analyze_questionnaire(**inputs)
+    for _ in range(4):
+        subsequent = analyze_questionnaire(**inputs)
+        assert subsequent == first
+
+
+def test_questionnaire_calculator_cannot_omit_burst_when_inputs_present() -> None:
+    """Regression test: daily syncs, a peak window, and multiple environments force burst."""
+    result = analyze_questionnaire(
+        total_connections=45,
+        api_percent=66.67,
+        db_percent=33.33,
+        sub_hourly_percent=20,
+        hourly_percent=30,
+        daily_percent=50,
+        sync_duration_minutes=10,
+        freshness_minutes=60,
+        environments=2,
+    )
+    # Daily syncs exist and environments > 1, so a burst calculation is required.
+    assert result["worst_case_burst_workers"] >= result["steady_state_workers"]
+    assert result["worst_case_burst_workers"] > 0
+    assert result["peak_window_drain_workers"] >= 1
+
+
+def test_run_worker_analysis_questionnaire_subcommand(repo_root: Path) -> None:
+    """CLI questionnaire mode returns deterministic sizing summary."""
+    script = repo_root / "skills" / "worker-analysis" / "scripts" / "run_worker_analysis.py"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "questionnaire",
+            "--connections", "45",
+            "--api-percent", "66.67",
+            "--db-percent", "33.33",
+            "--sub-hourly-percent", "20",
+            "--hourly-percent", "30",
+            "--daily-percent", "50",
+            "--avg-duration", "10",
+            "--freshness-minutes", "60",
+            "--environments", "2",
+            "--growth-connections", "80",
+        ],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    data = _parse_script_json(result.stdout)
+    sizing = data["result"]["sizing"]
+    assert sizing["steady_state_workers"] == 4
+    assert sizing["worst_case_burst_workers"] == 11
+    assert sizing["combined_prod_staging_workers"] == 6
+    assert sizing["future_growth_workers"] == 8
+    assert sizing["recommended_contract_or_deployment_workers"] == 8

@@ -131,6 +131,42 @@ def get_worker_model() -> Dict[str, Any]:
     return WORKER_MODEL
 
 
+def split_proportionally(total: int, weights: Dict[str, float]) -> Dict[str, int]:
+    """Split an integer total into buckets proportional to the supplied weights.
+
+    Uses floor splitting plus largest-remainder tie-breaking, with weight as
+    the secondary sort key so larger buckets receive fractional units first.
+    The returned integers always sum to ``total``.
+    """
+    if total <= 0:
+        return {k: 0 for k in weights}
+
+    total_weight = sum(weights.values())
+    if total_weight == 0:
+        return {k: 0 for k in weights}
+
+    raw = {k: total * w / total_weight for k, w in weights.items()}
+    floors = {k: max(0, int(v)) for k, v in raw.items()}
+
+    assigned = sum(floors.values())
+    deficit = total - assigned
+    if deficit > 0:
+        remainders = {k: raw[k] - floors[k] for k in weights}
+        sorted_keys = sorted(
+            weights.keys(),
+            key=lambda k: (remainders[k], weights[k]),
+            reverse=True,
+        )
+        for k in sorted_keys[:deficit]:
+            floors[k] += 1
+    elif deficit < 0:
+        for _ in range(-deficit):
+            k = max(floors, key=floors.get)
+            floors[k] -= 1
+
+    return floors
+
+
 def is_database_connector(connector_name: str) -> bool:
     """
     Check if a connector is a database/file connector.

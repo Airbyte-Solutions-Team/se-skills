@@ -45,6 +45,9 @@ def _questionnaire(args: argparse.Namespace) -> int:
         daily_percent=args.daily_percent,
         sync_duration_minutes=args.avg_duration,
         maintenance_window_hours=args.maintenance_window,
+        freshness_minutes=args.freshness_minutes,
+        environments=args.environments,
+        growth_connections=args.growth_connections,
     )
     print(json.dumps({"mode": "2A_questionnaire", "result": result}, indent=2, default=str))
     return 0
@@ -197,6 +200,9 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--daily-percent", type=float, default=50)
     q.add_argument("--avg-duration", type=float, default=8)
     q.add_argument("--maintenance-window", type=float, default=4)
+    q.add_argument("--freshness-minutes", type=float, default=60.0)
+    q.add_argument("--environments", type=int, default=2)
+    q.add_argument("--growth-connections", type=int, default=None)
 
     # Quick estimate from CLI args
     est = subparsers.add_parser("estimate", help="Quick ballpark estimate")

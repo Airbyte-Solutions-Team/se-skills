@@ -62,11 +62,23 @@ SKILL_PRESENTATION: dict[str, dict[str, Any]] = {
 }
 
 
+# Explicit reviewed-skill allowlist for non-interactive shell execution.
+# A skill must be listed here AND declare shell=True in SKILL_PERMISSIONS to
+# receive --permission-mode bypassPermissions. This prevents an arbitrary newly
+# discovered or added shell skill from automatically bypassing the permission
+# prompts in `claude -p`.
+SHELL_BYPASS_ALLOWLIST: set[str] = {
+    "connector-feasibility",
+    "freeform",
+    "pov-gsheet",
+    "worker-analysis",
+}
+
+
 class PermissionProfile(BaseModel):
     write: bool = True
     shell: bool = False
     git: bool = False
-    permission_mode: str = "auto"  # passed to `claude --permission-mode`
 
     def requires_approval(self) -> bool:
         return self.write or self.shell or self.git
@@ -81,7 +93,7 @@ class SkillPermission(BaseModel):
     summary: str = ""
 
     @classmethod
-    def from_profile(cls, profile: PermissionProfile) -> "SkillPermission":
+    def from_profile(cls, skill_id: str, profile: PermissionProfile) -> "SkillPermission":
         caps = []
         if profile.write:
             caps.append("writes a file to the customer workspace")
@@ -89,11 +101,13 @@ class SkillPermission(BaseModel):
             caps.append("runs git commands")
         if profile.shell:
             caps.append("runs shell commands")
+        # Only reviewed, allowlisted skills receive --permission-mode bypassPermissions.
+        bypass = profile.shell and skill_id in SHELL_BYPASS_ALLOWLIST
         return cls(
             write=profile.write,
             shell=profile.shell,
             git=profile.git,
-            permission_mode=profile.permission_mode,
+            permission_mode="bypassPermissions" if bypass else "auto",
             requires_approval=profile.requires_approval(),
             summary="; ".join(caps) if caps else "performs this action",
         )
@@ -105,7 +119,7 @@ SKILL_PERMISSIONS: dict[str, PermissionProfile] = {
     "connector-feasibility": PermissionProfile(write=True, shell=True, git=True),
     "freeform": PermissionProfile(write=True, shell=True, git=True),
     "pov-gsheet": PermissionProfile(write=True, shell=True, git=False),
-    "worker-analysis": PermissionProfile(write=True, shell=True, git=False, permission_mode="bypassPermissions"),
+    "worker-analysis": PermissionProfile(write=True, shell=True, git=False),
 }
 
 
@@ -174,10 +188,12 @@ class SkillRuntimeService:
     # -----------------------------------------------------------------------
     def _permission_profile(self, skill_id: str | None, freeform: bool = False) -> SkillPermission:
         if freeform or not skill_id:
+            resolved_id = "freeform"
             profile = SKILL_PERMISSIONS["freeform"]
         else:
+            resolved_id = skill_id
             profile = SKILL_PERMISSIONS.get(skill_id, PermissionProfile(write=True))
-        return SkillPermission.from_profile(profile)
+        return SkillPermission.from_profile(resolved_id, profile)
 
     def permission_for(self, skill: str | None, freeform: bool = False) -> dict:
         if freeform or not skill:

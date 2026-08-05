@@ -150,23 +150,43 @@ class WorkerCalculator:
         if sync_duration_minutes is None:
             sync_duration_minutes = config.DEFAULT_SYNC_DURATION_MINUTES
 
-        # Calculate connection counts by type
-        api_count = int(total_connections * (api_percent / 100))
-        db_count = int(total_connections * (db_percent / 100))
+        # Calculate connection counts by type and frequency using a proportional
+        # distribution that preserves the integer totals.
+        type_split = config.split_proportionally(
+            total_connections, {"api": api_percent, "db": db_percent}
+        )
+        api_count = type_split["api"]
+        db_count = type_split["db"]
 
-        # Calculate connection counts by frequency
-        sub_hourly_count = int(total_connections * (sub_hourly_percent / 100))
-        hourly_count = int(total_connections * (hourly_percent / 100))
-        daily_count = int(total_connections * (daily_percent / 100))
+        freq_split = config.split_proportionally(
+            total_connections,
+            {
+                "sub_hourly": sub_hourly_percent,
+                "hourly": hourly_percent,
+                "daily": daily_percent,
+            },
+        )
+        sub_hourly_count = freq_split["sub_hourly"]
+        hourly_count = freq_split["hourly"]
+        daily_count = freq_split["daily"]
 
-        # Distribute frequency across types (proportionally)
-        api_sub = int(sub_hourly_count * (api_percent / 100))
-        api_hourly = int(hourly_count * (api_percent / 100))
-        api_daily = int(daily_count * (api_percent / 100))
+        # Distribute each frequency bucket across connector types.
+        sub_type = config.split_proportionally(
+            sub_hourly_count, {"api": api_percent, "db": db_percent}
+        )
+        hourly_type = config.split_proportionally(
+            hourly_count, {"api": api_percent, "db": db_percent}
+        )
+        daily_type = config.split_proportionally(
+            daily_count, {"api": api_percent, "db": db_percent}
+        )
 
-        db_sub = int(sub_hourly_count * (db_percent / 100))
-        db_hourly = int(hourly_count * (db_percent / 100))
-        db_daily = int(daily_count * (db_percent / 100))
+        api_sub = sub_type["api"]
+        api_hourly = hourly_type["api"]
+        api_daily = daily_type["api"]
+        db_sub = sub_type["db"]
+        db_hourly = hourly_type["db"]
+        db_daily = daily_type["db"]
 
         # Calculate expected concurrent syncs for each category
         # Proportion of time running = sync_duration / interval

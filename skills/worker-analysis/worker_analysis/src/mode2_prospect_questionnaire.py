@@ -27,6 +27,12 @@ from datetime import datetime
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), 'src'))
 
+try:
+    from src import config
+except ImportError:
+    import config
+
+from questionnaire_calculator import analyze_questionnaire
 from worker_calculator import WorkerCalculator
 
 
@@ -38,7 +44,10 @@ def estimate_from_questionnaire(
     hourly_percent: float,
     daily_percent: float,
     sync_duration_minutes: float = None,
-    maintenance_window_hours: float = None
+    maintenance_window_hours: float = None,
+    freshness_minutes: float = 60.0,
+    environments: int = 2,
+    growth_connections: int = None,
 ) -> dict:
     """
     Estimate worker requirements from prospect questionnaire answers.
@@ -52,9 +61,13 @@ def estimate_from_questionnaire(
         daily_percent: Percentage running daily or less (%)
         sync_duration_minutes: [OPTIONAL] Most syncs under time (minutes)
         maintenance_window_hours: [OPTIONAL] Maintenance window for infrequent syncs (hours)
+        freshness_minutes: [OPTIONAL] Target freshness window for daily batch (minutes)
+        environments: [OPTIONAL] Number of environments (default 2: prod + staging)
+        growth_connections: [OPTIONAL] Future connection target for growth sizing
 
     Returns:
-        Dictionary with estimation results
+        Dictionary with deterministic estimation results including all seven
+        sizing views required for a complete questionnaire answer.
     """
     print("\n" + "=" * 80)
     print("📋 MODE 2A: NEW PROSPECT ESTIMATION")
@@ -73,42 +86,69 @@ def estimate_from_questionnaire(
         print(f"  • Avg Sync Duration: {sync_duration_minutes} minutes")
     if maintenance_window_hours:
         print(f"  • Maintenance Window: {maintenance_window_hours} hours")
+    if freshness_minutes:
+        print(f"  • Freshness Window: {freshness_minutes} minutes")
+    if environments:
+        print(f"  • Environments: {environments}")
+    if growth_connections:
+        print(f"  • Growth Target: {growth_connections} connections")
 
-    # Calculate using worker calculator
-    calculator = WorkerCalculator()
-
-    result = calculator.calculate_from_estimate(
+    sizing = analyze_questionnaire(
         total_connections=total_connections,
         api_percent=api_percent,
         db_percent=db_file_percent,
         sub_hourly_percent=sub_hourly_percent,
         hourly_percent=hourly_percent,
         daily_percent=daily_percent,
-        sync_duration_minutes=sync_duration_minutes
+        sync_duration_minutes=sync_duration_minutes,
+        maintenance_window_hours=maintenance_window_hours,
+        freshness_minutes=freshness_minutes,
+        environments=environments,
+        growth_connections=growth_connections,
     )
 
-    # Display results
     print("\n" + "=" * 80)
-    print("📊 ESTIMATION RESULTS")
+    print("📊 DETERMINISTIC SIZING SUMMARY")
     print("=" * 80 + "\n")
 
-    breakdown = result['connection_breakdown']
-    concurrency = result['expected_concurrency']
+    print("| Sizing view | Workers |")
+    print("|---|---|")
+    print(f"| Steady-state requirement | {sizing['steady_state_workers']} |")
+    print(f"| Peak-window drain requirement | {sizing['peak_window_drain_workers']} |")
+    print(f"| Worst-case simultaneous or clustered burst | {sizing['worst_case_burst_workers']} |")
+    print(f"| Production-only requirement | {sizing['production_only_workers']} |")
+    print(f"| Combined production and staging requirement | {sizing['combined_prod_staging_workers']} |")
+    print(f"| Future-growth requirement | {sizing['future_growth_workers']} |")
+    print(f"| Recommended contract or deployment capacity | {sizing['recommended_contract_or_deployment_workers']} |")
 
-    print(f"Connection Breakdown:")
-    print(f"  • API Connections: {breakdown['api_connections']}")
-    print(f"  • Database/File Connections: {breakdown['db_connections']}")
-    print(f"  • Sub-hourly: {breakdown['by_frequency']['sub_hourly']}")
-    print(f"  • Hourly: {breakdown['by_frequency']['hourly']}")
-    print(f"  • Daily: {breakdown['by_frequency']['daily']}")
+    print("\n" + "=" * 80)
+    print("📋 CONNECTION MATRIX")
+    print("=" * 80 + "\n")
 
-    print(f"\nExpected Peak Concurrency:")
-    print(f"  • API Concurrent: {concurrency['api_concurrent']}")
-    print(f"  • DB/File Concurrent: {concurrency['db_concurrent']}")
-    print(f"  • Total Concurrent: {concurrency['total_concurrent']}")
+    matrix = sizing["connection_matrix"]
+    print("| Type | Sub-hourly | Hourly | Daily | Total |")
+    print("|---|---|---|---|---|")
+    print(
+        f"| API | {matrix['sub_hourly']['api']} | "
+        f"{matrix['hourly']['api']} | {matrix['daily']['api']} | "
+        f"{matrix['api_connections']} |"
+    )
+    print(
+        f"| DB/File | {matrix['sub_hourly']['db']} | "
+        f"{matrix['hourly']['db']} | {matrix['daily']['db']} | "
+        f"{matrix['db_connections']} |"
+    )
+    print(
+        f"| Total | {matrix['sub_hourly']['total']} | "
+        f"{matrix['hourly']['total']} | {matrix['daily']['total']} | "
+        f"{sum(matrix[b]['total'] for b in ('sub_hourly', 'hourly', 'daily'))} |"
+    )
 
-    print(f"\n🎯 ESTIMATED WORKERS REQUIRED: {result['workers_required']} {result['worker_type']}")
-    print()
+    print("\n" + "=" * 80)
+    print("🎯 ESTIMATED WORKERS REQUIRED: "
+          f"{sizing['recommended_contract_or_deployment_workers']} Data Workers")
+    print("=" * 80 + "\n")
+
     print("⚠️  NOTE: This is a statistical ESTIMATE based on expected concurrency.")
     print("   Once the customer is on the platform, analyze actual job history")
     print("   using Mode 1 (job overlap analysis) for accurate worker requirements.\n")
@@ -119,14 +159,14 @@ def estimate_from_questionnaire(
         print("💡 MAINTENANCE WINDOW INSIGHTS")
         print("=" * 80 + "\n")
 
-        # Calculate how many connections can run in maintenance window
-        infrequent_count = breakdown['by_frequency']['daily']
+        infrequent_count = matrix['daily']['total']
         if sync_duration_minutes:
-            # How many syncs can fit in window
             syncs_per_window = maintenance_window_hours * 60 / sync_duration_minutes
-            # If we have 2 workers (4 DB concurrent), how many can we handle
-            concurrent_capacity = 2 * result['calculation_details']['db_connections_per_worker']
-            max_in_window = syncs_per_window * concurrent_capacity
+            # Use combined API + DB daily slots at the steady-state per-worker level
+            daily_slots_per_worker = (
+                config.API_CONNECTIONS_PER_WORKER + config.DB_CONNECTIONS_PER_WORKER
+            )
+            max_in_window = syncs_per_window * daily_slots_per_worker
 
             print(f"With a {maintenance_window_hours}h maintenance window:")
             print(f"  • Can handle ~{int(max_in_window)} infrequent syncs")
@@ -137,7 +177,22 @@ def estimate_from_questionnaire(
                 print(f"  ⚠️  May need longer window or parallel processing")
         print()
 
-    return result
+    # Also include the legacy WorkerCalculator steady-state output so callers that
+    # expect the previous result shape continue to work.
+    legacy_estimate = WorkerCalculator().calculate_from_estimate(
+        total_connections=total_connections,
+        api_percent=api_percent,
+        db_percent=db_file_percent,
+        sub_hourly_percent=sub_hourly_percent,
+        hourly_percent=hourly_percent,
+        daily_percent=daily_percent,
+        sync_duration_minutes=sync_duration_minutes,
+    )
+
+    return {
+        "sizing": sizing,
+        "legacy_estimate": legacy_estimate,
+    }
 
 
 if __name__ == "__main__":
@@ -152,7 +207,7 @@ if __name__ == "__main__":
         hourly_percent=30,
         daily_percent=50,
         sync_duration_minutes=5,
-        maintenance_window_hours=4
+        maintenance_window_hours=4,
     )
 
     # Save result
@@ -161,7 +216,7 @@ if __name__ == "__main__":
         json.dump({
             'mode': '2A_questionnaire',
             'timestamp': datetime.utcnow().isoformat(),
-            'result': result
+            'result': result,
         }, f, indent=2, default=str)
 
     print(f"📁 Results saved to: {output_file}")

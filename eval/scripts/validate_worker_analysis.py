@@ -13,6 +13,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_DIR = REPO_ROOT / "eval" / "fixtures" / "worker_analysis"
 ORIGINAL_SKILL = Path.home() / "repos" / "ai-skills" / ".agents" / "skills" / "worker-analysis" / "SKILL.md"
+SE_SUITE_SKILL = REPO_ROOT / "skills" / "worker-analysis" / "SKILL.md"
 WORKSPACE_FIXTURE = REPO_ROOT / "eval" / "fixtures" / "worker_analysis_workspace.json"
 
 SCENARIOS = {
@@ -56,6 +57,7 @@ async def run_one(
     output_path: Path,
     *,
     original: bool = False,
+    se_suite: bool = False,
     semaphore: asyncio.Semaphore,
 ) -> None:
     async with semaphore:
@@ -70,6 +72,8 @@ async def run_one(
         ]
         if original:
             cmd.extend(["--append-system-prompt-file", str(ORIGINAL_SKILL)])
+        elif se_suite:
+            cmd.extend(["--append-system-prompt-file", str(SE_SUITE_SKILL)])
         print(f"Running: {' '.join(cmd)}")
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -100,15 +104,34 @@ async def run_one(
 
 async def main() -> None:
     tasks = []
-    semaphore = asyncio.Semaphore(4)
+    semaphore = asyncio.Semaphore(2)
+
+    # One original-vs-ported run for each scenario.
     for name, prompt in SCENARIOS.items():
         for kind in ("se-suite", "original"):
             out = FIXTURE_DIR / kind / f"{name}.md"
             tasks.append(
                 asyncio.create_task(
-                    run_one(prompt, out, original=(kind == "original"), semaphore=semaphore)
+                    run_one(
+                        prompt,
+                        out,
+                        original=(kind == "original"),
+                        se_suite=(kind == "se-suite"),
+                        semaphore=semaphore,
+                    )
                 )
             )
+
+    # Five identical real-runtime complete-questionnaire runs using the se-suite skill.
+    q_prompt = SCENARIOS["questionnaire_complete"]
+    for i in range(5):
+        out = FIXTURE_DIR / "se-suite" / f"questionnaire_complete_run_{i + 1}.md"
+        tasks.append(
+            asyncio.create_task(
+                run_one(q_prompt, out, se_suite=True, semaphore=semaphore)
+            )
+        )
+
     await asyncio.gather(*tasks, return_exceptions=True)
 
 

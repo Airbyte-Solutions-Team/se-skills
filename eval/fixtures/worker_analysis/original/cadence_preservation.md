@@ -1,190 +1,107 @@
-The numbers are in. Here's the full analysis.
+Excellent — the skill ran successfully. Here is the full analysis for **Acme**:
 
 ---
 
-## Acme Prospect — Worker Estimation Analysis
-**Date:** 2026-08-04 · **Method:** Statistical estimation model (prospect — no Metabase data)
+## 🧮 Worker Estimation: Acme (Prospect)
 
-> ⚠️ **Estimation caveat:** This uses `ceil(API/5) + ceil(DB/2)`. Once Acme is on Cloud, Metabase billing data (CPU-based formula) becomes the source of truth. Treat all numbers here as pre-sales sizing, not billing guarantees.
+**Mode:** Mode 2A — Questionnaire-based Statistical Estimation
+**Analysis date:** 2026-08-05
+⚠️ *This is an estimate. The actual billing formula uses CPU values per sync; once Acme is on the platform, actual hourly Metabase data becomes the source of truth.*
 
 ---
 
-### Input Assumptions
+### Connection Matrix (50 connections)
 
-| Parameter | Value | Derived From |
+| Type | Sub-hourly (every 15 min) | Hourly | Daily | **Total** |
+|---|---|---|---|---|
+| **API** (Salesforce, HubSpot, Stripe, Shopify, Zendesk) | 8 | 14 | 13 | **35** |
+| **DB/File** (Postgres, MySQL, Snowflake) | 4 | 6 | 5 | **15** |
+| **Total** | 12 | 20 | 18 | **50** |
+
+*Split from inputs: 70% API / 30% DB × {25% sub-hourly / 40% hourly / 35% daily}*
+
+---
+
+### Sizing Views
+
+| Sizing view | Workers | What it means |
 |---|---|---|
-| Total connections | 50 | Provided |
-| API connectors | 35 (70%) | Salesforce, HubSpot, Stripe, Shopify, Zendesk |
-| Database connectors | 15 (30%) | Postgres, MySQL, Snowflake |
-| Sub-hourly (every 15 min) | 12 connections | 25% × 50 |
-| Hourly | 20 connections | 40% × 50 |
-| Daily | 17 connections | 35% × 50 (land in 1–5 AM window) |
-| Avg sync duration | 12 min | Provided |
-| P90 sync duration | ~20 min | Conservative (12 min × 1.67); above empirical fleet P90s |
-| Peak window | 1–5 AM UTC | Provided |
-| Growth target | 80 connections | 6-month projection |
-| Environments | 2 (prod + staging) | Provided |
-| Workload type | Incremental only | No initial load |
+| **Steady-state requirement** | **5** | Expected load when schedules are spread across intervals |
+| Peak-window drain requirement | 2 | Minimum to flush 18 daily syncs within a 60-min freshness SLA |
+| **Worst-case burst** | **10** | All 18 daily syncs fire simultaneously + ongoing sub-hourly/hourly steady state |
+| Production-only requirement | 5 | Prod environment alone at steady state |
+| Combined prod + staging | 7 | Prod (5) + staging modeled as daily-only (2) |
+| **Future growth (80 connections)** | **10** | 80-connection target at same mix, prod + staging |
+| ✅ **Recommended contract capacity** | **10** | Governs — driven by growth target |
 
 ---
 
-### 1 · Connection Breakdown (Proportional Distribution)
+### Steady-State Concurrency Breakdown (12-min avg duration)
 
-Frequency × type distributed proportionally (70% API / 30% DB):
+The key driver of concurrency is how long each sync runs relative to its schedule interval (duty cycle = duration ÷ interval):
 
-| Schedule | Total | API | DB |
-|---|---|---|---|
-| Every 15 min | 12 | 8 | 3 |
-| Hourly | 20 | 14 | 6 |
-| Daily (peak window) | 17 | 11 | 5 |
-| **Total** | **50** | **35** | **15** |
-
----
-
-### 2 · Steady-State Concurrency (Billing Baseline)
-
-Using `concurrency = connections × (avg_duration / interval)` per schedule group:
-
-| Group | Interval | API Concurrent | DB Concurrent | Formula |
+| Frequency | Interval | Duty cycle | Concurrent API syncs | Concurrent DB syncs |
 |---|---|---|---|---|
-| Every 15 min | 15 min | 8 × (12/15) = **6.40** | 3 × (12/15) = **2.40** | 0.80 utilization ratio |
-| Hourly | 60 min | 14 × (12/60) = **2.80** | 6 × (12/60) = **1.20** | 0.20 utilization ratio |
-| Daily (in 240-min peak window) | 240 min | 11 × (12/240) = **0.55** | 5 × (12/240) = **0.25** | 0.05 utilization ratio |
-| **Totals** | | **9.75 API** | **3.85 DB** | |
+| Sub-hourly (every 15 min) | 15 min | **80%** | 8 × 0.80 = **6.40** | 4 × 0.80 = **3.20** |
+| Hourly | 60 min | 20% | 14 × 0.20 = **2.80** | 6 × 0.20 = **1.20** |
+| Daily | 1,440 min | 0.83% | 13 × 0.0083 = **0.11** | 5 × 0.0083 = **0.04** |
+| **Total** | — | — | **9.31** | **4.44** |
 
-**Steady-state workers = ceil(9.75 / 5) + ceil(3.85 / 2) = 2 + 2 = `4 workers`**
-
-This is the floor — what billing sees during normal operation between hourly bursts. It matches the toolkit's output of 4 workers.
-
----
-
-### 3 · Peak Burst Analysis (Top-of-Hour, 1:00–4:00 AM UTC)
-
-The most important scenario: at every `:00` mark during the peak window, **both** hourly and sub-hourly connections fire simultaneously. That's a synchronized burst of **32 connections** starting at the same instant (with a 12-minute avg run duration).
-
-| Component | Count | API | DB |
-|---|---|---|---|
-| Hourly connections starting | 20 | 14.0 | 6.0 |
-| Sub-hourly connections starting | 12 | 8.4 | 3.6 |
-| Daily (steady-state, in window) | — | 0.55 | 0.25 |
-| **Burst totals** | | **22.95** | **9.85** |
-
-**Burst workers = ceil(22.95 / 5) + ceil(9.85 / 2) = 5 + 5 = `10 workers`**
-
-This spike lasts approximately 12 minutes (avg sync duration), repeating 4× per night (1:00, 2:00, 3:00, 4:00 AM UTC). Between bursts (at `:15`, `:30`, `:45`), only sub-hourly fires and load drops back to **4 workers**.
-
-```
-Worker usage pattern during 1–5 AM UTC:
-                                                              
-  10 ┤ ████                    ████                    ████
-   8 ┤ ████                    ████                    ████
-   6 ┤ ████                    ████                    ████
-   4 ┤ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████
-   2 ┤ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████
-   0 └────────────────────────────────────────────────────
-     :00  :15  :30  :45  :00  :15  :30  :45  :00  :15
-     │←── 1 AM ─────────────────────────────── 3 AM ───→│
-     
-     ▓ = 10 workers (burst at :00)    █ = 4 workers (steady-state)
-```
+**Steady-state worker formula:**
+`ceil(9.31 / 5) + ceil(4.44 / 2)` = `ceil(1.86) + ceil(2.22)` = **2 + 3 = 5 workers**
 
 ---
 
-### 4 · Queuing Model — Daily Batch (1–5 AM Window)
+### Worst-Case Burst (1–5 AM UTC Peak Window)
 
-The 17 daily connections can be modeled as a queued batch over 240 minutes. The queuing calculator shows they are extremely lightweight even without dedicated workers — they'll drain comfortably using the capacity already needed for the sub-hourly/hourly workload.
+At the nightly batch window, all 18 daily syncs fire near simultaneously while sub-hourly and hourly steady-state continues:
 
-| Daily batch | Workers needed | Concurrent slots | Drain time | Margin |
+| Component | API concurrent | DB concurrent |
+|---|---|---|
+| Sub-hourly steady-state | 6.40 | 3.20 |
+| Hourly steady-state | 2.80 | 1.20 |
+| Daily burst (all fire at once) | **+13.00** | **+5.00** |
+| **Burst total** | **22.20** | **9.40** |
+
+**Burst worker formula:**
+`ceil(22.20 / 5) + ceil(9.40 / 2)` = `ceil(4.44) + ceil(4.70)` = **5 + 5 = 10 workers**
+
+> **Key insight on the 1–5 AM window:** Sub-hourly connections (12 total, 80% duty cycle) are the heaviest contributor at any hour — they are essentially always running. Scheduling all 18 daily syncs in the same window means peak capacity must absorb the full burst on top of constant sub-hourly load. Staggering daily syncs across the 4-hour window (e.g., 6 syncs at 01:00, 6 at 02:30, 6 at 04:00) would reduce burst from **10 → ~6 workers**.
+
+---
+
+### Growth Scenario: Launch → 80 connections (6 months)
+
+| Scenario | Connections | Prod workers | Staging workers | **Combined** |
 |---|---|---|---|---|
-| 11 daily API syncs | 1 worker | 5 concurrent | ~27 min | ~213 min |
-| 5 daily DB syncs | 1 worker | 2 concurrent | ~31 min | ~209 min |
-| **Combined** | **2 workers** | — | ~31 min max | **~209 min spare** |
+| Launch (today) | 50 | 5 | 2 | **7** |
+| Growth target | 80 | 8 | 2 | **10** |
 
-**Key insight:** The daily batch is trivially small relative to the 240-minute window. Even 1 worker clears all 17 daily connections in under 35 minutes. The burst from hourly + sub-hourly connections dominates sizing — **not the daily batch**.
-
----
-
-### 5 · Growth Projections (50 → 80 Connections Over 6 Months)
-
-Same ratio assumptions maintained (70% API, 30% DB, same schedule distribution, same 12-min avg duration):
-
-| Scenario | Connections | Steady-State | Peak Burst (prod) | P99 Est. |
-|---|---|---|---|---|
-| **Today** | 50 | 4 workers | 10 workers | ~8 workers |
-| +25% | 62 | 6 workers | 13 workers | ~10 workers |
-| +50% | 75 | 6 workers | 15 workers | ~12 workers |
-| **6-mo target** | 80 | 8 workers | 17 workers | ~14 workers |
-
-At 80 connections the burst reaches 17 workers — a 70% increase from today. This is the key growth inflection that should trigger a contract review.
+The 80-connection target at the same connector mix (70/30 API/DB) and the same schedule distribution reaches **10 workers combined** across prod and staging — which is why 10 is the recommended contract anchor.
 
 ---
 
-### 6 · Dual-Environment Impact (Prod + Staging)
+### Recommendation
 
-Three staging configurations to consider:
-
-| Configuration | Prod Workers | Staging Workers | **Total** |
-|---|---|---|---|
-| Staging mirrors prod exactly (same schedule) | 10 burst | 10 burst | **20 workers** |
-| Staging at 50% load (offset peak) | 10 burst | 5 burst | **15 workers worst-case** |
-| Staging offset by 4–6h (staggered) | 10 burst | max at once | **10 workers** |
-
-**Recommendation on staging:** Stagger the staging peak by at least 4 hours from prod. This eliminates the dual-burst problem and keeps the combined need at 10 workers rather than 15–20. The 1–5 AM prod window pairs well with a 7–11 AM staging window, well inside business hours for monitoring.
-
----
-
-### 7 · Contract Recommendations
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                  RECOMMENDED CONTRACT TIERS                      │
-├─────────────────────────────────┬──────────┬─────────────────────┤
-│ Scenario                        │ Workers  │ Notes               │
-├─────────────────────────────────┼──────────┼─────────────────────┤
-│ Prod only — minimum viable      │  4       │ Floor; no burst room│
-│ Prod only — burst headroom (P99)│  10      │ Covers peak cleanly │
-│ Both envs — staggered schedule  │  10–12   │ Recommended start   │
-│ Both envs — simultaneous peaks  │  14–16   │ Conservative/safe   │
-│ 6-mo growth target (both envs)  │  20–24   │ Plan for upgrade    │
-└─────────────────────────────────┴──────────┴─────────────────────┘
-
-RECOMMENDED STARTING CONTRACT: 10–12 workers
-GROWTH TRIGGER: Upgrade to 18–20 workers when connections exceed 65
-```
-
-**Why 10–12 and not 4?** The steady-state of 4 workers covers average operation but offers zero headroom for the 10-worker burst that occurs every hour during the 1–5 AM window. Under capacity enforcement, syncs arriving during a burst would queue. Starting at 10–12 covers prod cleanly and gives staging capacity via slack.
-
----
-
-### 8 · Optimization Levers (Reduce Burst Without Adding Workers)
-
-The 10-worker burst is entirely caused by **synchronized start times** — all 32 hourly + sub-hourly connections fire at the same `:00` moment. Three practical levers:
-
-**A) Stagger hourly connections across the hour**
-Spread the 20 hourly connections in 4-minute offsets instead of all firing at `:00`. Example:
-- `0 0 1/1 * * ?` → `0 5 1/1 * * ?`, `0 10 1/1 * * ?`, etc.
-- This flattens the burst from a 10-worker spike to ~4–5 workers sustained — potentially halving the required contract.
-
-**B) Shift daily connections outside the hourly burst**
-Schedule all 17 daily connections at `:30` past the hour (e.g., 1:30, 2:30 AM). They complete well within the 4-hour window and don't compete with the hourly burst.
-
-**C) Stagger staging peak 4–6 hours from prod**
-1–5 AM prod / 7–11 AM staging eliminates dual-env burst overlap entirely.
-
-**Projected impact of staggering (A alone):**
-Burst drops from 32 simultaneous → ~8 concurrent at any given minute → **5 workers covers everything**, potentially bringing the contract from 10–12 down to **6–8 workers**.
-
----
-
-### Summary Card
-
-| Metric | Value |
+| Dimension | Recommended |
 |---|---|
-| **Steady-state workers (billing baseline)** | **4** |
-| **Peak burst workers (top of hour, prod)** | **10** |
-| **Recommended contract — start** | **10–12** |
-| **Recommended contract — 6-month growth** | **18–20** |
-| **Burst duration** | ~12 min, 4× per night |
-| **Daily batch workers needed** | 2 (trivial — rides on existing capacity) |
-| **Critical schedule risk** | All hourly + sub-hourly start simultaneously |
-| **Single biggest optimization** | Stagger hourly start times → reduce burst 40–50% |
+| **Contract capacity** | **10 Data Workers** |
+| Launch-day steady-state | 5 workers (50% utilization at contract) |
+| Burst (unoptimized daily window) | 10 workers — hits contracted ceiling |
+| Post-staggering burst (recommended) | ~6 workers — comfortable headroom |
+| 6-month growth capacity | ✅ Covered at 80 connections |
+
+**Three actions to stay well within 10 workers as the workload grows:**
+
+1. **Stagger the 1–5 AM daily batch** — spread 18 nightly syncs evenly across the 4-hour window (every ~13 min) rather than a simultaneous fire. This alone cuts burst from 10 to ~6 workers, giving 4 workers of headroom for growth.
+2. **Review sub-hourly necessity** — 12 connections running every 15 min carry an 80% duty cycle; confirming these truly need 15-min cadence (vs. hourly) would free ~1–2 steady-state workers.
+3. **Keep staging on daily-only schedules** — the staging model (2 workers) assumes daily cadence. If staging inherits sub-hourly schedules, it adds incremental load beyond this estimate.
+
+---
+
+### Caveats
+
+- This estimate uses the **heuristic model** (`ceil(API/5) + ceil(DB/2)`), not the actual CPU-based billing formula `(maxSourceCPU + maxDestCPU + maxOrchestratorCPU) / 8`. Actual billing on Cloud may differ.
+- No initial full-load is modeled (as requested). Full-load syncs would temporarily spike workers well above these estimates during the onboarding window.
+- Snowflake is classified as DB for this estimate. Since it will be used as a *destination* warehouse rather than a source, its CPU weight in billing may vary — verify via Datadog once live.
+- Once Acme is on the platform, run a **Mode 1 job overlap analysis** after 7–14 days of production history for precise contract sizing.

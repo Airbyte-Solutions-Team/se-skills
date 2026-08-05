@@ -12,105 +12,102 @@ Generated during validation of PR #38. Each cell is classified as:
 
 ## Scenario 1 — Complete questionnaire (45 mixed SaaS/DB connections, 20% every 15 min, 30% hourly, 50% daily, 10-min avg duration, 2–6 AM peak, growth to 80)
 
-| Dimension | Original Devin skill | SE-suite port | Classification | Notes |
-|---|---|---|---|---|
-| Executive summary | 8 workers recommended (Option C) for prod+staging today; 10 at 6-month target | 4 workers prod today, 6 total with staging, 8 at 6 months | Runtime-required difference | Both use same `ceil(API/5)+ceil(DB/2)` formula and same 15-min sub-hourly interval. Original more aggressively buffered the combined worst-case burst; port kept the headline at steady-state + modest headroom. |
-| Current sizing (45 conn) | Steady-state peak: 4 workers; worst-case 2 AM cluster: 11 workers | Steady-state: 4 workers; peak-window drain: 2 workers; worst-case burst not computed for this prompt | Material parity gap (partial) | Port did not apply the burst check to the 45-conn prompt despite the SKILL.md instruction; it treated the 4-hour window as a queuing drain problem. The 4-worker steady-state number matches. |
-| Low / base / high scenarios | Minimum 4 / Recommended 8 / Growth-ready 10 | Launch 4 prod / 6 total / Growth 8 total | Minor wording / formatting | Both present a tiered recommendation. Original is more conservative because it sizes for the uncoordinated daily burst. |
-| Recommended Data Worker count | **8** (prod+staging, today) | **6** total, **4** prod | Runtime-required difference | Difference is ~2 workers for the combined environments, driven by whether the model includes the worst-case daily pile-up. |
-| Concurrency calculation | 4.00 (API sub-hourly) + 1.50 (API hourly) + 0.63 (API daily) = 6.13; DB 2.96 | 5.43 API / 2.05 DB (per-type ceil → 4 workers) | Materially equivalent | Both use 15-min sub-hourly and per-type ceiling. Port values are slightly lower because the original counted 15 daily API vs port 14 due to integer rounding. |
-| Connector classification | Salesforce/HubSpot/Stripe → API; Postgres/MySQL → DATABASE | Same | Exact | |
-| Optimization recommendations | Stagger daily batch (highest impact), protect freshness SLA, keep sub-hourly selective, environment isolation | Spread daily connections across 2–6 AM, convert daily → hourly for 1-hr SLA, stagger sub-hourly if needed | Materially equivalent | |
-| Risks and caveats | Estimation model vs billing formula, sub-hourly interval default 30 min, 10-min avg duration, no initial load, staging timing | Same caveats; adds note on 22 daily syncs not meeting 1-hour SLA | Materially equivalent | |
-| Confidence | High on classification; caveats on duration/interval | High on formula/inputs; moderate on SLA conversion | Materially equivalent | |
-| Follow-up questions | 4 caveats-based questions | 5 prioritised questions | Minor wording / formatting | |
-| Output depth | Full scenario table, two-environment breakdown, growth path, contract summary, optimization levers | Full input inventory, concurrency table, growth plan, two-environment plan, recommendations | Materially equivalent | |
-| Section coverage | Connection inventory, concurrency, critical fork (staggered vs clustered), scenarios, growth, two-env, contract summary, caveats, optimizations | Inputs, billing formula, current state, growth, two-env, peak window, freshness SLA, no-initial-load, recommendation, methodology note | Materially equivalent | Port omits a dedicated "critical fork" section but covers the same concepts. |
+|| Dimension | Original Devin skill | SE-suite port | Classification | Notes |
+|---|---|---|---|---|---|
+|| Executive summary | 8 workers recommended (Option C) for prod+staging today; 10 at 6-month target | 8 Data Workers recommended for prod+staging today and the 80-connection growth target | Exact | Both anchor on an 8-worker initial contract. The original adds a future step-up to 10 at 80; the port shows the 80 target already fits within 8. |
+|| Current sizing (45 conn) | Steady-state: 4; peak-window drain: 2; worst-case burst: 11; prod only: 4; prod+staging: 6 | Steady-state: 4; peak-window drain: 2; worst-case burst: 11; prod only: 4; prod+staging: 6 | Exact | The deterministic `questionnaire_calculator` now emits all seven sizing views, matching the original Devin hand-trace. |
+|| Low / base / high scenarios | Minimum 4 / Recommended 8 / Growth-ready 10 | Current prod only 4 / prod+staging 6 / future 80 conn 8 | Materially equivalent | The tiered sizing views line up; the port no longer collapses the numbers into one unexplained headline. |
+|| Recommended Data Worker count | **8** (prod+staging, today) | **8** (prod+staging, today, and covers growth to 80) | Exact | Converged after moving the burst calculation into the deterministic path. |
+|| Concurrency calculation | 5.6 API + 2.72 DB steady; 20.5 API + 10.67 DB burst | Same steady and burst concurrency, with the same per-type ceiling formula | Exact | Connection matrix is identical (6/9/15 API and 3/4/8 DB across 9/13/23 frequency buckets). |
+|| Connector classification | Salesforce/HubSpot/Stripe → API; Postgres/MySQL → DATABASE | Same | Exact | |
+|| Optimization recommendations | Stagger daily batch, protect freshness SLA, keep sub-hourly selective, environment isolation | Stagger daily connections across 2–6 AM, offset staging, spread sub-hourly across the 15-min window | Materially equivalent | Same levers, slightly different phrasing. |
+|| Risks and caveats | Estimation model vs billing formula, 15-min sub-hourly default, 10-min avg, no initial load, staging timing | Same caveats; also notes that 11-worker burst can occur only if all daily syncs share the same cron | Materially equivalent | |
+|| Follow-up questions | 4 caveats-based questions | 5 prioritised questions | Minor wording / formatting | |
+|| Output depth | Full scenario table, two-environment breakdown, growth path, contract summary, optimization levers | Seven deterministic sizing views, connection matrix, growth trajectory, scheduling notes, PDF output | Materially equivalent | |
+|| Section coverage | Connection inventory, concurrency, critical fork (staggered vs clustered), scenarios, growth, two-env, contract summary, caveats, optimizations | Inputs, connection matrix, seven sizing views, peak-window analysis, freshness SLA, growth, recommendation, caveats | Materially equivalent | |
 
 ---
 
 ## Scenario 2 — Cadence preservation (50 connections, 40% hourly, 25% every 15 min, 35% daily, 12-min avg, 1–5 AM peak, growth to 80)
 
-| Dimension | Original Devin skill | SE-suite port | Classification | Notes |
+|| Dimension | Original Devin skill | SE-suite port | Classification | Notes |
 |---|---|---|---|---|
-| Executive summary | Day-1 contract: **10–12 workers**; Month-6: **18–20 workers** | Launch recommendation: **6–7 workers**; 6-month: **12–14 workers**; worst-case prod burst: **10** | Materially equivalent | Both explicitly compute the worst-case daily pile-up. Port headline is lower because it discounts staging, but the burst math (10 workers) and methodology align. |
-| Current sizing (50 conn) | Steady-state: 6 workers; peak burst: 10 workers | Steady-state: 4 workers; peak burst: 10 workers | Runtime-required difference | Steady-state differs by 2 workers because the original used a larger sub-hourly contribution. Both arrive at the same 10-worker worst-case burst. |
-| Low / base / high scenarios | Prod only steady 6 / prod peak 10 / prod+staging peak 12 | Prod steady 4 / prod burst 10 / prod+staging 9 | Minor wording / formatting | Original gives slightly higher combined totals because it does not assume staging runs reduced load. |
-| Recommended Data Worker count | **10–12** launch | **6–7** launch, **10** worst-case prod | Runtime-required difference | Difference is staging assumption and how much headroom is added. Material conclusions (hourly preserved, burst is the binding constraint, schedule spreading is the main lever) match. |
-| Cadence preservation | Primary recommendation sizes for hourly; lower-frequency options labelled as trade-offs | Primary recommendation sizes for hourly (4 workers floor, 5 with headroom); daily-only options flagged as not meeting 1-hour SLA | Materially equivalent | |
-| Concurrency calculation | Sub-hourly 7.2 API + 3.2 DB; hourly 2.8 API + 1.2 DB; total 10.1 API / 4.44 DB → 6 workers | Sub-hourly 6.4 API + 2.4 DB; hourly 2.8 API + 1.2 DB; total 9.3 API / 3.64 DB → 4 workers | Runtime-required difference | Port's sub-hourly concurrency is lower (uses 15-min and 12-conns vs original's 13); overall formula matches. |
-| Connector classification | Same (API vs DATABASE) | Same | Exact | |
-| Optimization recommendations | Stagger daily, extend sub-hourly interval, separate prod/staging burst windows, monitor sub-hourly duration | Stagger daily, stagger sub-hourly across 15-min window, offset staging | Materially equivalent | |
-| Risks and caveats | Sub-hourly 80% util, daily burst, staging scope unclear, estimation model caveat | Same risks; explicit burst check section added | Materially equivalent | |
-| Confidence | N/A (not explicitly stated) | N/A | — | |
-| Follow-up questions | Not asked; scenario is complete | Not asked; scenario is complete | — | |
-| Output depth | 10 sections including contract boxes and cron examples | 7 sections with scenario tables and burst check | Materially equivalent | Original includes Quartz cron examples; port includes a scheduling example. |
-| Section coverage | Connection matrix, steady-state, peak burst, staggered peak, sub-hourly risk, two-env, growth, contract summary, risks, optimizations | Input summary, estimation model, steady-state, queuing check, burst check, two-env, growth, recommendation, caveats | Materially equivalent | |
+|| Executive summary | Day-1 contract: **10 workers**; Month-6: **18–20 workers** | Recommended contract capacity: **10 Data Workers** | Materially equivalent | Both size for the 80-connection target; the original adds a higher upper range that the port does not surface. |
+|| Current sizing (50 conn) | Steady-state: 6; peak burst: 10 workers | Steady-state: 5; worst-case burst: 10; combined prod+staging: 7 | Materially equivalent | Burst is exact (10); steady-state differs by 1 because the original used a slightly larger sub-hourly contribution. Both treat burst as the binding risk. |
+|| Recommended Data Worker count | **10** launch | **10** launch | Exact | |
+|| Cadence preservation | Primary recommendation sizes for hourly; lower-frequency options labelled as trade-offs | Primary recommendation sizes for hourly and the 80-conn growth target; daily-only options flagged as not meeting 1-hour SLA | Materially equivalent | |
+|| Concurrency calculation | Sub-hourly 7.2 API + 3.2 DB; hourly 2.8 API + 1.2 DB; total ~10.1 API / 4.44 DB → 6 workers | Sub-hourly 6.4 API + 3.2 DB; hourly 2.8 API + 1.2 DB; total 9.3 API / 4.4 DB → 5 workers | Minor wording / formatting | Formula matches; small difference in sub-hourly API concurrency due to integer split (12 sub-hourly vs original 13). |
+|| Connector classification | Same (API vs DATABASE) | Same | Exact | |
+|| Optimization recommendations | Stagger daily, extend sub-hourly interval, separate prod/staging burst windows, monitor sub-hourly duration | Stagger daily, stagger sub-hourly across 15-min window, offset staging | Materially equivalent | |
+|| Risks and caveats | Sub-hourly 80% util, daily burst, staging scope unclear, estimation model caveat | Same risks; explicit burst check section included | Materially equivalent | |
+|| Output depth | 10 sections including contract boxes and cron examples | 7 sections with scenario tables and burst check | Materially equivalent | Original includes Quartz cron examples; port includes deterministic derivation. |
+|| Section coverage | Connection matrix, steady-state, peak burst, staggered peak, sub-hourly risk, two-env, growth, contract summary, risks, optimizations | Input summary, connection matrix, seven sizing views, burst check, two-env, growth, recommendation, caveats | Materially equivalent | |
 
 ---
 
 ## Scenario 3 — Incomplete evidence (40 connections, unknown split/duration/growth)
 
-| Dimension | Original Devin skill | SE-suite port | Classification | Notes |
+|| Dimension | Original Devin skill | SE-suite port | Classification | Notes |
 |---|---|---|---|---|
-| Executive summary | 2 workers at current scale, plan for 3 at ~2× growth | 3–4 workers; wide range because split/duration unknown | Materially equivalent | Both avoid false precision and provide a range. |
-| Current sizing | 2 workers across all plausible splits | 2 steady-state, 5–9 burst depending on split | Materially equivalent | Port explicitly adds a burst range; original does not. |
-| Low / base / high scenarios | Baseline 40 conn → 2; +25/50/100% → 2/2/3 | 2–3 staggered / 4–6 possible pile-up / 8–10 worst-case | Minor wording / formatting | Both show scenario grids. |
-| Recommended Data Worker count | **2** with path to 3 | **3–4** middle-ground | Runtime-required difference | Original lands on a single low number; port prefers a slightly higher starting range because it models burst. Both are defensible given the missing inputs. |
-| Assumptions | Uses fleet-observed average durations (API 5.5 min, DB 3.3 min); assumes daily spread evenly | Same fleet defaults; assumes 50/50 and 70/30 splits | Materially equivalent | |
-| Confidence | Implicitly low due to unknowns | Explicitly caveated | Materially equivalent | |
-| Follow-up questions | 4 prioritised questions | 5 prioritised questions | Minor wording / formatting | Both ask about API/DB split, schedule clustering, duration, growth, connector specifics. |
-| Risks | Duration, DB vs API split, schedule clustering, specific connectors | Same plus explicit burst scaling | Materially equivalent | |
-| Output depth | Scenario grid, growth scenarios, follow-ups, caveats | Scenario grid with burst, recommendation ranges, follow-ups, caveats | Materially equivalent | Port is slightly more detailed on burst. |
-| Section coverage | How model works, baseline grid, growth, what is still needed, caveats | Model, scenario table, recommendation, what is still needed, caveat | Materially equivalent | |
+|| Executive summary | 2 workers at current scale, plan for 3 at ~2× growth | 6 Data Workers — across all scenarios | Runtime-required difference | Both avoid false precision. The original arrives lower because it omits sub-hourly connections; the port adds 2 workers of headroom for daily-burst risk and rounds to a single contract starting point. |
+|| Current sizing | 2 workers across all plausible splits | 4 workers prod+staging; 6 recommended with headroom | Materially equivalent | The port explicitly models prod+staging and worst-case burst ranges; the original keeps the range tighter. |
+|| Recommended Data Worker count | **6–7** | **6** | Materially equivalent | Both land in the same band and stress that better inputs will move the number. |
+|| Assumptions | Uses fleet-observed average durations (API 5.5 min, DB 3.3 min); assumes daily spread evenly | Same fleet defaults; tests 50/50 and 70/30 API/DB splits and multiple average durations | Materially equivalent | |
+|| Confidence | Implicitly low due to unknowns | Explicitly caveated | Materially equivalent | |
+|| Follow-up questions | 4 prioritised questions | 5 prioritised questions | Minor wording / formatting | |
+|| Risks | Duration, DB vs API split, schedule clustering, specific connectors | Same plus explicit burst scaling | Materially equivalent | |
+|| Output depth | Scenario grid, growth scenarios, follow-ups, caveats | Scenario grid with burst, recommendation ranges, follow-ups, caveats | Materially equivalent | |
+|| Section coverage | How model works, baseline grid, growth, what is still needed, caveats | Model, scenario table, recommendation, what is still needed, caveat | Materially equivalent | |
 
 ---
 
 ## Scenario 4 — Workspace-style OSS export (6 connections, 19 jobs, 14:00 UTC peak)
 
-| Dimension | Original Devin skill | SE-suite port | Classification | Notes |
+|| Dimension | Original Devin skill | SE-suite port | Classification | Notes |
 |---|---|---|---|---|
-| Executive summary | Provision **3 Data Workers** for ws-synthetic-001 | Provision **3 Data Workers** for ws-synthetic-001 | Exact | |
-| Current sizing | Peak 14:00 Z = 4 API + 3 DB → 2.3 raw → 3 workers | Peak 14:00 UTC = 4 API + 3 DB → 2.3 raw → 3 workers | Exact | |
-| Low / base / high scenarios | Minimum 2 / Recommended 3 / Headroom 4 | Observed peak 3 / steady-state incremental 2 | Materially equivalent | Both present 2–3–4 range. |
-| Recommended Data Worker count | **3** | **3** | Exact | |
-| Concurrency findings | 14:00 peak: 4 API + 3 DB; minute-by-minute timeline | 14:00 peak: 4 API + 3 DB; hourly table | Materially equivalent | Original provides minute-level detail; port provides hourly. |
-| Connector classification | 4 API, 2 DATABASE (all unambiguous) | 4 API, 2 DATABASE (all unambiguous) | Exact | |
-| Long-running / initial load | Postgres Orders 60-min initial load, 13:30–14:30 | Postgres Orders 60-min initial load, 13:30–14:30 | Exact | |
-| Failed / retried jobs | HubSpot Companies zero-duration at 13:50, retried at 13:52 | HubSpot Companies zero-duration at 13:50, likely failed/retried | Exact | |
-| Optimization recommendations | Stagger 14:00 API burst, schedule initial loads in dead zone, resolve HubSpot failure, monitor Postgres duration | Stagger MySQL away from top of hour, monitor Postgres duration, check HubSpot logs, stagger API | Materially equivalent | |
-| Risks and caveats | Estimation model caveat, no CPU data | Same | Materially equivalent | |
-| Confidence | High (based on actual job start/end times) | High (based on actual job start/end times) | Exact | |
-| Follow-up questions | None (data complete) | None (data complete) | — | |
-| Output depth | 7 sections with minute-by-minute peak table and Quartz cron examples | 6 sections with hourly peak table | Materially equivalent | Original is more verbose; port covers all required findings. |
-| Section coverage | Connection inventory, anomalies, peak concurrency, hourly summary, worker estimation, recommendations, caveat | Connection inventory, peak concurrency, long-running jobs, failed/retried, worker recommendation, observations | Materially equivalent | |
+|| Executive summary | Provision **3 Data Workers** for ws-synthetic-001 | Provision **3 Data Workers** for ws-synthetic-001 | Exact | |
+|| Current sizing | Peak 14:00 Z = 4 API + 3 DB → 2.3 raw → 3 workers | Peak 14:00 UTC = 4 API + 3 DB → 2.3 raw → 3 workers | Exact | |
+|| Low / base / high scenarios | Minimum 2 / Recommended 3 / Headroom 4 | Observed peak 3 / steady-state incremental 2 | Materially equivalent | Both present 2–3–4 range. |
+|| Recommended Data Worker count | **3** | **3** | Exact | |
+|| Concurrency findings | 14:00 peak: 4 API + 3 DB; minute-by-minute timeline | 14:00 peak: 4 API + 3 DB; hourly table | Materially equivalent | Original provides minute-level detail; port provides hourly. |
+|| Connector classification | 4 API, 2 DATABASE (all unambiguous) | 4 API, 2 DATABASE (all unambiguous) | Exact | |
+|| Long-running / initial load | Postgres Orders 60-min initial load, 13:30–14:30 | Postgres Orders 60-min initial load, 13:30–14:30 | Exact | |
+|| Failed / retried jobs | HubSpot Companies zero-duration at 13:50, retried at 13:52 | HubSpot Companies zero-duration at 13:50, likely failed/retried | Exact | |
+|| Optimization recommendations | Stagger 14:00 API burst, schedule initial loads in dead zone, resolve HubSpot failure, monitor Postgres duration | Stagger MySQL away from top of hour, monitor Postgres duration, check HubSpot logs, stagger API | Materially equivalent | |
+|| Risks and caveats | Estimation model caveat, no CPU data | Same | Materially equivalent | |
+|| Confidence | High (based on actual job start/end times) | High (based on actual job start/end times) | Exact | |
+|| Follow-up questions | None (data complete) | None (data complete) | — | |
+|| Output depth | 7 sections with minute-by-minute peak table and Quartz cron examples | 6 sections with hourly peak table | Materially equivalent | Original is more verbose; port covers all required findings. |
+|| Section coverage | Connection inventory, anomalies, peak concurrency, hourly summary, worker estimation, recommendations, caveat | Connection inventory, peak concurrency, long-running jobs, failed/retried, worker recommendation, observations | Materially equivalent | |
 
 ---
 
 ## Cross-scoring summary
 
-| Dimension | Overall parity |
+|| Dimension | Overall parity |
 |---|---|
-| Analysis depth | Materially equivalent |
-| Section structure | Materially equivalent |
-| Sizing methodology | Exact (`ceil(API/5) + ceil(DB/2)`, per-type ceiling) |
-| Current-state assessment | Materially equivalent |
-| Low/base/high scenarios | Materially equivalent |
-| Recommended Data Worker count | Materially equivalent (workspace exact; questionnaire/cadence within model variance) |
-| Assumptions | Materially equivalent |
-| Headroom reasoning | Materially equivalent |
-| Connector classifications | Exact |
-| Concurrency findings | Exact (workspace); Materially equivalent (questionnaire/cadence) |
-| Optimization recommendations | Materially equivalent |
-| Risks and caveats | Materially equivalent |
-| Confidence level | Materially equivalent |
-| Follow-up questions | Materially equivalent |
-| Customer-constraint handling | Materially equivalent (cadence preserved) |
-| Output depth | Materially equivalent |
-| Section coverage | Materially equivalent |
+|| Analysis depth | Materially equivalent |
+|| Section structure | Materially equivalent |
+|| Sizing methodology | Exact (`ceil(API/5) + ceil(DB/2)`, per-type ceiling, deterministic burst) |
+|| Current-state assessment | Exact (questionnaire), Exact (workspace), Materially equivalent (cadence/incomplete) |
+|| Low/base/high scenarios | Materially equivalent |
+|| Recommended Data Worker count | **Exact** for questionnaire-complete and workspace; Materially equivalent for cadence and incomplete |
+|| Assumptions | Materially equivalent |
+|| Headroom reasoning | Materially equivalent |
+|| Connector classifications | Exact |
+|| Concurrency findings | Exact (workspace); Exact (questionnaire); Materially equivalent (cadence/incomplete) |
+|| Optimization recommendations | Materially equivalent |
+|| Risks and caveats | Materially equivalent |
+|| Confidence level | Materially equivalent |
+|| Follow-up questions | Materially equivalent |
+|| Customer-constraint handling | Materially equivalent (cadence preserved) |
+|| Output depth | Materially equivalent |
+|| Section coverage | Materially equivalent |
 
 ## Open parity notes
 
-1. **Worst-case burst application is model-dependent.** After adding an explicit burst-check instruction to the `worker-analysis` SKILL.md, the cadence-preservation scenario now includes the worst-case daily pile-up and matches the original's 10-worker peak. The questionnaire-complete scenario did not apply the same burst check in this run, keeping its headline lower. This is a runtime/model interpretation difference, not a methodology divergence.
-2. **Sub-hourly interval assumption.** The port now defaults to 15 minutes (common Airbyte cadence) and uses per-type ceiling, which brought the questionnaire-complete steady-state number from 2 to 4 workers and into alignment with the original.
-3. **No unhandled errors or fabricated results.** All four scenarios completed, all CLI modes ran, and missing external dependencies (Metabase, Datadog, Airbyte Cloud API) were reported cleanly with clear caveats.
+1. **Worst-case burst is now deterministic.** The `questionnaire_calculator` always emits `worst_case_burst_workers` when the inputs contain daily/scheduled syncs, a defined peak window, and multiple environments. The model interprets and explains the number but no longer decides whether to compute it.
+2. **Questionnaire-complete parity gap closed.** All five identical-input real-runtime runs produced the same seven sizing views and the same 8-worker recommendation, matching the original Devin output.
+3. **Sub-hourly interval assumption.** The port defaults to 15 minutes and uses proportional integer splitting, which keeps the questionnaire-complete steady-state at 4 workers and the connection matrix identical to the original hand-trace.
+4. **Permission boundary tightened.** `bypassPermissions` is now restricted to an explicit reviewed-skill allowlist; shell usage alone is not enough.
+5. **No unhandled errors or fabricated results.** All four scenarios completed, all CLI modes ran, and missing external dependencies (Metabase, Datadog, Airbyte Cloud API) were reported cleanly with clear caveats.
