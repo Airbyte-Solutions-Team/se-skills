@@ -1,0 +1,15 @@
+{
+  "command": [
+    "claude",
+    "-p",
+    "Use the worker-analysis skill for Acme. Estimate workers for a prospect. The customer requires hourly synchronization for all critical reports. 50 connections: 35 are SaaS APIs (Salesforce, HubSpot, Stripe, Shopify, Zendesk) and 15 are databases (Postgres, MySQL, Snowflake). Schedule: 40% hourly, 25% every 15 minutes, 35% daily. Average sync duration 12 minutes. Peak window 1-5 AM UTC. Growth to 80 connections in 6 months. Two environments (prod and staging). No initial load. Recurring incremental workload.",
+    "--model",
+    "claude-sonnet-4-6",
+    "--bare",
+    "--dangerously-skip-permissions",
+    "--append-system-prompt-file",
+    "/home/ubuntu/repos/se-skills/skills/worker-analysis/SKILL.md"
+  ],
+  "returncode": 0,
+  "stderr": ""
+}

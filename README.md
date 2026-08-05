@@ -1,6 +1,6 @@
 # SE Skills Suite — Solutions Engineering Workflow for Claude Code
 
-A suite of Claude Code skills that automate the Solutions Engineering deal lifecycle — call prep, qualification, post-call summaries, deal assessments, objection handling, and internal meeting prep. Grounded in established sales frameworks (MEDDPICC, SPIN, Sandler, Challenger, Voss), wired into Gong (transcripts) and Salesforce (CRM), with outputs auto-saved per customer.
+A suite of Claude Code skills that automate the Solutions Engineering deal lifecycle — call prep, qualification, post-call summaries, deal assessments, objection handling, internal meeting prep, and worker analysis. Grounded in established sales frameworks (MEDDPICC, SPIN, Sandler, Challenger, Voss), wired into Gong (transcripts) and Salesforce (CRM), with outputs auto-saved per customer.
 
 Built by Gary Yang (Solutions Engineer, Airbyte). Designed to be team-shareable.
 
@@ -28,6 +28,7 @@ Built by Gary Yang (Solutions Engineer, Airbyte). Designed to be team-shareable.
 | `next-move` | Diagnoses where a customer sits + recommends the next skill | "where am I on X", "what's next for X" |
 | `coverage-handoff` | PTO coverage handoff — self-contained HTML page for a covering SE | "coverage handoff", "PTO handoff for X" |
 | `pov-gsheet` | Create and pre-fill a POV Success Criteria Google Sheet for a prospect | "POV sheet", "success criteria for X", "prep the POV" |
+| `worker-analysis` | Analyze, estimate, and optimize Airbyte Data Worker usage | "worker analysis", "how many workers", "capacity" |
 
 Plus the shared reference (not a skill): **`_se-playbook.md`** — the SE-craft canon all skills read from. It now also contains a `Shared Skill Boilerplate` section (`Output format reference`, `Pre-flight source check`, `After Generating (saving skills)`) that individual `SKILL.md` files reference as `~/.claude/skills/_se-playbook.md` instead of duplicating.
 
@@ -85,6 +86,7 @@ follow-up-email           ← drafts in your voice, as needed
 objection-handler         ← when a concern surfaces
 internal-prep             ← AE syncs, forecasts, exec readouts
 pov-gsheet                ← create + pre-fill a POV Success Criteria Google Sheet
+worker-analysis           ← analyze data worker usage / capacity
 
 next-move        ← run anytime: "what should I do next on X?"
 ```

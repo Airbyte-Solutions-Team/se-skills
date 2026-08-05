@@ -1,0 +1,15 @@
+{
+  "command": [
+    "claude",
+    "-p",
+    "Use the worker-analysis skill for Acme. Estimate workers for a prospect. We have about 40 connections, a mix of SaaS APIs and databases, but we do not have the exact API/DB split or the average sync duration. Some connections run hourly and some run daily. We expect to grow but do not have a firm number. What would you estimate and what else do you need to know?",
+    "--model",
+    "claude-sonnet-4-6",
+    "--bare",
+    "--dangerously-skip-permissions",
+    "--append-system-prompt-file",
+    "/home/ubuntu/repos/ai-skills/.agents/skills/worker-analysis/SKILL.md"
+  ],
+  "returncode": 0,
+  "stderr": ""
+}

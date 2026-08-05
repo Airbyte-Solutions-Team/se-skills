@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from services.skill_runtime_service import SkillRuntimeService
+from services.skill_runtime_service import SKILL_PERMISSIONS, SkillRuntimeService
 from webapp import config as app_config
 
 
@@ -189,3 +189,141 @@ def test_api_invoke_freeform_runs_after_permission_approval(monkeypatch, tmp_pat
 
     assert result.get("job_id")
     assert "blocked" not in result
+
+
+def test_worker_analysis_blocked_without_permission_approval(tmp_path: Path):
+    """worker-analysis cannot run until the backend approval gate succeeds."""
+    svc = _runtime_svc(tmp_path)
+
+    result = asyncio.run(svc.invoke(
+        account="Acme",
+        skill="worker-analysis",
+        opportunity=None,
+        opp_slug=None,
+        extra=None,
+        freeform=None,
+        override_prerequisites=False,
+        approve_permissions=False,
+    ))
+
+    assert result["blocked"] is True
+    assert "permissions" in result
+    assert result["permissions"]["shell"] is True
+    assert "job_id" not in result
+
+
+def test_worker_analysis_permission_plan_shows_before_approval(tmp_path: Path):
+    """Permission planning is returned before approval so the user can review it."""
+    svc = _runtime_svc(tmp_path)
+
+    plan = svc.permission_for("worker-analysis")
+    assert plan["write"] is True
+    assert plan["shell"] is True
+    assert plan["git"] is False
+    assert plan["requires_approval"] is True
+    assert plan["permission_mode"] == "bypassPermissions"
+    assert "runs shell commands" in plan["summary"]
+
+
+def test_worker_analysis_runs_after_permission_approval(tmp_path: Path):
+    """A user can invoke worker-analysis only after explicitly approving permissions."""
+    svc = _runtime_svc(tmp_path)
+
+    result = asyncio.run(svc.invoke(
+        account="Acme",
+        skill="worker-analysis",
+        opportunity=None,
+        opp_slug=None,
+        extra="questionnaire mode",
+        freeform=None,
+        override_prerequisites=False,
+        approve_permissions=True,
+    ))
+
+    assert result.get("job_id")
+    assert "blocked" not in result
+    # Launch meta must carry the bypass permission mode for non-interactive shell use.
+    launch = svc.job_service.launch_calls[-1]
+    assert launch["meta"]["permission_mode"] == "bypassPermissions"
+
+
+def test_worker_analysis_questionnaire_mode_has_only_required_permissions(tmp_path: Path):
+    """worker-analysis only needs write (output) and shell (toolkit); no git."""
+    svc = _runtime_svc(tmp_path)
+    plan = svc.permission_for("worker-analysis")
+    assert plan["write"] is True
+    assert plan["shell"] is True
+    assert plan["git"] is False
+
+
+def test_only_allowlisted_shell_skills_receive_bypass_permissions(tmp_path: Path):
+    """bypassPermissions is limited to the reviewed allowlist."""
+    svc = _runtime_svc(tmp_path)
+    # freeform is a special pseudo-skill that is not discovered from disk.
+    for sid in ("connector-feasibility", "pov-gsheet", "worker-analysis"):
+        plan = svc.permission_for(sid)
+        assert plan["shell"] is True
+        assert plan["permission_mode"] == "bypassPermissions"
+
+    freeform = svc._permission_profile(None, freeform=True)
+    assert freeform.shell is True
+    assert freeform.permission_mode == "bypassPermissions"
+
+    for sid in ("prep-call", "biz-qual", "next-move", "post-call"):
+        plan = svc.permission_for(sid)
+        assert plan["shell"] is False
+        assert plan["permission_mode"] == "auto"
+
+
+def test_unknown_skill_cannot_obtain_bypass_permissions_by_declaring_shell(tmp_path: Path, monkeypatch):
+    """Skill metadata alone (a declared shell=True) does not grant bypassPermissions."""
+    from services.skill_runtime_service import PermissionProfile
+
+    svc = _runtime_svc(tmp_path)
+    # Pretend an untrusted skill is declared with shell=True but is not in the allowlist.
+    monkeypatch.setitem(SKILL_PERMISSIONS, "untrusted-skill", PermissionProfile(write=True, shell=True, git=False))
+    profile = svc._permission_profile("untrusted-skill")
+    assert profile.shell is True
+    assert profile.permission_mode == "auto", "shell alone must not grant bypassPermissions"
+
+
+def test_non_shell_skills_retain_write_only_permission_behavior(tmp_path: Path):
+    """Existing non-shell skills keep write-only auto permission mode."""
+    svc = _runtime_svc(tmp_path)
+    plan = svc.permission_for("prep-call")
+    assert plan["write"] is True
+    assert plan["shell"] is False
+    assert plan["git"] is False
+    assert plan["permission_mode"] == "auto"
+    assert plan["requires_approval"] is True
+
+
+def test_invoke_block_leaves_service_usable(tmp_path: Path):
+    """A rejected permission plan prevents invocation but does not break later calls."""
+    svc = _runtime_svc(tmp_path)
+
+    blocked = asyncio.run(svc.invoke(
+        account="Acme",
+        skill="worker-analysis",
+        opportunity=None,
+        opp_slug=None,
+        extra=None,
+        freeform=None,
+        override_prerequisites=False,
+        approve_permissions=False,
+    ))
+    assert blocked["blocked"] is True
+    assert "job_id" not in blocked
+
+    approved = asyncio.run(svc.invoke(
+        account="Acme",
+        skill="worker-analysis",
+        opportunity=None,
+        opp_slug=None,
+        extra=None,
+        freeform=None,
+        override_prerequisites=False,
+        approve_permissions=True,
+    ))
+    assert approved.get("job_id")
+    assert "blocked" not in approved

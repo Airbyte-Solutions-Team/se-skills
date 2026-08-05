@@ -56,8 +56,22 @@ SKILL_PRESENTATION: dict[str, dict[str, Any]] = {
     "internal-prep": {"label": "Internal Prep", "blurb": "AE sync / forecast / exec-readout prep (internal)", "tier": TIER_ANYTIME, "step": None, "order": 24},
     "coverage-handoff": {"label": "Coverage Handoff", "blurb": "PTO handoff for a covering SE", "tier": TIER_ANYTIME, "step": None, "order": 25},
     "pov-gsheet": {"label": "POV Google Sheet", "blurb": "Create and pre-fill a POV Success Criteria Google Sheet", "tier": TIER_ANYTIME, "step": None, "order": 26},
+    "worker-analysis": {"label": "Worker Analysis", "blurb": "Analyze, estimate, and optimize Airbyte Data Worker usage", "tier": TIER_ANYTIME, "step": None, "order": 27},
     # Router (unnumbered)
     "next-move": {"label": "Next Move", "blurb": "Not sure what to run? This inspects the deal and tells you", "tier": TIER_META, "step": None, "order": 30},
+}
+
+
+# Explicit reviewed-skill allowlist for non-interactive shell execution.
+# A skill must be listed here AND declare shell=True in SKILL_PERMISSIONS to
+# receive --permission-mode bypassPermissions. This prevents an arbitrary newly
+# discovered or added shell skill from automatically bypassing the permission
+# prompts in `claude -p`.
+SHELL_BYPASS_ALLOWLIST: set[str] = {
+    "connector-feasibility",
+    "freeform",
+    "pov-gsheet",
+    "worker-analysis",
 }
 
 
@@ -74,11 +88,12 @@ class SkillPermission(BaseModel):
     write: bool = True
     shell: bool = False
     git: bool = False
+    permission_mode: str = "auto"
     requires_approval: bool = True
     summary: str = ""
 
     @classmethod
-    def from_profile(cls, profile: PermissionProfile) -> "SkillPermission":
+    def from_profile(cls, skill_id: str, profile: PermissionProfile) -> "SkillPermission":
         caps = []
         if profile.write:
             caps.append("writes a file to the customer workspace")
@@ -86,10 +101,13 @@ class SkillPermission(BaseModel):
             caps.append("runs git commands")
         if profile.shell:
             caps.append("runs shell commands")
+        # Only reviewed, allowlisted skills receive --permission-mode bypassPermissions.
+        bypass = profile.shell and skill_id in SHELL_BYPASS_ALLOWLIST
         return cls(
             write=profile.write,
             shell=profile.shell,
             git=profile.git,
+            permission_mode="bypassPermissions" if bypass else "auto",
             requires_approval=profile.requires_approval(),
             summary="; ".join(caps) if caps else "performs this action",
         )
@@ -101,6 +119,7 @@ SKILL_PERMISSIONS: dict[str, PermissionProfile] = {
     "connector-feasibility": PermissionProfile(write=True, shell=True, git=True),
     "freeform": PermissionProfile(write=True, shell=True, git=True),
     "pov-gsheet": PermissionProfile(write=True, shell=True, git=False),
+    "worker-analysis": PermissionProfile(write=True, shell=True, git=False),
 }
 
 
@@ -169,10 +188,12 @@ class SkillRuntimeService:
     # -----------------------------------------------------------------------
     def _permission_profile(self, skill_id: str | None, freeform: bool = False) -> SkillPermission:
         if freeform or not skill_id:
+            resolved_id = "freeform"
             profile = SKILL_PERMISSIONS["freeform"]
         else:
+            resolved_id = skill_id
             profile = SKILL_PERMISSIONS.get(skill_id, PermissionProfile(write=True))
-        return SkillPermission.from_profile(profile)
+        return SkillPermission.from_profile(resolved_id, profile)
 
     def permission_for(self, skill: str | None, freeform: bool = False) -> dict:
         if freeform or not skill:
@@ -403,12 +424,14 @@ class SkillRuntimeService:
         if not freeform and skill not in self.skill_ids:
             raise SkillRuntimeError(400, f"Unknown skill: {skill}")
 
-        out_dir = None
         if safe_opp:
             try:
                 out_dir = self.output_service.opp_outputs_dir(safe_account, safe_opp)
             except OutputError as exc:
                 raise SkillRuntimeError(exc.status_code, exc.detail) from exc
+        else:
+            out_dir = self.customers_dir / safe_account / "outputs"
+            out_dir.mkdir(parents=True, exist_ok=True)
 
         # Deterministic prerequisite check. Free-form instructions and explicit
         # overrides skip the planner.
@@ -454,6 +477,7 @@ class SkillRuntimeService:
                     "opp_slug": safe_opp,
                     "skill": skill_id,
                     "opportunity": opportunity,
+                    "permission_mode": profile.permission_mode,
                 },
             )
         except HTTPException as exc:

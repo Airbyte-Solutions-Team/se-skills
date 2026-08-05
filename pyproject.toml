@@ -15,11 +15,15 @@ dev = [
     "nh3>=0.2.18",
     "keyring>=25.0",
     "httpx>=0.25",
+    "reportlab>=4.0",
+    "numpy>=1.24",
+    "requests>=2.31",
+    "python-dateutil>=2.8",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["eval"]
-pythonpath = [".", "webapp"]
+pythonpath = [".", "webapp", "skills/worker-analysis/worker_analysis", "skills/worker-analysis/worker_analysis/src"]
 filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::starlette.exceptions.StarletteDeprecationWarning",
