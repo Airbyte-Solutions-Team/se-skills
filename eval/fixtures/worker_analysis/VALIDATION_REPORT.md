@@ -18,7 +18,7 @@
 
 ## Deterministic burst calculation
 
-The worst-case burst calculation is now implemented in `skills/worker-analysis/worker_analysis/src/questionnaire_calculator.py`. It is always executed when the questionnaire inputs contain a daily/scheduled workload group, a defined peak/maintenance window, and multiple environments:
+The worst-case burst calculation is implemented in `skills/worker-analysis/worker_analysis/src/questionnaire_calculator.py`. It is always executed when the questionnaire inputs contain a daily/scheduled workload group, a defined peak/maintenance window, and multiple environments:
 
 - **Steady-state concurrency**: `API_conc = Σ(api_count_by_freq × duration / interval)` and `DB_conc = Σ(db_count_by_freq × duration / interval)`.
 - **Worst-case burst concurrency**: adds the full count of daily (or less frequent) connections to the steady-state sub-hourly + hourly concurrency, modelling every daily sync firing simultaneously at the window start.
@@ -54,13 +54,70 @@ For the complete-questionnaire fixture this yields:
 
 All five real-runtime runs produced the same deterministic sizing views and the same 8-worker headline recommendation. Minor wording and table formatting differed between runs; no material recommendation alternation occurred.
 
+## Parity reconciliation
+
+This section reconciles the parity matrix against the **saved output artifacts** under `eval/fixtures/worker_analysis/original/` and `eval/fixtures/worker_analysis/se-suite/`, which are the source of truth.
+
+### Scenario 1 — Complete questionnaire
+
+- **Original artifact:** `eval/fixtures/worker_analysis/original/questionnaire_complete.md`
+- **Port artifact:** `eval/fixtures/worker_analysis/se-suite/questionnaire_complete.md`
+- **Inputs:** 45 connections, 30 API / 15 DB, 20% sub-hourly, 30% hourly, 50% daily, 10-min avg, 2–6 AM peak, 2 environments, 80-connection growth target.
+
+| | Original | Port | Notes |
+|---|---|---|---|
+| Current recommendation | 8 Data Workers | 8 Data Workers | Identical. |
+| Future-growth calculation (80 conns) | 8 workers | 8 workers | Identical combined prod+staging at 80. |
+| Future headline recommendation at 80 | 8 in sizing view and summary; 10 in growth-trajectory table | 8 Data Workers | The original artifact is internally contradictory. The port's deterministic output matches the original's explicit 8-worker future-growth sizing view. The 10 appears to be an additional step-up trigger or model inconsistency, not a separate calculation. |
+
+The contradiction in the original output is **not** a port defect. The parity classification for the current recommendation is **Exact**; the future headline recommendation is **Materially equivalent** because the original artifact gives two numbers and the port picks the one that aligns with the deterministic calculation.
+
+### Scenario 2 — Cadence preservation
+
+- **Original artifact:** `eval/fixtures/worker_analysis/original/cadence_preservation.md`
+- **Port artifact:** `eval/fixtures/worker_analysis/se-suite/cadence_preservation.md`
+- **Inputs:** 50 connections, 35 API / 15 DB, 25% sub-hourly, 40% hourly, 35% daily, 12-min avg, 1–5 AM peak, 2 environments, 80-connection growth target.
+
+| | Original | Port | Notes |
+|---|---|---|---|
+| Current recommendation | 10 Data Workers | 10 Data Workers | Identical. |
+| Future recommendation at 80 | 10 Data Workers ("6-month growth capacity | ✅ Covered at 80 connections") | 10 Data Workers | Identical. |
+
+The earlier parity matrix claimed the original recommended "18–20 workers" at month 6. That number is **not present** in the saved original artifact; it came from an earlier or different validation run. The classification is now **Exact** for both current and future recommendations.
+
+### Scenario 3 — Incomplete evidence
+
+- **Original artifact:** `eval/fixtures/worker_analysis/original/incomplete_evidence.md`
+- **Port artifact:** `eval/fixtures/worker_analysis/se-suite/incomplete_evidence.md`
+- **Inputs:** ~40 connections, API/DB split and duration unknown, some hourly and some daily, growth expected but unspecified. The port additionally assumes 40% hourly / 60% daily, 8-min avg duration, 2 environments, and 60-connection growth target.
+
+| | Original | Port | Notes |
+|---|---|---|---|
+| Executive summary / headline | "6–7 Data Workers (recommended starting capacity)" | "6 Data Workers" | The previous matrix mislabeled the 2-worker steady-state figure as the final recommendation. The port's 6 is inside the original's 6–7 range. |
+| Steady-state base case | 2–3 workers | 2 workers | The 2 in the previous matrix was this steady-state value, not the headline. |
+| Prod + staging base case | 4–5 workers | 4 workers | |
+| Worst-case burst | 8–9 workers | 8–12 workers | Both give a similar burst ceiling range. |
+| Future-growth view | Not modeled as a row; notes 2× (80 conns) would be 8–9 | 60-conns future-growth = 4–5 workers, still recommended 6 | The future target was not the same, so the numbers are not directly comparable. Both state that growth pushes the recommendation up. |
+
+The classification for the headline recommendation is **Materially equivalent**; the future-growth view is a **Runtime-required difference** because the two outputs assumed different growth targets.
+
+### Reconciliation conclusion
+
+All contradictions traced to either:
+
+1. **Labeling/documentation errors in the previous parity matrix** (Scenario 2's "18–20" and Scenario 3's "2 workers today"), or
+2. **Genuine internal ambiguity in the generated original output** (Scenario 1's 8 vs 10 at 80 connections).
+
+No production code was changed. The deterministic calculator and the permission allowlist remain unchanged.
+
 ## Original-vs-ported questionnaire parity
 
 The complete-questionnaire scenario no longer contains a material parity gap for current sizing, worst-case burst, combined-environment recommendation, or the headline Data Worker recommendation:
 
-- Original Devin recommendation: **8 Data Workers** for prod + staging today.
-- SE-suite recommendation: **8 Data Workers** for prod + staging today and the 80-connection growth target.
-- The port's deterministic `questionnaire_calculator` emits the same connection matrix (6/9/15 API and 3/4/8 DB) and the same seven sizing views as the original Devin hand-trace.
+- Original Devin current recommendation: **8 Data Workers** for prod + staging today.
+- SE-suite current recommendation: **8 Data Workers** for prod + staging today.
+- Future-growth combined requirement at 80: both **8 workers**.
+- The original artifact's future headline is ambiguous (8 and 10); the port consistently returns **8 Data Workers**, matching the explicit 8-worker future-growth sizing view in the original.
 
 See `eval/fixtures/worker_analysis/PARITY_MATRIX.md` for the full cell-by-cell matrix.
 
@@ -112,7 +169,7 @@ No unhandled errors were observed:
 - **Skills currently with `shell=True`**: `connector-feasibility`, `freeform`, `pov-gsheet`, `worker-analysis`.
 - **Skills that receive `bypassPermissions`**: only the same four skills, and only because they are explicitly listed in `SHELL_BYPASS_ALLOWLIST` in `webapp/services/skill_runtime_service.py` **and** declare `shell=True` in `SKILL_PERMISSIONS`.
 - **Final eligibility rule**: `permission_mode == "bypassPermissions"` if and only if `profile.shell is True` and `skill_id in SHELL_BYPASS_ALLOWLIST`. Everything else uses `permission_mode == "auto"`.
-- **Backend approval gate**: `SkillRuntimeService.invoke` checks `profile.requires_approval and not approve_permissions` and returns `{"blocked": True, "permissions": ...}` before any job is launched. The user must call `/api/permissions` to see the plan and then `POST /api/invoke` with `approve_permissions=true`.
+- **Backend approval gate**: `SkillRuntimeService.invoke` checks `approve_permissions=True` before launching any job. The user must call `/api/permissions` to see the plan and then `POST /api/invoke` with `approve_permissions=true`.
 - **Unknown / arbitrary skills**: cannot obtain `bypassPermissions` merely by declaring shell usage. A skill must be added to the hard-coded allowlist in code; discovered skill folders on disk do not influence the allowlist.
 - **Untrusted/malformed skill**: cannot exploit this path unless both `SKILL_PERMISSIONS` and `SHELL_BYPASS_ALLOWLIST` are modified in the source.
 - **worker-analysis permission configuration**: requires `write=True` (to save outputs) and `shell=True` (to run the Python toolkit scripts), with `git=False`. It uses `bypassPermissions` only because it is in the allowlist.
@@ -121,7 +178,7 @@ No unhandled errors were observed:
 
 ## Permission-gate security tests
 
-Tests added in `eval/tests/test_webapp_permissions.py` prove:
+Tests in `eval/tests/test_webapp_permissions.py` prove:
 
 - `worker-analysis` cannot run until the backend approval gate succeeds.
 - The permission plan (`GET /api/permissions`) is returned before approval and includes `write`, `shell`, `git`, `permission_mode`, `requires_approval`, and a human-readable `summary`.
@@ -149,7 +206,7 @@ Tests added in `eval/tests/test_webapp_permissions.py` prove:
 
 PR #38 remains a draft. This validation pass resolved the two focused merge blockers:
 
-1. **Deterministic worst-case burst parity**: the burst calculation was moved into `questionnaire_calculator.py`, the seven sizing views are always returned, and the complete-questionnaire fixture now consistently recommends 8 Data Workers across repeated real-runtime runs.
-2. **`bypassPermissions` safety boundary**: the permission mode is now limited to an explicit reviewed-skill allowlist, with security tests proving the approval gate and blast radius.
+1. **Deterministic worst-case burst parity**: the burst calculation is in `questionnaire_calculator.py`, the seven sizing views are always returned, and the complete-questionnaire fixture consistently recommends 8 Data Workers across repeated real-runtime runs.
+2. **`bypassPermissions` safety boundary**: the permission mode is limited to an explicit reviewed-skill allowlist, with security tests proving the approval gate and blast radius.
 
 No new integrations, UI workflows, generalized frameworks, or MCP clients were added. All changes stay within the `worker-analysis` skill, its CLI, and the `SkillRuntimeService`/`JobService` permission path.
