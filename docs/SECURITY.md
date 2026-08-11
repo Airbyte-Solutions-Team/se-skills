@@ -34,7 +34,7 @@
 
 - Postgres row-level security (RLS) policies enforce that all queries for a tenant-scoped table only return rows whose `org_id` matches a membership the authenticated user has for that organization.
 - The API establishes a trusted organization context only after validating the user's JWT and resolving an active membership. User-supplied `org_id` values are never authoritative.
-- The exact mechanism for propagating that trusted organization context into RLS (for example, a per-request database session variable, application-level filters, or another approach) is a Slice 2 design and testing decision.
+- The exact mechanism for propagating that trusted organization context into RLS (for example, authenticated JWT/provider claims, a transaction-scoped database context, a provider-native Auth/RLS integration, or another safe DB-enforced mechanism) is a Slice 2 design and testing decision. Application-level `org_id` checks are a separate defense-in-depth layer, not the mechanism that propagates identity into RLS.
 - The application layer re-checks `org_id` on every mutation and before returning or forwarding data to the SPA.
 - No API route may use a user-provided `org_id` or `user_id` as the authorization predicate.
 - Service-to-service calls (for example, worker to database) use a narrow role that can access only job/output/transcript rows and cannot read auth users or memberships directly.

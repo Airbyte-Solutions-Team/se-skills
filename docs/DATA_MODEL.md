@@ -138,6 +138,7 @@ Append-only attempt history for a job. `jobs` remains the aggregate ledger; `job
 | Column | Purpose |
 |---|---|
 | `id` (PK) | UUID |
+| `org_id` (FK to organizations, indexed) | Organization owner; must match the parent `jobs.org_id` |
 | `job_id` (FK) | Parent job |
 | `attempt_number` | Integer, starting at 1 |
 | `worker_id` | Worker/runtime that ran this attempt |
@@ -152,7 +153,7 @@ Append-only attempt history for a job. `jobs` remains the aggregate ledger; `job
 | `cost` | Estimated cost for this attempt |
 | `created_at` | Timestamp |
 
-RLS on `org_id` via the parent job. Each attempt is immutable once recorded. `jobs.attempts` is a derived counter, not the source of truth for retry history.
+RLS on `org_id` with an invariant that `job_attempts.org_id` equals the parent `jobs.org_id`. Each attempt is immutable once recorded. `jobs.attempts` is a derived counter, not the source of truth for retry history.
 
 ### `outputs`
 
@@ -272,10 +273,11 @@ RLS on `org_id` plus scope checks. Rotation and refresh are handled by a credent
 7. **Job payloads must not contain raw transcript bodies or secrets; they reference inputs by stable ids.**
 8. **Audit events record who created, ran, reviewed, corrected, approved, and exported every artifact.**
 9. **Generated outputs and sidecars are immutable; corrections are append-only/versioned.**
+10. **`job_attempts` has a non-nullable `org_id` indexed FK to `organizations`, and every `job_attempts.org_id` must equal the parent `jobs.org_id` at the application and/or database layer.**
 
 ## RLS expectations
 
 - An authenticated user may access a tenant-scoped row only when an active membership proves they belong to that row's organization. The API resolves the user's organization from their active membership and never trusts a user-supplied `org_id`.
-- The exact RLS policy implementation (for example, `current_setting('app.current_org_id')` or an equivalent mechanism) is a Slice 2 implementation decision and must be designed and tested before it is committed.
+- The exact RLS policy implementation (for example, authenticated JWT/provider claims, a transaction-scoped database context, a provider-native Auth/RLS integration, or another safe DB-enforced mechanism) is a Slice 2 implementation decision and must be designed and tested before it is committed.
 - Application code re-checks `org_id` on every mutation to catch path-traversal or policy misconfigurations.
 - Direct database access for analytics/admin is allowed only with an elevated role that bypasses RLS and is audited separately.
