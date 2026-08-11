@@ -250,7 +250,7 @@ RLS on `org_id` plus scope checks. Rotation and refresh are handled by a credent
 
 ## Job payload and audit metadata
 
-- The `jobs.payload` stores runtime configuration and stable input references (`input_refs`, `source_manifest`), not raw transcript bodies or secrets.
+- The `jobs.payload` stores runtime configuration and stable input references (`input_refs`, `source_manifest`), not raw transcript bodies or secrets. `input_refs` are resolved only to same-organization records through DB-enforced/authorized lookup paths.
 - Each job records `requester_id`, `org_id`, `account_id`, `opportunity_id`, `skill`, `skill_version`, `model`, `runtime_version`, aggregate `token_usage`/`cost`, `attempts`, timeout/cancellation information, redacted failure information, and the resulting `result_output_id`. Detailed per-attempt retry history lives in `job_attempts`.
 - The job ledger plus the source/evidence manifest must be sufficient to reconstruct the run context without re-executing the model.
 
@@ -273,7 +273,8 @@ RLS on `org_id` plus scope checks. Rotation and refresh are handled by a credent
 7. **Job payloads must not contain raw transcript bodies or secrets; they reference inputs by stable ids.**
 8. **Audit events record who created, ran, reviewed, corrected, approved, and exported every artifact.**
 9. **Generated outputs and sidecars are immutable; corrections are append-only/versioned.**
-10. **`job_attempts` has a non-nullable `org_id` indexed FK to `organizations`, and every `job_attempts.org_id` must equal the parent `jobs.org_id` at the application and/or database layer.**
+10. **Every tenant-scoped parent/child reference preserves organization ownership and is enforced by the database (for example, composite organization-aware foreign keys, triggers, or another DB-enforced mechanism selected in the implementation slice). Application-layer `org_id` checks are a required additional defense, not a substitute for the database enforcement.**
+11. **`job_attempts` has a non-nullable `org_id` indexed FK to `organizations`; every `job_attempts.org_id` must equal the parent `jobs.org_id` and is enforced at the database layer.**
 
 ## RLS expectations
 

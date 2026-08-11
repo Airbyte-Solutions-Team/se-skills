@@ -37,6 +37,7 @@
 - The exact mechanism for propagating that trusted organization context into RLS (for example, authenticated JWT/provider claims, a transaction-scoped database context, a provider-native Auth/RLS integration, or another safe DB-enforced mechanism) is a Slice 2 design and testing decision. Application-level `org_id` checks are a separate defense-in-depth layer, not the mechanism that propagates identity into RLS.
 - The application layer re-checks `org_id` on every mutation and before returning or forwarding data to the SPA.
 - No API route may use a user-provided `org_id` or `user_id` as the authorization predicate.
+- Every tenant-scoped parent/child reference (for example, `opportunities` to `accounts`, `transcripts` to `accounts`/`opportunities`, `jobs` to `accounts`/`opportunities`, `outputs` to `jobs`/`accounts`/`opportunities`, `output_versions` to `outputs`, `reviews` to `outputs`/`output_versions`, and `job_attempts` to `jobs`) must preserve organization ownership and is enforced by the database. Cross-organization relationship attempts must fail at the database boundary and in application authorization tests.
 - Service-to-service calls (for example, worker to database) use a narrow role that can access only job/output/transcript rows and cannot read auth users or memberships directly.
 
 ## Private storage

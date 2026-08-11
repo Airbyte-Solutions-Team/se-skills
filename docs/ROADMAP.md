@@ -68,6 +68,7 @@ This is the source of truth for productionalization slices and progress. Each sl
 - `assigned_to` is metadata and does not change visibility.
 - Direct SQL queries return no rows for an organization the user is not a member of.
 - The API never authorizes using a user-supplied `org_id`.
+- Database constraints enforce that every tenant-scoped parent/child relationship (for example, `opportunities` to `accounts`) preserves `org_id`; cross-org relationship attempts fail at the DB boundary and in application authorization tests.
 - No local filesystem state is required for sign-in or account CRUD.
 
 **Non-goals:**
@@ -98,6 +99,7 @@ This is the source of truth for productionalization slices and progress. Each sl
 - The SPA cannot access storage without the API.
 - Listing transcripts for an account only returns transcripts in the active organization.
 - Deleting an account also removes or marks transcripts for deletion.
+- `transcripts` to `accounts`/`opportunities` preserve `org_id` and are enforced by the database; cross-org references fail at the DB boundary and in application authorization tests.
 
 **Non-goals:**
 - No transcript parsing or transcription.
@@ -129,6 +131,7 @@ This is the source of truth for productionalization slices and progress. Each sl
 - A worker/API crash leaves the job in a recoverable state; the ledger is the source of truth.
 - Retry counters, attempt history, and dead-letter state are persisted in Postgres.
 - No job state lives only in a local file or in-memory dict.
+- `jobs` and `job_attempts` to `accounts`/`opportunities` preserve `org_id` and are enforced by the database; cross-org references fail at the DB boundary and in application authorization tests.
 
 **Non-goals:**
 - No actual skill runtime.
@@ -161,6 +164,7 @@ This is the source of truth for productionalization slices and progress. Each sl
 - Output includes required sections (`At a Glance`, `Source Coverage`, etc.).
 - The `post-call` validation contract is documented, implemented, and tested before the slice is marked complete.
 - Validation status is recorded and surfaced in the UI.
+- `outputs` to `jobs`/`accounts`/`opportunities` preserve `org_id` and are enforced by the database; cross-org references fail at the DB boundary and in application authorization tests.
 
 **Non-goals:**
 - Not all skills.
@@ -192,6 +196,7 @@ This is the source of truth for productionalization slices and progress. Each sl
 - Review/correction history is persisted and visible.
 - Audit events cover upload, run, review, export.
 - Exports use the same `nh3` allowlist as local to avoid unsanitized HTML; secrets are redacted, and customer content only appears where the artifact is intended to contain it.
+- `reviews` and `output_versions` to `outputs` preserve `org_id` and are enforced by the database; cross-org references fail at the DB boundary and in application authorization tests.
 - Beta launch checklist (security review, observability, runbook) is complete.
 
 **Non-goals:**
