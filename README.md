@@ -4,6 +4,8 @@ A suite of Claude Code skills that automate the Solutions Engineering deal lifec
 
 Built by Gary Yang (Solutions Engineer, Airbyte). Designed to be team-shareable.
 
+> **Managed hosted beta:** A productionalization program for a secure, Airbyte-managed beta is documented in [PRODUCTIONALIZATION.md](./PRODUCTIONALIZATION.md). The local-first workflow and the local webapp remain fully supported.
+
 ---
 
 ## What's in the suite
