@@ -13,7 +13,7 @@ This is the source of truth for productionalization slices and progress. Each sl
 
 ## Slice 1: Architecture baseline
 
-**Status:** `In Progress` (this PR)
+**Status:** `Complete` (PR #39)
 
 **Product outcome:** A shared, reviewed architecture and security contract for the hosted beta, so future slices have a source of truth and do not re-litigate decisions.
 

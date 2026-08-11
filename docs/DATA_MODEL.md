@@ -131,6 +131,29 @@ RLS on `org_id`. The queue claims a job by atomically transitioning `status` fro
 
 Primary job statuses: `queued`, `running`, `success`, `failure`, `cancelled`, `timeout`. `retry-wait` and dead-letter are queue/scheduling concepts, not primary job statuses.
 
+### `job_attempts`
+
+Append-only attempt history for a job. `jobs` remains the aggregate ledger; `job_attempts` records each execution attempt.
+
+| Column | Purpose |
+|---|---|
+| `id` (PK) | UUID |
+| `job_id` (FK) | Parent job |
+| `attempt_number` | Integer, starting at 1 |
+| `worker_id` | Worker/runtime that ran this attempt |
+| `runtime_version` | Sandbox/runtime image version for this attempt |
+| `lease_token` | Heartbeat/lease token for claim liveness (nullable) |
+| `started_at` / `finished_at` | Timestamps |
+| `heartbeat_at` | Last worker heartbeat/lease renewal |
+| `outcome` | `success`, `failure`, `timeout`, `cancelled` |
+| `error_category` | Categorized failure reason (for example, `timeout`, `model_rate_limit`, `storage_write`, `sandbox`) |
+| `error` | Redacted failure summary |
+| `token_usage` | JSON: input/output token counts for this attempt |
+| `cost` | Estimated cost for this attempt |
+| `created_at` | Timestamp |
+
+RLS on `org_id` via the parent job. Each attempt is immutable once recorded. `jobs.attempts` is a derived counter, not the source of truth for retry history.
+
 ### `outputs`
 
 A generated skill output. The original Markdown and sidecar are immutable once written; corrections are recorded as new `output_versions` and approvals reference a specific version.
@@ -156,15 +179,15 @@ RLS on `org_id`. The generated content and sidecar must never be overwritten; an
 
 ### `reviews`
 
-Review/correction/approval actions on an output. Approvals reference a specific reviewed version; corrections create a new `output_versions` row rather than overwriting the original output.
+Review/correction/approval actions on an output. `output_version_id` is null when the action applies to the immutable original generated `outputs` row; it references an `output_versions` row when the action applies to a correction. Approvals always reference a specific reviewed version (original or corrected); corrections create a new `output_versions` row rather than overwriting the original output.
 
 | Column | Purpose |
 |---|---|
 | `id` (PK) | UUID |
 | `org_id` (FK, indexed) | Organization owner |
 | `output_id` (FK) | Output reviewed |
-| `output_version_id` (FK, nullable) | Specific `output_versions` row being reviewed/approved |
-| `previous_version_id` (FK, nullable) | Previous version this action follows, for correction chain |
+| `output_version_id` (FK, nullable) | Specific `output_versions` row being reviewed/approved; `null` means the immutable original `outputs` row |
+| `previous_version_id` (FK, nullable) | Previous `output_versions` row this correction follows; `null` for original-output comments/approvals or first corrections |
 | `user_id` (FK to users) | Reviewer |
 | `action` | `approve`, `comment`, `correct` |
 | `comment` | Text |
@@ -188,7 +211,7 @@ Append-only versions of an output. A correction creates a new version with a cor
 | `change_summary` | Brief description of what changed |
 | `created_at` | Timestamp |
 
-RLS on `org_id`. The original `outputs.content_storage_path` and `outputs.sidecar` are immutable; corrections always write a new `output_versions` row. The final reviewed state is reconstructable from the original output and the chain of versions/reviews.
+RLS on `org_id`. The original `outputs.content_storage_path` and `outputs.sidecar` are immutable and represent the generated evidence (version 0). The first correction references the original `output_id` with `previous_version_id` null; subsequent corrections reference the prior `output_versions` row. An `approve` action may have `output_version_id` null (approving the original) or reference a specific corrected version. The final reviewed state is reconstructable from the original output and the chain of `output_versions` and `reviews`.
 
 ### `audit_events`
 
@@ -227,15 +250,15 @@ RLS on `org_id` plus scope checks. Rotation and refresh are handled by a credent
 ## Job payload and audit metadata
 
 - The `jobs.payload` stores runtime configuration and stable input references (`input_refs`, `source_manifest`), not raw transcript bodies or secrets.
-- Each job records `requester_id`, `org_id`, `account_id`, `opportunity_id`, `skill`, `skill_version`, `model`, `runtime_version`, `token_usage`, `cost`, attempts, retry history, timeout/cancellation information, redacted failure information, and the resulting `result_output_id`.
+- Each job records `requester_id`, `org_id`, `account_id`, `opportunity_id`, `skill`, `skill_version`, `model`, `runtime_version`, aggregate `token_usage`/`cost`, `attempts`, timeout/cancellation information, redacted failure information, and the resulting `result_output_id`. Detailed per-attempt retry history lives in `job_attempts`.
 - The job ledger plus the source/evidence manifest must be sufficient to reconstruct the run context without re-executing the model.
 
 ## Output immutability and review versioning
 
-- The original generated `outputs` row and its Markdown/sidecar are immutable. It serves as the generation evidence.
-- User corrections create new `output_versions` rows. Each version references its parent `output_id` and, for a correction chain, `previous_version_id`.
-- An `approve` action references the specific `output_version_id` that was approved.
-- The final reviewed state can be reconstructed from the original output and the chain of `output_versions` and `reviews`.
+- The original generated `outputs` row and its Markdown/sidecar are immutable. It serves as the generation evidence (version 0).
+- User corrections create new `output_versions` rows. Each version references its parent `output_id` and, for a correction chain, `previous_version_id`. The first correction may have `previous_version_id` null because it follows the original `outputs` row.
+- An `approve` action may have `output_version_id` null (approving the original generated output) or reference a specific corrected `output_versions` row.
+- The final reviewed state can be reconstructed from the original `outputs` row and the chain of `output_versions` and `reviews`.
 - Correcting an output must never overwrite the original generation evidence.
 
 ## Important constraints and indexes

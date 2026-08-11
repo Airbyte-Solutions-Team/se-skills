@@ -25,15 +25,16 @@
 ## Organization isolation
 
 - The organization is the tenancy boundary. Every tenant-scoped row has `org_id`.
-- `users` and `memberships` are separate. A user can be a member of multiple organizations but has one active organization per request.
+- The managed beta supports one Airbyte organization. The conceptual schema may remain extensible to multiple organizations in the future, but the beta does not include an org switcher.
 - Accounts and opportunities belong to the organization, not to the user.
 - `created_by` and `assigned_to` are metadata, not access controls.
 - Cross-organization access is a merge blocker. Any change that could allow one organization to read or modify another's data must be rejected.
 
 ## Database and RLS + application authorization
 
-- Postgres row-level security (RLS) policies enforce that all queries for a tenant-scoped table only return rows whose `org_id` matches the active membership.
-- The API sets the active organization id in the database session after validating the user's JWT and resolving the membership.
+- Postgres row-level security (RLS) policies enforce that all queries for a tenant-scoped table only return rows whose `org_id` matches a membership the authenticated user has for that organization.
+- The API establishes a trusted organization context only after validating the user's JWT and resolving an active membership. User-supplied `org_id` values are never authoritative.
+- The exact mechanism for propagating that trusted organization context into RLS (for example, a per-request database session variable, application-level filters, or another approach) is a Slice 2 design and testing decision.
 - The application layer re-checks `org_id` on every mutation and before returning or forwarding data to the SPA.
 - No API route may use a user-provided `org_id` or `user_id` as the authorization predicate.
 - Service-to-service calls (for example, worker to database) use a narrow role that can access only job/output/transcript rows and cannot read auth users or memberships directly.
