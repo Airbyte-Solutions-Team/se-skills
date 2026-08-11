@@ -18,7 +18,7 @@
 - The browser is untrusted.
 - The SPA is static and served from the same origin as the API.
 - The FastAPI process is trusted to enforce authentication and authorization.
-- Supabase (or approved operational provider) provides identity, relational data, and object storage.
+- Supabase (or another operational provider chosen and approved for the beta) provides identity, relational data, and object storage.
 - Workers are semi-trusted: they run sandboxed code and receive only allowlisted secrets.
 - External APIs (model provider, Gong, Salesforce, etc.) are third-party boundaries.
 
@@ -98,5 +98,5 @@ The following invariants must be enforced by code review and CI. A PR that viola
 6. **No hosted job may use unrestricted shell, `bypassPermissions`, arbitrary Git, browser/computer automation, local repository access, Live Transcribe, or arbitrary outbound network.**
 7. **No organization-wide integration secrets may be stored in generic application environment variables.**
 8. **Cross-organization access is a merge blocker.** Any test, route, or query that returns data from another organization must fail CI.
-9. **Secrets and PII must be redacted from logs, errors, and exported artifacts before they leave the trust boundary.**
+9. **Secrets must never be exported; exports are authorized and organization-scoped. Customer content must not leak into logs, errors, or unrelated organizations, and exports preserve only the information the artifact is intended to contain. Applicable retention and data-handling rules still apply.**
 10. **Live Transcribe and other local-only capabilities remain local-only until separately approved.**

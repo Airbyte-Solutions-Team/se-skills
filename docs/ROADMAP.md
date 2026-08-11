@@ -47,16 +47,18 @@ This is the source of truth for productionalization slices and progress. Each sl
 
 ## Slice 2: Auth, organization, and data foundation
 
-**Status:** `Ready`
+**Status:** `Proposed`
 
-**Product outcome:** Users can sign in, belong to an organization, and create/list accounts scoped to that organization.
+**Product outcome:** Users can sign in, belong to the single Airbyte beta organization, and create/list accounts scoped to that organization.
 
 **Scope:**
-- Identity provider integration (Supabase Auth is the working hypothesis).
-- `organizations` and `memberships` tables; active-organization resolution.
+- Identity provider integration (Supabase Auth is the working hypothesis; requires Product Owner approval before implementation).
+- `organizations` and `memberships` tables; active-organization resolution for the beta organization.
 - `accounts` and `opportunities` tables with `org_id`, `created_by`, `assigned_to`, and RLS policies.
 - FastAPI authentication middleware and organization-scoped authorization helpers.
-- SPA login flow and org switcher.
+- SPA login flow (no org switcher in the beta; schema remains extensible to multiple organizations in the future).
+
+**Promotion to `Ready` dependency:** Product Owner approval of the beta Auth/DB/Storage provider and the authentication approach.
 
 **Dependencies:** Slice 1.
 
@@ -64,7 +66,8 @@ This is the source of truth for productionalization slices and progress. Each sl
 - A user can sign in and see only their organization's accounts.
 - Creating an account sets `org_id` and `created_by`.
 - `assigned_to` is metadata and does not change visibility.
-- Direct SQL queries with a different `org_id` return no rows due to RLS.
+- Direct SQL queries return no rows for an organization the user is not a member of.
+- The API never authorizes using a user-supplied `org_id`.
 - No local filesystem state is required for sign-in or account CRUD.
 
 **Non-goals:**
@@ -111,7 +114,7 @@ This is the source of truth for productionalization slices and progress. Each sl
 **Product outcome:** The API can enqueue a skill job, a worker can claim and run it, and job state survives API/worker restarts without local filesystem state.
 
 **Scope:**
-- `jobs` table (job ledger) with `status`, `payload`, `attempts`, `max_attempts`, `started_at`, `finished_at`, `error`, `worker_id`.
+- `jobs` table (job ledger) covering `queued`, `running`, `success`, `failure`, `cancelled`, and `timeout`; plus `requester_id`, `skill`, `skill_version`, `model`, `runtime_version`, `input_refs`, `source_manifest`, `result_output_id`, `token_usage`, `cost`, attempts/retry history, timeout/cancellation, and redacted error fields.
 - Queue mechanism (Postgres-backed advisory-lock or lightweight queue; Redis not required unless workload need is demonstrated).
 - Worker harness that polls/claims jobs and runs an ephemeral container/process.
 - Retry and dead-letter behavior.
@@ -121,9 +124,10 @@ This is the source of truth for productionalization slices and progress. Each sl
 
 **Acceptance criteria:**
 - Enqueuing a job returns a durable `job_id`.
-- A worker can claim a job exactly once.
-- A worker crash leaves the job in a recoverable state.
-- Retry counters and dead-letter state are persisted in Postgres.
+- A worker can claim an attempt atomically/exclusively.
+- Delivery is at-least-once, not exactly-once; retries are bounded and recorded.
+- A worker/API crash leaves the job in a recoverable state; the ledger is the source of truth.
+- Retry counters, attempt history, and dead-letter state are persisted in Postgres.
 - No job state lives only in a local file or in-memory dict.
 
 **Non-goals:**
@@ -143,7 +147,8 @@ This is the source of truth for productionalization slices and progress. Each sl
 - Sandbox technology decision and integration.
 - Agent runtime that preserves multi-step behavior: source/file discovery, full transcript reads, tool use, prior context, self-checks, source coverage, artifact generation.
 - `post-call` skill packaging and allowlist for files, tools, network, credentials.
-- Output sidecar generation and validation (`OutputMetadata` equivalent in Postgres/object storage).
+- Define and test the production validation contract for `post-call` (decision-critical structure and Source Coverage requirements necessary to present the output as validated; `webapp/output_schema.py` does not currently define a post-call schema).
+- Output sidecar generation and validation.
 - Worker integration: claim job, run sandbox, write output, update job.
 
 **Dependencies:** Slice 3, Slice 4.
@@ -154,6 +159,7 @@ This is the source of truth for productionalization slices and progress. Each sl
 - Sandbox network egress is allowlisted.
 - No unrestricted shell, `bypassPermissions`, Git, browser automation, or local repo access.
 - Output includes required sections (`At a Glance`, `Source Coverage`, etc.).
+- The `post-call` validation contract is documented, implemented, and tested before the slice is marked complete.
 - Validation status is recorded and surfaced in the UI.
 
 **Non-goals:**
@@ -185,7 +191,7 @@ This is the source of truth for productionalization slices and progress. Each sl
 - End-to-end workflow: sign in → create account → upload transcript → run `post-call` → review → correct/approve → export.
 - Review/correction history is persisted and visible.
 - Audit events cover upload, run, review, export.
-- Exports are sanitized (same `nh3` allowlist as local).
+- Exports use the same `nh3` allowlist as local to avoid unsanitized HTML; secrets are redacted, and customer content only appears where the artifact is intended to contain it.
 - Beta launch checklist (security review, observability, runbook) is complete.
 
 **Non-goals:**

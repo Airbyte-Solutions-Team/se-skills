@@ -5,7 +5,7 @@
 - `webapp/app.py` is a FastAPI composition root. It constructs `OutputService`, `JobService`, `AccountService`, `OverviewService`, `AskService`, `TranscriptionService`, `SkillRuntimeService`, and `SalesforceIntegration`; mounts `webapp/static/`; and registers routes.
 - The frontend is a vanilla-JS SPA (`static/index.html`, `app.js`, `style.css`) served by FastAPI's `StaticFiles`.
 - Business logic lives in `webapp/services/` and `webapp/routes/`. The current data layer is the local filesystem under `~/airbyte-work/01-customers/` plus `<workspace>/.state/` snapshots.
-- Skills are Markdown prompt files under `skills/<skill>/SKILL.md`. The webapp invokes them with `claude -p ... --permission-mode acceptEdits` from `~/airbyte-work`.
+- Skills are Markdown prompt files under `skills/<skill>/SKILL.md`. The webapp invokes them through `SkillRuntimeService`, which selects a permission profile per skill. The default mode is `acceptEdits`; reviewed shell skills listed in `SHELL_BYPASS_ALLOWLIST` and declaring `shell=True` can receive `--permission-mode bypassPermissions`. This broad local permission model is not carried into the hosted runtime.
 - Outputs are Markdown files with `.md.json` sidecars; review feedback is `.md.feedback.jsonl`.
 - Persistence is best-effort JSON snapshots; job state survives an API restart but not a filesystem loss.
 - `eval/` provides deterministic manifest-based evaluation.
@@ -40,13 +40,13 @@ This is a logical view. Concrete technology choices (Supabase, worker framework,
 ## FastAPI/SPA boundary
 
 - The FastAPI backend and the vanilla-JS SPA stay on the same origin for the beta. The browser obtains a session from Supabase Auth; the SPA sends the JWT or session cookie with API requests.
-- FastAPI validates the session, resolves the user's current organization from membership, and applies organization-scoped authorization on every route.
+- FastAPI validates the session, resolves the user's organization from an active membership, and applies organization-scoped authorization on every route. The beta supports a single Airbyte organization; there is no org switcher.
 - No server-side rendering; the SPA calls JSON/REST endpoints.
 
 ## Auth, database, and storage boundaries
 
 - **Identity:** Supabase Auth (working hypothesis). Users authenticate with organization credentials or SSO. `auth.users` holds identity; `memberships` links users to organizations with roles.
-- **Relational data:** Postgres managed by Supabase (working hypothesis). All tenant-scoped tables carry `org_id`. Row-level security policies enforce that a query can only touch rows whose `org_id` matches the user's active membership.
+- **Relational data:** Postgres managed by Supabase (working hypothesis). All tenant-scoped tables carry `org_id`. Row-level security policies enforce that a query can only touch rows whose `org_id` matches a user's active membership. The API never uses a user-supplied `org_id` as authoritative; the exact RLS policy implementation is a Slice 2 design and testing decision.
 - **Private storage:** Supabase Storage private buckets (working hypothesis). Objects are stored under organization-scoped prefixes. The API generates short-lived signed URLs or streams objects through the API so the SPA never holds broad storage credentials.
 - **No local filesystem durability:** the worker and API processes do not depend on persistent local disk for customer data, job state, or outputs.
 
@@ -64,8 +64,8 @@ This is a logical view. Concrete technology choices (Supabase, worker framework,
 
 ### Job ledger / queue
 
-- Persist job records with `status`, `payload`, `result_output_id`, `attempts`, `max_attempts`, `started_at`, `finished_at`, `error`, `runtime_version`, `worker_id`.
-- Provide at-least-once delivery to workers; support retry with backoff; support dead-letter / poison-pill handling.
+- Persist job records with `status`, `requester_id`, `org_id`, `account_id`, `opportunity_id`, `skill`, `skill_version`, `model`, `runtime_version`, `payload` (input references and runtime config, not raw transcript bodies or secrets), `source_manifest`, `result_output_id`, `validation_status`, `token_usage`/`cost`, `attempts`, `max_attempts`, `started_at`, `finished_at`, `timeout_at`, `cancelled_at`, `error` (redacted), `worker_id`.
+- Provide at-least-once delivery to workers (not exactly-once execution); support bounded retry with backoff and a dead-letter / poison-pill queue. `retry-wait` and dead-letter are queue/scheduling concepts, not primary job statuses.
 - Survive API and worker restarts without data loss.
 - Do not require Redis unless a concrete workload need (for example, a high-throughput event stream or scheduled job fan-out) justifies it; a Postgres-backed queue is acceptable for the initial beta workload.
 
@@ -103,7 +103,7 @@ The runtime is executed inside an isolated sandbox:
 | Capability | Hosted runtime | Local runtime |
 |---|---|---|
 | Identity | Supabase Auth / org membership | OS user / Claude Code user |
-| Skill invocation | Worker sandbox with allowlisted tools | `claude -p --permission-mode acceptEdits` |
+| Skill invocation | Worker sandbox with allowlisted tools | `claude -p` with `acceptEdits` default; reviewed shell skills can use `bypassPermissions` |
 | File access | Mounted allowlisted files only | Full local workspace, `~/.claude/skills/`, repos |
 | Network | Allowlist only | Host network |
 | MCPs/tools | Approved, audited subset | User's full `~/.claude.json` MCP config |
@@ -114,13 +114,14 @@ The runtime is executed inside an isolated sandbox:
 
 ## Failure and retry flow
 
-1. **API enqueue:** `POST /api/jobs` inserts a `pending` job record and returns `job_id`.
-2. **Worker claim:** a worker marks the job `running` with a `worker_id` and `started_at` using a compare-and-set on status.
-3. **Sandbox run:** the worker creates the sandbox, mounts inputs, and runs the skill runtime.
-4. **Success:** the worker writes the output and sidecar, updates the job to `done` with `result_output_id`, and records `finished_at`.
-5. **Retryable failure:** transient errors (sandbox timeout, model rate limit, storage write failure) increment `attempts` and return the job to `pending`/`retry` with a backoff. After `max_attempts` the job moves to `error`/`dead-letter`.
-6. **Permanent failure:** the job moves to `error`; `stderr`/logs are redacted and persisted; the user sees a failure state with guidance.
-7. **API/worker crash:** jobs in `running` without a heartbeat become claimable again or are marked lost; the ledger is the source of truth.
+1. **API enqueue:** `POST /api/jobs` inserts a `queued` job record and returns `job_id`.
+2. **Worker claim:** a worker atomically claims a `queued` job by transitioning it to `running` with a `worker_id` and `started_at`. A compare-and-set on `status` ensures only one worker owns an attempt.
+3. **Sandbox run:** the worker creates the sandbox, mounts the allowlisted inputs by reference, and runs the skill runtime.
+4. **Success:** the worker writes the output and sidecar, updates the job to `success` with `result_output_id`, and records `finished_at`.
+5. **Retryable failure:** transient errors (sandbox timeout, model rate limit, storage write failure) increment `attempts` and return the job to `queued`/`retry-wait` with a backoff. `retry-wait` is a queue/scheduling concept, not a primary job status. After `max_attempts` the job moves to `failure` or a dead-letter queue.
+6. **Permanent failure:** the job moves to `failure`; `stderr`/logs are redacted and persisted; the user sees a failure state with guidance.
+7. **Cancellation/timeout:** a `running` job can be cancelled by the user or by a timeout, moving to `cancelled` or `timeout` respectively.
+8. **API/worker crash:** jobs in `running` without a heartbeat become claimable again or are marked lost; the ledger is the source of truth. The intended invariant is at-least-once recovery, not exactly-once execution; workers must make result persistence idempotent where practical.
 
 ## Clearly identified unresolved decisions
 

@@ -6,7 +6,7 @@ This document is the entry point for the managed-hosted-beta program. It links t
 
 The SE Skills Suite today is a local-first Claude Code skill suite plus an optional FastAPI + vanilla-JS web hub.
 
-- **Skills:** `skills/<skill>/SKILL.md` files invoked by `claude -p ... --permission-mode acceptEdits`.
+- **Skills:** `skills/<skill>/SKILL.md` files invoked by Claude Code through `SkillRuntimeService`. The default permission mode for interactive use is `acceptEdits`; reviewed shell skills listed in `SHELL_BYPASS_ALLOWLIST` and declaring `shell=True` can be granted `--permission-mode bypassPermissions`. This broad local permission behavior is not carried into the hosted runtime.
 - **Local workspace:** customer data, transcripts, and outputs live in a configurable filesystem workspace (default `~/airbyte-work/01-customers/`).
 - **Webapp:** FastAPI (`webapp/app.py`) serves a static SPA from `webapp/static/`, with routes in `webapp/routes/` and services in `webapp/services/`.
 - **Job execution:** in-process `asyncio.create_subprocess_exec` running `claude -p` with a 10-minute timeout; job snapshots stored in `<workspace>/.state/jobs.json` for restart recovery.
@@ -31,7 +31,7 @@ First complete hosted workflow:
 | Storage | local filesystem under `~/airbyte-work` | private organization-scoped object storage; no dependence on persistent local server filesystem |
 | Job durability | `jobs.json` snapshot in local workspace | durable job ledger + queue + separate workers; survives worker/API restart |
 | Agent runtime | `claude -p` with the user's local tools, MCPs, repos, and network | isolated ephemeral workspaces with allowlisted files, tools, credentials, and network destinations |
-| Permissions | `--permission-mode acceptEdits` after UI approval | no unrestricted shell, `bypassPermissions`, arbitrary Git, browser/computer automation, local-repo access, Live Transcribe, or arbitrary outbound network in the hosted runtime |
+| Permissions | `SkillRuntimeService` selects a permission profile per skill; default is `acceptEdits`, and reviewed shell skills in `SHELL_BYPASS_ALLOWLIST` can receive `bypassPermissions` | no unrestricted shell, `bypassPermissions`, arbitrary Git, browser/computer automation, local-repo access, Live Transcribe, or arbitrary outbound network in the hosted runtime |
 | Cross-org access | N/A | must be impossible at both DB/RLS and application layers; cross-organization access is a merge blocker |
 | Audit/provenance | minimal (job snapshots, output mtimes) | durable audit log of who uploaded, ran, reviewed, and exported what |
 
@@ -60,7 +60,7 @@ First complete hosted workflow:
 ### Local (preserved)
 
 - Full Claude Code skill suite with local `~/.claude/skills/` symlinks
-- `claude -p --permission-mode acceptEdits` with local tools, MCPs, repos, and network
+- `claude -p` with local permission profiles: `acceptEdits` by default, `bypassPermissions` for reviewed shell skills, with local tools, MCPs, repos, and network
 - Live Transcribe with local audio capture
 - Connector feasibility using local `airbyte` / `airbyte-platform` repos
 - `pov-gsheet` Chrome automation and Google Drive workflows
