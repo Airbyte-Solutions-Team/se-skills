@@ -47,7 +47,7 @@ This is the source of truth for productionalization slices and progress. Each sl
 
 ## Slice 2: Auth, organization, and data foundation
 
-**Status:** `Complete` (PR #<TBD>)
+**Status:** `Complete` (PR #40)
 
 **Product outcome:** Users can sign in, belong to the single Airbyte beta organization, and create/list accounts scoped to that organization.
 
