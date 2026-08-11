@@ -1288,3 +1288,10 @@ a.live-btn { text-decoration: none; display: inline-flex; align-items: center; }
   .compare-unchanged, .compare-raw { margin: 0 14px 14px; }
 }
 
+/* ── Hosted beta account UI ────────────────────────────────────────────── */
+.hosted-page { max-width: 720px; margin: 24px auto; padding: 0 16px; }
+.hosted-page .section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+.hosted-page .section-head h2 { margin: 0; font-size: 20px; }
+.hosted-page .create-box { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
+.hosted-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+

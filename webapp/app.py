@@ -5,6 +5,7 @@
 #   "fastapi", "uvicorn[standard]", "pyyaml",
 #   "faster-whisper", "sounddevice", "numpy", "sse-starlette", "anthropic",
 #   "markdown", "nh3", "keyring",
+#   "asyncpg", "pyjwt[crypto]",
 # ]
 # ///
 # NOTE: live-transcribe needs the PortAudio system lib for sounddevice:
@@ -38,6 +39,12 @@ from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
 import config
+
+try:
+    import hosted
+    _HOSTED_AVAILABLE = True
+except Exception:
+    _HOSTED_AVAILABLE = False
 from integrations.salesforce import SalesforceIntegration
 from routes.accounts import router as accounts_router
 from routes.ask import router as ask_router
@@ -162,11 +169,19 @@ async def _lifespan(app: FastAPI):
     channels so the process can exit cleanly.
     """
     logger.info("se-skills webapp starting up")
+    if _HOSTED_AVAILABLE and hosted.config.is_hosted():
+        admin_pool, user_pool = await hosted.db.create_pools()
+        app.state.hosted_admin_pool = admin_pool
+        app.state.hosted_user_pool = user_pool
     yield
     logger.info("se-skills webapp shutting down")
     svc: TranscriptionService = getattr(app.state, "transcription_service", None)
     if svc:
         svc.shutdown()
+    if getattr(app.state, "hosted_admin_pool", None):
+        await app.state.hosted_admin_pool.close()
+    if getattr(app.state, "hosted_user_pool", None):
+        await app.state.hosted_user_pool.close()
 
 
 def create_app() -> FastAPI:
@@ -183,6 +198,9 @@ def create_app() -> FastAPI:
     app.include_router(salesforce_router)
     app.include_router(ask_router)
     app.include_router(transcription_router)
+
+    if _HOSTED_AVAILABLE:
+        hosted.add_hosted_routers(app)
 
     @app.get("/favicon.ico")
     async def favicon() -> Response:

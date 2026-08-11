@@ -112,6 +112,7 @@ Notes:
 - **Live Transcribe** — transcribe a live call with an AI copilot ask-bar. Sessions are persisted to disk, so an app restart mid-call recovers the transcript; you can also name the mic and call channels (e.g. "You" / "Customer") instead of the default labels. If state cannot be written, a warning toast tells you the transcript may not survive a restart.
 - **Durable background jobs** — skill runs and live copilot deep-asks are persisted while in progress, so a server restart leaves the *job record* recoverable (or clearly marked as lost) rather than silently disappearing. The running child process cannot be reattached; persistence failures surface a warning toast.
 - **Skill-completion toasts** — run a skill, navigate away, and a top-right banner tells you when it's ready with an Open deep-link.
+- **Hosted beta (optional, `HOSTED_MODE=1`)** — sign in with Google via Supabase Auth, resolve your Airbyte organization membership, and list or create organization-owned accounts. When `HOSTED_MODE` is unset the app keeps using the local filesystem and local skill workflows.
 
 Invoking a skill shells out to Claude Code headless:
 ```

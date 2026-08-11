@@ -2,7 +2,19 @@
 const view = document.getElementById("view");
 const crumbs = document.getElementById("crumbs");
 
-const api = async (path, opts) => {
+// Hosted-mode token, if any, is sent on all API calls.
+let HOSTED_TOKEN = null;
+
+const api = async (path, opts = {}) => {
+  if (HOSTED_TOKEN) {
+    opts = {
+      ...opts,
+      headers: {
+        ...(opts.headers || {}),
+        "Authorization": `Bearer ${HOSTED_TOKEN}`,
+      },
+    };
+  }
   const r = await fetch(path, opts);
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
   return r.headers.get("content-type")?.includes("application/json") ? r.json() : r.text();
@@ -3544,7 +3556,11 @@ async function route() {
       el.scrollIntoView({ behavior: "smooth", block: "start" }); flashEl(el);
       return;
     }
-    if (h === "/" || h === "") return pageMembers();
+    if (h === "/" || h === "") {
+      if (HOSTED) return pageHosted();
+      return pageMembers();
+    }
+    if (h === "/hosted") return pageHosted();
     if (h === "/help") return pageHelp();
     const parts = h.split("/");          // ["", kind, arg, ...]
     const kind = parts[1];
@@ -3865,8 +3881,133 @@ async function openDealDiffModal(ctx, currentPath) {
   if (leftIdx !== rightIdx) await runDiff();
 }
 
+let HOSTED = null; // null until checked, then false or the auth config object
+
+async function initHosted() {
+  try {
+    const cfg = await api("/api/auth/config");
+    if (!cfg.hosted) {
+      HOSTED = false;
+      return;
+    }
+    HOSTED = cfg;
+    // If Supabase redirected back with an access_token in the URL fragment,
+    // store it and clean the URL so a refresh does not re-parse stale data.
+    const hash = location.hash.slice(1);
+    if (hash.includes("access_token=")) {
+      const params = new URLSearchParams(hash);
+      const token = params.get("access_token");
+      if (token) {
+        HOSTED_TOKEN = token;
+        localStorage.setItem("se-hosted-token", token);
+      }
+      history.replaceState(null, "", location.pathname + location.search + "#/hosted");
+    } else {
+      HOSTED_TOKEN = localStorage.getItem("se-hosted-token") || null;
+    }
+  } catch {
+    HOSTED = false;
+  }
+}
+
+function hostedSignInUrl() {
+  const redirect = encodeURIComponent(window.location.origin + "/");
+  return `${HOSTED.supabase_url}/auth/v1/authorize?provider=google&redirect_to=${redirect}`;
+}
+
+function pageHostedSignIn(error = "") {
+  setCrumbs([{ label: "Sign in" }]);
+  view.innerHTML = `
+    <div class="empty-box">
+      <div class="empty-icon">🔒</div>
+      <div class="empty-title">Airbyte-managed hosted beta</div>
+      <div class="empty-body">Sign in with your Google account to continue.</div>
+      <div class="empty-actions">
+        <button class="primary" id="hosted-signin">Sign in with Google</button>
+      </div>
+      ${error ? `<div class="status err" style="margin-top:16px">${esc(error)}</div>` : ""}
+    </div>`;
+  const btn = document.getElementById("hosted-signin");
+  if (btn) btn.onclick = () => { window.location.href = hostedSignInUrl(); };
+}
+
+async function pageHostedAccounts(session) {
+  setCrumbs([{ label: "Airbyte" }]);
+  let data;
+  try {
+    data = await api("/api/hosted/accounts");
+  } catch (e) {
+    view.innerHTML = `<div class="empty-box"><div class="empty-icon">⚠️</div><div class="empty-title">Could not load accounts</div><div class="empty-body">${esc(e.message)}</div></div>`;
+    return;
+  }
+  const accounts = data.accounts || [];
+  const list = accounts.length
+    ? `<div class="hosted-list">${accounts.map((a) => `
+        <div class="card">
+          <h3>${esc(a.name)}</h3>
+          <div class="meta">${esc(a.slug)}</div>
+        </div>`).join("")}</div>`
+    : `<div class="empty">No accounts yet.</div>`;
+  view.innerHTML = `
+    <div class="hosted-page">
+      <div class="section-head">
+        <h2>Accounts</h2>
+        <span class="muted">${esc(session.user.email)}</span>
+      </div>
+      <form id="hosted-create-account" class="create-box">
+        <input type="text" id="hosted-account-name" placeholder="New account name" required />
+        <button type="submit" class="primary">Create account</button>
+      </form>
+      <div id="hosted-accounts">${list}</div>
+      <div id="hosted-error" class="status err hidden"></div>
+    </div>`;
+
+  const form = document.getElementById("hosted-create-account");
+  if (form) form.onsubmit = async (ev) => {
+    ev.preventDefault();
+    const nameEl = document.getElementById("hosted-account-name");
+    const errEl = document.getElementById("hosted-error");
+    errEl.classList.add("hidden");
+    try {
+      await api("/api/hosted/accounts", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: nameEl.value.trim() }),
+      });
+      nameEl.value = "";
+      await pageHostedAccounts(session);
+    } catch (e) {
+      errEl.textContent = e.message;
+      errEl.classList.remove("hidden");
+    }
+  };
+}
+
+async function pageHosted() {
+  if (!HOSTED_TOKEN) return pageHostedSignIn();
+  view.innerHTML = `<div class="empty-box"><div class="empty-icon">⏳</div><div class="empty-title">Loading...</div></div>`;
+  let session;
+  try {
+    session = await api("/api/auth/session");
+  } catch (e) {
+    const msg = e.message || "";
+    if (msg.includes("401") || msg.includes("403") || msg.includes("Invalid") || msg.includes("expired")) {
+      HOSTED_TOKEN = null;
+      localStorage.removeItem("se-hosted-token");
+      return pageHostedSignIn("Your session expired. Please sign in again.");
+    }
+    view.innerHTML = `<div class="empty-box"><div class="empty-icon">⚠️</div><div class="empty-title">Error</div><div class="empty-body">${esc(e.message)}</div></div>`;
+    return;
+  }
+  await pageHostedAccounts(session);
+}
+
 (async function init() {
   initTheme();
+  await initHosted();
+  if (HOSTED && location.hash.slice(1) === "") {
+    location.hash = "#/hosted";
+  }
   try { SKILLS = await api("/api/skills"); } catch { SKILLS = []; }
   try {
     const help = await api("/api/skills/help");
