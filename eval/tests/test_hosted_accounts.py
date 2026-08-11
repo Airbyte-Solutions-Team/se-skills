@@ -6,7 +6,6 @@ synthetic data only and a local HMAC JWT secret so no Supabase project is requir
 """
 from __future__ import annotations
 
-import importlib
 import os
 import sys
 import uuid
@@ -68,9 +67,6 @@ async def hosted_env(db_urls: dict[str, str]) -> dict[str, str]:
 
     from webapp.hosted import config, migrations
 
-    importlib.reload(config)
-    importlib.reload(migrations)
-
     await migrations.migrate(
         env["MIGRATE_DATABASE_URL"],
         config.MIGRATIONS_DIR,
@@ -82,9 +78,10 @@ async def hosted_env(db_urls: dict[str, str]) -> dict[str, str]:
 
 @pytest.fixture(scope="session")
 def app_client(hosted_env: dict[str, str]) -> Any:
-    from webapp import app as app_module
+    import webapp.app as app_module
 
-    importlib.reload(app_module)
+    # `hosted_env` already reloaded `webapp.hosted.config` with the test
+    # container URLs, so importing `webapp.app` here picks up hosted mode.
     with TestClient(app_module.app) as client:
         yield client
 
