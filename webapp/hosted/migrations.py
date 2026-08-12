@@ -11,6 +11,13 @@ logger = logging.getLogger(__name__)
 
 _MIGRATION_NAME_RE = re.compile(r"^(\d{3})_.*\.sql$")
 
+# GUC names used to pass role passwords into migrations without string
+# substitution. The migration runner sets these inside each transaction with
+# `set_config`, and migrations read them with `current_setting` inside `format`
+# (which safely quotes the literal).
+_APP_USER_PASSWORD_GUC = "migration.app_user_password"
+_APP_ADMIN_PASSWORD_GUC = "migration.app_admin_password"
+
 
 async def ensure_migrations_table(conn: asyncpg.Connection) -> None:
     await conn.execute(
@@ -39,33 +46,27 @@ async def applied_versions(conn: asyncpg.Connection) -> set[str]:
     return {r["version"] for r in rows}
 
 
-def _substitute_placeholders(sql: str, values: dict[str, str]) -> str:
-    """Replace `__NAME__` placeholders so real passwords never live in .sql files."""
-    result = sql
-    for key, value in values.items():
-        result = result.replace(f"__{key}__", value)
-    return result
+def _validate_passwords(app_user_password: str, app_admin_password: str) -> None:
+    if not app_user_password:
+        raise ValueError("app_user_password must be a non-empty string")
+    if not app_admin_password:
+        raise ValueError("app_admin_password must be a non-empty string")
 
 
 async def migrate(
     dsn: str,
     migrations_dir: Path,
     *,
-    app_user_password: str = "app_user_password",
-    app_admin_password: str = "app_admin_password",
+    app_user_password: str,
+    app_admin_password: str,
 ) -> list[str]:
     """Apply all unapplied migrations under a single admin connection.
 
-    Placeholders replaced:
-      - __APP_USER_PASSWORD__
-      - __APP_ADMIN_PASSWORD__
-      - __DATABASE_NAME__
+    Role passwords are passed as transaction-local GUCs and read by the SQL
+    migration using `format(... %L, current_setting(...))`. They are never
+    interpolated into migration text.
     """
-    values = {
-        "APP_USER_PASSWORD": app_user_password,
-        "APP_ADMIN_PASSWORD": app_admin_password,
-        "DATABASE_NAME": "current_database()",  # only used inside EXECUTE format
-    }
+    _validate_passwords(app_user_password, app_admin_password)
 
     pool = await asyncpg.create_pool(dsn, min_size=1, max_size=1)
     try:
@@ -76,8 +77,18 @@ async def migrate(
             for version, path in list_migrations(migrations_dir):
                 if version in applied:
                     continue
-                sql = _substitute_placeholders(path.read_text(), values)
                 async with conn.transaction():
+                    await conn.execute(
+                        "SELECT set_config($1, $2, true)",
+                        _APP_USER_PASSWORD_GUC,
+                        app_user_password,
+                    )
+                    await conn.execute(
+                        "SELECT set_config($1, $2, true)",
+                        _APP_ADMIN_PASSWORD_GUC,
+                        app_admin_password,
+                    )
+                    sql = path.read_text()
                     await conn.execute(sql)
                     await conn.execute(
                         "INSERT INTO public.schema_migrations (version) VALUES ($1)",

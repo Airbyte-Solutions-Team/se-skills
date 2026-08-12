@@ -11,27 +11,21 @@
 # NOTE: live-transcribe needs the PortAudio system lib for sounddevice:
 #   brew install portaudio   (one-time)
 # and BlackHole for system-audio capture (see README -> Live Transcribe setup).
-"""SE Skills — local web app.
+"""SE Skills — FastAPI composition root.
 
-A thin UI over the filesystem the SE skills already produce, plus a button to
-invoke a skill via Claude Code headless (`claude -p`).
-
-Structure:
-  Main page      -> solutions team members (from team-members.yaml + .se-config.yaml)
-  Member page    -> that member's accounts (folders in 01-customers/) + create account
-  Account page   -> all outputs for that account + invoke a skill
+In local mode the app wires the existing filesystem-backed services and routes.
+In hosted mode (`HOSTED_MODE=1`) it builds only the hosted-safe auth/org/account
+surface and static assets; local filesystem, integration, transcription, skill,
+and shell routes are not registered.
 
 Run:
   cd webapp && uv run app.py
   (or: uvicorn app:app --reload --port 8787)
-
-This is LOCAL ONLY. It runs as you, on your machine, using your already-authed
-Claude Code + MCPs + local files. Do not deploy this to a shared server without
-solving multi-user auth + data isolation first (see README).
 """
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -40,31 +34,30 @@ from fastapi.staticfiles import StaticFiles
 
 import config
 
+logger = logging.getLogger(__name__)
+
+# Optional hosted-mode extension. If HOSTED_MODE is requested and the module is
+# missing or invalid, fail closed immediately instead of silently booting the
+# local app.
 try:
     import hosted
     _HOSTED_AVAILABLE = True
-except Exception:
+    _HOSTED_IMPORT_ERROR: BaseException | None = None
+except Exception as _hosted_exc:
     _HOSTED_AVAILABLE = False
-from integrations.salesforce import SalesforceIntegration
-from routes.accounts import router as accounts_router
-from routes.ask import router as ask_router
-from routes.feedback import router as feedback_router
-from routes.jobs import router as jobs_router
-from routes.outputs import router as outputs_router
-from routes.overview import router as overview_router
-from routes.salesforce import router as salesforce_router
-from routes.skills import router as skills_router
-from routes.transcription import router as transcription_router
-from services.account_service import AccountService
-from services.ask_service import AskService, anthropic_api_key
-from services.feedback_service import FeedbackService
-from services.job_service import JobService
-from services.output_service import OutputService
-from services.overview_service import OverviewService
-from services.skill_runtime_service import SkillRuntimeService
-from services.transcription_service import TranscriptionService
+    _HOSTED_IMPORT_ERROR = _hosted_exc
 
-logger = logging.getLogger(__name__)
+
+def _hosted_mode_requested() -> bool:
+    return (os.environ.get("HOSTED_MODE") or "").lower() in ("1", "true", "yes")
+
+
+if _hosted_mode_requested() and not _HOSTED_AVAILABLE:
+    raise RuntimeError(
+        "HOSTED_MODE is enabled but the hosted extension could not be imported. "
+        "Verify that asyncpg and pyjwt are installed."
+    ) from _HOSTED_IMPORT_ERROR
+
 
 # Favicon: inline SVG (also linked in index.html <head>). Serving it here too
 # silences the browser's default GET /favicon.ico even for clients that ignore
@@ -77,13 +70,31 @@ _FAVICON_SVG = (
 )
 
 
-def _build_services(app: FastAPI) -> None:
-    """Construct shared services once and wire them to `app.state`.
+def _build_local_services(app: FastAPI) -> None:
+    """Construct filesystem-backed local services and wire them to `app.state`.
 
-    Each stateful service is created exactly once per app so identity is preserved
-    across all routes and consumers (AccountService, OverviewService, AskService,
-    and the skill runtime all share the same JobService and OutputService).
+    Imports are deferred so the hosted mode surface can start without optional
+    local dependencies such as faster-whisper or anthropic.
     """
+    from integrations.salesforce import SalesforceIntegration
+    from routes.accounts import router as accounts_router
+    from routes.ask import router as ask_router
+    from routes.feedback import router as feedback_router
+    from routes.jobs import router as jobs_router
+    from routes.outputs import router as outputs_router
+    from routes.overview import router as overview_router
+    from routes.salesforce import router as salesforce_router
+    from routes.skills import router as skills_router
+    from routes.transcription import router as transcription_router
+    from services.account_service import AccountService
+    from services.ask_service import AskService, anthropic_api_key
+    from services.feedback_service import FeedbackService
+    from services.job_service import JobService
+    from services.output_service import OutputService
+    from services.overview_service import OverviewService
+    from services.skill_runtime_service import SkillRuntimeService
+    from services.transcription_service import TranscriptionService
+
     output_service = OutputService(
         customers_dir=config.CUSTOMERS_DIR,
         workspace=config.WORKSPACE,
@@ -159,36 +170,7 @@ def _build_services(app: FastAPI) -> None:
     app.state.transcription_service = transcription_service
     app.state.skill_runtime_service = skill_runtime_service
 
-
-@asynccontextmanager
-async def _lifespan(app: FastAPI):
-    """Startup/shutdown lifecycle.
-
-    Construction of services (and therefore job + transcription recovery from
-    persistence) happens at startup; on shutdown we stop any active transcription
-    channels so the process can exit cleanly.
-    """
-    logger.info("se-skills webapp starting up")
-    if _HOSTED_AVAILABLE and hosted.config.is_hosted():
-        admin_pool, user_pool = await hosted.db.create_pools()
-        app.state.hosted_admin_pool = admin_pool
-        app.state.hosted_user_pool = user_pool
-    yield
-    logger.info("se-skills webapp shutting down")
-    svc: TranscriptionService = getattr(app.state, "transcription_service", None)
-    if svc:
-        svc.shutdown()
-    if getattr(app.state, "hosted_admin_pool", None):
-        await app.state.hosted_admin_pool.close()
-    if getattr(app.state, "hosted_user_pool", None):
-        await app.state.hosted_user_pool.close()
-
-
-def create_app() -> FastAPI:
-    app = FastAPI(title="SE Skills", lifespan=_lifespan)
-    _build_services(app)
-
-    # Public routes — registered exactly once.
+    # Public local routes — registered exactly once.
     app.include_router(skills_router)
     app.include_router(jobs_router)
     app.include_router(accounts_router)
@@ -199,8 +181,15 @@ def create_app() -> FastAPI:
     app.include_router(ask_router)
     app.include_router(transcription_router)
 
+
+def _register_hosted_routers(app: FastAPI) -> None:
+    """Register hosted-mode routes when the hosted module is available."""
     if _HOSTED_AVAILABLE:
         hosted.add_hosted_routers(app)
+
+
+def _register_common_routes(app: FastAPI) -> None:
+    """Register favicon and static assets."""
 
     @app.get("/favicon.ico")
     async def favicon() -> Response:
@@ -212,6 +201,43 @@ def create_app() -> FastAPI:
         StaticFiles(directory=str(config.WEBAPP_DIR / "static"), html=True),
         name="static",
     )
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Startup/shutdown lifecycle.
+
+    In hosted mode the only runtime state is the `app_user` connection pool.
+    In local mode we also stop any active transcription channels on shutdown.
+    """
+    logger.info("se-skills webapp starting up")
+    if _HOSTED_AVAILABLE and hosted.config.is_hosted():
+        user_pool = await hosted.db.create_pool()
+        app.state.hosted_user_pool = user_pool
+    yield
+    logger.info("se-skills webapp shutting down")
+    svc = getattr(app.state, "transcription_service", None)
+    if svc:
+        svc.shutdown()
+    user_pool = getattr(app.state, "hosted_user_pool", None)
+    if user_pool:
+        await user_pool.close()
+
+
+def create_app() -> FastAPI:
+    """Build and return the FastAPI application for the current mode."""
+    app = FastAPI(title="SE Skills", lifespan=_lifespan)
+
+    if _HOSTED_AVAILABLE and hosted.config.is_hosted():
+        _register_hosted_routers(app)
+    else:
+        if _hosted_mode_requested():
+            # This branch is reached when the hosted module could not be imported;
+            # the module-level guard already raised, so this is defensive.
+            raise RuntimeError("Hosted mode requested but not available")
+        _build_local_services(app)
+
+    _register_common_routes(app)
     return app
 
 

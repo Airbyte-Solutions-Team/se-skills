@@ -95,40 +95,34 @@ async def require_user(request: Request) -> User:
     return User(id=verified.user_id, email=verified.email)
 
 
-async def _resolve_org(admin_pool: asyncpg.Pool, user: User) -> OrgContext | None:
-    """Look up the user's active membership and return the organization context.
+async def _resolve_org(pool: asyncpg.Pool, user: User) -> OrgContext | None:
+    """Look up the user's active membership using the `app_user` pool.
 
-    The beta is scoped to a single Airbyte organization; if a user somehow has
-    multiple active memberships we resolve the first one and warn.
+    Membership resolution is delegated to a narrow `SECURITY DEFINER` function
+    owned by the migration role. The web process never connects as the
+    `BYPASSRLS` migration/DDL principal.
     """
-    async with admin_pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            SELECT m.id AS membership_id, m.org_id, m.role, m.active,
-                   (SELECT count(*) FROM public.memberships m2
-                    WHERE m2.user_id = $1 AND m2.active = true) AS org_count
-            FROM public.memberships m
-            WHERE m.user_id = $1 AND m.active = true
-            ORDER BY m.created_at
-            LIMIT 1
-            """,
-            user.id,
-        )
-        if row is None:
-            return None
-        if row["org_count"] > 1:
-            logger.warning(
-                "User %s has %d active memberships; using %s",
-                user.id,
-                row["org_count"],
-                row["org_id"],
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            # The resolver function reads the verified user id from a
+            # transaction-scoped GUC and returns only that user's active
+            # membership. Using set_config with a parameter keeps the UUID out of
+            # the SQL string.
+            await conn.execute(
+                "SELECT set_config('app.current_user_id', $1, true)",
+                str(user.id),
             )
-        return OrgContext(
-            user=user,
-            org_id=row["org_id"],
-            membership_id=row["membership_id"],
-            role=row["role"],
-        )
+            row = await conn.fetchrow(
+                "SELECT membership_id, org_id, role FROM public.resolve_active_membership()"
+            )
+            if row is None:
+                return None
+            return OrgContext(
+                user=user,
+                org_id=row["org_id"],
+                membership_id=row["membership_id"],
+                role=row["role"],
+            )
 
 
 async def require_org(
@@ -136,7 +130,7 @@ async def require_org(
     user: User = Depends(require_user),
 ) -> OrgContext:
     """FastAPI dependency that resolves the user's active organization."""
-    pool = request.app.state.hosted_admin_pool
+    pool = request.app.state.hosted_user_pool
     org = await _resolve_org(pool, user)
     if org is None or not org.role or not org.membership_id:
         raise AuthError("No active organization membership", status.HTTP_403_FORBIDDEN)
@@ -145,23 +139,22 @@ async def require_org(
 
 @asynccontextmanager
 async def tenant_connection(request: Request, org: OrgContext):
-    """Yield an app_user connection with the tenant context set for RLS.
+    """Yield an `app_user` connection with the verified tenant context set.
 
-    `app.current_org_id` and `app.current_user_id` are set with `SET LOCAL`
-    inside a transaction so the value is automatically cleared on commit or
-    rollback. This prevents one request from leaking organization context to
-    another request that reuses the same pool connection.
+    `app.current_org_id` and `app.current_user_id` are set in a transaction with
+    `set_config(..., is_local=true)` so the values are automatically cleared on
+    commit or rollback. This prevents one request from leaking organization
+    context to another request that reuses the same pool connection.
     """
     pool: asyncpg.Pool = request.app.state.hosted_user_pool
     async with pool.acquire() as conn:
         async with conn.transaction():
-            # `SET LOCAL` cannot be parameterized, so these values are supplied
-            # as string literals. They are UUIDs from the verified token/membership
-            # lookup, not user-controlled free text.
             await conn.execute(
-                f"SET LOCAL app.current_org_id = '{str(org.org_id)}'"
+                "SELECT set_config('app.current_org_id', $1, true)",
+                str(org.org_id),
             )
             await conn.execute(
-                f"SET LOCAL app.current_user_id = '{str(org.user.id)}'"
+                "SELECT set_config('app.current_user_id', $1, true)",
+                str(org.user.id),
             )
             yield conn

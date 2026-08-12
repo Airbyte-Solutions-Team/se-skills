@@ -3561,6 +3561,13 @@ async function route() {
       return pageMembers();
     }
     if (h === "/hosted") return pageHosted();
+    // In hosted mode only the auth/org/account surface is available. Unknown
+    // client-side hashes should redirect back to the hosted landing page
+    // instead of calling local-only page handlers.
+    if (HOSTED) {
+      location.hash = "#/hosted";
+      return;
+    }
     if (h === "/help") return pageHelp();
     const parts = h.split("/");          // ["", kind, arg, ...]
     const kind = parts[1];
@@ -4005,14 +4012,19 @@ async function pageHosted() {
 (async function init() {
   initTheme();
   await initHosted();
-  if (HOSTED && location.hash.slice(1) === "") {
-    location.hash = "#/hosted";
+  if (HOSTED) {
+    // In hosted mode the local skill/execution endpoints are not registered.
+    // The page router loads the hosted account surface directly.
+    if (location.hash.slice(1) === "") {
+      location.hash = "#/hosted";
+    }
+  } else {
+    try { SKILLS = await api("/api/skills"); } catch { SKILLS = []; }
+    try {
+      const help = await api("/api/skills/help");
+      SKILLS_HELP = Object.fromEntries(help.map((h) => [h.id, h]));
+    } catch { SKILLS_HELP = {}; }
   }
-  try { SKILLS = await api("/api/skills"); } catch { SKILLS = []; }
-  try {
-    const help = await api("/api/skills/help");
-    SKILLS_HELP = Object.fromEntries(help.map((h) => [h.id, h]));
-  } catch { SKILLS_HELP = {}; }
   window.addEventListener("hashchange", route);
   route();
 })();

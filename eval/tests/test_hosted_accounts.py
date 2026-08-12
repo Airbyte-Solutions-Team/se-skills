@@ -142,6 +142,34 @@ async def _seed_member(
         return user_id, org_id, membership_id
 
 
+async def _seed_user_and_membership(
+    admin_pool: asyncpg.Pool,
+    email: str,
+    org_id: uuid.UUID,
+    active: bool = True,
+) -> uuid.UUID:
+    """Create a user and membership in an existing org."""
+    async with admin_pool.acquire() as conn:
+        user_id = uuid.uuid4()
+        await conn.execute(
+            "INSERT INTO public.users (id, email) VALUES ($1, $2)",
+            user_id,
+            email,
+        )
+        await conn.execute(
+            """
+            INSERT INTO public.memberships (id, org_id, user_id, role, active)
+            VALUES ($1, $2, $3, $4, $5)
+            """,
+            uuid.uuid4(),
+            org_id,
+            user_id,
+            "member",
+            active,
+        )
+        return user_id
+
+
 def _token(user_id: uuid.UUID, email: str) -> str:
     now = datetime.now(timezone.utc).timestamp()
     return jwt.encode(
@@ -323,10 +351,31 @@ async def test_assignment_does_not_change_org_visibility(
 
 @pytest.mark.hosted
 @pytest.mark.slow
+async def test_hosted_mode_does_not_expose_local_routes(app_client: TestClient) -> None:
+    """Hosted mode should only register auth, hosted, favicon, and static."""
+    local_routes = [
+        "/api/members",
+        "/api/accounts",
+        "/api/skills",
+        "/api/jobs",
+        "/api/overview",
+        "/api/sfdc/stage-amount",
+        "/api/ask",
+        "/api/transcribe/start",
+        "/api/invoke",
+        "/api/output/ask",
+    ]
+    for route in local_routes:
+        response = app_client.get(route)
+        assert response.status_code == 404, f"{route} should not be exposed in hosted mode"
+
+
+@pytest.mark.hosted
+@pytest.mark.slow
 async def test_cross_org_account_not_visible_via_rls(
     user_pool: asyncpg.Pool, admin_pool: asyncpg.Pool
 ) -> None:
-    async def _setup() -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
+    async def _setup() -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID]:
         async with admin_pool.acquire() as conn:
             org_a, org_b = uuid.uuid4(), uuid.uuid4()
             await conn.execute(
@@ -342,14 +391,22 @@ async def test_cross_org_account_not_visible_via_rls(
                 """,
                 account_id, org_a, "Account A", "account-a",
             )
-            return org_a, org_b, account_id
+            user_b = await _seed_user_and_membership(admin_pool, "user-b@airbyte.io", org_b)
+            return org_a, org_b, account_id, user_b
 
-    org_a, org_b, account_id = await _setup()  # noqa: F841
+    org_a, org_b, account_id, user_b = await _setup()  # noqa: F841
 
     async def _query() -> list[asyncpg.Record]:
         async with user_pool.acquire() as conn:
             async with conn.transaction():
-                await conn.execute(f"SET LOCAL app.current_org_id = '{str(org_b)}'")
+                await conn.execute(
+                    "SELECT set_config('app.current_org_id', $1, true)",
+                    str(org_b),
+                )
+                await conn.execute(
+                    "SELECT set_config('app.current_user_id', $1, true)",
+                    str(user_b),
+                )
                 return await conn.fetch(
                     "SELECT id FROM public.accounts WHERE id = $1", account_id
                 )
@@ -360,10 +417,107 @@ async def test_cross_org_account_not_visible_via_rls(
 
 @pytest.mark.hosted
 @pytest.mark.slow
+async def test_rls_blocks_mismatched_org_context(
+    user_pool: asyncpg.Pool, admin_pool: asyncpg.Pool
+) -> None:
+    """A valid membership for org A must not allow access to org B rows."""
+    async def _setup() -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID]:
+        async with admin_pool.acquire() as conn:
+            org_a, org_b = uuid.uuid4(), uuid.uuid4()
+            await conn.execute(
+                "INSERT INTO public.organizations (id, name, slug) VALUES ($1, $2, $3), ($4, $5, $6)",
+                org_a, "Org A", "org-a-mismatch",
+                org_b, "Org B", "org-b-mismatch",
+            )
+            user_a = await _seed_user_and_membership(admin_pool, "user-a@airbyte.io", org_a)
+            await _seed_user_and_membership(admin_pool, "user-b@airbyte.io", org_b)
+            await conn.execute(
+                """
+                INSERT INTO public.accounts (id, org_id, name, slug)
+                VALUES ($1, $2, $3, $4)
+                """,
+                uuid.uuid4(), org_b, "Account B", "account-b",
+            )
+            return org_a, org_b, user_a, uuid.uuid4()
+
+    org_a, org_b, user_a, _ = await _setup()  # noqa: F841
+
+    async def _query() -> list[asyncpg.Record]:
+        async with user_pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT set_config('app.current_org_id', $1, true)",
+                    str(org_b),
+                )
+                await conn.execute(
+                    "SELECT set_config('app.current_user_id', $1, true)",
+                    str(user_a),
+                )
+                return await conn.fetch("SELECT id FROM public.accounts")
+
+    rows = await _query()
+    assert len(rows) == 0
+
+
+@pytest.mark.hosted
+@pytest.mark.slow
+async def test_rls_blocks_cross_org_write_without_membership(
+    user_pool: asyncpg.Pool, admin_pool: asyncpg.Pool
+) -> None:
+    """Setting current_org_id to another org without a membership must block writes."""
+    async def _setup() -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
+        async with admin_pool.acquire() as conn:
+            org_a, org_b = uuid.uuid4(), uuid.uuid4()
+            await conn.execute(
+                "INSERT INTO public.organizations (id, name, slug) VALUES ($1, $2, $3), ($4, $5, $6)",
+                org_a, "Org A", "org-a-write",
+                org_b, "Org B", "org-b-write",
+            )
+            user_a = await _seed_user_and_membership(admin_pool, "user-a-write@airbyte.io", org_a)
+            await conn.execute(
+                """
+                INSERT INTO public.accounts (id, org_id, name, slug)
+                VALUES ($1, $2, $3, $4)
+                """,
+                uuid.uuid4(), org_b, "Account B", "account-b-write",
+            )
+            return org_a, org_b, user_a
+
+    org_a, org_b, user_a = await _setup()  # noqa: F841
+
+    async def _insert() -> None:
+        async with user_pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT set_config('app.current_org_id', $1, true)",
+                    str(org_b),
+                )
+                await conn.execute(
+                    "SELECT set_config('app.current_user_id', $1, true)",
+                    str(user_a),
+                )
+                account_b = await conn.fetchval(
+                    "SELECT id FROM public.accounts WHERE slug = $1",
+                    "account-b-write",
+                )
+                await conn.execute(
+                    """
+                    INSERT INTO public.opportunities (id, org_id, account_id, name, slug)
+                    VALUES ($1, $2, $3, $4, $5)
+                    """,
+                    uuid.uuid4(), org_b, account_b, "Opp", "opp-write",
+                )
+
+    with pytest.raises(asyncpg.exceptions.InsufficientPrivilegeError):
+        await _insert()
+
+
+@pytest.mark.hosted
+@pytest.mark.slow
 async def test_cross_org_opportunity_relationship_fails_at_db(
     user_pool: asyncpg.Pool, admin_pool: asyncpg.Pool
 ) -> None:
-    async def _setup() -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
+    async def _setup() -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID]:
         async with admin_pool.acquire() as conn:
             org_a, org_b = uuid.uuid4(), uuid.uuid4()
             await conn.execute(
@@ -379,14 +533,22 @@ async def test_cross_org_opportunity_relationship_fails_at_db(
                 """,
                 account_id, org_a, "Account A", "account-a-xfk",
             )
-            return org_a, org_b, account_id
+            user_b = await _seed_user_and_membership(admin_pool, "user-b-xfk@airbyte.io", org_b)
+            return org_a, org_b, account_id, user_b
 
-    org_a, org_b, account_id = await _setup()  # noqa: F841
+    org_a, org_b, account_id, user_b = await _setup()  # noqa: F841
 
     async def _insert_bad_opportunity() -> None:
         async with user_pool.acquire() as conn:
             async with conn.transaction():
-                await conn.execute(f"SET LOCAL app.current_org_id = '{str(org_b)}'")
+                await conn.execute(
+                    "SELECT set_config('app.current_org_id', $1, true)",
+                    str(org_b),
+                )
+                await conn.execute(
+                    "SELECT set_config('app.current_user_id', $1, true)",
+                    str(user_b),
+                )
                 await conn.execute(
                     """
                     INSERT INTO public.opportunities (id, org_id, account_id, name, slug)
@@ -467,3 +629,209 @@ async def test_opportunity_same_org_succeeds(
     )
     assert list_resp.status_code == 200
     assert any(o["id"] == opportunity["id"] for o in list_resp.json()["opportunities"])
+
+
+@pytest.mark.hosted
+@pytest.mark.slow
+async def test_opportunity_slug_unique_per_account(
+    app_client: TestClient, admin_pool: asyncpg.Pool
+) -> None:
+    """The same slug may be used for opportunities on different accounts in the same org."""
+    user_id, _, _ = await _seed_member(
+        admin_pool, "opp-slug@airbyte.io", org_slug="opp-slug"
+    )
+    account_ids = []
+    for name in ["Account One", "Account Two"]:
+        resp = app_client.post(
+            "/api/hosted/accounts",
+            json={"name": name},
+            headers=_auth_header(user_id, "opp-slug@airbyte.io"),
+        )
+        assert resp.status_code == 201
+        account_ids.append(resp.json()["id"])
+
+    created_ids = set()
+    for account_id in account_ids:
+        resp = app_client.post(
+            f"/api/hosted/accounts/{account_id}/opportunities",
+            json={"name": "Expansion"},
+            headers=_auth_header(user_id, "opp-slug@airbyte.io"),
+        )
+        assert resp.status_code == 201
+        created_ids.add(resp.json()["id"])
+        assert resp.json()["slug"] == "expansion"
+
+    assert len(created_ids) == 2
+
+
+@pytest.mark.hosted
+@pytest.mark.slow
+async def test_app_user_resolver_cannot_alter_tenancy(
+    user_pool: asyncpg.Pool, admin_pool: asyncpg.Pool
+) -> None:
+    """The app_user role used by normal requests cannot mutate organizations, memberships, users, or schema_migrations."""
+    async with admin_pool.acquire() as conn:
+        org_id = await conn.fetchval(
+            "INSERT INTO public.organizations (id, name, slug) VALUES ($1, $2, $3) RETURNING id",
+            uuid.uuid4(), "Evil Org", "evil-org",
+        )
+        user_id = uuid.uuid4()
+        await conn.execute(
+            "INSERT INTO public.users (id, email) VALUES ($1, $2)",
+            user_id,
+            "evil@airbyte.io",
+        )
+
+    async with user_pool.acquire() as conn:
+        with pytest.raises(asyncpg.exceptions.InsufficientPrivilegeError):
+            await conn.execute(
+                "INSERT INTO public.organizations (id, name, slug) VALUES ($1, $2, $3)",
+                uuid.uuid4(), "Bad Org", "bad-org",
+            )
+
+    async with user_pool.acquire() as conn:
+        with pytest.raises(asyncpg.exceptions.InsufficientPrivilegeError):
+            await conn.execute(
+                """
+                INSERT INTO public.memberships (id, org_id, user_id, role, active)
+                VALUES ($1, $2, $3, $4, $5)
+                """,
+                uuid.uuid4(), org_id, user_id, "member", True,
+            )
+
+    async with user_pool.acquire() as conn:
+        with pytest.raises(asyncpg.exceptions.InsufficientPrivilegeError):
+            await conn.execute(
+                "UPDATE public.memberships SET active = false WHERE user_id = $1",
+                user_id,
+            )
+
+    async with user_pool.acquire() as conn:
+        with pytest.raises(asyncpg.exceptions.InsufficientPrivilegeError):
+            await conn.execute(
+                "DELETE FROM public.users WHERE id = $1",
+                user_id,
+            )
+
+    async with user_pool.acquire() as conn:
+        with pytest.raises(asyncpg.exceptions.InsufficientPrivilegeError):
+            await conn.execute(
+                "INSERT INTO public.schema_migrations (version) VALUES ($1)",
+                "999",
+            )
+
+
+@pytest.mark.hosted
+@pytest.mark.slow
+async def test_deactivated_membership_denies_access(
+    app_client: TestClient, admin_pool: asyncpg.Pool
+) -> None:
+    """After a membership is deactivated the user can no longer access the org."""
+    user_id, _, _ = await _seed_member(
+        admin_pool, "deactivated@airbyte.io", org_slug="deactivated"
+    )
+
+    # First request succeeds.
+    response = app_client.get(
+        "/api/hosted/accounts",
+        headers=_auth_header(user_id, "deactivated@airbyte.io"),
+    )
+    assert response.status_code == 200
+
+    async with admin_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE public.memberships SET active = false WHERE user_id = $1",
+            user_id,
+        )
+
+    # Subsequent request is rejected because the resolver no longer finds an
+    # active membership.
+    response = app_client.get(
+        "/api/hosted/accounts",
+        headers=_auth_header(user_id, "deactivated@airbyte.io"),
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.hosted
+@pytest.mark.slow
+async def test_migration_rejects_empty_passwords(hosted_env: dict[str, str]) -> None:
+    """The migration runner fails before connecting if credentials are empty."""
+    from webapp.hosted import config, migrations
+
+    with pytest.raises(ValueError):
+        await migrations.migrate(
+            hosted_env["MIGRATE_DATABASE_URL"],
+            config.MIGRATIONS_DIR,
+            app_user_password="",
+            app_admin_password="app_admin_password",
+        )
+
+    with pytest.raises(ValueError):
+        await migrations.migrate(
+            hosted_env["MIGRATE_DATABASE_URL"],
+            config.MIGRATIONS_DIR,
+            app_user_password="app_user_password",
+            app_admin_password="",
+        )
+
+
+@pytest.mark.hosted
+@pytest.mark.slow
+async def test_migration_safe_password_quoting(hosted_env: dict[str, str]) -> None:
+    """Role passwords with SQL-significant characters are quoted safely."""
+    from webapp.hosted import config, migrations
+
+    malicious = "app'user\"; DROP TABLE public.users; --"
+    host_port = hosted_env["MIGRATE_DATABASE_URL"].rsplit("/", 1)[0]
+    test_db = "test_migration_pw"
+
+    admin_conn = None
+    user_conn = None
+    try:
+        admin_conn = await asyncpg.connect(hosted_env["MIGRATE_DATABASE_URL"])
+        await admin_conn.execute(f"CREATE DATABASE {test_db}")
+        await admin_conn.close()
+        admin_conn = None
+
+        test_dsn = f"{host_port}/{test_db}"
+        await migrations.migrate(
+            test_dsn,
+            config.MIGRATIONS_DIR,
+            app_user_password=malicious,
+            app_admin_password=malicious,
+        )
+
+        # Must be able to connect as app_user with the malicious password.
+        user_conn = await asyncpg.connect(
+            f"{host_port}/{test_db}?user=app_user&password={malicious}"
+        )
+        row = await user_conn.fetchval(
+            "SELECT public.is_active_org_member($1, $2)",
+            uuid.uuid4(),
+            uuid.uuid4(),
+        )
+        assert row is False
+        await user_conn.close()
+        user_conn = None
+    finally:
+        if user_conn:
+            await user_conn.close()
+        if admin_conn:
+            await admin_conn.close()
+        # Restore the global app_user password for the shared container.
+        restore_conn = await asyncpg.connect(hosted_env["MIGRATE_DATABASE_URL"])
+        try:
+            await restore_conn.execute(
+                f"ALTER ROLE app_user WITH PASSWORD 'app_user_password'"
+            )
+        finally:
+            await restore_conn.close()
+        # Drop the temporary database.
+        drop_conn = await asyncpg.connect(hosted_env["MIGRATE_DATABASE_URL"])
+        try:
+            await drop_conn.execute(
+                f"DROP DATABASE IF EXISTS {test_db} WITH (FORCE)"
+            )
+        finally:
+            await drop_conn.close()

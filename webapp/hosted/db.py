@@ -1,9 +1,12 @@
-"""Database pools and JWKS client for the hosted app."""
+"""Database pool and JWKS client for the hosted app.
+
+The web process only needs the least-privileged `app_user` pool. The migration
+role (`app_admin`) is used by `scripts/migrate.py` and is not kept in the
+running application.
+"""
 from __future__ import annotations
 
 import logging
-from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 import asyncpg
 import jwt
@@ -30,23 +33,14 @@ def clear_jwks_client() -> None:
     _jwks_client = None
 
 
-async def create_pools() -> tuple[asyncpg.Pool, asyncpg.Pool]:
-    """Create admin and app_user connection pools."""
+async def create_pool() -> asyncpg.Pool:
+    """Create the `app_user` connection pool used by normal requests."""
     if not config.DATABASE_URL:
         raise RuntimeError("DATABASE_URL is not configured")
-    if not config.DATABASE_ADMIN_URL:
-        raise RuntimeError("DATABASE_ADMIN_URL is not configured")
 
-    user_pool = await asyncpg.create_pool(
+    return await asyncpg.create_pool(
         config.DATABASE_URL,
         min_size=1,
         max_size=10,
         command_timeout=30,
     )
-    admin_pool = await asyncpg.create_pool(
-        config.DATABASE_ADMIN_URL,
-        min_size=1,
-        max_size=5,
-        command_timeout=30,
-    )
-    return admin_pool, user_pool

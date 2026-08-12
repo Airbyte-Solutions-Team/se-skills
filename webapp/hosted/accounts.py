@@ -21,11 +21,11 @@ async def _require_assigned_in_org(
     if assigned_to is None:
         return
     row = await conn.fetchrow(
-        "SELECT 1 FROM public.memberships WHERE user_id = $1 AND org_id = $2 AND active = true",
+        "SELECT public.is_active_org_member($1, $2) AS ok",
         assigned_to,
         org_id,
     )
-    if row is None:
+    if row is None or not row["ok"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="assigned_to user is not an active member of this organization",
@@ -48,17 +48,18 @@ async def _ensure_account_slug(
 
 
 async def _ensure_opportunity_slug(
-    conn: asyncpg.Connection, org_id: uuid.UUID, slug: str, suffix: int = 0
+    conn: asyncpg.Connection, account_id: uuid.UUID, slug: str, suffix: int = 0
 ) -> str:
+    """Deduplicate opportunity slugs within a single account."""
     candidate = f"{slug}-{suffix}" if suffix else slug
     existing = await conn.fetchval(
-        "SELECT 1 FROM public.opportunities WHERE org_id = $1 AND slug = $2",
-        org_id,
+        "SELECT 1 FROM public.opportunities WHERE account_id = $1 AND slug = $2",
+        account_id,
         candidate,
     )
     if existing is None:
         return candidate
-    return await _ensure_opportunity_slug(conn, org_id, slug, suffix + 1)
+    return await _ensure_opportunity_slug(conn, account_id, slug, suffix + 1)
 
 
 @router.get("/accounts", response_model=AccountList)
@@ -140,7 +141,7 @@ async def create_opportunity(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Account not found",
             )
-        slug = await _ensure_opportunity_slug(conn, org.org_id, slug)
+        slug = await _ensure_opportunity_slug(conn, account_id, slug)
         row = await conn.fetchrow(
             """
             INSERT INTO public.opportunities (org_id, account_id, name, slug, created_by, assigned_to)

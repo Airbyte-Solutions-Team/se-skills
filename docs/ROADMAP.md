@@ -54,11 +54,12 @@ This is the source of truth for productionalization slices and progress. Each sl
 **Scope:**
 - Supabase Auth with Google OAuth for Airbyte users (Product Owner-approved for the beta). Access is invite/pre-provisioned-membership only; an `@airbyte.com` email may be an onboarding check, but email domain is not the authorization boundary.
 - `organizations`, `memberships`, `accounts`, and `opportunities` tables with `org_id`, `created_by`, `assigned_to`, timestamps, uniqueness, and relationship constraints.
-- Postgres RLS with `app_user` (`NOBYPASSRLS`) and a transaction-scoped `SET LOCAL app.current_org_id` / `app.current_user_id` context; `app_admin` (`BYPASSRLS`) is used only for migrations and membership resolution.
+- Postgres RLS with `app_user` (`NOBYPASSRLS`). The request context is propagated with transaction-scoped `set_config('app.current_org_id', ...)` / `set_config('app.current_user_id', ...)`. A narrow `SECURITY DEFINER` resolver function owned by the migration role returns the verified user's active membership; the web process never holds a `BYPASSRLS` admin pool.
+- Least-privilege `app_user` grants: explicit `SELECT/INSERT/UPDATE/DELETE` on `accounts` and `opportunities`; `SELECT` on `users`, `organizations`, and `memberships`; `EXECUTE` on the membership resolver functions; no broad or default privileges.
 - FastAPI authentication and organization-scoped authorization helpers that resolve organization context from the authenticated user's active membership and never trust a browser-supplied `org_id` or `user_id`.
 - Organization-scoped `accounts` list/create APIs and the `opportunities` data layer required by Slice 2.
-- Minimal SPA sign-in, signed-out, loading, error, account-list, and account-create states.
-- `HOSTED_MODE=1` opt-in so existing local filesystem workflows are not silently forced onto Supabase.
+- Minimal SPA sign-in, signed-out, loading, error, account-list, and account-create states. The hosted SPA does not call local skill/execution endpoints.
+- `HOSTED_MODE=1` opt-in with fail-closed startup: local filesystem, integration, transcription, skill, and shell routes are not registered in hosted mode.
 
 **Dependencies:** Slice 1.
 

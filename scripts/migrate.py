@@ -21,11 +21,17 @@ async def main() -> int:
     if not config.MIGRATE_DATABASE_URL:
         print("MIGRATE_DATABASE_URL is required", file=sys.stderr)
         return 1
+    if not config.APP_USER_PASSWORD:
+        print("APP_USER_PASSWORD is required and must be non-empty", file=sys.stderr)
+        return 1
+    if not config.APP_ADMIN_PASSWORD:
+        print("APP_ADMIN_PASSWORD is required and must be non-empty", file=sys.stderr)
+        return 1
     ran = await migrations.migrate(
         config.MIGRATE_DATABASE_URL,
         config.MIGRATIONS_DIR,
-        app_user_password=config.APP_USER_PASSWORD or "app_user_password",
-        app_admin_password=config.APP_ADMIN_PASSWORD or "app_admin_password",
+        app_user_password=config.APP_USER_PASSWORD,
+        app_admin_password=config.APP_ADMIN_PASSWORD,
     )
     for version in ran:
         print(f"Applied migration {version}")
