@@ -85,7 +85,7 @@ This is the source of truth for productionalization slices and progress. Each sl
 
 ## Slice 3: Transcript upload and private storage
 
-**Status:** `In Progress`
+**Status:** `Complete` (PR #41)
 
 **Product outcome:** SEs can upload a transcript for an account/opportunity and have it stored privately, organization-scoped, and referenced by the API.
 
