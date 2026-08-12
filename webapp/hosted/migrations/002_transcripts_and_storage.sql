@@ -54,8 +54,22 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO app_admin;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO app_admin;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO app_admin;
 
--- Narrow, app_admin-owned helper for Storage RLS policies. The authenticated
--- role cannot read public.memberships directly, but it can execute this
+-- Dedicated backend Storage role. FastAPI signs a short-lived JWT for this role
+-- using a server-side Supabase JWT secret; the browser's authenticated token is
+-- never granted direct access to Storage objects.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'app_storage') THEN
+        CREATE ROLE app_storage NOLOGIN NOBYPASSRLS NOINHERIT;
+    ELSE
+        ALTER ROLE app_storage NOLOGIN NOBYPASSRLS NOINHERIT;
+    END IF;
+END $$;
+
+GRANT USAGE ON SCHEMA public TO app_storage;
+
+-- Narrow, app_admin-owned helper for Storage RLS policies. The app_storage role
+-- cannot read public.memberships directly, but it can execute this
 -- fixed-search-path function to test active membership.
 CREATE OR REPLACE FUNCTION public.is_active_org_member_storage(p_user_id UUID, p_org_id UUID)
 RETURNS BOOLEAN
@@ -72,12 +86,7 @@ $func$;
 
 ALTER FUNCTION public.is_active_org_member_storage(UUID, UUID) OWNER TO app_admin;
 REVOKE ALL ON FUNCTION public.is_active_org_member_storage(UUID, UUID) FROM PUBLIC;
-DO $grant$
-BEGIN
-    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
-        EXECUTE 'GRANT EXECUTE ON FUNCTION public.is_active_org_member_storage(UUID, UUID) TO authenticated';
-    END IF;
-END $grant$;
+GRANT EXECUTE ON FUNCTION public.is_active_org_member_storage(UUID, UUID) TO app_storage;
 
 -- Supabase Storage bucket and RLS policies. Skipped entirely when the storage
 -- schema is not present (local Postgres without the Storage extension/service).
@@ -85,6 +94,8 @@ DO $$
 DECLARE
     storage_exists BOOLEAN := EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = 'storage');
     auth_exists BOOLEAN := EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = 'auth');
+    authenticated_exists BOOLEAN := EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated');
+    anon_exists BOOLEAN := EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon');
 BEGIN
     IF NOT storage_exists THEN
         RETURN;
@@ -92,10 +103,6 @@ BEGIN
 
     IF NOT auth_exists THEN
         RAISE EXCEPTION 'auth schema is required when storage schema is present';
-    END IF;
-
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
-        RAISE EXCEPTION 'authenticated role is required for Supabase Storage RLS';
     END IF;
 
     -- The transcripts bucket is fixed to this name in code and policies. Create
@@ -120,9 +127,27 @@ BEGIN
     EXECUTE 'GRANT USAGE ON SCHEMA storage TO app_admin';
     EXECUTE 'GRANT ALL ON ALL TABLES IN SCHEMA storage TO app_admin';
 
-    -- The Supabase Storage API runs as the authenticated role.
-    EXECUTE 'GRANT USAGE ON SCHEMA storage TO authenticated';
-    EXECUTE 'GRANT SELECT, INSERT, UPDATE, DELETE ON storage.objects TO authenticated';
+    -- app_storage is the only role that may perform object operations on the
+    -- transcripts bucket. The browser's authenticated/anon roles are explicitly
+    -- denied direct Storage access.
+    EXECUTE 'GRANT USAGE ON SCHEMA storage TO app_storage';
+    EXECUTE 'GRANT USAGE ON SCHEMA auth TO app_storage';
+    EXECUTE 'GRANT SELECT, INSERT, UPDATE, DELETE ON storage.objects TO app_storage';
+
+    -- auth.uid() is used by the RLS policy below to identify the JWT user.
+    IF EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE n.nspname = 'auth' AND p.proname = 'uid') THEN
+        EXECUTE 'GRANT EXECUTE ON FUNCTION auth.uid() TO app_storage';
+    END IF;
+
+    EXECUTE 'REVOKE ALL ON ALL TABLES IN SCHEMA storage FROM PUBLIC';
+    IF authenticated_exists THEN
+        EXECUTE 'REVOKE ALL ON ALL TABLES IN SCHEMA storage FROM authenticated';
+        EXECUTE 'REVOKE USAGE ON SCHEMA storage FROM authenticated';
+    END IF;
+    IF anon_exists THEN
+        EXECUTE 'REVOKE ALL ON ALL TABLES IN SCHEMA storage FROM anon';
+        EXECUTE 'REVOKE USAGE ON SCHEMA storage FROM anon';
+    END IF;
 
     -- Drop any previous policies for this bucket so migrations remain idempotent.
     EXECUTE 'DROP POLICY IF EXISTS transcripts_select ON storage.objects';
@@ -131,23 +156,24 @@ BEGIN
     EXECUTE 'DROP POLICY IF EXISTS transcripts_delete ON storage.objects';
 
     -- Users can only access objects under an org path where they have an active
-    -- membership. The first path segment is the org UUID.
+    -- membership. The first path segment is the org UUID. These policies apply to
+    -- the app_storage role used by the backend-signed Storage JWT.
     EXECUTE 'CREATE POLICY transcripts_select ON storage.objects
-        FOR SELECT TO authenticated
+        FOR SELECT TO app_storage
         USING (
             bucket_id = ''transcripts''
             AND public.is_active_org_member_storage(auth.uid(), (storage.foldername(name))[1]::uuid)
         )';
 
     EXECUTE 'CREATE POLICY transcripts_insert ON storage.objects
-        FOR INSERT TO authenticated
+        FOR INSERT TO app_storage
         WITH CHECK (
             bucket_id = ''transcripts''
             AND public.is_active_org_member_storage(auth.uid(), (storage.foldername(name))[1]::uuid)
         )';
 
     EXECUTE 'CREATE POLICY transcripts_update ON storage.objects
-        FOR UPDATE TO authenticated
+        FOR UPDATE TO app_storage
         USING (
             bucket_id = ''transcripts''
             AND public.is_active_org_member_storage(auth.uid(), (storage.foldername(name))[1]::uuid)
@@ -158,7 +184,7 @@ BEGIN
         )';
 
     EXECUTE 'CREATE POLICY transcripts_delete ON storage.objects
-        FOR DELETE TO authenticated
+        FOR DELETE TO app_storage
         USING (
             bucket_id = ''transcripts''
             AND public.is_active_org_member_storage(auth.uid(), (storage.foldername(name))[1]::uuid)

@@ -25,6 +25,12 @@ APP_ADMIN_PASSWORD = os.environ.get("APP_ADMIN_PASSWORD", "")
 HOSTED_JWT_ALGORITHM = os.environ.get("HOSTED_JWT_ALGORITHM", "RS256")
 HOSTED_JWT_SECRET = os.environ.get("HOSTED_JWT_SECRET", "")
 
+# Supabase JWT secret used to sign short-lived Storage JWTs. The backend signs
+# a token for a dedicated `app_storage` Postgres role; the user's browser token
+# is never authorized for direct Storage object operations. This secret is only
+# used server-side and is never sent to the browser.
+SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
+
 # Shared secret used to sign the tenant context token that the application
 # passes to the database. The DB stores the same secret in app_private and
 # verifies the token inside SECURITY DEFINER functions so the app_user role

@@ -85,14 +85,14 @@ This is the source of truth for productionalization slices and progress. Each sl
 
 ## Slice 3: Transcript upload and private storage
 
-**Status:** `Complete` (PR #41)
+**Status:** `In Progress` (PR #41)
 
 **Product outcome:** SEs can upload a transcript for an account/opportunity and have it stored privately, organization-scoped, and referenced by the API.
 
 **Scope:**
-- Private object storage using Supabase Storage (Product Owner-approved for the beta). The `transcripts` bucket is private and RLS policies derive the user from the Supabase JWT and verify active membership against the `org_id` prefix.
+- Private object storage using Supabase Storage (Product Owner-approved for the beta). The `transcripts` bucket is private and RLS policies target a dedicated `app_storage` Postgres role. FastAPI signs a short-lived `app_storage` JWT with the server-side `SUPABASE_JWT_SECRET` for each Storage REST call; the browser-visible `authenticated` role has no `storage.objects` privileges.
 - `transcripts` table with `org_id`, `account_id`, optional `opportunity_id`, server-generated `storage_path`, `original_filename`, `size_bytes`, `mime_type`, `uploaded_by`, and timestamps. Composite foreign keys enforce same-organization relationships.
-- FastAPI upload/list/download/delete endpoints that stream through the API, validate content independently of browser filename/MIME, and use the authenticated user's bearer token for Supabase Storage REST calls (public `SUPABASE_ANON_KEY` only; no service-role key in normal request paths).
+- FastAPI upload/list/download/delete endpoints that stream through the API, validate content independently of browser filename/MIME, and sign a short-lived `app_storage` JWT for Supabase Storage REST calls (public `SUPABASE_ANON_KEY` only as the `apikey` project identifier; no service-role key or browser `authenticated` JWT in normal request paths).
 - SPA account/opportunity selection, upload progress/list, download, and delete states.
 - `TRANSCRIPT_MAX_BYTES` default of 10 MiB; accepted `.txt`, `.md`, `.vtt`, `.srt`; rejection of HTML, archives, executables, binary files, invalid UTF-8, and NUL bytes.
 

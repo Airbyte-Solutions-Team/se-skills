@@ -1,10 +1,11 @@
 """Storage backends for hosted transcript objects.
 
-The production backend streams bytes to/from Supabase Storage using the
-authenticated user's JWT for authorization. The Storage RLS policy (created in
-migrations) enforces that a user can only touch objects under an organization
-where they have an active membership. FastAPI never uses the Supabase
-service-role key for normal transcript operations.
+The production backend streams bytes to/from Supabase Storage using a
+server-signed JWT for a dedicated `app_storage` Postgres role. The Storage
+RLS policy (created in migrations) enforces that a user can only touch objects
+under an organization where they have an active membership. FastAPI never uses
+the Supabase service-role key for normal transcript operations, and the user's
+browser token is never authorized for direct Storage object access.
 
 A memory backend is provided for tests so the transcript surface can be exercised
 without a paid Supabase project.
@@ -14,12 +15,14 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterable
+from datetime import datetime, timezone
 from typing import Any
 
 import asyncpg
 import httpx
+import jwt
 
-from . import auth, config
+from . import config
 
 logger = logging.getLogger(__name__)
 
@@ -45,20 +48,20 @@ class StorageBackend:
     """Abstract storage backend for transcript bytes."""
 
     async def upload(
-        self, token: str, path: str, data: AsyncIterable[bytes], content_type: str
+        self, user_id: uuid.UUID, path: str, data: AsyncIterable[bytes], content_type: str
     ) -> None:
         """Upload an object at *path* with the given byte stream and content type."""
         raise NotImplementedError
 
-    async def download(self, token: str, path: str) -> AsyncGenerator[bytes, None]:
+    async def download(self, user_id: uuid.UUID, path: str) -> AsyncGenerator[bytes, None]:
         """Return an async iterator over the object's bytes."""
         raise NotImplementedError
 
-    async def delete(self, token: str, path: str) -> None:
+    async def delete(self, user_id: uuid.UUID, path: str) -> None:
         """Delete the object at *path*."""
         raise NotImplementedError
 
-    async def list_prefix(self, token: str, prefix: str) -> list[str]:
+    async def list_prefix(self, user_id: uuid.UUID, prefix: str) -> list[str]:
         """Return object paths under *prefix*."""
         raise NotImplementedError
 
@@ -68,12 +71,13 @@ class StorageBackend:
 
 
 class SupabaseStorageBackend(StorageBackend):
-    """Call Supabase Storage using the user's JWT and the public anon key.
+    """Call Supabase Storage with a server-signed `app_storage` JWT.
 
-    The anon key is required by the Supabase REST API as an `apikey` header;
-    it is not a service-role credential and cannot access private objects by
-    itself. Storage RLS uses the `Authorization` bearer token (the user's
-    Supabase JWT) to decide access.
+    The public anon key is sent only as the `apikey` project identifier. The
+    `Authorization` header carries a short-lived JWT signed by the backend with
+    `SUPABASE_JWT_SECRET` and the `app_storage` role. The Storage RLS policies
+    for the `transcripts` bucket then verify the `sub` claim against an active
+    membership in the organization path segment.
     """
 
     def __init__(self) -> None:
@@ -82,22 +86,39 @@ class SupabaseStorageBackend(StorageBackend):
             raise RuntimeError("SUPABASE_URL or SUPABASE_STORAGE_ENDPOINT is required for Storage")
         if not config.SUPABASE_ANON_KEY:
             raise RuntimeError("SUPABASE_ANON_KEY is required for Storage")
+        if not config.SUPABASE_JWT_SECRET:
+            raise RuntimeError("SUPABASE_JWT_SECRET is required for Storage")
         self.base_url = base
         self.anon_key = config.SUPABASE_ANON_KEY
+        self.jwt_secret = config.SUPABASE_JWT_SECRET
         self.client = httpx.AsyncClient(timeout=30)
 
-    def _headers(self, token: str) -> dict[str, str]:
+    def _storage_token(self, user_id: uuid.UUID) -> str:
+        """Return a short-lived JWT for the dedicated Storage role."""
+        now = datetime.now(timezone.utc).timestamp()
+        return jwt.encode(
+            {
+                "sub": str(user_id),
+                "role": "app_storage",
+                "iat": now,
+                "exp": now + 60,
+            },
+            self.jwt_secret,
+            algorithm="HS256",
+        )
+
+    def _headers(self, user_id: uuid.UUID) -> dict[str, str]:
         return {
             "apikey": self.anon_key,
-            "Authorization": f"Bearer {token}",
+            "Authorization": f"Bearer {self._storage_token(user_id)}",
         }
 
     async def upload(
-        self, token: str, path: str, data: AsyncIterable[bytes], content_type: str
+        self, user_id: uuid.UUID, path: str, data: AsyncIterable[bytes], content_type: str
     ) -> None:
         url = f"{self.base_url}/storage/v1/object/{BUCKET}/{path}"
         headers = {
-            **self._headers(token),
+            **self._headers(user_id),
             "Content-Type": content_type,
             "x-upsert": "false",
         }
@@ -116,9 +137,9 @@ class SupabaseStorageBackend(StorageBackend):
             )
             raise StorageError("Storage upload failed")
 
-    async def download(self, token: str, path: str) -> AsyncGenerator[bytes, None]:
+    async def download(self, user_id: uuid.UUID, path: str) -> AsyncGenerator[bytes, None]:
         url = f"{self.base_url}/storage/v1/object/authenticated/{BUCKET}/{path}"
-        request = self.client.build_request("GET", url, headers=self._headers(token))
+        request = self.client.build_request("GET", url, headers=self._headers(user_id))
         try:
             response = await self.client.send(request, stream=True)
         except httpx.HTTPError as exc:
@@ -152,10 +173,10 @@ class SupabaseStorageBackend(StorageBackend):
 
         return _stream(response)
 
-    async def delete(self, token: str, path: str) -> None:
+    async def delete(self, user_id: uuid.UUID, path: str) -> None:
         url = f"{self.base_url}/storage/v1/object/{BUCKET}/{path}"
         try:
-            response = await self.client.delete(url, headers=self._headers(token))
+            response = await self.client.delete(url, headers=self._headers(user_id))
         except httpx.HTTPError as exc:
             logger.warning("Storage delete request failed for path %s: %s", path, type(exc).__name__)
             raise StorageError("Storage delete failed") from exc
@@ -171,13 +192,13 @@ class SupabaseStorageBackend(StorageBackend):
             )
             raise StorageError("Storage delete failed")
 
-    async def list_prefix(self, token: str, prefix: str) -> list[str]:
+    async def list_prefix(self, user_id: uuid.UUID, prefix: str) -> list[str]:
         url = f"{self.base_url}/storage/v1/object/list/{BUCKET}"
         try:
             response = await self.client.post(
                 url,
                 json={"prefix": prefix, "limit": 1000},
-                headers=self._headers(token),
+                headers=self._headers(user_id),
             )
         except httpx.HTTPError as exc:
             logger.warning("Storage list request failed for prefix %s: %s", prefix, type(exc).__name__)
@@ -202,9 +223,8 @@ class MemoryStorageBackend(StorageBackend):
     """In-memory storage backend that mirrors the Supabase Storage RLS policy.
 
     Used by tests to verify application behavior without requiring a live
-    Supabase Storage service. It validates the bearer token with the same
-    configuration as `auth.verify_token` and checks that the object's
-    organization prefix matches an active membership.
+    Supabase Storage service. It checks that the object's organization prefix
+    matches an active membership for the provided user id.
 
     When no admin pool is provided, a pool is created lazily from the
     `DATABASE_ADMIN_URL` environment variable so the backend always operates in
@@ -238,13 +258,9 @@ class MemoryStorageBackend(StorageBackend):
             )
             return row is not None
 
-    async def _validate(self, token: str, path: str) -> None:
-        if not token:
-            raise StorageAuthError("Missing token")
-        try:
-            verified = auth.verify_token(token)
-        except auth.AuthError as exc:
-            raise StorageAuthError(str(exc)) from exc
+    async def _validate(self, user_id: uuid.UUID | None, path: str) -> None:
+        if not user_id:
+            raise StorageAuthError("Missing user identity")
         parts = path.split("/")
         if not parts or not parts[0]:
             raise StorageAuthError("Invalid object path")
@@ -252,13 +268,13 @@ class MemoryStorageBackend(StorageBackend):
             org_id = uuid.UUID(parts[0])
         except ValueError as exc:
             raise StorageAuthError("Invalid organization segment") from exc
-        if not await self._is_active_member(verified.user_id, org_id):
+        if not await self._is_active_member(user_id, org_id):
             raise StorageAuthError("User is not an active member of this organization")
 
     async def upload(
-        self, token: str, path: str, data: AsyncIterable[bytes], content_type: str
+        self, user_id: uuid.UUID | None, path: str, data: AsyncIterable[bytes], content_type: str
     ) -> None:
-        await self._validate(token, path)
+        await self._validate(user_id, path)
         chunks: list[bytes] = []
         if isinstance(data, bytes):
             chunks = [data]
@@ -268,8 +284,8 @@ class MemoryStorageBackend(StorageBackend):
         self.objects[path] = b"".join(chunks)
         self.content_types[path] = content_type
 
-    async def download(self, token: str, path: str) -> AsyncGenerator[bytes, None]:
-        await self._validate(token, path)
+    async def download(self, user_id: uuid.UUID | None, path: str) -> AsyncGenerator[bytes, None]:
+        await self._validate(user_id, path)
         if path not in self.objects:
             raise ObjectNotFound("Object not found")
         data = self.objects[path]
@@ -281,19 +297,19 @@ class MemoryStorageBackend(StorageBackend):
 
         return _stream()
 
-    async def delete(self, token: str, path: str) -> None:
-        await self._validate(token, path)
+    async def delete(self, user_id: uuid.UUID | None, path: str) -> None:
+        await self._validate(user_id, path)
         if path not in self.objects:
             raise ObjectNotFound("Object not found")
         del self.objects[path]
         self.content_types.pop(path, None)
 
-    async def list_prefix(self, token: str, prefix: str) -> list[str]:
+    async def list_prefix(self, user_id: uuid.UUID | None, prefix: str) -> list[str]:
         # For listing we only verify the org prefix, matching the Supabase policy.
         parts = prefix.split("/")
         if not parts or not parts[0]:
             raise StorageAuthError("Invalid list prefix")
-        await self._validate(token, parts[0])
+        await self._validate(user_id, parts[0])
         return [path for path in self.objects if path.startswith(prefix)]
 
     async def close(self) -> None:

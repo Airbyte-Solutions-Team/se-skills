@@ -100,7 +100,7 @@ Constraints:
 - `org_id` references `public.organizations`
 - Indexes on `org_id`, `(account_id, org_id)`, `(opportunity_id, org_id)`, and `uploaded_by`
 
-RLS on `org_id` using the same signed tenant-context token as accounts and opportunities. The API streams file contents through FastAPI; the SPA never holds storage credentials. Uploads are validated for size (`TRANSCRIPT_MAX_BYTES`, default 10 MiB), allowed text extensions (`.txt`, `.md`, `.vtt`, `.srt`), valid UTF-8, no NUL bytes, and disallowed HTML/executable/binary signatures before any object or metadata is created.
+RLS on `org_id` using the same signed tenant-context token as accounts and opportunities. Storage object access uses a dedicated `app_storage` Postgres role: FastAPI signs a short-lived JWT (`role: "app_storage"`, `sub: user_id`) with the server-side `SUPABASE_JWT_SECRET` for Supabase Storage REST calls, and the browser-visible `authenticated` role has no `storage.objects` privileges. The API streams file contents through FastAPI; the SPA never holds storage credentials. Uploads are validated for size (`TRANSCRIPT_MAX_BYTES`, default 10 MiB), allowed text extensions (`.txt`, `.md`, `.vtt`, `.srt`), valid UTF-8, no NUL bytes, and disallowed HTML/executable/binary signatures before any object or metadata is created.
 
 ### `jobs`
 

@@ -112,7 +112,7 @@ Notes:
 - **Live Transcribe** — transcribe a live call with an AI copilot ask-bar. Sessions are persisted to disk, so an app restart mid-call recovers the transcript; you can also name the mic and call channels (e.g. "You" / "Customer") instead of the default labels. If state cannot be written, a warning toast tells you the transcript may not survive a restart.
 - **Durable background jobs** — skill runs and live copilot deep-asks are persisted while in progress, so a server restart leaves the *job record* recoverable (or clearly marked as lost) rather than silently disappearing. The running child process cannot be reattached; persistence failures surface a warning toast.
 - **Skill-completion toasts** — run a skill, navigate away, and a top-right banner tells you when it's ready with an Open deep-link.
-- **Hosted beta (optional, `HOSTED_MODE=1`)** — sign in with Google via Supabase Auth, resolve your Airbyte organization membership, and list or create organization-owned accounts. You can also select an account or opportunity and upload, list, download, or delete transcript files (`.txt`, `.md`, `.vtt`, `.srt`, up to 10 MiB by default). Uploads are validated as plain UTF-8 text (HTML, archives, executables, binary files, NUL bytes, and invalid UTF-8 are rejected) and streamed through FastAPI without persisting customer content to local disk. When `HOSTED_MODE` is unset the app keeps using the local filesystem and local skill workflows.
+- **Hosted beta (optional, `HOSTED_MODE=1`)** — sign in with Google via Supabase Auth, resolve your Airbyte organization membership, and list or create organization-owned accounts. You can also select an account or opportunity and upload, list, download, or delete transcript files (`.txt`, `.md`, `.vtt`, `.srt`, up to 10 MiB by default). Uploads are validated as plain UTF-8 text (HTML, archives, executables, binary files, NUL bytes, and invalid UTF-8 are rejected) and streamed through FastAPI without persisting customer content to local disk. Storage access uses a server-side signed short-lived JWT for a dedicated `app_storage` Postgres role; the SPA never receives Storage credentials. When `HOSTED_MODE` is unset the app keeps using the local filesystem and local skill workflows.
 
 Invoking a skill shells out to Claude Code headless:
 ```
@@ -172,7 +172,7 @@ Set `HOSTED_MODE=1` to use Supabase Auth + Postgres instead of the local filesys
 - `APP_USER_PASSWORD` / `APP_ADMIN_PASSWORD` — the role passwords created by the migration.
 - `HOSTED_CONTEXT_SECRET` — a strong shared secret used to sign tenant-context tokens between the app and the database. Generate a long random value and keep it with `APP_USER_PASSWORD`/`APP_ADMIN_PASSWORD`.
 - `HOSTED_JWT_ALGORITHM` (`HS256` for local tests, `RS256` for Supabase) and `HOSTED_JWT_SECRET` or Supabase JWKS.
-- `SUPABASE_STORAGE_BUCKET` (optional, defaults to `transcripts`) and `SUPABASE_STORAGE_ENDPOINT` (optional override for tests or custom endpoints).
+- `SUPABASE_JWT_SECRET` — the Supabase JWT secret used by the backend to sign short-lived Storage JWTs for the dedicated `app_storage` Postgres role. It is only used server-side and must not be sent to the browser.
 - `TRANSCRIPT_MAX_BYTES` (optional, defaults to `10485760` — 10 MiB).
 
 Run migrations before starting the app:

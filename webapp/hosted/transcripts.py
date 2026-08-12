@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, stat
 from fastapi.responses import StreamingResponse
 
 from . import config, models, storage
-from .auth import get_token_from_request, require_org, tenant_connection
+from .auth import require_org, tenant_connection
 from .models import OrgContext, TranscriptList, TranscriptOut
 
 logger = logging.getLogger(__name__)
@@ -329,13 +329,30 @@ async def upload_account_transcript(
     data, original_filename, content_type = await _read_and_validate(file)
     transcript_id = uuid.uuid4()
     storage_path = _storage_path(org.org_id, account_id, None, transcript_id)
-    token = get_token_from_request(request)
     backend = request.app.state.storage_backend
 
     # Stream the object to private Storage first. The object is not listable
     # until the metadata row is committed afterwards.
     try:
-        await backend.upload(token, storage_path, data, content_type)
+        await backend.upload(org.user.id, storage_path, data, content_type)
+    except TranscriptValidationError as exc:
+        # Invalid content discovered while streaming; attempt to remove any
+        # partial object and return 400.
+        try:
+            await backend.delete(org.user.id, storage_path)
+        except storage.ObjectNotFound:
+            pass
+        except Exception as cleanup_exc:
+            logger.warning(
+                "Failed to clean up partially uploaded object %s: %s",
+                storage_path,
+                cleanup_exc,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Upload failed",
+            ) from cleanup_exc
+        raise exc
     except storage.StorageAuthError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -375,13 +392,27 @@ async def upload_account_transcript(
                 content_type,
                 org.user.id,
             )
-    except HTTPException:
-        raise
+    except HTTPException as http_exc:
+        # Account not found/cross-org returns 404 after the object was uploaded.
+        # Clean up the orphan and re-raise the 404.
+        try:
+            await backend.delete(org.user.id, storage_path)
+        except storage.ObjectNotFound:
+            pass
+        except Exception as cleanup_exc:
+            logger.warning("Failed to clean up orphaned storage object %s: %s", storage_path, cleanup_exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Upload failed",
+            ) from cleanup_exc
+        raise http_exc
     except Exception as insert_exc:
         # Metadata creation or transaction finalization failed. The object is
         # not listable, so attempt to clean up the orphaned Storage object.
         try:
-            await backend.delete(token, storage_path)
+            await backend.delete(org.user.id, storage_path)
+        except storage.ObjectNotFound:
+            pass
         except Exception as cleanup_exc:
             logger.warning("Failed to clean up orphaned storage object %s: %s", storage_path, cleanup_exc)
         raise HTTPException(
@@ -450,11 +481,26 @@ async def upload_opportunity_transcript(
     data, original_filename, content_type = await _read_and_validate(file)
     transcript_id = uuid.uuid4()
     storage_path = _storage_path(org.org_id, account_id, opportunity_id, transcript_id)
-    token = get_token_from_request(request)
     backend = request.app.state.storage_backend
 
     try:
-        await backend.upload(token, storage_path, data, content_type)
+        await backend.upload(org.user.id, storage_path, data, content_type)
+    except TranscriptValidationError as exc:
+        try:
+            await backend.delete(org.user.id, storage_path)
+        except storage.ObjectNotFound:
+            pass
+        except Exception as cleanup_exc:
+            logger.warning(
+                "Failed to clean up partially uploaded object %s: %s",
+                storage_path,
+                cleanup_exc,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Upload failed",
+            ) from cleanup_exc
+        raise exc
     except storage.StorageAuthError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -495,11 +541,23 @@ async def upload_opportunity_transcript(
                 content_type,
                 org.user.id,
             )
-    except HTTPException:
-        raise
+    except HTTPException as http_exc:
+        try:
+            await backend.delete(org.user.id, storage_path)
+        except storage.ObjectNotFound:
+            pass
+        except Exception as cleanup_exc:
+            logger.warning("Failed to clean up orphaned storage object %s: %s", storage_path, cleanup_exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Upload failed",
+            ) from cleanup_exc
+        raise http_exc
     except Exception as insert_exc:
         try:
-            await backend.delete(token, storage_path)
+            await backend.delete(org.user.id, storage_path)
+        except storage.ObjectNotFound:
+            pass
         except Exception as cleanup_exc:
             logger.warning("Failed to clean up orphaned storage object %s: %s", storage_path, cleanup_exc)
         raise HTTPException(
@@ -590,10 +648,9 @@ async def _download_transcript(
             await _require_account_in_org(conn, account_id, org.org_id)
         row = await _load_transcript(conn, transcript_id, account_id, opportunity_id, org.org_id)
 
-    token = get_token_from_request(request)
     backend = request.app.state.storage_backend
     try:
-        data = await backend.download(token, row["storage_path"])
+        data = await backend.download(org.user.id, row["storage_path"])
     except storage.ObjectNotFound as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -629,7 +686,6 @@ async def _delete_transcript(
     transcript_id: uuid.UUID,
     org: OrgContext,
 ) -> None:
-    token = get_token_from_request(request)
     backend = request.app.state.storage_backend
 
     async with tenant_connection(request, org) as conn:
@@ -643,7 +699,7 @@ async def _delete_transcript(
     # Delete the private Storage object first. If this fails, the metadata row
     # is unchanged and the transcript remains listable.
     try:
-        await backend.delete(token, storage_path)
+        await backend.delete(org.user.id, storage_path)
     except storage.ObjectNotFound:
         # Already gone; continue to clean up metadata.
         pass

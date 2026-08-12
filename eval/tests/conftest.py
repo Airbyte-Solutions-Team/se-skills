@@ -73,19 +73,22 @@ async def _ensure_storage_schema(admin_dsn: str) -> None:
                 IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
                     CREATE ROLE authenticated WITH LOGIN;
                 END IF;
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_storage') THEN
+                    CREATE ROLE app_storage NOLOGIN NOBYPASSRLS NOINHERIT;
+                END IF;
             END $$;
 
             CREATE SCHEMA IF NOT EXISTS auth;
 
-            GRANT CONNECT ON DATABASE test TO authenticated;
-            GRANT USAGE ON SCHEMA public, storage, auth TO authenticated;
+            GRANT CONNECT ON DATABASE test TO authenticated, app_storage;
+            GRANT USAGE ON SCHEMA public, storage, auth TO authenticated, app_storage;
             ALTER ROLE authenticated SET search_path = 'auth, storage, public';
 
             CREATE OR REPLACE FUNCTION auth.uid()
             RETURNS UUID AS $$
                 SELECT (NULLIF(current_setting('request.jwt.claims', true), '')::json->>'sub')::uuid;
             $$ LANGUAGE sql STABLE;
-            GRANT EXECUTE ON FUNCTION auth.uid() TO authenticated;
+            GRANT EXECUTE ON FUNCTION auth.uid() TO authenticated, app_storage;
             """
         )
     finally:
@@ -101,6 +104,7 @@ async def hosted_env(db_urls: dict[str, str]) -> dict[str, str]:
         "SUPABASE_ANON_KEY": "anon-key",
         "HOSTED_JWT_ALGORITHM": "HS256",
         "HOSTED_JWT_SECRET": "super-secret-32-byte-test-jwt-key!",
+        "SUPABASE_JWT_SECRET": "super-secret-32-byte-test-storage-jwt-key!",
         "HOSTED_CONTEXT_SECRET": "test-context-secret-32-bytes!!",
         "BETA_ALLOWED_EMAILS": "test@airbyte.io,other@airbyte.io",
         **db_urls,
@@ -165,11 +169,53 @@ async def superuser_pool(hosted_env: dict[str, str]) -> AsyncGenerator[asyncpg.P
         await pool.close()
 
 
-@pytest.fixture(scope="session")
-def app_client(hosted_env: dict[str, str]) -> Any:
-    """Return a TestClient for the hosted app with an in-memory storage backend."""
-    # Use the same top-level `hosted` package that app.py imports so the
-    # in-memory backend is visible to the transcript routes.
+@pytest.fixture(autouse=True)
+def _hosted_app_mode(request: pytest.FixtureRequest, hosted_env: dict[str, str]) -> None:
+    """Ensure `webapp.app` is imported for the correct mode before any test.
+
+    Hosted tests use a freshly imported `webapp.app` with `HOSTED_MODE=1` so the
+    session-scoped app fixture and the tests patch the same module objects. Non-hosted
+    tests import a local-mode `webapp.app` so filesystem-backed routes are present.
+    """
+    hosted_marker = request.node.get_closest_marker("hosted")
+    if hosted_marker:
+        os.environ["HOSTED_MODE"] = "1"
+        modules_to_drop = [
+            name
+            for name in list(sys.modules)
+            if name in ("app", "webapp.app")
+            or name.startswith("hosted")
+            or name.startswith("webapp.hosted")
+        ]
+    else:
+        os.environ.pop("HOSTED_MODE", None)
+        modules_to_drop = [
+            name
+            for name in list(sys.modules)
+            if name in ("app", "webapp.app")
+            or name.startswith("hosted")
+            or name.startswith("webapp.hosted")
+        ]
+    for name in modules_to_drop:
+        if name in sys.modules:
+            del sys.modules[name]
+    if hosted_marker:
+        # Leave the actual import to `app_client` so it can install the in-memory
+        # Storage backend before `webapp.app` registers hosted routers.
+        return
+    # For non-hosted tests, preload the local app so `test_ask_routes` etc. can
+    # import `webapp.app` without seeing a stale hosted module.
+    import webapp.app  # noqa: F401
+
+
+@pytest.fixture
+def app_client(hosted_env: dict[str, str], _hosted_app_mode: None) -> Any:
+    """Return a function-scoped TestClient for the hosted app.
+
+    The in-memory Storage backend is installed before `webapp.app` is imported so
+    the hosted transcript routes see the test backend. The backend is cleared after
+    the test.
+    """
     import hosted
     from hosted import storage
 
