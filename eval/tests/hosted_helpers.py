@@ -158,3 +158,37 @@ async def _seed_opportunity(
             created_by,
         )
         return opportunity_id
+
+
+async def _seed_transcript(
+    admin_pool: asyncpg.Pool,
+    org_id: uuid.UUID,
+    account_id: uuid.UUID,
+    opportunity_id: uuid.UUID | None,
+    uploaded_by: uuid.UUID,
+    filename: str = "test-transcript.txt",
+    size_bytes: int = 100,
+    mime_type: str = "text/plain",
+) -> uuid.UUID:
+    """Insert a transcript metadata row directly for job lifecycle tests."""
+    async with admin_pool.acquire() as conn:
+        transcript_id = uuid.uuid4()
+        storage_path = f"{org_id}/{account_id}/{transcript_id}-{filename}"
+        await conn.execute(
+            """
+            INSERT INTO public.transcripts (
+                id, org_id, account_id, opportunity_id, storage_path,
+                original_filename, size_bytes, mime_type, uploaded_by
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            """,
+            transcript_id,
+            org_id,
+            account_id,
+            opportunity_id,
+            storage_path,
+            filename,
+            size_bytes,
+            mime_type,
+            uploaded_by,
+        )
+        return transcript_id

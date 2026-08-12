@@ -59,30 +59,40 @@ This is a logical view. Concrete technology choices (Supabase, worker framework,
 - Authentication and session handling.
 - Organization resolution and authorization.
 - CRUD for accounts, opportunities, transcripts, outputs, reviews, and jobs.
-- Enqueueing skill jobs and returning a job id.
+- Enqueueing skill jobs (`POST /api/hosted/accounts/{account_id}/jobs`) and returning a `job_id`.
+- Listing an account's jobs (`GET /api/hosted/accounts/{account_id}/jobs`) and fetching job detail (`GET /api/hosted/jobs/{job_id}`).
+- Requesting job cancellation (`POST /api/hosted/jobs/{job_id}/cancel`).
 - Serving the static SPA and rendered output content.
 - Audit logging of user-facing actions.
 - Export rendering (PDF, internal HTML) from stored output content.
 
-### Job ledger / queue
+### Job ledger / queue (Slice 4)
 
-- Persist job records with `status`, `requester_id`, `org_id`, `account_id`, `opportunity_id`, `skill`, `skill_version`, `model`, `runtime_version`, `payload` (input references and runtime config, not raw transcript bodies or secrets), `source_manifest`, `result_output_id`, `validation_status`, `token_usage`/`cost`, `attempts`, `max_attempts`, `started_at`, `finished_at`, `timeout_at`, `cancelled_at`, `error` (redacted), `worker_id`.
-- Provide at-least-once delivery to workers (not exactly-once execution); support bounded retry with backoff and a dead-letter / poison-pill queue. `retry-wait` and dead-letter are queue/scheduling concepts, not primary job statuses.
-- Survive API and worker restarts without data loss.
-- Do not require Redis unless a concrete workload need (for example, a high-throughput event stream or scheduled job fan-out) justifies it; a Postgres-backed queue is acceptable for the initial beta workload.
+- `public.jobs` is the durable job ledger. Primary statuses are `queued`, `running`, `success`, `failure`, `cancelled`, and `timeout`. `retry-wait` and dead-letter are scheduling metadata, not additional primary statuses.
+- `public.job_attempts` is an append-only table. Each claim creates a row with `attempt_number`, `worker_id`, a random `lease_token`, `started_at`, `heartbeat_at`, and `timeout_at`. The attempt row later records the actual executor `runtime_version` and `model`, which may differ from the requested values stored on `public.jobs`.
+- Every job and attempt has an explicit non-null `org_id`. Composite foreign keys on `(transcript_id, account_id, org_id)`, `(opportunity_id, account_id, org_id)`, and `(account_id, org_id)` enforce that all inputs belong to the same organization.
+- `payload`, `input_refs`, and `source_manifest` contain only stable IDs and non-sensitive lineage metadata. They never contain transcript bodies, secrets, bearer tokens, storage credentials, or browser-supplied paths.
+- Claiming is transactional: `claim_next_job` selects one eligible `queued` job with `FOR UPDATE SKIP LOCKED`, transitions it to `running`, creates an attempt row, increments `attempts`, sets `worker_id`, `started_at`, and `timeout_at`, and returns the attempt metadata including the lease token. Only one worker can win the row lock.
+- `worker_heartbeat` locks the job row, then the attempt row, updates `heartbeat_at` and `timeout_at` for the current attempt and lease token, and returns whether `cancel_requested_at` has been set.
+- `complete_job` and `fail_job` require the current attempt number and lease token, lock the job row first and then the attempt row, verify the job is `running` and the lease token is current, and then either record `success`/`failure`/requeue or finalize as `cancelled`. A stale token cannot mutate a reclaimed job. `complete_job` persists the actual executor `runtime_version` and `model` on the attempt row. `fail_job` checks `cancel_requested_at` before writing the attempt outcome; if cancellation was requested it records `outcome = 'cancelled'` on the current attempt while preserving diagnostics, and never emits retry/dead-letter metadata.
+- `recover_expired_leases` scans `running` rows whose `timeout_at` has passed, locks the job row, locks the open attempt row, marks the abandoned attempt with a `timeout` outcome, and either requeues the job with bounded backoff when attempts remain or moves it to terminal `failure` with `dead_lettered = true`.
+- `request_job_cancellation` locks the job row and uses status-predicated updates. A queued job becomes `cancelled` immediately; a running job sets `cancel_requested_at` and is finalized by the worker on its next heartbeat or completion attempt.
+- Idempotent enqueue: `enqueue_job` accepts an optional `idempotency_key`. It inserts atomically with `ON CONFLICT (org_id, idempotency_key) DO NOTHING` and then compares the stored request fingerprint (account, transcript, opportunity, skill, skill_version, model, runtime_version, max_attempts, payload, input_refs, source_manifest). Identical requests return the original job; a conflicting reuse raises a safe `409`-style error.
+- Delivery is at-least-once; result commits are idempotent within the current attempt. No job state lives in process memory or on local disk.
+- Redis is intentionally not used. Postgres row locks, leases, and recovery functions are sufficient for the beta workload and avoid an additional infrastructure dependency.
 
 ### Workers
 
-- Poll the job ledger or consume events.
-- Create an isolated sandbox for each job.
-- Mount only the allowlisted transcript/output files and read-only reference data.
-- Run the skill runtime with allowlisted tools, credentials, and network destinations.
-- Write the generated Markdown and `.md.json` sidecar back to object storage and update the job/output record.
-- Report completion, failure, or retry.
+- A separate worker process (`scripts/run_hosted_worker.py`) polls `claim_next_job` and runs an injected executor.
+- The worker enforces an immutable wall-clock execution deadline around `executor.execute` (using `asyncio.wait_for`) that is independent of the heartbeat lease. If the deadline expires, the worker cancels the executor and records a terminal `timeout`. If a cancellation request is observed, the heartbeat monitor cancels the executor and the worker records `cancelled`.
+- Heartbeat failures are distinct from user cancellation. If `worker_heartbeat` fails, the worker stops the current attempt and leaves it for `recover_expired_leases`; it does not call `cancel_job` or mark the job as user-cancelled.
+- Slice 4 ships a deterministic `EchoExecutor` that returns synthetic metadata and a `null` `output_id`. It proves the queue lifecycle without invoking a skill, model, shell command, container, or sandbox.
+- Future slices will replace `EchoExecutor` with an isolated sandbox that mounts allowlisted transcript/output files and runs the skill runtime with allowlisted tools, credentials, and network destinations.
+- Report completion, failure, or retry to the job ledger, including the actual executor `runtime_version` and `model` on each attempt.
 
-## Agent-runtime isolation model
+## Agent-runtime isolation model (deferred to Slice 5)
 
-The hosted runtime is not "load a `SKILL.md` and call `messages.create()` once." It is a multi-step agent environment that preserves the behavior the local skills rely on:
+The hosted runtime is not "load a `SKILL.md` and call `messages.create()` once." It is a multi-step agent environment that preserves the behavior the local skills rely on. Slice 4 intentionally does not implement this runtime; it is deferred to Slice 5 while the deterministic `EchoExecutor` proves the queue lifecycle:
 
 - **Source/file discovery:** the runtime can list and read the files the job owns (transcripts, prior outputs, reference data).
 - **Full transcript reads:** transcripts are loaded entirely into context; no arbitrary truncation that would break source-coverage claims.
@@ -105,7 +115,7 @@ The runtime is executed inside an isolated sandbox:
 | Capability | Hosted runtime | Local runtime |
 |---|---|---|
 | Identity | Supabase Auth / org membership | OS user / Claude Code user |
-| Skill invocation | Worker sandbox with allowlisted tools | `claude -p` with `acceptEdits` default; reviewed shell skills can use `bypassPermissions` |
+| Skill invocation | Worker sandbox with allowlisted tools (Slice 5) | `claude -p` with `acceptEdits` default; reviewed shell skills can use `bypassPermissions` |
 | File access | Mounted allowlisted files only | Full local workspace, `~/.claude/skills/`, repos |
 | Network | Allowlist only | Host network |
 | MCPs/tools | Approved, audited subset | User's full `~/.claude.json` MCP config |
@@ -116,23 +126,22 @@ The runtime is executed inside an isolated sandbox:
 
 ## Failure and retry flow
 
-1. **API enqueue:** `POST /api/jobs` inserts a `queued` job record and returns `job_id`.
-2. **Worker claim:** a worker atomically claims a `queued` job by transitioning it to `running` with a `worker_id` and `started_at`. A compare-and-set on `status` ensures only one worker owns an attempt.
-3. **Sandbox run:** the worker creates the sandbox, mounts the allowlisted inputs by reference, and runs the skill runtime.
-4. **Success:** the worker writes the output and sidecar, updates the job to `success` with `result_output_id`, and records `finished_at`.
-5. **Retryable failure:** transient errors (sandbox timeout, model rate limit, storage write failure) increment `attempts` and return the job to `queued`/`retry-wait` with a backoff. `retry-wait` is a queue/scheduling concept, not a primary job status. After `max_attempts` the job moves to `failure` or a dead-letter queue.
-6. **Permanent failure:** the job moves to `failure`; `stderr`/logs are redacted and persisted; the user sees a failure state with guidance.
-7. **Cancellation/timeout:** a `running` job can be cancelled by the user or by a timeout, moving to `cancelled` or `timeout` respectively.
-8. **API/worker crash:** jobs in `running` without a heartbeat become claimable again or are marked lost; the ledger is the source of truth. The intended invariant is at-least-once recovery, not exactly-once execution; workers must make result persistence idempotent where practical.
+1. **API enqueue:** `POST /api/hosted/accounts/{account_id}/jobs` calls `public.enqueue_job`, verifies the caller's active membership, validates the transcript/opportunity/account organization chain, and inserts a `queued` record. It returns `job_id`, `job_status`, and `job_created_at`.
+2. **Worker claim:** `claim_next_job` selects the oldest eligible `queued` job with `FOR UPDATE SKIP LOCKED`, transitions it to `running`, creates an append-only `job_attempts` row with a random `lease_token`, and sets `timeout_at`. The row lock guarantees only one worker owns the attempt.
+3. **Heartbeat:** the worker calls `worker_heartbeat` to extend `timeout_at` while it runs the executor; `worker_heartbeat` also returns whether `cancel_requested_at` is set.
+4. **Slice 4 execution:** the worker runs the deterministic `EchoExecutor` under an immutable wall-clock deadline. The executor returns synthetic metadata and a `null` `output_id`. No skill, model, shell, container, or sandbox is invoked.
+5. **Success:** `complete_job` locks the job then the attempt, verifies the current attempt/lease token, persists the actual executor `runtime_version` and `model` on the attempt, and sets the job to `success` with `finished_at`, `token_usage`, and `cost`.
+6. **Retryable failure:** `fail_job` checks `cancel_requested_at` first. If set, it finalizes the current attempt as `cancelled` and the job as `cancelled` without retry/dead-letter metadata. Otherwise it records the attempt outcome (`failure` or `timeout`) and either requeues the job with a persisted backoff when `attempts < max_attempts` or moves it to terminal `failure` with `dead_lettered = true`.
+7. **Timeout:** a `running` job whose `timeout_at` expires is recovered by `recover_expired_leases`, which records the abandoned attempt as `timeout` and either requeues or dead-letters the job. The final status is `timeout`, distinct from `failure`.
+8. **Cancellation:** `request_job_cancellation` sets `cancel_requested_at`. A queued job becomes `cancelled` immediately; a running job is finalized by the worker on the next heartbeat or completion attempt. `fail_job` and `complete_job` both honor a pending cancellation by finalizing the current attempt as `cancelled`; `cancel_job` is used for a clean worker-side cancellation.
+9. **API/worker crash:** jobs in `running` without a heartbeat are recovered by `recover_expired_leases`; the ledger is the source of truth. The invariant is at-least-once recovery, not exactly-once execution; `complete_job`/`fail_job` are scoped to the current attempt and lease token to keep result commits idempotent where practical.
 
 ## Clearly identified unresolved decisions
 
 These decisions are intentionally deferred to the implementation slices and must be resolved before the corresponding code is merged:
 
-- **Queue implementation:** Postgres-backed advisory locks vs. a lightweight message queue. Redis is not required unless workload analysis shows a need.
 - **Worker framework:** containerized workers (for example, Fly Machines, ECS Fargate, Kubernetes Jobs) vs. a process pool on a VM. The sandbox technology depends on this choice.
-- **Sandbox technology:** gVisor, Firecracker, unprivileged containers, or another isolation layer.
-- **Model provider and runtime:** whether the hosted runtime continues to use Claude Code/`claude` CLI or switches to Anthropic API/Agent SDK/Bedrock/etc.
+- **Sandbox technology:** gVisor, Firecracker, unprivileged containers, or another isolation layer. This is the core unresolved Slice 5 decision.
 - **Supabase commitment:** whether Supabase Auth, Postgres, and Storage are approved as the operational backend or are replaced by another Airbyte-standard provider.
 - **Credential storage:** whether to use Supabase Vault, AWS Secrets Manager, HashiCorp Vault, or another encrypted store for OAuth tokens and integration credentials.
 - **Salesforce/Gong/Google integrations:** whether the beta includes these integrations and, if so, how user-consented OAuth credentials are stored and scoped.

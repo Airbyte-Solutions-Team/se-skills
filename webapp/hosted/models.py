@@ -1,6 +1,7 @@
 """Pydantic request/response models for hosted account/opportunity APIs."""
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from datetime import datetime
@@ -153,6 +154,159 @@ class TranscriptOut(BaseModel):
 
 class TranscriptList(BaseModel):
     transcripts: list[TranscriptOut]
+
+
+class JobAttemptOut(BaseModel):
+    id: uuid.UUID
+    attempt_number: int
+    worker_id: str | None
+    runtime_version: str | None
+    model: str | None
+    started_at: datetime
+    finished_at: datetime | None
+    heartbeat_at: datetime | None
+    outcome: str | None
+    error_category: str | None
+    error: str | None
+    token_usage: dict[str, Any] | None
+    cost: float | None
+    created_at: datetime
+
+    @classmethod
+    def from_record(cls, record: Any) -> "JobAttemptOut":
+        def _json(value: Any) -> Any:
+            if isinstance(value, str):
+                return json.loads(value)
+            return value or {}
+
+        return cls(
+            id=record["id"],
+            attempt_number=record["attempt_number"],
+            worker_id=record.get("worker_id"),
+            runtime_version=record.get("runtime_version"),
+            model=record.get("model"),
+            started_at=record["started_at"],
+            finished_at=record.get("finished_at"),
+            heartbeat_at=record.get("heartbeat_at"),
+            outcome=record.get("outcome"),
+            error_category=record.get("error_category"),
+            error=record.get("error"),
+            token_usage=_json(record.get("token_usage")),
+            cost=float(record["cost"]) if record.get("cost") is not None else None,
+            created_at=record["created_at"],
+        )
+
+
+class JobOut(BaseModel):
+    id: uuid.UUID
+    org_id: uuid.UUID
+    account_id: uuid.UUID
+    transcript_id: uuid.UUID
+    opportunity_id: uuid.UUID | None
+    requester_id: uuid.UUID
+    skill: str
+    skill_version: str
+    model: str | None
+    runtime_version: str | None
+    worker_id: str | None
+    status: str
+    payload: dict[str, Any]
+    input_refs: dict[str, Any]
+    source_manifest: dict[str, Any]
+    result_output_id: uuid.UUID | None
+    validation_status: str
+    token_usage: dict[str, Any] | None
+    cost: float | None
+    attempts: int
+    max_attempts: int
+    started_at: datetime | None
+    finished_at: datetime | None
+    timeout_at: datetime | None
+    cancelled_at: datetime | None
+    cancelled_by: uuid.UUID | None
+    cancel_requested_at: datetime | None
+    next_attempt_after: datetime | None
+    dead_lettered: bool
+    error: str | None
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def from_record(cls, record: Any) -> "JobOut":
+        def _json(value: Any) -> Any:
+            if isinstance(value, str):
+                return json.loads(value)
+            return value or {}
+
+        return cls(
+            id=record["id"],
+            org_id=record["org_id"],
+            account_id=record["account_id"],
+            transcript_id=record["transcript_id"],
+            opportunity_id=record.get("opportunity_id"),
+            requester_id=record["requester_id"],
+            skill=record["skill"],
+            skill_version=record["skill_version"],
+            model=record.get("model"),
+            runtime_version=record.get("runtime_version"),
+            worker_id=record.get("worker_id"),
+            status=record["status"],
+            payload=_json(record.get("payload")),
+            input_refs=_json(record.get("input_refs")),
+            source_manifest=_json(record.get("source_manifest")),
+            result_output_id=record.get("result_output_id"),
+            validation_status=record.get("validation_status") or "unvalidated",
+            token_usage=_json(record.get("token_usage")),
+            cost=float(record["cost"]) if record.get("cost") is not None else None,
+            attempts=record["attempts"],
+            max_attempts=record["max_attempts"],
+            started_at=record.get("started_at"),
+            finished_at=record.get("finished_at"),
+            timeout_at=record.get("timeout_at"),
+            cancelled_at=record.get("cancelled_at"),
+            cancelled_by=record.get("cancelled_by"),
+            cancel_requested_at=record.get("cancel_requested_at"),
+            next_attempt_after=record.get("next_attempt_after"),
+            dead_lettered=record.get("dead_lettered") or False,
+            error=record.get("error"),
+            created_at=record["created_at"],
+            updated_at=record["updated_at"],
+        )
+
+
+class JobList(BaseModel):
+    jobs: list[JobOut]
+
+
+class JobDetail(BaseModel):
+    job: JobOut
+    attempts: list[JobAttemptOut]
+
+
+class JobCreate(BaseModel):
+    account_id: uuid.UUID
+    transcript_id: uuid.UUID
+    opportunity_id: uuid.UUID | None = None
+    skill: str = "post-call"
+    skill_version: str = "1.0"
+    model: str = "echo"
+    runtime_version: str = "slice4"
+    max_attempts: int = Field(default=3, ge=1, le=10)
+    idempotency_key: str | None = None
+
+    @field_validator("skill", "skill_version", "model", "runtime_version")
+    @classmethod
+    def _strip_strings(cls, value: str | None) -> str | None:
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def _validate_idempotency_key(cls, value: str | None) -> str | None:
+        if value is not None:
+            value = value.strip()
+            if not value or len(value) > 200:
+                raise ValueError("idempotency_key must be between 1 and 200 characters")
+        return value
 
 
 def slugify(name: str) -> str:

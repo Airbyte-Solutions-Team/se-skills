@@ -85,7 +85,7 @@ This is the source of truth for productionalization slices and progress. Each sl
 
 ## Slice 3: Transcript upload and private storage
 
-**Status:** `In Progress` (PR #41)
+**Status:** `Complete` (PR #41)
 
 **Product outcome:** SEs can upload a transcript for an account/opportunity and have it stored privately, organization-scoped, and referenced by the API.
 
@@ -127,32 +127,48 @@ This is the source of truth for productionalization slices and progress. Each sl
 
 ## Slice 4: Durable asynchronous jobs
 
-**Status:** `Proposed`
+**Status:** `In Progress` (PR #42; blocked on reviewer acceptance of review fixes)
 
-**Product outcome:** The API can enqueue a skill job, a worker can claim and run it, and job state survives API/worker restarts without local filesystem state.
+**Product outcome:** An authenticated member can select an uploaded transcript, enqueue a durable `post-call` job, a separate worker claims and runs it, and the member sees the terminal job status. All state is persisted in Postgres; no job state depends on process memory or local filesystem.
 
 **Scope:**
-- `jobs` table (job ledger) covering `queued`, `running`, `success`, `failure`, `cancelled`, and `timeout`; plus `requester_id`, `skill`, `skill_version`, `model`, `runtime_version`, `input_refs`, `source_manifest`, `result_output_id`, `token_usage`, `cost`, attempts/retry history, timeout/cancellation, and redacted error fields.
-- Queue mechanism (Postgres-backed advisory-lock or lightweight queue; Redis not required unless workload need is demonstrated).
-- Worker harness that polls/claims jobs and runs an ephemeral container/process.
-- Retry and dead-letter behavior.
-- API endpoints to create, list, and get job status.
+- `jobs` and `job_attempts` tables with explicit `org_id`, composite foreign keys to `accounts`, `opportunities`, and `transcripts` that enforce same-organization ownership, `requester_id`, `cancelled_by`, `skill`, `skill_version`, `model`, `runtime_version`, `payload`, `input_refs`, `source_manifest`, `result_output_id` (NULL until Slice 5), `validation_status`, `token_usage`, `cost`, `attempts`, `max_attempts`, `timeout_at`, `cancel_requested_at`, `cancelled_at`, `next_attempt_after`, `dead_lettered`, and redacted `error`.
+- Postgres-backed queue using transactional `FOR UPDATE SKIP LOCKED` row claiming, expiring leases, heartbeats, and a `recover_expired_leases()` function. Redis is not used.
+- Dedicated least-privilege `app_worker` Postgres role (`NOBYPASSRLS`) that can only execute the queue functions; no direct tenant table access.
+- `SECURITY DEFINER` queue functions (`enqueue_job`, `claim_next_job`, `worker_heartbeat`, `complete_job`, `fail_job`, `cancel_job`, `recover_expired_leases`) owned by `app_admin`, with empty `search_path`, revoked `PUBLIC` execute, and explicit transition validation.
+- Separate polling worker entry point (`scripts/run_hosted_worker.py`) and `webapp/hosted/worker.py` `Worker` class with graceful shutdown.
+- Deterministic `EchoExecutor` that proves claim, heartbeat, completion, failure, retry, timeout, cancellation, and crash recovery without executing a skill, model, shell command, container, or sandbox.
+- Organization-scoped enqueue (`POST /api/hosted/accounts/{account_id}/jobs`), list (`GET /api/hosted/accounts/{account_id}/jobs`), detail (`GET /api/hosted/jobs/{job_id}`), and cancel (`POST /api/hosted/jobs/{job_id}/cancel`) APIs.
+- Minimal SPA job-status and enqueue UI on the hosted transcript list.
+- Updated `docs/ARCHITECTURE.md`, `docs/DATA_MODEL.md`, `docs/SECURITY.md`, `docs/ROADMAP.md`, `PRODUCTIONALIZATION.md`, and `webapp/README.md` with queue, lease, worker-role, retry, cancellation, timeout, idempotency, and recovery design; distinguishes Slice 4's deterministic executor from Slice 5's unresolved sandbox and hosted agent-runtime decisions.
 
-**Dependencies:** Slice 2 (data model), Slice 3 (optional, but jobs need at least account context).
+**Dependencies:** Slice 2, Slice 3.
 
 **Acceptance criteria:**
-- Enqueuing a job returns a durable `job_id`.
-- A worker can claim an attempt atomically/exclusively.
-- Delivery is at-least-once, not exactly-once; retries are bounded and recorded.
-- A worker/API crash leaves the job in a recoverable state; the ledger is the source of truth.
-- Retry counters, attempt history, and dead-letter state are persisted in Postgres.
-- No job state lives only in a local file or in-memory dict.
-- `jobs` and `job_attempts` to `accounts`/`opportunities` preserve `org_id` and are enforced by the database; cross-org references fail at the DB boundary and in application authorization tests.
+- Authenticated active members can enqueue a job for an accessible transcript and receive a durable `job_id`.
+- Unauthenticated, inactive-member, non-member, spoofed-org, and cross-organization requests fail.
+- Same-organization mismatched `account`/`opportunity`/`transcript` relationships fail at the API and database boundaries.
+- Direct `app_user` access cannot read or mutate another organization's jobs or attempts.
+- Two concurrent workers cannot claim the same attempt; claim and attempt creation are atomic.
+- A worker can heartbeat and complete only with the current lease token; a stale worker cannot mutate a job after lease expiry and reclamation.
+- API or worker restart does not lose queued/running job state.
+- Expired leases are recovered deterministically; retries are bounded, backoff is persisted, attempt history is append-only, and exhausted jobs are visibly `dead_lettered` without inventing a new primary status.
+- Queued and running cancellation behavior is covered; `timeout` is distinct from `failure`.
+- Illegal transitions and mutation of terminal jobs fail at the database boundary.
+- Idempotent enqueue replay returns the same job; conflicting reuse returns a safe `409` conflict.
+- Job payloads and persisted/logged errors contain no transcript body or secrets.
+- The worker identity can invoke only its required queue operations and cannot assume migration/admin roles or directly access unrelated tenant data.
+- Existing Slice 2 and Slice 3 hosted tests, all non-hosted tests, deterministic evaluations, and local workflows continue to pass.
 
 **Non-goals:**
-- No actual skill runtime.
-- No sandbox isolation (a no-op or echo worker is acceptable).
-- No model provider integration.
+- No actual post-call skill execution.
+- No model-provider or agent-runtime integration.
+- No output generation, output Storage bucket, or output review.
+- No sandbox, container orchestration, unrestricted subprocess, shell, Git, browser automation, or outbound network.
+- No Redis or externally hosted queue.
+- No production deployment, paid infrastructure provisioning, or real customer-data migration.
+- No Salesforce, Gong, Google, or other integration work.
+- No broad SPA rewrite.
 
 ---
 

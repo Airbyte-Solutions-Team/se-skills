@@ -3,7 +3,8 @@
 
 Usage:
     HOSTED_MODE=1 MIGRATE_DATABASE_URL=postgresql://... \
-        APP_USER_PASSWORD=... APP_ADMIN_PASSWORD=... HOSTED_CONTEXT_SECRET=... \
+        APP_USER_PASSWORD=... APP_ADMIN_PASSWORD=... APP_WORKER_PASSWORD=... \
+        HOSTED_CONTEXT_SECRET=... \
         uv run scripts/migrate.py
 """
 from __future__ import annotations
@@ -27,6 +28,9 @@ async def main() -> int:
     if not config.APP_ADMIN_PASSWORD:
         print("APP_ADMIN_PASSWORD is required and must be non-empty", file=sys.stderr)
         return 1
+    if not config.APP_WORKER_PASSWORD:
+        print("APP_WORKER_PASSWORD is required and must be non-empty", file=sys.stderr)
+        return 1
     if not config.HOSTED_CONTEXT_SECRET:
         print("HOSTED_CONTEXT_SECRET is required and must be non-empty", file=sys.stderr)
         return 1
@@ -35,6 +39,7 @@ async def main() -> int:
         config.MIGRATIONS_DIR,
         app_user_password=config.APP_USER_PASSWORD,
         app_admin_password=config.APP_ADMIN_PASSWORD,
+        app_worker_password=config.APP_WORKER_PASSWORD,
         context_secret=config.HOSTED_CONTEXT_SECRET,
     )
     for version in ran:

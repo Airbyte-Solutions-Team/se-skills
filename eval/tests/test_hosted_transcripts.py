@@ -799,6 +799,7 @@ async def test_storage_bucket_public_is_forced_private_by_migration(
         hosted.config.MIGRATIONS_DIR,
         app_user_password="app_user_password",
         app_admin_password="app_admin_password",
+        app_worker_password="app_worker_password",
         context_secret=hosted_env["HOSTED_CONTEXT_SECRET"],
     )
 
@@ -1242,6 +1243,7 @@ async def test_storage_migration_fails_when_authenticator_missing(
                 migrations_dir,
                 app_user_password="app_user_password",
                 app_admin_password="app_admin_password",
+                app_worker_password="app_worker_password",
                 context_secret=hosted_env["HOSTED_CONTEXT_SECRET"],
             )
     finally:
@@ -1263,5 +1265,6 @@ async def test_storage_migration_fails_when_authenticator_missing(
             migrations_dir,
             app_user_password="app_user_password",
             app_admin_password="app_admin_password",
+            app_worker_password="app_worker_password",
             context_secret=hosted_env["HOSTED_CONTEXT_SECRET"],
         )

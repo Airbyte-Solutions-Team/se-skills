@@ -17,10 +17,12 @@ SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 DATABASE_ADMIN_URL = os.environ.get("DATABASE_ADMIN_URL", "")
+DATABASE_WORKER_URL = os.environ.get("DATABASE_WORKER_URL", "")
 MIGRATE_DATABASE_URL = os.environ.get("MIGRATE_DATABASE_URL", "")
 
 APP_USER_PASSWORD = os.environ.get("APP_USER_PASSWORD", "")
 APP_ADMIN_PASSWORD = os.environ.get("APP_ADMIN_PASSWORD", "")
+APP_WORKER_PASSWORD = os.environ.get("APP_WORKER_PASSWORD", "")
 
 HOSTED_JWT_ALGORITHM = os.environ.get("HOSTED_JWT_ALGORITHM", "RS256")
 HOSTED_JWT_SECRET = os.environ.get("HOSTED_JWT_SECRET", "")
@@ -41,6 +43,20 @@ BETA_ALLOWED_EMAILS = {e.strip().lower() for e in (os.environ.get("BETA_ALLOWED_
 BETA_ALLOW_AIRBYTE_DOMAIN = (os.environ.get("BETA_ALLOW_AIRBYTE_DOMAIN") or "").lower() in ("1", "true", "yes")
 
 SUPABASE_STORAGE_ENDPOINT = os.environ.get("SUPABASE_STORAGE_ENDPOINT", "")
+
+# Worker tuning. The worker process uses short lease/heartbeat intervals to detect
+# crashed workers; values are configurable for tests and small deployments.
+_WORKER_POLL_INTERVAL_STR = os.environ.get("WORKER_POLL_INTERVAL", "1")
+WORKER_POLL_INTERVAL = float(_WORKER_POLL_INTERVAL_STR) if _WORKER_POLL_INTERVAL_STR.replace(".", "", 1).isdigit() else 1.0
+
+_WORKER_HEARTBEAT_INTERVAL_STR = os.environ.get("WORKER_HEARTBEAT_INTERVAL", "10")
+WORKER_HEARTBEAT_INTERVAL = float(_WORKER_HEARTBEAT_INTERVAL_STR) if _WORKER_HEARTBEAT_INTERVAL_STR.replace(".", "", 1).isdigit() else 10.0
+
+_WORKER_TIMEOUT_SECONDS_STR = os.environ.get("WORKER_TIMEOUT_SECONDS", "300")
+WORKER_TIMEOUT_SECONDS = int(_WORKER_TIMEOUT_SECONDS_STR) if _WORKER_TIMEOUT_SECONDS_STR.isdigit() else 300
+
+_WORKER_MAX_ATTEMPTS_STR = os.environ.get("WORKER_MAX_ATTEMPTS", "3")
+WORKER_MAX_ATTEMPTS = int(_WORKER_MAX_ATTEMPTS_STR) if _WORKER_MAX_ATTEMPTS_STR.isdigit() else 3
 
 _TRANSCRIPT_MAX_BYTES_STR = os.environ.get("TRANSCRIPT_MAX_BYTES", "10485760")
 TRANSCRIPT_MAX_BYTES = int(_TRANSCRIPT_MAX_BYTES_STR) if _TRANSCRIPT_MAX_BYTES_STR.isdigit() else 10485760

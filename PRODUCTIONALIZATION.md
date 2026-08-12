@@ -29,8 +29,8 @@ First complete hosted workflow:
 | Identity/tenancy | none; app runs as the local OS user | organization-scoped auth and membership (Supabase Auth is the working hypothesis) |
 | Data ownership | `.owner` files on local filesystem; account owned by member id | every tenant-scoped record has explicit `org_id` ownership plus `created_by`/`assigned_to` metadata |
 | Storage | local filesystem under `~/airbyte-work` | private organization-scoped object storage; no dependence on persistent local server filesystem |
-| Job durability | `jobs.json` snapshot in local workspace | durable job ledger + queue + separate workers; survives worker/API restart |
-| Agent runtime | `claude -p` with the user's local tools, MCPs, repos, and network | isolated ephemeral workspaces with allowlisted files, tools, credentials, and network destinations |
+| Job durability | `jobs.json` snapshot in local workspace | durable Postgres job ledger (`public.jobs`/`public.job_attempts`) with `FOR UPDATE SKIP LOCKED` row claiming, expiring lease tokens, heartbeats, and a separate worker process; survives worker/API restart. Redis is not used. |
+| Agent runtime | `claude -p` with the user's local tools, MCPs, repos, and network | isolated ephemeral workspaces with allowlisted files, tools, credentials, and network destinations (Slice 5) |
 | Permissions | `SkillRuntimeService` selects a permission profile per skill; default is `acceptEdits`, and reviewed shell skills in `SHELL_BYPASS_ALLOWLIST` can receive `bypassPermissions` | no unrestricted shell, `bypassPermissions`, arbitrary Git, browser/computer automation, local-repo access, Live Transcribe, or arbitrary outbound network in the hosted runtime |
 | Cross-org access | N/A | must be impossible at both DB/RLS and application layers; cross-organization access is a merge blocker |
 | Audit/provenance | minimal (job snapshots, output mtimes) | durable audit log of who uploaded, ran, reviewed, and exported what |
@@ -41,7 +41,7 @@ First complete hosted workflow:
 2. **FastAPI + SPA on one origin initially.** The existing vanilla-JS SPA and FastAPI backend continue to be served from the same origin; no beta requirement to move the SPA to Vercel.
 3. **Supabase is the working hypothesis for Auth, Postgres, and private Storage.** It is a hypothesis, not a committed operational decision, until the beta infrastructure is provisioned and approved.
 4. **No persistent local server filesystem state for production durability.** Customer transcripts, outputs, job state, and audit logs live in managed Postgres and object storage.
-5. **Durable job ledger, queue, and workers.** Long-running skill execution must be decoupled from the web/API process. Do not require Redis unless a concrete workload need justifies it.
+5. **Durable job ledger, queue, and workers.** Long-running skill execution is decoupled from the web/API process. Slice 4 implements a Postgres-backed queue with `FOR UPDATE SKIP LOCKED` row claiming, expiring lease tokens, worker heartbeats, `recover_expired_leases`, bounded retries with backoff, cancellation, and a separate polling worker process. Redis is intentionally not used for the beta workload.
 6. **Hosted runtime is a multi-step agent, not a single LLM request.** It must preserve source/file discovery, full transcript reads, tool use, prior context, self-checks, source coverage, and artifact generation.
 7. **Agent isolation by default.** Hosted jobs run in isolated ephemeral workspaces. Files, tools, credentials, and network destinations are allowlisted.
 8. **Local-only capabilities remain local.** Unrestricted shell, `bypassPermissions`, arbitrary Git, browser/computer automation, local repository access, Live Transcribe, and arbitrary outbound network access remain local-only until separately approved.
@@ -53,7 +53,7 @@ First complete hosted workflow:
 
 - Sign in / org membership
 - Organization-scoped accounts, opportunities, transcripts, outputs, jobs
-- Asynchronous post-call skill execution in an isolated sandbox
+- Asynchronous post-call skill job enqueueing and durable status tracking via a Postgres queue and separate worker process (Slice 4 uses a deterministic `EchoExecutor`; actual skill execution is Slice 5)
 - Review, correction, approval, and export of generated outputs
 - Audit log and provenance
 

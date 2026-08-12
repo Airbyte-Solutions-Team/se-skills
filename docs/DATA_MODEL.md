@@ -109,10 +109,11 @@ Durable job ledger for asynchronous skill execution.
 | Column | Purpose |
 |---|---|
 | `id` (PK) | UUID |
-| `org_id` (FK, indexed) | Organization owner |
+| `org_id` (FK, indexed) | Organization owner; every job and attempt has explicit non-null `org_id` |
 | `account_id` (FK) | Account |
 | `opportunity_id` (FK, nullable) | Opportunity |
-| `requester_id` (FK to users) | User who invoked the job |
+| `transcript_id` (FK) | Uploaded transcript input; composite FK `(transcript_id, account_id, org_id)` enforces same-organization ownership |
+| `requester_id` (FK to users) | User who invoked the job; derived from the authenticated session |
 | `skill` | Skill id, e.g. `post-call` |
 | `skill_version` | Skill/prompt version or content hash |
 | `model` | Model selected for the run |
@@ -129,14 +130,18 @@ Durable job ledger for asynchronous skill execution.
 | `max_attempts` | Maximum allowed attempts |
 | `started_at` / `finished_at` | Timestamps |
 | `timeout_at` | Deadline after which a running attempt is considered timed out |
+| `cancel_requested_at` | Set when a running job is requested to cancel |
+| `next_attempt_after` | Earliest time a requeued job is eligible for the next claim; used for bounded backoff |
+| `dead_lettered` | True when `max_attempts` has been exhausted |
 | `cancelled_at` / `cancelled_by` | Cancellation timestamp and actor |
-| `worker_id` | Worker that claimed the attempt |
+| `worker_id` | Worker that claimed the current attempt |
 | `error` | Redacted failure summary (no raw stack traces or secrets) |
 | `created_at` | Timestamp |
+| `updated_at` | Timestamp |
 
-RLS on `org_id`. The queue claims a job by atomically transitioning `status` from `queued` to `running` with a compare-and-set. The intended invariant is an atomic/exclusive claim per attempt, at-least-once recovery, bounded retries, and no silent job loss on worker/API crashes.
+RLS on `org_id`. The queue claims a job by atomically transitioning `status` from `queued` to `running` with `FOR UPDATE SKIP LOCKED` in a single transaction that also creates the first `job_attempts` row, increments `attempts`, assigns `worker_id`, and sets `timeout_at`. The intended invariant is an atomic/exclusive claim per attempt, at-least-once recovery, bounded retries, and no silent job loss on worker/API crashes.
 
-Primary job statuses: `queued`, `running`, `success`, `failure`, `cancelled`, `timeout`. `retry-wait` and dead-letter are queue/scheduling concepts, not primary job statuses.
+Primary job statuses: `queued`, `running`, `success`, `failure`, `cancelled`, `timeout`. `retry-wait` and dead-letter are scheduling metadata, not primary job statuses. The initial hosted job accepts exactly one uploaded transcript belonging to the selected account/opportunity.
 
 ### `job_attempts`
 
@@ -146,10 +151,11 @@ Append-only attempt history for a job. `jobs` remains the aggregate ledger; `job
 |---|---|
 | `id` (PK) | UUID |
 | `org_id` (FK to organizations, indexed) | Organization owner; must match the parent `jobs.org_id` |
-| `job_id` (FK) | Parent job |
+| `job_id` (FK) | Parent job; composite FK `(job_id, org_id)` enforces same-organization parent |
 | `attempt_number` | Integer, starting at 1 |
 | `worker_id` | Worker/runtime that ran this attempt |
-| `runtime_version` | Sandbox/runtime image version for this attempt |
+| `runtime_version` | Actual sandbox/runtime image version recorded for this attempt |
+| `model` | Actual model recorded for this attempt |
 | `lease_token` | Heartbeat/lease token for claim liveness (nullable) |
 | `started_at` / `finished_at` | Timestamps |
 | `heartbeat_at` | Last worker heartbeat/lease renewal |
@@ -160,7 +166,7 @@ Append-only attempt history for a job. `jobs` remains the aggregate ledger; `job
 | `cost` | Estimated cost for this attempt |
 | `created_at` | Timestamp |
 
-RLS on `org_id` with an invariant that `job_attempts.org_id` equals the parent `jobs.org_id`. Each attempt is immutable once recorded. `jobs.attempts` is a derived counter, not the source of truth for retry history.
+RLS on `org_id` with an invariant that `job_attempts.org_id` equals the parent `jobs.org_id` at the database boundary (enforced by the composite FK). Each attempt is immutable once recorded. `jobs.attempts` is a derived counter, not the source of truth for retry history.
 
 ### `outputs`
 
