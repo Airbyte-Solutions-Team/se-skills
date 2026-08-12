@@ -55,7 +55,7 @@ The managed container option is treated as a deployment variant of option 1 rath
 **Versions recorded for this decision:**
 - `httpx` 0.28.1 (sandbox-to-proxy HTTP transport)
 - Anthropic Messages API `2023-06-01` (JSON request/response shape)
-- Target model family: `claude-3-5-sonnet-20241022` (model identifier may change)
+- Target model family: `claude-sonnet-4-6` (model identifier is configured by the worker and may change)
 - gVisor `runsc` current stable as of 2026-08-11
 
 ### How it works

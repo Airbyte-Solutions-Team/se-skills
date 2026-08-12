@@ -123,6 +123,8 @@ _SKILL_SCHEMAS: dict[str, SkillOutputSchema] = {
             "action-items",
             "next-step",
             "source-coverage",
+            "attendees",
+            "coaching-observations",
         ],
         required_at_a_glance_labels=[
             "call-type",
@@ -146,13 +148,15 @@ _SKILL_SCHEMAS: dict[str, SkillOutputSchema] = {
             "next-step",
             "deal-assessment-update-needed",
         ],
+        # Conditional sections may be absent; if present, they must be non-empty.
+        # Slice 5B may add transcript-entity triggers (e.g. "Sources & Destinations"
+        # required when the transcript names a system) for now a present heading is
+        # treated as the model's decision to include that conditional section.
         conditional_sections=[
             "sources-destinations",
             "technical-notes",
             "meddpicc-quick-pass",
-            "coaching-observations",
             "open-questions-follow-ups",
-            "attendees",
         ],
         source_coverage_required=True,
         forbid_placeholders=True,
@@ -267,6 +271,12 @@ def _extract_sections(text: str) -> dict[str, str]:
     current_lines: list[str] = []
     in_code_fence = False
 
+    def _set_body(key: str, lines: list[str]) -> None:
+        body = "\n".join(lines).strip()
+        # If the same heading appears more than once, keep the first non-empty body.
+        if key not in sections or not sections[key]:
+            sections[key] = body
+
     for line in text.splitlines():
         fence_match = re.match(r"^(```|~~~)", line)
         if fence_match:
@@ -274,7 +284,7 @@ def _extract_sections(text: str) -> dict[str, str]:
 
         if not in_code_fence and line.startswith("## "):
             if current_key is not None:
-                sections[current_key] = "\n".join(current_lines).strip()
+                _set_body(current_key, current_lines)
             current_key = _normalize_heading(line[3:])
             current_lines = []
             continue
@@ -286,8 +296,8 @@ def _extract_sections(text: str) -> dict[str, str]:
             # Glance are captured separately.
             pass
 
-    if current_key is not None and current_key not in sections:
-        sections[current_key] = "\n".join(current_lines).strip()
+    if current_key is not None:
+        _set_body(current_key, current_lines)
 
     return sections
 
@@ -395,10 +405,21 @@ def parse_output(
         if schema.brief_required_at_a_glance_labels is not None:
             required_at_a_glance = list(schema.brief_required_at_a_glance_labels)
 
+    def _resolve_heading(required_key: str) -> str | None:
+        """Return the actual normalized heading key in `sections` that covers the required key.
+
+        A heading matches when the required key's tokens are a subset of the
+        found heading's tokens (e.g. "key-takeaways" matches "key-takeaways-and-decisions").
+        """
+        parts = set(required_key.split("-"))
+        for found in sections:
+            if parts <= set(found.split("-")):
+                return found
+        return None
+
     def _heading_present(required_key: str) -> bool:
         """A required section is present if a normalized H2 heading covers it."""
-        parts = set(required_key.split("-"))
-        return any(parts <= set(found.split("-")) for found in sections)
+        return _resolve_heading(required_key) is not None
 
     def _section_present(required_key: str) -> bool:
         """A required section is present if a heading or At a Glance label covers it."""
@@ -429,6 +450,15 @@ def parse_output(
         )
 
     missing: list[str] = [s for s in required if not section_check(s)]
+
+    # Conditional sections are not required to be present, but if a heading for one
+    # appears in the document the runtime has decided to include it and it must have
+    # a non-empty body. Slice 5B can add transcript-entity triggers later.
+    present_conditional: list[str] = []
+    if schema and schema.conditional_sections:
+        for key in schema.conditional_sections:
+            if _resolve_heading(key) is not None:
+                present_conditional.append(key)
 
     # A document must have enough current-format markers for us to confidently
     # say it is incomplete. Legacy outputs may use older headings; without a
@@ -474,13 +504,22 @@ def parse_output(
     if missing_labels and schema and schema.strict_at_a_glance:
         errors.append(f"Missing At a Glance fields: {', '.join(missing_labels)}.")
 
-    # In strict mode, required sections must have non-empty, meaningful bodies.
+    # In strict mode, required and present conditional sections must have non-empty,
+    # meaningful bodies. The resolved (possibly expanded) heading is used so an
+    # empty "Key Takeaways and Decisions" cannot masquerade as a present section.
     if strict:
         for required_key in required:
-            if required_key in sections:
-                body = sections[required_key].strip()
+            found_key = _resolve_heading(required_key)
+            if found_key is not None:
+                body = sections[found_key].strip()
                 if not body:
                     errors.append(f"Required section '{required_key}' is empty.")
+        for conditional_key in present_conditional:
+            found_key = _resolve_heading(conditional_key)
+            if found_key is not None:
+                body = sections[found_key].strip()
+                if not body:
+                    errors.append(f"Conditional section '{conditional_key}' is empty.")
 
     if "source-coverage" not in sections:
         errors.append("Missing Source Coverage section.")

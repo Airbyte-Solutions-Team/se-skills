@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -14,11 +15,11 @@ from webapp.hosted.runtime_contract import (
     ExecutionMetadata,
     InputManifest,
     NetworkDestination,
-    OutputSidecar,
     RedactedFailure,
     RuntimeJob,
     RuntimeResult,
     RuntimeValidationError,
+    SandboxOutputSidecar,
     SkillRuntime,
     TokenUsage,
     ToolName,
@@ -56,9 +57,15 @@ class _FakeCancellationToken:
 
     def __init__(self, cancelled: bool = False) -> None:
         self._cancelled = cancelled
+        self._event = asyncio.Event()
+        if cancelled:
+            self._event.set()
 
     def is_cancelled(self) -> bool:
         return self._cancelled
+
+    async def wait(self) -> None:
+        await self._event.wait()
 
 
 class FakeSkillRuntime:
@@ -67,7 +74,7 @@ class FakeSkillRuntime:
     async def execute(self, job: RuntimeJob, cancellation: object) -> RuntimeResult:
         return RuntimeResult(
             output_artifact="# Call Summary: Acme",
-            sidecar=OutputSidecar(
+            sidecar=SandboxOutputSidecar(
                 skill=job.skill,
                 skill_version=job.skill_version,
                 mode=job.mode,
@@ -257,7 +264,7 @@ def test_runtime_result_cannot_be_both_output_and_failure() -> None:
     with pytest.raises(ValidationError, match="cannot contain both"):
         RuntimeResult(
             output_artifact="# Title",
-            sidecar=OutputSidecar(skill="post-call"),
+            sidecar=SandboxOutputSidecar(skill="post-call"),
             failure=RedactedFailure(category="executor_error", message="nope"),
         )
 
@@ -277,7 +284,7 @@ def test_runtime_result_rejects_sandbox_supplied_validation_status() -> None:
     # owns validation. A RuntimeResult has no validation field.
     result = RuntimeResult(
         output_artifact="# Title",
-        sidecar=OutputSidecar(skill="post-call"),
+        sidecar=SandboxOutputSidecar(skill="post-call"),
     )
     assert not hasattr(result, "validation")
 
@@ -312,7 +319,7 @@ async def test_fake_runtime_stops_on_cancellation() -> None:
                 )
             return RuntimeResult(
                 output_artifact="# Title",
-                sidecar=OutputSidecar(skill=job.skill, skill_version=job.skill_version, mode=job.mode),
+                sidecar=SandboxOutputSidecar(skill=job.skill, skill_version=job.skill_version, mode=job.mode),
             )
 
     job = _minimal_job()

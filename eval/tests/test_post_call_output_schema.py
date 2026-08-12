@@ -72,22 +72,53 @@ def test_post_call_action_item_owner_placeholder(repo_root: Path) -> None:
     assert any("[Owner]" in e for e in meta.validation_errors)
 
 
-def test_post_call_conditional_sections_absent_legitimately(repo_root: Path) -> None:
-    base = _load_fixture(repo_root, "post-call-brief.md")
-    extra = """
-## Deal Health Signals
-- **Positive signals:** Budget confirmed.
-- **Negative signals:** Security review may add 2 weeks.
-- **Recommended Deal Assessment update?** yes
+def _remove_section(text: str, heading: str) -> str:
+    """Remove a section starting with `heading` up to the next H2 or EOF."""
+    import re
 
-## New Objections / Concerns Surfaced
-- No new objections surfaced.
-"""
-    # Insert the extra sections before the final Source Coverage section.
-    text = base.replace("## Source Coverage", extra + "\n## Source Coverage")
+    pattern = re.compile(rf"^{re.escape(heading)}\b.*?^(?=## |\Z)", re.MULTILINE | re.DOTALL)
+    return pattern.sub("", text)
+
+
+def test_post_call_conditional_sections_absent_legitimately(repo_root: Path) -> None:
+    # Remove all conditional sections from the full fixture; the remaining required
+    # sections (including attendees and coaching observations) should still validate.
+    text = _load_fixture(repo_root, "post-call-full.md")
+    for heading in [
+        "## Sources & Destinations",
+        "## Technical Notes",
+        "## MEDDPICC Quick Pass",
+        "## Open Questions / Follow-ups",
+    ]:
+        text = _remove_section(text, heading)
     meta = output_schema.parse_output("post-call", text, mode="full")
     assert meta.valid is True
     assert meta.validation_status == "valid"
+
+
+def test_post_call_conditional_section_present_but_empty_is_invalid(repo_root: Path) -> None:
+    text = _load_fixture(repo_root, "post-call-full.md").replace(
+        "## Technical Notes\n- **Volume / scale / frequency:** 10M rows/day [stated]\n- **Deployment / infra / security:** VPC residency required",
+        "## Technical Notes",
+    )
+    meta = output_schema.parse_output("post-call", text, mode="full")
+    assert meta.valid is False
+    assert meta.validation_status == "invalid"
+    assert any("technical-notes" in e.lower() for e in meta.validation_errors)
+
+
+def test_post_call_empty_expanded_heading_is_invalid(repo_root: Path) -> None:
+    text = _load_fixture(repo_root, "post-call-brief.md").replace(
+        "## Action Items",
+        "## Action Items and Decisions",
+    ).replace(
+        "- [ ] **SE** — Schedule technical deep-dive with security lead by June 14\n- [ ] **Champion** — Introduce SE to the security reviewer",
+        "",
+    )
+    meta = output_schema.parse_output("post-call", text, mode="brief")
+    assert meta.valid is False
+    assert meta.validation_status == "invalid"
+    assert any("action-items" in e.lower() for e in meta.validation_errors)
 
 
 def test_post_call_malformed_sidecar_skill_mismatch(tmp_path: Path, repo_root: Path) -> None:

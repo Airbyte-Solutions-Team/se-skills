@@ -126,7 +126,7 @@ class NetworkDestination(BaseModel):
 class TokenUsage(BaseModel):
     """Token usage reported by the model runtime."""
 
-    model_config = ConfigDict(frozen=True, extra="allow")
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     input_tokens: int = 0
     output_tokens: int = 0
@@ -136,7 +136,7 @@ class TokenUsage(BaseModel):
 class ExecutionMetadata(BaseModel):
     """Non-sensitive execution metadata returned by the sandbox runtime."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     runtime_version: str | None = None
     model: str | None = None
@@ -147,20 +147,21 @@ class ExecutionMetadata(BaseModel):
 class RedactedFailure(BaseModel):
     """Categorized, non-sensitive failure information for the job ledger."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     category: str
     message: str
 
 
-class OutputSidecar(BaseModel):
+class SandboxOutputSidecar(BaseModel):
     """Candidate sidecar produced by the sandbox runtime.
 
-    This is an untrusted artifact; the worker validates the Markdown and sidecar
-    with `output_schema.parse_output` before persisting anything.
+    This is an untrusted artifact and contains no validation state. The worker
+    validates the Markdown and sidecar with `output_schema.parse_output` outside
+    the sandbox before persisting anything.
     """
 
-    model_config = ConfigDict(frozen=True, extra="allow")
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     skill: str
     skill_version: str = "1.0"
@@ -168,8 +169,6 @@ class OutputSidecar(BaseModel):
     title: str | None = None
     date: str | None = None
     source_coverage: str | None = None
-    validation_status: ValidationStatus = "unvalidated"
-    validation_errors: list[str] = Field(default_factory=list)
 
 
 class InputManifest(BaseModel):
@@ -181,7 +180,7 @@ class InputManifest(BaseModel):
     a database connection string in this payload.
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     transcript_id: uuid.UUID
     account_id: uuid.UUID
@@ -206,7 +205,7 @@ class Allowlist(BaseModel):
     are not in the registry and therefore cannot appear in an allowlist.
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     tools: frozenset[ToolName] = Field(default_factory=frozenset)
     network: frozenset[NetworkDestination] = Field(default_factory=frozenset)
@@ -223,7 +222,7 @@ class Allowlist(BaseModel):
 class RuntimeJob(BaseModel):
     """Immutable, serializable data the sandbox runtime needs to execute one attempt."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     job_id: uuid.UUID
     org_id: uuid.UUID
@@ -284,10 +283,10 @@ class ValidationResult(BaseModel):
     result, not by the sandbox itself.
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     status: ValidationStatus
-    errors: list[str] = Field(default_factory=list)
+    errors: tuple[str, ...] = ()
 
 
 class RuntimeResult(BaseModel):
@@ -298,10 +297,10 @@ class RuntimeResult(BaseModel):
     persisting anything.
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     output_artifact: str | None = None
-    sidecar: OutputSidecar | None = None
+    sidecar: SandboxOutputSidecar | None = None
     execution_metadata: ExecutionMetadata = Field(default_factory=ExecutionMetadata)
     failure: RedactedFailure | None = None
 
@@ -324,6 +323,14 @@ class CancellationToken(Protocol):
 
     def is_cancelled(self) -> bool:
         """Return True when the worker has requested cancellation."""
+        ...
+
+    async def wait(self) -> None:
+        """Return when cancellation has been requested.
+
+        The runtime may race this against a blocked model call so a long-running
+        request can be interrupted as soon as the worker signals cancellation.
+        """
         ...
 
 
