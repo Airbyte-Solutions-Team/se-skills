@@ -174,7 +174,7 @@ This is the source of truth for productionalization slices and progress. Each sl
 
 ## Slice 5A: Runtime/sandbox decision and post-call contracts
 
-**Status:** `In Progress`
+**Status:** `Complete` (PR #43)
 
 **Product outcome:** The hard-to-reverse architecture decisions for Slice 5B are resolved and codified in an executable contract, so the isolated post-call implementation is mechanical and unambiguous.
 
