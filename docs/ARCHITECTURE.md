@@ -87,12 +87,12 @@ This is a logical view. Concrete technology choices (Supabase, worker framework,
 - The worker enforces an immutable wall-clock execution deadline around `executor.execute` (using `asyncio.wait_for`) that is independent of the heartbeat lease. If the deadline expires, the worker cancels the executor and records a terminal `timeout`. If a cancellation request is observed, the heartbeat monitor cancels the executor and the worker records `cancelled`.
 - Heartbeat failures are distinct from user cancellation. If `worker_heartbeat` fails, the worker stops the current attempt and leaves it for `recover_expired_leases`; it does not call `cancel_job` or mark the job as user-cancelled.
 - Slice 4 ships a deterministic `EchoExecutor` that returns synthetic metadata and a `null` `output_id`. It proves the queue lifecycle without invoking a skill, model, shell command, container, or sandbox.
-- Future slices will replace `EchoExecutor` with an isolated sandbox that mounts allowlisted transcript/output files and runs the skill runtime with allowlisted tools, credentials, and network destinations.
+- Slice 5A defines the executable runtime contract in `webapp/hosted/runtime_contract.py` and keeps `EchoExecutor` working. Slice 5B will replace `EchoExecutor` with an isolated sandbox that mounts allowlisted transcript/output files and runs a `SkillRuntime` implementation with allowlisted tools, network destinations, and no platform credentials in the sandbox.
 - Report completion, failure, or retry to the job ledger, including the actual executor `runtime_version` and `model` on each attempt.
 
-## Agent-runtime isolation model (deferred to Slice 5)
+## Agent-runtime isolation model (resolved in ADR-005 for Slice 5B)
 
-The hosted runtime is not "load a `SKILL.md` and call `messages.create()` once." It is a multi-step agent environment that preserves the behavior the local skills rely on. Slice 4 intentionally does not implement this runtime; it is deferred to Slice 5 while the deterministic `EchoExecutor` proves the queue lifecycle:
+The hosted runtime is not "load a `SKILL.md` and call `messages.create()` once." It is a multi-step agent environment that preserves the behavior the local skills rely on. Slice 4 intentionally did not implement this runtime; ADR-005 in `docs/decisions/ADR-005-runtime-and-sandbox.md` resolves the technology choice. The implementation is deferred to Slice 5B, while `webapp/hosted/runtime_contract.py` and `webapp/output_schema.py` already encode the contract the runtime must satisfy:
 
 - **Source/file discovery:** the runtime can list and read the files the job owns (transcripts, prior outputs, reference data).
 - **Full transcript reads:** transcripts are loaded entirely into context; no arbitrary truncation that would break source-coverage claims.
@@ -101,21 +101,22 @@ The hosted runtime is not "load a `SKILL.md` and call `messages.create()` once."
 - **Self-checks:** the runtime can verify required output sections and source coverage before finalizing.
 - **Source coverage and artifact generation:** the output Markdown must still include `At a Glance`, `Source Coverage`, and skill-specific required sections; sidecar validation is run after generation.
 
-The runtime is executed inside an isolated sandbox:
+The runtime is executed inside an isolated gVisor-backed `runsc` container:
 
-- One sandbox per job.
-- No access to the host filesystem except explicitly mounted allowlisted paths.
+- One ephemeral sandbox per attempt.
+- No access to the host filesystem except explicitly mounted allowlisted paths (read-only transcript and prior context, writable temporary output workspace).
 - No environment variables from the host except a short allowlist.
 - No unrestricted shell; no `bypassPermissions`; no arbitrary Git; no browser/computer automation; no local repository access; no Live Transcribe; no arbitrary outbound network.
-- Network egress is deny-by-default and allowlisted per job type.
-- The sandbox image is rebuilt from a known base; ephemeral data is destroyed after the job completes.
+- Network egress is deny-by-default and allowlisted per job type; model calls are proxied through the worker so the sandbox never sees the Anthropic API key.
+- The container image is rebuilt from a known base; ephemeral data is destroyed after the attempt completes.
+- The worker validates the Markdown and sidecar outside the sandbox before writing anything to Storage or the `outputs` row.
 
 ## Hosted vs local runtime distinction
 
 | Capability | Hosted runtime | Local runtime |
 |---|---|---|
 | Identity | Supabase Auth / org membership | OS user / Claude Code user |
-| Skill invocation | Worker sandbox with allowlisted tools (Slice 5) | `claude -p` with `acceptEdits` default; reviewed shell skills can use `bypassPermissions` |
+| Skill invocation | Worker sandbox with the Anthropic Agent SDK and mediated typed tools (Slice 5B) | `claude -p` with `acceptEdits` default; reviewed shell skills can use `bypassPermissions` |
 | File access | Mounted allowlisted files only | Full local workspace, `~/.claude/skills/`, repos |
 | Network | Allowlist only | Host network |
 | MCPs/tools | Approved, audited subset | User's full `~/.claude.json` MCP config |
@@ -129,7 +130,7 @@ The runtime is executed inside an isolated sandbox:
 1. **API enqueue:** `POST /api/hosted/accounts/{account_id}/jobs` calls `public.enqueue_job`, verifies the caller's active membership, validates the transcript/opportunity/account organization chain, and inserts a `queued` record. It returns `job_id`, `job_status`, and `job_created_at`.
 2. **Worker claim:** `claim_next_job` selects the oldest eligible `queued` job with `FOR UPDATE SKIP LOCKED`, transitions it to `running`, creates an append-only `job_attempts` row with a random `lease_token`, and sets `timeout_at`. The row lock guarantees only one worker owns the attempt.
 3. **Heartbeat:** the worker calls `worker_heartbeat` to extend `timeout_at` while it runs the executor; `worker_heartbeat` also returns whether `cancel_requested_at` is set.
-4. **Slice 4 execution:** the worker runs the deterministic `EchoExecutor` under an immutable wall-clock deadline. The executor returns synthetic metadata and a `null` `output_id`. No skill, model, shell, container, or sandbox is invoked.
+4. **Slice 4 execution / Slice 5A contract:** the worker runs the deterministic `EchoExecutor` under an immutable wall-clock deadline. The executor returns synthetic metadata and a `null` `output_id`. No skill, model, shell, container, or sandbox is invoked. Slice 5A added the `SkillRuntime` protocol (`webapp/hosted/runtime_contract.py`) and the `post-call` validation contract (`webapp/output_schema.py`).
 5. **Success:** `complete_job` locks the job then the attempt, verifies the current attempt/lease token, persists the actual executor `runtime_version` and `model` on the attempt, and sets the job to `success` with `finished_at`, `token_usage`, and `cost`.
 6. **Retryable failure:** `fail_job` checks `cancel_requested_at` first. If set, it finalizes the current attempt as `cancelled` and the job as `cancelled` without retry/dead-letter metadata. Otherwise it records the attempt outcome (`failure` or `timeout`) and either requeues the job with a persisted backoff when `attempts < max_attempts` or moves it to terminal `failure` with `dead_lettered = true`.
 7. **Timeout:** a `running` job whose `timeout_at` expires is recovered by `recover_expired_leases`, which records the abandoned attempt as `timeout` and either requeues or dead-letters the job. The final status is `timeout`, distinct from `failure`.
@@ -141,8 +142,9 @@ The runtime is executed inside an isolated sandbox:
 These decisions are intentionally deferred to the implementation slices and must be resolved before the corresponding code is merged:
 
 - **Worker framework:** containerized workers (for example, Fly Machines, ECS Fargate, Kubernetes Jobs) vs. a process pool on a VM. The sandbox technology depends on this choice.
-- **Sandbox technology:** gVisor, Firecracker, unprivileged containers, or another isolation layer. This is the core unresolved Slice 5 decision.
+- **Sandbox technology:** resolved to gVisor-backed `runsc` containers for the beta, with Firecracker as a future higher-isolation alternative.
 - **Supabase commitment:** whether Supabase Auth, Postgres, and Storage are approved as the operational backend or are replaced by another Airbyte-standard provider.
 - **Credential storage:** whether to use Supabase Vault, AWS Secrets Manager, HashiCorp Vault, or another encrypted store for OAuth tokens and integration credentials.
 - **Salesforce/Gong/Google integrations:** whether the beta includes these integrations and, if so, how user-consented OAuth credentials are stored and scoped.
 - **Observability:** logging, metrics, and tracing backend for workers and sandbox.
+- **Output persistence boundary for Slice 5B:** worker resolves transcript and prior context, materializes read-only files into the sandbox, runs the runtime, validates `output.md` and `sidecar.json` outside the sandbox, writes valid artifacts to private org-scoped Storage, creates the `outputs` row, and calls `complete_job` with `result_output_id`. Invalid artifacts are distinguished from execution failures. Cleanup on partial failure must be specified before Slice 5B.

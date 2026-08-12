@@ -19,7 +19,7 @@
 - The SPA is static and served from the same origin as the API.
 - The FastAPI process is trusted to enforce authentication and authorization.
 - Supabase (or another operational provider chosen and approved for the beta) provides identity, relational data, and object storage.
-- Workers are semi-trusted: they run sandboxed code and receive only allowlisted secrets.
+- Workers are semi-trusted: they resolve authorized inputs and manage sandbox lifecycle. The sandbox runtime is untrusted and receives no Postgres credentials, Storage credentials, model keys, or browser-supplied paths.
 - External APIs (model provider, Gong, Salesforce, etc.) are third-party boundaries.
 
 ## Organization isolation
@@ -62,7 +62,7 @@
 - **No organization-wide secrets in generic application environment variables.** Salesforce, Gong, Google, and similar integration credentials are stored per organization or per user in an encrypted credential store (Supabase Vault, AWS Secrets Manager, HashiCorp Vault, or equivalent).
 - OAuth flows are per user or per organization with explicit consent and scoped scopes.
 - Refresh tokens and API keys are encrypted at rest; the agent runtime receives only short-lived, job-scoped credentials.
-- The Anthropic/model API key is managed by the platform, not exposed to the sandbox or the SPA.
+- The Anthropic/model API key is managed by the platform, not exposed to the sandbox or the SPA. Slice 5A encodes this in `webapp/hosted/runtime_contract.py`: model calls originate from the worker or a worker-side model proxy, not from the sandbox directly.
 - Secret values are redacted from logs, subprocess output, and error messages using the same patterns as `webapp/security.py` (authorization headers, tokens, keys, passwords).
 
 ## Agent isolation
@@ -72,6 +72,16 @@
 - The sandbox receives no host environment variables except an allowlist (for example, `PATH`, `HOME` for a temporary home, model endpoint config).
 - The runtime does not have unrestricted shell, `bypassPermissions`, arbitrary Git, browser/computer automation, local repository access, Live Transcribe, or arbitrary outbound network.
 - Tool use is mediated and logged. The agent can only call tools that are registered in the runtime config for that job type.
+
+## Runtime contract and output validation (Slice 5A)
+
+- The `SkillRuntime` protocol in `webapp/hosted/runtime_contract.py` is provider-neutral. A durable job carries only stable identifiers; transcript bodies, bearer tokens, signed URLs, DB credentials, Storage credentials, and arbitrary browser-supplied paths are never passed through the job payload.
+- `Allowlist` rejects generic tools such as `Bash`, `Shell`, `Exec`, `Git`, `Browser`, `Chrome`, `Http`, `McpDiscover`, and `BypassPermissions` at contract construction time.
+- `InputManifest` carries only read-only references to the transcript and prior context; the worker materializes these into the sandbox after authorization.
+- `RuntimeJob` carries an immutable execution deadline and a cancellation predicate; the worker enforces both and terminates the sandbox when either fires.
+- `RuntimeResult` separates validated output artifacts from categorized, redacted failures.
+- `output_schema.parse_output` validates the generated Markdown and sidecar deterministically, without an LLM. For `post-call`, it requires a title, date, At a Glance decision fields, Key Takeaways, Action Items, Next Step, Source Coverage with concrete read/total counts, and rejects unfilled template placeholders. Conditional sections such as Sources & Destinations, Technical Notes, MEDDPICC Quick Pass, and Coaching Observations are not required when their triggering evidence is absent.
+- Only the worker persists validated artifacts to Storage and the `outputs` row; the sandbox has no direct access to either.
 
 ## Tool and network allowlisting
 
@@ -111,3 +121,5 @@ The following invariants must be enforced by code review and CI. A PR that viola
 8. **Cross-organization access is a merge blocker.** Any test, route, or query that returns data from another organization must fail CI.
 9. **Secrets must never be exported; exports are authorized and organization-scoped. Customer content must not leak into logs, errors, or unrelated organizations, and exports preserve only the information the artifact is intended to contain. Applicable retention and data-handling rules still apply.**
 10. **Live Transcribe and other local-only capabilities remain local-only until separately approved.**
+11. **Transcript and output contents are never logged.**
+12. **The sandbox receives only allowlisted tools, network destinations, and read-only input mounts; it cannot access Postgres, Supabase Storage credentials, or the model key.**

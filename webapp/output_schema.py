@@ -32,6 +32,13 @@ class SkillOutputSchema(BaseModel):
     skill: str
     required_sections: list[str] = Field(default_factory=list)
     required_at_a_glance_labels: list[str] = Field(default_factory=list)
+    brief_required_sections: list[str] | None = None
+    brief_required_at_a_glance_labels: list[str] | None = None
+    conditional_sections: list[str] = Field(default_factory=list)
+    source_coverage_required: bool = False
+    forbid_placeholders: bool = False
+    strict_at_a_glance: bool = False
+    strict_sections: bool = False
 
 
 class OutputMetadata(BaseModel):
@@ -40,6 +47,7 @@ class OutputMetadata(BaseModel):
     skill: str
     title: str | None = None
     date: str | None = None
+    mode: str = "full"  # "full" | "brief"
     at_a_glance: dict[str, str] = Field(default_factory=dict)
     sections: dict[str, str] = Field(default_factory=dict)
     required_sections: list[str] = Field(default_factory=list)
@@ -102,6 +110,51 @@ _SKILL_SCHEMAS: dict[str, SkillOutputSchema] = {
         skill="pov-gsheet",
         required_sections=["receipt", "source-coverage"],
         required_at_a_glance_labels=["google-sheet-url", "status"],
+    ),
+    "post-call": SkillOutputSchema(
+        skill="post-call",
+        required_sections=[
+            "key-takeaways",
+            "deal-health-signals",
+            "new-objections-concerns-surfaced",
+            "action-items",
+            "next-step",
+            "source-coverage",
+        ],
+        required_at_a_glance_labels=[
+            "call-type",
+            "call-date",
+            "attendees",
+            "action-items",
+            "next-step",
+            "deal-assessment-update-needed",
+        ],
+        brief_required_sections=[
+            "key-takeaways",
+            "action-items",
+            "next-step",
+            "source-coverage",
+        ],
+        brief_required_at_a_glance_labels=[
+            "call-type",
+            "call-date",
+            "attendees",
+            "action-items",
+            "next-step",
+            "deal-assessment-update-needed",
+        ],
+        conditional_sections=[
+            "sources-destinations",
+            "technical-notes",
+            "meddpicc-quick-pass",
+            "coaching-observations",
+            "open-questions-follow-ups",
+            "attendees",
+        ],
+        source_coverage_required=True,
+        forbid_placeholders=True,
+        strict_at_a_glance=True,
+        strict_sections=True,
     ),
 }
 
@@ -236,6 +289,73 @@ def _extract_sections(text: str) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# Post-call validation helpers
+# ---------------------------------------------------------------------------
+
+# Bracket text that is allowed and does not indicate an unfilled template.
+_PLACEHOLDER_ALLOWED_BRACKETS = frozenset({
+    "stated",
+    "inferred",
+    "x",
+    "x",
+    " ",
+    "",
+})
+
+
+def _is_allowed_bracket_content(content: str) -> bool:
+    """Return True for checkboxes, tags, and callouts rather than placeholders."""
+    content = content.strip()
+    if content.lower() in _PLACEHOLDER_ALLOWED_BRACKETS:
+        return True
+    if content.startswith("!"):
+        # Markdown callouts such as [!verdict], [!risk], [!info].
+        return True
+    if content.isdigit():
+        # Counts such as ==[3]== or [3].
+        return True
+    # Checkbox states.
+    if re.fullmatch(r"[xX ]?", content):
+        return True
+    return False
+
+
+def _find_placeholders(text: str) -> list[str]:
+    """Find bracketed text that looks like an unfilled template placeholder."""
+    placeholders: list[str] = []
+    if not text:
+        return placeholders
+    for match in re.finditer(r"\[([^\]]+)\]", text):
+        inner = match.group(1)
+        if not _is_allowed_bracket_content(inner):
+            placeholders.append(match.group(0))
+    return placeholders
+
+
+def _validate_source_coverage_post_call(body: str) -> list[str]:
+    """Source Coverage for post-call must claim a complete read with N / N lines."""
+    errors: list[str] = []
+    if not body or not body.strip():
+        errors.append("Source Coverage section is empty.")
+        return errors
+    match = re.search(r"(\d+)\s*/\s*(\d+)\s*(?:line|lines|ln|lns)", body, re.IGNORECASE)
+    if not match:
+        errors.append("Source Coverage must report concrete read/total line counts (e.g. '612 / 612 lines').")
+        return errors
+    read_count = int(match.group(1))
+    total_count = int(match.group(2))
+    if read_count < total_count:
+        errors.append(f"Source Coverage reports a partial read ({read_count} / {total_count} lines).")
+    elif read_count > total_count:
+        errors.append(f"Source Coverage read count exceeds total ({read_count} / {total_count} lines).")
+    if "full" not in body.lower() and "complete" not in body.lower() and read_count == total_count:
+        # Encourage an explicit full/complete statement; not a hard failure on
+        # its own if counts are equal, but combined with missing counts it fails.
+        pass
+    return errors
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -243,6 +363,7 @@ def parse_output(
     skill: str,
     text: str,
     reference_freshness_at_generation: list[ReferenceFreshness] | None = None,
+    mode: str = "full",
 ) -> OutputMetadata:
     """Parse a generated Markdown output and validate it against the skill schema.
 
@@ -269,15 +390,26 @@ def parse_output(
     sections = _extract_sections(text)
 
     required: list[str] = list(schema.required_sections) if schema else []
+    required_at_a_glance: list[str] = list(schema.required_at_a_glance_labels) if schema else []
+    if mode == "brief" and schema:
+        if schema.brief_required_sections is not None:
+            required = list(schema.brief_required_sections)
+        if schema.brief_required_at_a_glance_labels is not None:
+            required_at_a_glance = list(schema.brief_required_at_a_glance_labels)
+
+    def _heading_present(required_key: str) -> bool:
+        """A required section is present if a normalized H2 heading covers it."""
+        parts = set(required_key.split("-"))
+        return any(parts <= set(found.split("-")) for found in sections)
 
     def _section_present(required_key: str) -> bool:
         """A required section is present if a heading or At a Glance label covers it."""
+        if _heading_present(required_key):
+            return True
         parts = set(required_key.split("-"))
-        if any(parts <= set(found.split("-")) for found in sections):
-            return True
-        if any(parts <= set(label.split("-")) for label in at_a_glance):
-            return True
-        return False
+        return any(parts <= set(label.split("-")) for label in at_a_glance)
+
+    section_check = _heading_present if (schema and schema.strict_sections) else _section_present
 
     # If we have no schema for this skill, we cannot validate it.
     if schema is None:
@@ -285,6 +417,7 @@ def parse_output(
             skill=skill,
             title=title,
             date=date,
+            mode=mode,
             at_a_glance=at_a_glance,
             sections={k: v[:5000] for k, v in sections.items()},
             required_sections=[],
@@ -296,7 +429,7 @@ def parse_output(
             reference_freshness_at_generation=reference_freshness_at_generation,
         )
 
-    missing: list[str] = [s for s in required if not _section_present(s)]
+    missing: list[str] = [s for s in required if not section_check(s)]
 
     # A document must have enough current-format markers for us to confidently
     # say it is incomplete. Legacy outputs may use older headings; without a
@@ -305,7 +438,7 @@ def parse_output(
     # missing **Date:** line, by contrast, is a concrete validation error once
     # we have recognized the current format.
     non_source_required = [s for s in required if s != "source-coverage"]
-    has_non_source_required = any(_section_present(s) for s in non_source_required)
+    has_non_source_required = any(section_check(s) for s in non_source_required)
     has_current_markers = bool(title and at_a_glance and has_non_source_required)
 
     if not has_current_markers:
@@ -313,6 +446,7 @@ def parse_output(
             skill=skill,
             title=title,
             date=date,
+            mode=mode,
             at_a_glance=at_a_glance,
             sections={k: v[:5000] for k, v in sections.items()},
             required_sections=required,
@@ -327,10 +461,35 @@ def parse_output(
     errors: list[str] = []
     if missing:
         errors.append(f"Missing required sections: {', '.join(missing)}.")
+
+    missing_labels = [label for label in required_at_a_glance if label not in at_a_glance]
+    if missing_labels and schema and schema.strict_at_a_glance:
+        errors.append(f"Missing At a Glance fields: {', '.join(missing_labels)}.")
+
     if not date:
         errors.append("No **Date:** line found in the title block.")
+    if not title:
+        errors.append("No H1 title found.")
     if "source-coverage" not in sections:
         errors.append("Missing Source Coverage section.")
+    elif schema and schema.source_coverage_required:
+        errors.extend(_validate_source_coverage_post_call(sections["source-coverage"]))
+
+    # Post-call outputs must not ship with unfilled template placeholders.
+    if schema and schema.forbid_placeholders:
+        for source, label in [(title, "title"), (date, "date")]:
+            if source:
+                placeholders = _find_placeholders(source)
+                if placeholders:
+                    errors.append(f"Unresolved placeholder(s) in {label}: {', '.join(placeholders)}.")
+        for label, value in at_a_glance.items():
+            placeholders = _find_placeholders(value)
+            if placeholders:
+                errors.append(f"Unresolved placeholder(s) in At a Glance '{label}': {', '.join(placeholders)}.")
+        for section_key, body in sections.items():
+            placeholders = _find_placeholders(body)
+            if placeholders:
+                errors.append(f"Unresolved placeholder(s) in section '{section_key}': {', '.join(placeholders)}.")
 
     valid = not errors
     validation_status = "valid" if valid else "invalid"
@@ -339,6 +498,7 @@ def parse_output(
         skill=skill,
         title=title,
         date=date,
+        mode=mode,
         at_a_glance=at_a_glance,
         sections={k: v[:5000] for k, v in sections.items()},
         required_sections=required,
@@ -366,9 +526,12 @@ def read_or_parse_sidecar(md_path: Path, skill: str) -> OutputMetadata:
             sc_mtime = sidecar.stat().st_mtime
             if sc_mtime >= md_mtime:
                 data = json.loads(sidecar.read_text(encoding="utf-8"))
-                if data.get("schema_version") == SCHEMA_VERSION:
+                if data.get("schema_version") != SCHEMA_VERSION:
+                    logger.info("Sidecar schema version %s != %s; reparsing", data.get("schema_version"), SCHEMA_VERSION)
+                elif data.get("skill") != skill:
+                    logger.info("Sidecar skill %s != %s; reparsing", data.get("skill"), skill)
+                else:
                     return OutputMetadata(**data)
-                logger.info("Sidecar schema version %s != %s; reparsing", data.get("schema_version"), SCHEMA_VERSION)
         except (OSError, ValueError, TypeError):
             logger.warning("Failed to read sidecar %s; reparsing", sidecar)
 
@@ -407,6 +570,16 @@ _ACTION_SECTION_SUBSTRINGS = ("action", "next-step", "close-criteria", "what-wou
 
 _DISPLAY_TITLE_OVERRIDES = {
     "at-a-glance": "At a Glance",
+    "key-takeaways": "Key Takeaways",
+    "deal-health-signals": "Deal Health Signals",
+    "new-objections-concerns-surfaced": "New Objections / Concerns Surfaced",
+    "action-items": "Action Items",
+    "next-step": "Next Step",
+    "sources-destinations": "Sources & Destinations",
+    "technical-notes": "Technical Notes",
+    "open-questions-follow-ups": "Open Questions / Follow-ups",
+    "attendees": "Attendees",
+    "meddpicc-quick-pass": "MEDDPICC Quick Pass",
     "meddpicc-pre-scorecard": "MEDDPICC Pre-Scorecard",
     "probability-verdict": "Probability Verdict",
     "what-would-close-it": "What Would Close It",

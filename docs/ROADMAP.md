@@ -127,12 +127,12 @@ This is the source of truth for productionalization slices and progress. Each sl
 
 ## Slice 4: Durable asynchronous jobs
 
-**Status:** `In Progress` (PR #42; blocked on reviewer acceptance of review fixes)
+**Status:** `Complete` (PR #42)
 
 **Product outcome:** An authenticated member can select an uploaded transcript, enqueue a durable `post-call` job, a separate worker claims and runs it, and the member sees the terminal job status. All state is persisted in Postgres; no job state depends on process memory or local filesystem.
 
 **Scope:**
-- `jobs` and `job_attempts` tables with explicit `org_id`, composite foreign keys to `accounts`, `opportunities`, and `transcripts` that enforce same-organization ownership, `requester_id`, `cancelled_by`, `skill`, `skill_version`, `model`, `runtime_version`, `payload`, `input_refs`, `source_manifest`, `result_output_id` (NULL until Slice 5), `validation_status`, `token_usage`, `cost`, `attempts`, `max_attempts`, `timeout_at`, `cancel_requested_at`, `cancelled_at`, `next_attempt_after`, `dead_lettered`, and redacted `error`.
+- `jobs` and `job_attempts` tables with explicit `org_id`, composite foreign keys to `accounts`, `opportunities`, and `transcripts` that enforce same-organization ownership, `requester_id`, `cancelled_by`, `skill`, `skill_version`, `model`, `runtime_version`, `payload`, `input_refs`, `source_manifest`, `result_output_id` (NULL until Slice 5B), `validation_status`, `token_usage`, `cost`, `attempts`, `max_attempts`, `timeout_at`, `cancel_requested_at`, `cancelled_at`, `next_attempt_after`, `dead_lettered`, and redacted `error`.
 - Postgres-backed queue using transactional `FOR UPDATE SKIP LOCKED` row claiming, expiring leases, heartbeats, and a `recover_expired_leases()` function. Redis is not used.
 - Dedicated least-privilege `app_worker` Postgres role (`NOBYPASSRLS`) that can only execute the queue functions; no direct tenant table access.
 - `SECURITY DEFINER` queue functions (`enqueue_job`, `claim_next_job`, `worker_heartbeat`, `complete_job`, `fail_job`, `cancel_job`, `recover_expired_leases`) owned by `app_admin`, with empty `search_path`, revoked `PUBLIC` execute, and explicit transition validation.
@@ -140,7 +140,7 @@ This is the source of truth for productionalization slices and progress. Each sl
 - Deterministic `EchoExecutor` that proves claim, heartbeat, completion, failure, retry, timeout, cancellation, and crash recovery without executing a skill, model, shell command, container, or sandbox.
 - Organization-scoped enqueue (`POST /api/hosted/accounts/{account_id}/jobs`), list (`GET /api/hosted/accounts/{account_id}/jobs`), detail (`GET /api/hosted/jobs/{job_id}`), and cancel (`POST /api/hosted/jobs/{job_id}/cancel`) APIs.
 - Minimal SPA job-status and enqueue UI on the hosted transcript list.
-- Updated `docs/ARCHITECTURE.md`, `docs/DATA_MODEL.md`, `docs/SECURITY.md`, `docs/ROADMAP.md`, `PRODUCTIONALIZATION.md`, and `webapp/README.md` with queue, lease, worker-role, retry, cancellation, timeout, idempotency, and recovery design; distinguishes Slice 4's deterministic executor from Slice 5's unresolved sandbox and hosted agent-runtime decisions.
+- Updated `docs/ARCHITECTURE.md`, `docs/DATA_MODEL.md`, `docs/SECURITY.md`, `docs/ROADMAP.md`, `PRODUCTIONALIZATION.md`, and `webapp/README.md` with queue, lease, worker-role, retry, cancellation, timeout, idempotency, and recovery design; distinguishes Slice 4's deterministic executor from Slice 5A/5B's sandbox and hosted agent-runtime decisions.
 
 **Dependencies:** Slice 2, Slice 3.
 
@@ -172,31 +172,60 @@ This is the source of truth for productionalization slices and progress. Each sl
 
 ---
 
-## Slice 5: Isolated hosted post-call runtime
+## Slice 5A: Runtime/sandbox decision and post-call contracts
+
+**Status:** `In Progress`
+
+**Product outcome:** The hard-to-reverse architecture decisions for Slice 5B are resolved and codified in an executable contract, so the isolated post-call implementation is mechanical and unambiguous.
+
+**Scope:**
+- Write a hosted-runtime ADR under `docs/decisions/` comparing a model API/Agent SDK runtime, a hosted Claude Code/CLI-style runtime, and at least two credible isolation approaches (for example, gVisor-backed containers and Firecracker/microVMs). Evaluate against multi-step agent fidelity, full transcript reads, tool mediation, prompt-injection containment, filesystem isolation, deny-by-default egress, credential handling, cancellation/deadline/crash behavior, local testing, deployment complexity, operational burden, beta cost, and portability. Record current vendor documentation and versions.
+- Resolve: where the agent loop runs, where model calls originate, how the platform model credential stays unavailable to generated code and sandbox tools, how transcript/reference inputs enter the sandbox without DB or Storage credentials, how the output leaves the sandbox, how tools are registered and allowlisted, how network destinations are enforced, how cancellation/deadline expiry/worker crashes terminate or recover the sandbox, and which component validates and persists the final artifact.
+- Define provider-neutral typed interfaces for the future isolated executor in code (`webapp/hosted/runtime_contract.py`). The contract must cover immutable job identity, org/account/opportunity/transcript references, requested skill/version, read-only input manifest, job-scoped prior context, allowlisted tools, allowlisted network destinations, immutable deadline, cancellation signal, temporary output workspace, Markdown artifact, sidecar metadata, actual runtime/model version, token usage and cost, validation result, and categorized redacted failure.
+- Keep `EchoExecutor` working as the Slice 4 deterministic executor; the new contract is additive and untyped-code-fakes-only.
+- Add a `post-call` validation contract to `webapp/output_schema.py` derived from `skills/post-call/SKILL.md`. Distinguish always-required decision-critical sections, always-required `At a Glance` fields, and conditional sections (`Sources & Destinations`, `Technical Notes`, `MEDDPICC Quick Pass`, `Coaching Observations`). Cover full and brief output modes with deterministic validation (no LLM). Add golden fixtures and tests.
+- Specify (but do not build) the Slice 5B output persistence boundary: worker resolves authorized transcript and prior context, materializes read-only inputs into a job-scoped sandbox, sandbox produces Markdown and candidate sidecar in a temporary output area, trusted worker validates both outside the sandbox, validated artifacts are written to private org-scoped Storage, an `outputs` row is created with org/account/opportunity/job relationships and immutable provenance, `complete_job` receives the authoritative `result_output_id`, invalid artifacts remain distinguishable from execution failures, and compensating cleanup is documented for Storage-success/metadata-failure and metadata-success/Storage-failure cases.
+- Update `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/DATA_MODEL.md` if the output persistence boundary requires schema changes, `PRODUCTIONALIZATION.md`, `webapp/README.md`, and `webapp/SESSION-LOG.md` to reflect the Slice 4 completion and the 5A/5B split.
+
+**Dependencies:** Slice 4.
+
+**Acceptance criteria:**
+- ADR is merged with a clear recommendation and rejected alternatives.
+- Runtime contract interfaces are merged, type-safe, and covered by fake-based deterministic tests.
+- `post-call` output validation contract is merged, deterministic, and covered by golden-fixture tests.
+- The Slice 5B persistence boundary is specified in docs and any required schema changes are described (migration deferred to Slice 5B unless needed for compilation/tests).
+- Existing hosted/non-hosted tests and deterministic eval continue to pass.
+
+**Non-goals:**
+- No actual model execution, model-provider credential, or sandbox service provisioning.
+- No production deployment or customer-data migration.
+- No broad SPA redesign.
+- No Redis.
+
+---
+
+## Slice 5B: Isolated hosted post-call runtime
 
 **Status:** `Proposed`
 
-**Product outcome:** A `post-call` skill can run asynchronously in an isolated sandbox and produce a validated Markdown output from an uploaded transcript.
+**Product outcome:** A `post-call` skill can run asynchronously in the selected isolated sandbox and produce a validated Markdown output from an uploaded transcript.
 
 **Scope:**
-- Sandbox technology decision and integration.
-- Agent runtime that preserves multi-step behavior: source/file discovery, full transcript reads, tool use, prior context, self-checks, source coverage, artifact generation.
-- `post-call` skill packaging and allowlist for files, tools, network, credentials.
-- Define and test the production validation contract for `post-call` (decision-critical structure and Source Coverage requirements necessary to present the output as validated; `webapp/output_schema.py` does not currently define a post-call schema).
-- Output sidecar generation and validation.
-- Worker integration: claim job, run sandbox, write output, update job.
+- Implement the sandbox technology and agent-runtime integration chosen in Slice 5A.
+- Worker resolves authorized transcript and prior context, mounts read-only inputs into the sandbox, runs the agent loop with allowlisted tools and network destinations, retrieves Markdown + sidecar, validates them outside the sandbox, writes the output to private org-scoped Storage, creates the `outputs` row, and completes the job with `result_output_id`.
+- Implement the `outputs`/`output_versions`/`reviews` schema and Storage RLS/policies needed for generated outputs (if not already present from Slice 5A specification).
+- Implement compensating cleanup for partial Storage/metadata failures.
 
-**Dependencies:** Slice 3, Slice 4.
+**Dependencies:** Slice 3, Slice 4, Slice 5A.
 
 **Acceptance criteria:**
 - `post-call` runs from an uploaded transcript and produces Markdown + sidecar.
 - Sandbox has no host filesystem access except mounted transcript and read-only reference data.
-- Sandbox network egress is allowlisted.
+- Sandbox network egress is allowlisted and deny-by-default.
 - No unrestricted shell, `bypassPermissions`, Git, browser automation, or local repo access.
-- Output includes required sections (`At a Glance`, `Source Coverage`, etc.).
-- The `post-call` validation contract is documented, implemented, and tested before the slice is marked complete.
-- Validation status is recorded and surfaced in the UI.
+- Output includes required sections (`At a Glance`, `Source Coverage`, etc.) and passes the deterministic validation contract.
 - `outputs` to `jobs`/`accounts`/`opportunities` preserve `org_id` and are enforced by the database; cross-org references fail at the DB boundary and in application authorization tests.
+- Validation status is recorded and surfaced in the UI.
 
 **Non-goals:**
 - Not all skills.
@@ -221,7 +250,7 @@ This is the source of truth for productionalization slices and progress. Each sl
 - Basic admin/org settings (members, roles, data retention view).
 - Onboarding and beta runbook.
 
-**Dependencies:** Slice 3, Slice 5.
+**Dependencies:** Slice 3, Slice 5B.
 
 **Acceptance criteria:**
 - End-to-end workflow: sign in → create account → upload transcript → run `post-call` → review → correct/approve → export.
