@@ -71,7 +71,7 @@ class NetworkDestination(BaseModel):
     path_prefix must start with `/` or be empty.
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     host: str
     port: int | None = None
@@ -183,10 +183,18 @@ class InputManifest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     transcript_id: uuid.UUID
+    transcript_ref: str
     account_id: uuid.UUID
     org_id: uuid.UUID
     opportunity_id: uuid.UUID | None = None
     prior_context_refs: frozenset[str] = Field(default_factory=frozenset)
+
+    @field_validator("transcript_ref")
+    @classmethod
+    def _validate_transcript_ref(cls, value: str) -> str:
+        if not value or ".." in value or value.startswith(("/", "\\", "~")):
+            raise RuntimeValidationError(f"Invalid transcript reference: {value!r}")
+        return value
 
     @field_validator("prior_context_refs")
     @classmethod
@@ -232,7 +240,7 @@ class RuntimeJob(BaseModel):
     opportunity_id: uuid.UUID | None = None
     skill: str = "post-call"
     skill_version: str = "1.0"
-    requested_model: str | None = None
+    requested_model: str
     requested_runtime_version: str | None = None
     mode: Mode = "full"
     input_manifest: InputManifest

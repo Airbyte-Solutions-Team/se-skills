@@ -7,7 +7,7 @@ adds the platform credential. The harness is deterministic when paired with a
 mock HTTP transport, so it can be exercised without network or model access.
 
 Vendor references (2026-08-11):
-- Anthropic Messages API: https://docs.anthropic.com/en/api/messages
+- Anthropic Messages API: https://platform.claude.com/docs/en/api/messages
 - httpx 0.28.1 (transport used to reach the worker model proxy)
 """
 from __future__ import annotations
@@ -15,13 +15,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from webapp.hosted.runtime_contract import (
     CancellationToken,
@@ -36,10 +35,26 @@ from webapp.hosted.runtime_contract import (
 )
 
 
+# ---------------------------------------------------------------------------
+# Anthropic Messages API DTOs
+# ---------------------------------------------------------------------------
+
+class BaseContentBlock(BaseModel):
+    """Fallback content block; accepts any Anthropic block type."""
+
+    model_config = ConfigDict(extra="allow", frozen=True)
+
+    type: str
+    text: str | None = None
+    id: str | None = None
+    name: str | None = None
+    input: dict[str, Any] | None = None
+
+
 class TextBlock(BaseModel):
     """A text content block in the Anthropic Messages API."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="allow", frozen=True)
     type: Literal["text"] = "text"
     text: str
 
@@ -47,7 +62,7 @@ class TextBlock(BaseModel):
 class ToolUseBlock(BaseModel):
     """A tool_use content block in the Anthropic Messages API."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="allow", frozen=True)
     type: Literal["tool_use"] = "tool_use"
     id: str
     name: str
@@ -57,13 +72,13 @@ class ToolUseBlock(BaseModel):
 class ToolResultBlock(BaseModel):
     """A tool_result content block in the Anthropic Messages API."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="allow", frozen=True)
     type: Literal["tool_result"] = "tool_result"
     tool_use_id: str
     content: str
 
 
-MessageContent = TextBlock | ToolUseBlock | ToolResultBlock
+ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock | BaseContentBlock
 
 
 class Message(BaseModel):
@@ -71,7 +86,7 @@ class Message(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     role: Literal["user", "assistant"]
-    content: list[MessageContent]
+    content: list[ContentBlock]
 
 
 class ToolDefinition(BaseModel):
@@ -97,35 +112,98 @@ class MessageRequest(BaseModel):
 class Usage(BaseModel):
     """Token usage reported by the Anthropic Messages API."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="allow", frozen=True)
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_creation_input_tokens: int | None = None
+    cache_read_input_tokens: int | None = None
 
 
 class MessageResponse(BaseModel):
-    """Response payload from the Anthropic Messages API."""
+    """Response payload from the Anthropic Messages API.
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    `extra="allow"` is used for the response DTO so a worker proxy that passes
+    through upstream fields (citations, thinking blocks, etc.) does not break the
+    harness. The harness only consumes documented fields.
+    """
+
+    model_config = ConfigDict(extra="allow", frozen=True)
     id: str
     type: Literal["message"] = "message"
     role: Literal["assistant"] = "assistant"
-    content: list[MessageContent]
+    content: list[ContentBlock]
     model: str
     stop_reason: str | None = None
+    stop_sequence: str | None = None
+    stop_details: Any | None = None
     usage: Usage = Field(default_factory=Usage)
 
 
+# ---------------------------------------------------------------------------
+# Typed tool inputs
+# ---------------------------------------------------------------------------
+
+class EmptyInput(BaseModel):
+    """No arguments."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class ReadPriorContextInput(BaseModel):
+    """Arguments for read_prior_context."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    ref: str
+
+
+class SearchTranscriptInput(BaseModel):
+    """Arguments for search_transcript."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    query: str
+    max_results: int = 10
+
+    @field_validator("max_results")  # type: ignore[misc]
+    @classmethod
+    def _clamp_max_results(cls, value: int) -> int:
+        if value < 1:
+            return 1
+        if value > 100:
+            return 100
+        return value
+
+
+class WriteOutputInput(BaseModel):
+    """Arguments for write_output."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    markdown: str
+    sidecar: dict[str, Any]
+
+
+class ReportFailureInput(BaseModel):
+    """Arguments for report_failure."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    category: str
+    message: str = "Unknown failure"
+
+
+# ---------------------------------------------------------------------------
+# Tool definitions
+# ---------------------------------------------------------------------------
+
 def _tool_definitions(allowed: frozenset[str]) -> list[ToolDefinition]:
-    """Return tool definitions only for tools in the job allowlist."""
+    """Return tool definitions only for tools in the job allowlist, sorted by name."""
     definitions: dict[str, ToolDefinition] = {
         "read_transcript": ToolDefinition(
             name="read_transcript",
-            description="Read the full transcript. Already loaded into context; returns confirmation.",
+            description="Read the full transcript. Returns the transcript text.",
             input_schema={"type": "object", "properties": {}, "required": []},
         ),
         "read_prior_context": ToolDefinition(
             name="read_prior_context",
-            description="Read an approved prior-context file by reference id.",
+            description="Read an approved prior-context file by its manifest reference id.",
             input_schema={
                 "type": "object",
                 "properties": {"ref": {"type": "string"}},
@@ -134,7 +212,7 @@ def _tool_definitions(allowed: frozenset[str]) -> list[ToolDefinition]:
         ),
         "list_priors": ToolDefinition(
             name="list_priors",
-            description="List the reference ids of available prior-context files.",
+            description="List the manifest reference ids of available prior-context files.",
             input_schema={"type": "object", "properties": {}, "required": []},
         ),
         "search_transcript": ToolDefinition(
@@ -142,7 +220,10 @@ def _tool_definitions(allowed: frozenset[str]) -> list[ToolDefinition]:
             description="Search the transcript for a keyword and return matching line ranges.",
             input_schema={
                 "type": "object",
-                "properties": {"query": {"type": "string"}},
+                "properties": {
+                    "query": {"type": "string"},
+                    "max_results": {"type": "integer", "default": 10},
+                },
                 "required": ["query"],
             },
         ),
@@ -172,11 +253,14 @@ def _tool_definitions(allowed: frozenset[str]) -> list[ToolDefinition]:
                     "category": {"type": "string"},
                     "message": {"type": "string"},
                 },
-                "required": ["category", "message"],
+                "required": ["category"],
             },
         ),
     }
-    return [definitions[name] for name in allowed if name in definitions]
+    return sorted(
+        (definitions[name] for name in allowed if name in definitions),
+        key=lambda d: d.name,
+    )
 
 
 def _proxy_base_url(network: frozenset[NetworkDestination]) -> str:
@@ -207,21 +291,35 @@ class TypedToolRuntime:
         self.max_turns = max_turns
 
     def _transcript_path(self, job: RuntimeJob) -> Path | None:
-        """Locate the single transcript file in the read-only input workspace."""
+        """Return the manifest-authorized transcript path inside the input workspace."""
         input_dir = Path(job.input_workspace)
         if not input_dir.exists():
             return None
-        candidates = [p for p in input_dir.iterdir() if p.is_file() and p.suffix in {".txt", ".md", ".vtt", ".srt"}]
-        # The first text-like file is the transcript; all others are prior context.
-        return candidates[0] if candidates else None
+        ref = job.input_manifest.transcript_ref
+        candidate = input_dir / ref
+        try:
+            candidate.relative_to(input_dir)
+        except ValueError:
+            return None
+        if candidate.is_file():
+            return candidate
+        return None
 
     def _prior_paths(self, job: RuntimeJob) -> list[Path]:
-        """Locate prior-context files in the read-only input workspace."""
+        """Return the manifest-authorized prior-context files, in sorted order."""
         input_dir = Path(job.input_workspace)
         if not input_dir.exists():
             return []
-        transcript = self._transcript_path(job)
-        return [p for p in input_dir.iterdir() if p.is_file() and p != transcript]
+        paths: list[Path] = []
+        for ref in sorted(job.input_manifest.prior_context_refs):
+            candidate = input_dir / ref
+            try:
+                candidate.relative_to(input_dir)
+            except ValueError:
+                continue
+            if candidate.is_file():
+                paths.append(candidate)
+        return paths
 
     def _system_prompt(self, job: RuntimeJob) -> str:
         return (
@@ -245,9 +343,6 @@ class TypedToolRuntime:
         """Run the manual typed-tool loop until the output is complete or the job expires."""
         if cancellation.is_cancelled():
             return _failure("cancelled", "Cancelled before execution started")
-
-        if not job.requested_model:
-            return _failure("input_error", "requested_model must be specified by the worker")
 
         transcript_path = self._transcript_path(job)
         if transcript_path is None:
@@ -282,14 +377,20 @@ class TypedToolRuntime:
 
         total_input = 0
         total_output = 0
-        model_name: str | None = job.requested_model
-        failure: RedactedFailure | None = None
+        total_cache_creation = 0
+        total_cache_read = 0
+        model_name: str = job.requested_model
+        output_written = False
 
         for _turn in range(self.max_turns):
             if cancellation.is_cancelled():
                 return _failure("cancelled", "Cancelled during agent loop")
-            if datetime.now(timezone.utc) > job.execution_deadline:
+
+            now = datetime.now(timezone.utc)
+            if now >= job.execution_deadline:
                 return _failure("timeout", "Execution deadline expired")
+
+            remaining = (job.execution_deadline - now).total_seconds()
 
             request = MessageRequest(
                 model=job.requested_model,
@@ -297,42 +398,70 @@ class TypedToolRuntime:
                 messages=messages,
                 tools=tools,
             )
-            response = await _cancellable_await(_call_proxy(client, request), cancellation)
+            try:
+                response = await _cancellable_await(
+                    _call_proxy(client, request),
+                    cancellation,
+                    timeout=remaining,
+                )
+            except Exception as exc:
+                return _failure("model_error", f"Model request failed: {exc.__class__.__name__}")
+
             if isinstance(response, RuntimeResult):
                 return response
+
             model_name = response.model
             total_input += response.usage.input_tokens
             total_output += response.usage.output_tokens
+            if response.usage.cache_creation_input_tokens:
+                total_cache_creation += response.usage.cache_creation_input_tokens
+            if response.usage.cache_read_input_tokens:
+                total_cache_read += response.usage.cache_read_input_tokens
 
-            assistant_content: list[MessageContent] = []
-            tool_use_blocks: list[ToolUseBlock] = []
-            for block in response.content:
-                assistant_content.append(block)
-                if isinstance(block, ToolUseBlock):
-                    tool_use_blocks.append(block)
-
-            messages.append(Message(role="assistant", content=assistant_content))
+            tool_use_blocks = [block for block in response.content if isinstance(block, ToolUseBlock)]
 
             if not tool_use_blocks:
-                break
+                terminal = response.stop_reason or "end_turn"
+                if terminal in {"end_turn", "stop_sequence"}:
+                    break
+                return _failure("model_error", f"Model stopped with {terminal}")
 
-            results: list[MessageContent] = []
+            messages.append(Message(role="assistant", content=list(response.content)))
+
+            results: list[ContentBlock] = []
+            finished = False
             for tool in tool_use_blocks:
-                result = _run_tool(tool, job, output_dir)
+                if tool.name not in allowed_tools:
+                    return _failure("forbidden_tool", f"Tool '{tool.name}' is not in the job allowlist")
+
+                result = _run_tool(tool, job, output_dir, transcript_text)
                 if isinstance(result, RedactedFailure):
-                    failure = result
-                results.append(
-                    ToolResultBlock(tool_use_id=tool.id, content=result if isinstance(result, str) else "failure")
-                )
+                    return _failure(result.category, result.message)
+
+                results.append(ToolResultBlock(tool_use_id=tool.id, content=result))
+
+                if tool.name == "write_output":
+                    output_written = True
+                if tool.name == "finish":
+                    finished = True
+
             messages.append(Message(role="user", content=results))
 
-            if failure:
-                return _failure(failure.category, failure.message)
-
-            if _stop_reason(response, tool_use_blocks):
+            if finished:
                 break
 
-        return await _collect_result(output_dir, job, model_name, total_input, total_output)
+        if not output_written:
+            return _failure("output_error", "No output was written before the loop ended")
+
+        return await _collect_result(
+            output_dir,
+            job,
+            model_name,
+            total_input,
+            total_output,
+            total_cache_creation,
+            total_cache_read,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -353,20 +482,40 @@ def _default_client(base_url: str) -> httpx.AsyncClient:
     )
 
 
-async def _cancellable_await(coro, cancellation: CancellationToken) -> Any:
-    """Race a coroutine against cancellation so a blocked request can be interrupted."""
+async def _cancellable_await(
+    coro,
+    cancellation: CancellationToken,
+    timeout: float | None = None,
+) -> Any:
+    """Race a coroutine against cancellation and an optional execution deadline."""
     request_task = asyncio.create_task(coro)
     cancel_task = asyncio.create_task(cancellation.wait())
-    done, pending = await asyncio.wait({request_task, cancel_task}, return_when=asyncio.FIRST_COMPLETED)
+    tasks: set[asyncio.Task] = {request_task, cancel_task}
+    deadline_task: asyncio.Task | None = None
+
+    if timeout is not None and timeout > 0:
+        deadline_task = asyncio.create_task(asyncio.sleep(timeout))
+        tasks.add(deadline_task)
+
+    done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+
     for p in pending:
         p.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await p
+
+    if deadline_task is not None and deadline_task in done:
+        request_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await request_task
+        return _failure("timeout", "Execution deadline reached during model request")
+
     if cancel_task in done:
         request_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await request_task
         return _failure("cancelled", "Model request cancelled")
+
     return request_task.result()
 
 
@@ -377,49 +526,101 @@ async def _call_proxy(client: httpx.AsyncClient, request: MessageRequest) -> Mes
     return MessageResponse(**response.json())
 
 
-def _run_tool(tool: ToolUseBlock, job: RuntimeJob, output_dir: Path) -> str | RedactedFailure:
-    """Execute one typed tool in the sandbox. Disabled tools and unknown tools fail."""
-    if tool.name not in job.allowlist.tools:
-        return RedactedFailure(category="forbidden_tool", message=f"Tool '{tool.name}' is not in the job allowlist")
+def _run_tool(
+    tool: ToolUseBlock,
+    job: RuntimeJob,
+    output_dir: Path,
+    transcript_text: str,
+) -> str | RedactedFailure:
+    """Execute one typed tool in the sandbox."""
+
+    def _parse(cls, data: dict[str, Any]) -> Any:
+        try:
+            return cls.model_validate(data)
+        except ValidationError as exc:
+            return RedactedFailure(
+                category="tool_input_error",
+                message=f"Invalid input for tool '{tool.name}': {exc.__class__.__name__}",
+            )
+
+    input_dir = Path(job.input_workspace)
 
     if tool.name == "read_transcript":
-        return "Transcript loaded from context"
+        _parse(EmptyInput, tool.input)
+        return transcript_text[:500_000]
+
+    if tool.name == "read_prior_context":
+        args = _parse(ReadPriorContextInput, tool.input)
+        if isinstance(args, RedactedFailure):
+            return args
+        ref = args.ref
+        if ref not in job.input_manifest.prior_context_refs:
+            return RedactedFailure(category="input_error", message=f"Prior context ref '{ref}' is not in the manifest")
+        prior_path = input_dir / ref
+        try:
+            prior_path.relative_to(input_dir)
+        except ValueError:
+            return RedactedFailure(category="input_error", message=f"Invalid prior context ref '{ref}'")
+        if not prior_path.is_file():
+            return RedactedFailure(category="input_error", message=f"Prior context file '{ref}' not found")
+        return prior_path.read_text(encoding="utf-8")[:100_000]
+
+    if tool.name == "list_priors":
+        _parse(EmptyInput, tool.input)
+        return json.dumps([{"ref": ref, "index": i} for i, ref in enumerate(sorted(job.input_manifest.prior_context_refs))])
+
+    if tool.name == "search_transcript":
+        args = _parse(SearchTranscriptInput, tool.input)
+        if isinstance(args, RedactedFailure):
+            return args
+        query = args.query.lower()
+        matches: list[str] = []
+        for i, line in enumerate(transcript_text.splitlines(), start=1):
+            if query in line.lower():
+                matches.append(f"Line {i}: {line.strip()[:200]}")
+            if len(matches) >= args.max_results:
+                break
+        return "\n".join(matches) if matches else f"No matches for query: {args.query}"
 
     if tool.name == "write_output":
-        markdown = tool.input.get("markdown", "")
-        sidecar = tool.input.get("sidecar", {})
-        (output_dir / "output.md").write_text(markdown, encoding="utf-8")
-        (output_dir / "sidecar.json").write_text(json.dumps(sidecar, indent=2), encoding="utf-8")
+        args = _parse(WriteOutputInput, tool.input)
+        if isinstance(args, RedactedFailure):
+            return args
+        try:
+            sidecar = SandboxOutputSidecar(**args.sidecar)
+        except ValidationError as exc:
+            return RedactedFailure(
+                category="output_error",
+                message=f"Invalid sidecar: {exc.__class__.__name__}",
+            )
+        (output_dir / "output.md").write_text(args.markdown, encoding="utf-8")
+        (output_dir / "sidecar.json").write_text(sidecar.model_dump_json(indent=2), encoding="utf-8")
         return "Output written"
 
     if tool.name == "finish":
+        _parse(EmptyInput, tool.input)
         return "Finished"
 
     if tool.name == "report_failure":
-        return RedactedFailure(
-            category=tool.input.get("category", "runtime_error"),
-            message=tool.input.get("message", "Unknown failure"),
-        )
+        args = _parse(ReportFailureInput, tool.input)
+        if isinstance(args, RedactedFailure):
+            return args
+        # The model-supplied message is treated as untrusted and is not propagated
+        # verbatim to the job ledger. The category is preserved because it is a
+        # closed failure type; the message is generic.
+        return RedactedFailure(category=args.category, message="Model reported a failure")
 
     return RedactedFailure(category="unknown_tool", message=f"Unhandled tool '{tool.name}'")
-
-
-def _stop_reason(response: MessageResponse, tool_use_blocks: list[ToolUseBlock]) -> bool:
-    """Return True when the assistant signalled completion."""
-    if response.stop_reason in {"end_turn", "stop_sequence"}:
-        return True
-    for block in tool_use_blocks:
-        if block.name == "finish":
-            return True
-    return False
 
 
 async def _collect_result(
     output_dir: Path,
     job: RuntimeJob,
-    model_name: str | None,
+    model_name: str,
     input_tokens: int,
     output_tokens: int,
+    cache_creation_input_tokens: int,
+    cache_read_input_tokens: int,
 ) -> RuntimeResult:
     """Read the candidate output from the sandbox workspace and return a RuntimeResult.
 
@@ -427,6 +628,7 @@ async def _collect_result(
     """
     output_md = output_dir / "output.md"
     sidecar_path = output_dir / "sidecar.json"
+
     if not output_md.exists():
         return _failure("output_error", "No output.md produced by the sandbox runtime")
 
@@ -441,6 +643,8 @@ async def _collect_result(
 
     if sidecar.skill != job.skill:
         return _failure("output_error", f"Sidecar skill {sidecar.skill!r} does not match job skill {job.skill!r}")
+    if sidecar.skill_version != job.skill_version:
+        return _failure("output_error", f"Sidecar skill_version {sidecar.skill_version!r} does not match job skill_version {job.skill_version!r}")
     if sidecar.mode != job.mode:
         return _failure("output_error", f"Sidecar mode {sidecar.mode!r} does not match job mode {job.mode!r}")
 
@@ -449,8 +653,14 @@ async def _collect_result(
         output_artifact=markdown,
         sidecar=sidecar,
         execution_metadata=ExecutionMetadata(
+            runtime_version=job.requested_runtime_version,
             model=model_name,
-            token_usage=TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens),
+            token_usage=TokenUsage(
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=None,
+            ),
+            cost=None,
         ),
     )
 

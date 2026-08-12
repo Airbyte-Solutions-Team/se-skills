@@ -34,6 +34,7 @@ def _minimal_manifest() -> InputManifest:
     tid = uuid.uuid4()
     return InputManifest(
         transcript_id=tid,
+        transcript_ref="transcript.txt",
         account_id=uuid.uuid4(),
         org_id=uuid.uuid4(),
     )
@@ -47,6 +48,8 @@ def _minimal_job() -> RuntimeJob:
         account_id=manifest.account_id,
         transcript_id=manifest.transcript_id,
         requester_id=uuid.uuid4(),
+        requested_model="claude-sonnet-4-6",
+        skill_version="1.0",
         input_manifest=manifest,
         execution_deadline=_now(),
     )
@@ -129,6 +132,7 @@ def test_runtime_job_rejects_input_manifest_identity_mismatch() -> None:
             account_id=manifest.account_id,
             transcript_id=uuid.uuid4(),
             requester_id=uuid.uuid4(),
+            requested_model="claude-sonnet-4-6",
             input_manifest=manifest,
             execution_deadline=_now(),
         )
@@ -256,6 +260,11 @@ def test_network_destination_accepts_localhost() -> None:
     assert str(dest) == "http://localhost"
 
 
+def test_network_destination_rejects_unknown_fields() -> None:
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        NetworkDestination(host="api.anthropic.com", port=443, extra_field="x")
+
+
 # ---------------------------------------------------------------------------
 # RuntimeResult validation
 # ---------------------------------------------------------------------------
@@ -281,12 +290,36 @@ def test_runtime_result_output_requires_sidecar() -> None:
 
 def test_runtime_result_rejects_sandbox_supplied_validation_status() -> None:
     # The sandbox must not be able to claim its own output is valid; the worker
-    # owns validation. A RuntimeResult has no validation field.
-    result = RuntimeResult(
-        output_artifact="# Title",
-        sidecar=SandboxOutputSidecar(skill="post-call"),
-    )
-    assert not hasattr(result, "validation")
+    # owns validation. A RuntimeResult has no validation field and is closed.
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        RuntimeResult(
+            output_artifact="# Title",
+            sidecar=SandboxOutputSidecar(skill="post-call"),
+            validation_status="valid",
+        )
+
+
+def test_sandbox_output_sidecar_rejects_validation_fields() -> None:
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        SandboxOutputSidecar(
+            skill="post-call",
+            validation_status="valid",
+            validation_errors=[],
+        )
+
+
+def test_runtime_job_rejects_missing_requested_model() -> None:
+    manifest = _minimal_manifest()
+    with pytest.raises(ValidationError, match="requested_model"):
+        RuntimeJob(
+            job_id=uuid.uuid4(),
+            org_id=manifest.org_id,
+            account_id=manifest.account_id,
+            transcript_id=manifest.transcript_id,
+            requester_id=uuid.uuid4(),
+            input_manifest=manifest,
+            execution_deadline=_now(),
+        )
 
 
 # ---------------------------------------------------------------------------

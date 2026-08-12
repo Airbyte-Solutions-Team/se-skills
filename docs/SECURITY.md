@@ -76,10 +76,11 @@
 ## Runtime contract and output validation (Slice 5A)
 
 - The `SkillRuntime` protocol in `webapp/hosted/runtime_contract.py` is provider-neutral. A durable job carries only stable identifiers; transcript bodies, bearer tokens, signed URLs, DB credentials, Storage credentials, and arbitrary browser-supplied paths are never passed through the job payload.
-- `Allowlist` rejects generic tools such as `Bash`, `Shell`, `Exec`, `Git`, `Browser`, `Chrome`, `Http`, `McpDiscover`, and `BypassPermissions` at contract construction time.
-- `InputManifest` carries only read-only references to the transcript and prior context; the worker materializes these into the sandbox after authorization.
-- `RuntimeJob` carries an immutable execution deadline and a cancellation predicate; the worker enforces both and terminates the sandbox when either fires.
-- `RuntimeResult` separates validated output artifacts from categorized, redacted failures.
+- `Allowlist` rejects generic tools such as `Bash`, `Shell`, `Exec`, `Git`, `Browser`, `Chrome`, `Http`, `McpDiscover`, and `BypassPermissions` at contract construction time. Each tool input is validated against a strict Pydantic model at dispatch.
+- `InputManifest` carries an explicit `transcript_ref` and a closed set of `prior_context_refs`; the runtime resolves only those filenames in the read-only input workspace and never reads unlisted files.
+- `RuntimeJob` requires `requested_model` at construction, carries an immutable execution deadline, and receives a `CancellationToken`; the harness races every in-flight model request against both cancellation and the deadline.
+- `NetworkDestination` is a closed Pydantic model (`extra="forbid"`) that accepts only `http`/`https` hostnames.
+- `RuntimeResult` separates validated output artifacts from categorized, redacted failures. The sandbox `SandboxOutputSidecar` has no validation fields and cannot assert a validation status.
 - `output_schema.parse_output` validates the generated Markdown and sidecar deterministically, without an LLM. For `post-call`, it requires a title, date, At a Glance decision fields, Key Takeaways, Action Items, Next Step, Source Coverage with concrete read/total counts, and rejects unfilled template placeholders. Conditional sections such as Sources & Destinations, Technical Notes, MEDDPICC Quick Pass, and Coaching Observations are not required when their triggering evidence is absent.
 - Only the worker persists validated artifacts to Storage and the `outputs` row; the sandbox has no direct access to either.
 
