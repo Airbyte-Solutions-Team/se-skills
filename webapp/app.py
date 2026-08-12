@@ -221,6 +221,12 @@ async def _lifespan(app: FastAPI):
     user_pool = getattr(app.state, "hosted_user_pool", None)
     if user_pool:
         await user_pool.close()
+    storage_backend = getattr(app.state, "storage_backend", None)
+    if storage_backend is not None:
+        try:
+            await storage_backend.close()
+        except Exception as exc:
+            logger.warning("Error closing storage backend: %s", exc)
 
 
 def create_app() -> FastAPI:

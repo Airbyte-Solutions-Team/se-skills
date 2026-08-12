@@ -34,7 +34,6 @@ HOSTED_CONTEXT_SECRET = os.environ.get("HOSTED_CONTEXT_SECRET", "")
 BETA_ALLOWED_EMAILS = {e.strip().lower() for e in (os.environ.get("BETA_ALLOWED_EMAILS") or "").split(",") if e.strip()}
 BETA_ALLOW_AIRBYTE_DOMAIN = (os.environ.get("BETA_ALLOW_AIRBYTE_DOMAIN") or "").lower() in ("1", "true", "yes")
 
-SUPABASE_STORAGE_BUCKET = os.environ.get("SUPABASE_STORAGE_BUCKET", "transcripts")
 SUPABASE_STORAGE_ENDPOINT = os.environ.get("SUPABASE_STORAGE_ENDPOINT", "")
 
 _TRANSCRIPT_MAX_BYTES_STR = os.environ.get("TRANSCRIPT_MAX_BYTES", "10485760")

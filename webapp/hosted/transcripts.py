@@ -1,21 +1,22 @@
 """Organization-scoped transcript upload/list/download/delete APIs."""
 from __future__ import annotations
 
+import codecs
 import logging
 import re
 import uuid
-from io import BytesIO
-from typing import Annotated
+from collections.abc import AsyncGenerator, AsyncIterable
+from typing import Annotated, Any
 
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
 
-logger = logging.getLogger(__name__)
-
 from . import config, models, storage
 from .auth import get_token_from_request, require_org, tenant_connection
 from .models import OrgContext, TranscriptList, TranscriptOut
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/hosted", tags=["hosted"])
 
@@ -27,10 +28,79 @@ _EXTENSION_CONTENT_TYPES: dict[str, str] = {
     ".srt": "text/srt",
 }
 
+# HTML/XML/executable signatures that are not allowed even when hidden behind an
+# accepted file extension.
+_HTML_SIGS = (
+    b"<!doctype html",
+    b"<html",
+    b"<head",
+    b"<body",
+    b"<script",
+    b"<style",
+    b"<svg",
+    b"<iframe",
+    b"<object",
+    b"<embed",
+    b"<meta",
+    b"<title",
+    b"<?php",
+    b"<%",
+)
+
+_MAGIC_SIGS = (
+    (b"PK\x03\x04", "ZIP"),
+    (b"PK\x05\x06", "ZIP"),
+    (b"PK\x07\x08", "ZIP"),
+    (b"Rar!", "RAR"),
+    (b"7z\xbc\xaf'\x1c", "7z"),
+    (b"\x7fELF", "ELF"),
+    (b"MZ", "PE"),
+    (b"\xcf\xfa\xed\xfe", "Mach-O"),
+    (b"\xca\xfe\xba\xbe", "Mach-O"),
+    (b"\xfe\xed\xfa\xcf", "Mach-O"),
+    (b"%PDF", "PDF"),
+    (b"\x1f\x8b", "gzip"),
+    (b"BZ", "bzip2"),
+    (b"\xfd7zXZ", "xz"),
+    (b"ustar", "tar"),
+)
+
+_MAX_SAFE_FILENAME_LEN = 200
+
 
 class TranscriptValidationError(HTTPException):
     def __init__(self, detail: str) -> None:
         super().__init__(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+
+class SizedAsyncIterator(AsyncIterable[bytes]):
+    """Wrap an async generator and track the total number of bytes yielded."""
+
+    def __init__(self, agen: AsyncGenerator[bytes, Any]) -> None:
+        self._agen = agen
+        self.total = 0
+        self._done = False
+
+    def __aiter__(self) -> "SizedAsyncIterator":
+        return self
+
+    async def __anext__(self) -> bytes:
+        if self._done:
+            raise StopAsyncIteration
+        try:
+            chunk = await self._agen.__anext__()
+        except StopAsyncIteration:
+            self._done = True
+            raise
+        self.total += len(chunk)
+        return chunk
+
+    async def aclose(self) -> None:
+        if not self._done and hasattr(self._agen, "aclose"):
+            try:
+                await self._agen.aclose()
+            except Exception:
+                pass
 
 
 def _safe_filename(name: str) -> str:
@@ -47,9 +117,30 @@ def _safe_filename(name: str) -> str:
     name = re.sub(r"[^A-Za-z0-9 ._-]", "", name).strip(". ")
     if not name:
         name = "transcript"
-    if len(name) > 200:
-        name = name[:200].rsplit(".", 1)[0] if "." in name[:200] else name[:200]
-    return name or "transcript"
+
+    if "." in name:
+        base, ext_part = name.rsplit(".", 1)
+        ext_part = ext_part.strip()
+        if not ext_part:
+            return name[:_MAX_SAFE_FILENAME_LEN] or "transcript"
+        max_base = _MAX_SAFE_FILENAME_LEN - len(ext_part) - 1
+        if max_base <= 0:
+            # Extension is too long; truncate the whole name to a safe fallback.
+            return name[:_MAX_SAFE_FILENAME_LEN] or "transcript"
+        base = base[:max_base].strip()
+        if not base:
+            base = "transcript"
+        return f"{base}.{ext_part}"
+
+    if len(name) > _MAX_SAFE_FILENAME_LEN:
+        name = name[:_MAX_SAFE_FILENAME_LEN]
+    return name
+
+
+def _file_extension(filename: str) -> str:
+    if "." not in filename:
+        return ""
+    return filename[filename.rfind("."):].lower()
 
 
 def _content_type_for(filename: str) -> str:
@@ -61,42 +152,96 @@ def _content_type_for(filename: str) -> str:
     raise TranscriptValidationError("Unsupported file type")
 
 
-def _read_and_validate(file: UploadFile) -> tuple[bytes, str]:
-    """Read the upload, enforce size, type, and content safety rules.
+def _is_disallowed_content(first_chunk: bytes) -> bool:
+    """Detect HTML/executable/binary content hidden behind an allowed extension."""
+    if first_chunk.startswith(b"\xef\xbb\xbf"):
+        first_chunk = first_chunk[3:]
 
-    Returns the validated bytes and the safe original filename.
-    """
-    original = _safe_filename(file.filename or "")
-    suffix = _file_extension(original)
-    if suffix not in _ALLOWED_EXTENSIONS:
-        raise TranscriptValidationError("Only .txt, .md, .vtt, and .srt files are allowed")
+    # Magic bytes are checked at the very start of the file.
+    for magic, _ in _MAGIC_SIGS:
+        if first_chunk.startswith(magic):
+            return True
 
-    max_bytes = config.TRANSCRIPT_MAX_BYTES
-    buffer = BytesIO()
-    total = 0
-    while chunk := file.file.read(65536):
-        total += len(chunk)
-        if total > max_bytes:
-            raise TranscriptValidationError(f"File exceeds {max_bytes} bytes")
-        buffer.write(chunk)
+    # HTML-like signatures are only rejected when they appear at the very start
+    # (after whitespace), so a transcript that merely mentions a tag is not blocked.
+    leading = first_chunk.lstrip()[:128].lower()
+    if leading and any(leading.startswith(sig) for sig in _HTML_SIGS):
+        return True
 
-    data = buffer.getvalue()
-    if not data:
-        raise TranscriptValidationError("File is empty")
-    if b"\x00" in data:
+    return False
+
+
+def _validate_chunk(
+    chunk: bytes,
+    total: int,
+    max_bytes: int,
+    decoder: codecs.IncrementalDecoder,
+    is_first: bool,
+) -> int:
+    """Validate a single chunk and return the new running total."""
+    total += len(chunk)
+    if total > max_bytes:
+        raise TranscriptValidationError(f"File exceeds {max_bytes} bytes")
+    if b"\x00" in chunk:
         raise TranscriptValidationError("File contains NUL bytes")
     try:
-        data.decode("utf-8")
+        decoder.decode(chunk, final=False)
+    except UnicodeDecodeError as exc:
+        raise TranscriptValidationError("File is not valid UTF-8") from exc
+    if is_first and _is_disallowed_content(chunk):
+        raise TranscriptValidationError("File content is not an allowed transcript format")
+    return total
+
+
+async def _validated_stream(
+    file: UploadFile, first_chunk: bytes
+) -> AsyncGenerator[bytes, None]:
+    """Yield validated chunks and enforce size, UTF-8, NUL, and content rules."""
+    decoder = codecs.getincrementaldecoder("utf-8")()
+    max_bytes = config.TRANSCRIPT_MAX_BYTES
+    total = 0
+
+    total = _validate_chunk(first_chunk, total, max_bytes, decoder, is_first=True)
+    yield first_chunk
+
+    while True:
+        chunk = await file.read(8192)
+        if not chunk:
+            break
+        total = _validate_chunk(chunk, total, max_bytes, decoder, is_first=False)
+        yield chunk
+
+    try:
+        decoder.decode(b"", final=True)
     except UnicodeDecodeError as exc:
         raise TranscriptValidationError("File is not valid UTF-8") from exc
 
-    return data, original
 
+async def _read_and_validate(
+    file: UploadFile,
+) -> tuple[SizedAsyncIterator, str, str]:
+    """Validate the upload and return a sized byte iterator plus safe metadata."""
+    raw = file.filename or ""
+    if not raw:
+        raise TranscriptValidationError("Filename is required")
+    ext = _file_extension(raw)
+    if ext not in _ALLOWED_EXTENSIONS:
+        raise TranscriptValidationError("Only .txt, .md, .vtt, and .srt files are allowed")
 
-def _file_extension(filename: str) -> str:
-    if "." not in filename:
-        return ""
-    return filename[filename.rfind("."):].lower()
+    first_chunk = await file.read(8192)
+    if not first_chunk:
+        raise TranscriptValidationError("File is empty")
+
+    # Eagerly validate the first chunk so malformed/unsafe content is rejected
+    # before any bytes are streamed to Storage.
+    decoder = codecs.getincrementaldecoder("utf-8")()
+    _validate_chunk(first_chunk, 0, config.TRANSCRIPT_MAX_BYTES, decoder, is_first=True)
+
+    original_filename = _safe_filename(raw)
+    content_type = _content_type_for(original_filename)
+    stream = _validated_stream(file, first_chunk)
+    sized = SizedAsyncIterator(stream)
+    return sized, original_filename, content_type
 
 
 def _storage_path(
@@ -181,17 +326,37 @@ async def upload_account_transcript(
     file: UploadFile,
     org: Annotated[OrgContext, Depends(require_org)],
 ) -> TranscriptOut:
-    data, original_filename = _read_and_validate(file)
-    content_type = _content_type_for(original_filename)
+    data, original_filename, content_type = await _read_and_validate(file)
     transcript_id = uuid.uuid4()
     storage_path = _storage_path(org.org_id, account_id, None, transcript_id)
     token = get_token_from_request(request)
-
     backend = request.app.state.storage_backend
-    async with tenant_connection(request, org) as conn:
-        await _require_account_in_org(conn, account_id, org.org_id)
-        try:
-            await backend.upload(token, storage_path, data, content_type)
+
+    # Stream the object to private Storage first. The object is not listable
+    # until the metadata row is committed afterwards.
+    try:
+        await backend.upload(token, storage_path, data, content_type)
+    except storage.StorageAuthError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Storage access denied",
+        ) from exc
+    except storage.StorageError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Storage upload failed",
+        ) from exc
+    except Exception as exc:
+        logger.warning("Unexpected storage upload error for path %s: %s", storage_path, type(exc).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Upload failed",
+        ) from exc
+
+    size_bytes = data.total
+    try:
+        async with tenant_connection(request, org) as conn:
+            await _require_account_in_org(conn, account_id, org.org_id)
             row = await conn.fetchrow(
                 """
                 INSERT INTO public.transcripts
@@ -206,21 +371,23 @@ async def upload_account_transcript(
                 account_id,
                 storage_path,
                 original_filename,
-                len(data),
+                size_bytes,
                 content_type,
                 org.user.id,
             )
-        except Exception as upload_or_insert_exc:
-            # Compensating cleanup: the object is not listable until metadata
-            # creation succeeds, so remove the orphaned object on failure.
-            try:
-                await backend.delete(token, storage_path)
-            except Exception as cleanup_exc:
-                logger.warning("Failed to clean up orphaned storage object %s: %s", storage_path, cleanup_exc)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Upload failed",
-            ) from upload_or_insert_exc
+    except HTTPException:
+        raise
+    except Exception as insert_exc:
+        # Metadata creation or transaction finalization failed. The object is
+        # not listable, so attempt to clean up the orphaned Storage object.
+        try:
+            await backend.delete(token, storage_path)
+        except Exception as cleanup_exc:
+            logger.warning("Failed to clean up orphaned storage object %s: %s", storage_path, cleanup_exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Upload failed",
+        ) from insert_exc
 
     return _transcript_from_record(row)
 
@@ -280,17 +447,35 @@ async def upload_opportunity_transcript(
     file: UploadFile,
     org: Annotated[OrgContext, Depends(require_org)],
 ) -> TranscriptOut:
-    data, original_filename = _read_and_validate(file)
-    content_type = _content_type_for(original_filename)
+    data, original_filename, content_type = await _read_and_validate(file)
     transcript_id = uuid.uuid4()
     storage_path = _storage_path(org.org_id, account_id, opportunity_id, transcript_id)
     token = get_token_from_request(request)
-
     backend = request.app.state.storage_backend
-    async with tenant_connection(request, org) as conn:
-        await _require_opportunity_in_account(conn, opportunity_id, account_id, org.org_id)
-        try:
-            await backend.upload(token, storage_path, data, content_type)
+
+    try:
+        await backend.upload(token, storage_path, data, content_type)
+    except storage.StorageAuthError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Storage access denied",
+        ) from exc
+    except storage.StorageError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Storage upload failed",
+        ) from exc
+    except Exception as exc:
+        logger.warning("Unexpected storage upload error for path %s: %s", storage_path, type(exc).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Upload failed",
+        ) from exc
+
+    size_bytes = data.total
+    try:
+        async with tenant_connection(request, org) as conn:
+            await _require_opportunity_in_account(conn, opportunity_id, account_id, org.org_id)
             row = await conn.fetchrow(
                 """
                 INSERT INTO public.transcripts
@@ -306,19 +491,21 @@ async def upload_opportunity_transcript(
                 opportunity_id,
                 storage_path,
                 original_filename,
-                len(data),
+                size_bytes,
                 content_type,
                 org.user.id,
             )
-        except Exception as upload_or_insert_exc:
-            try:
-                await backend.delete(token, storage_path)
-            except Exception as cleanup_exc:
-                logger.warning("Failed to clean up orphaned storage object %s: %s", storage_path, cleanup_exc)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Upload failed",
-            ) from upload_or_insert_exc
+    except HTTPException:
+        raise
+    except Exception as insert_exc:
+        try:
+            await backend.delete(token, storage_path)
+        except Exception as cleanup_exc:
+            logger.warning("Failed to clean up orphaned storage object %s: %s", storage_path, cleanup_exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Upload failed",
+        ) from insert_exc
 
     return _transcript_from_record(row)
 
@@ -406,7 +593,7 @@ async def _download_transcript(
     token = get_token_from_request(request)
     backend = request.app.state.storage_backend
     try:
-        data, _ = await backend.download(token, row["storage_path"])
+        data = await backend.download(token, row["storage_path"])
     except storage.ObjectNotFound as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -417,11 +604,16 @@ async def _download_transcript(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Storage access denied",
         ) from exc
+    except storage.StorageError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not download transcript from storage",
+        ) from exc
 
     filename = _safe_filename(row["original_filename"])
     content_type = row["mime_type"]
     return StreamingResponse(
-        BytesIO(data),
+        data,
         media_type=content_type,
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
@@ -438,6 +630,8 @@ async def _delete_transcript(
     org: OrgContext,
 ) -> None:
     token = get_token_from_request(request)
+    backend = request.app.state.storage_backend
+
     async with tenant_connection(request, org) as conn:
         if opportunity_id is not None:
             await _require_opportunity_in_account(conn, opportunity_id, account_id, org.org_id)
@@ -446,9 +640,8 @@ async def _delete_transcript(
         row = await _load_transcript(conn, transcript_id, account_id, opportunity_id, org.org_id)
         storage_path = row["storage_path"]
 
-    # Delete the storage object first. If this fails, metadata is unchanged and
-    # the transcript remains listable; no partial-success state.
-    backend = request.app.state.storage_backend
+    # Delete the private Storage object first. If this fails, the metadata row
+    # is unchanged and the transcript remains listable.
     try:
         await backend.delete(token, storage_path)
     except storage.ObjectNotFound:
@@ -465,12 +658,18 @@ async def _delete_transcript(
             detail="Could not delete transcript from storage",
         ) from exc
 
-    # Then delete metadata. If this fails, the storage object is gone and an
-    # operator or retry path is needed; the API reports failure rather than
-    # claiming success.
-    async with tenant_connection(request, org) as conn:
-        await conn.execute(
-            "DELETE FROM public.transcripts WHERE id = $1 AND org_id = $2",
-            transcript_id,
-            org.org_id,
-        )
+    # Then delete the metadata row. If this transaction fails, the Storage object
+    # is already gone; the API reports failure rather than claiming success.
+    try:
+        async with tenant_connection(request, org) as conn:
+            await conn.execute(
+                "DELETE FROM public.transcripts WHERE id = $1 AND org_id = $2",
+                transcript_id,
+                org.org_id,
+            )
+    except Exception as delete_exc:
+        logger.warning("Failed to delete transcript metadata %s: %s", transcript_id, delete_exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Delete failed",
+        ) from delete_exc

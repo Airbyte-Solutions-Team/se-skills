@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import AsyncGenerator, AsyncIterable
 from typing import Any
 
 import asyncpg
@@ -21,6 +22,11 @@ import httpx
 from . import auth, config
 
 logger = logging.getLogger(__name__)
+
+# Supabase Storage bucket used for transcript objects. This is fixed in the
+# migration policies; runtime configuration of the bucket name is not supported
+# because the RLS policies are static SQL.
+BUCKET = "transcripts"
 
 
 class StorageError(Exception):
@@ -38,12 +44,14 @@ class StorageAuthError(StorageError):
 class StorageBackend:
     """Abstract storage backend for transcript bytes."""
 
-    async def upload(self, token: str, path: str, data: bytes, content_type: str) -> None:
-        """Upload an object at *path* with the given bytes and content type."""
+    async def upload(
+        self, token: str, path: str, data: AsyncIterable[bytes], content_type: str
+    ) -> None:
+        """Upload an object at *path* with the given byte stream and content type."""
         raise NotImplementedError
 
-    async def download(self, token: str, path: str) -> tuple[bytes, str]:
-        """Return the object bytes and its stored content type."""
+    async def download(self, token: str, path: str) -> AsyncGenerator[bytes, None]:
+        """Return an async iterator over the object's bytes."""
         raise NotImplementedError
 
     async def delete(self, token: str, path: str) -> None:
@@ -53,6 +61,10 @@ class StorageBackend:
     async def list_prefix(self, token: str, prefix: str) -> list[str]:
         """Return object paths under *prefix*."""
         raise NotImplementedError
+
+    async def close(self) -> None:
+        """Release backend resources."""
+        pass
 
 
 class SupabaseStorageBackend(StorageBackend):
@@ -68,12 +80,9 @@ class SupabaseStorageBackend(StorageBackend):
         base = (config.SUPABASE_STORAGE_ENDPOINT or config.SUPABASE_URL or "").rstrip("/")
         if not base:
             raise RuntimeError("SUPABASE_URL or SUPABASE_STORAGE_ENDPOINT is required for Storage")
-        if not config.SUPABASE_STORAGE_BUCKET:
-            raise RuntimeError("SUPABASE_STORAGE_BUCKET is required")
         if not config.SUPABASE_ANON_KEY:
             raise RuntimeError("SUPABASE_ANON_KEY is required for Storage")
         self.base_url = base
-        self.bucket = config.SUPABASE_STORAGE_BUCKET
         self.anon_key = config.SUPABASE_ANON_KEY
         self.client = httpx.AsyncClient(timeout=30)
 
@@ -83,50 +92,110 @@ class SupabaseStorageBackend(StorageBackend):
             "Authorization": f"Bearer {token}",
         }
 
-    async def upload(self, token: str, path: str, data: bytes, content_type: str) -> None:
-        url = f"{self.base_url}/storage/v1/object/{self.bucket}/{path}"
+    async def upload(
+        self, token: str, path: str, data: AsyncIterable[bytes], content_type: str
+    ) -> None:
+        url = f"{self.base_url}/storage/v1/object/{BUCKET}/{path}"
         headers = {
             **self._headers(token),
             "Content-Type": content_type,
             "x-upsert": "false",
         }
-        response = await self.client.post(url, content=data, headers=headers)
+        try:
+            response = await self.client.post(url, content=data, headers=headers)
+        except httpx.HTTPError as exc:
+            logger.warning("Storage upload request failed for path %s: %s", path, type(exc).__name__)
+            raise StorageError("Storage upload failed") from exc
         if response.status_code == 401:
             raise StorageAuthError("Storage rejected upload")
-        response.raise_for_status()
+        if response.status_code == 403:
+            raise StorageAuthError("Storage access denied")
+        if response.status_code >= 400:
+            logger.warning(
+                "Storage upload failed for path %s: status %s", path, response.status_code
+            )
+            raise StorageError("Storage upload failed")
 
-    async def download(self, token: str, path: str) -> tuple[bytes, str]:
-        url = f"{self.base_url}/storage/v1/object/authenticated/{self.bucket}/{path}"
-        response = await self.client.get(url, headers=self._headers(token))
-        if response.status_code in (401, 403):
+    async def download(self, token: str, path: str) -> AsyncGenerator[bytes, None]:
+        url = f"{self.base_url}/storage/v1/object/authenticated/{BUCKET}/{path}"
+        request = self.client.build_request("GET", url, headers=self._headers(token))
+        try:
+            response = await self.client.send(request, stream=True)
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "Storage download request failed for path %s: %s", path, type(exc).__name__
+            )
+            raise StorageError("Storage download failed") from exc
+
+        if response.status_code == 401:
+            await response.aclose()
             raise StorageAuthError("Storage rejected download")
+        if response.status_code == 403:
+            await response.aclose()
+            raise StorageAuthError("Storage access denied")
         if response.status_code == 404:
+            await response.aclose()
             raise ObjectNotFound("Object not found in storage")
-        response.raise_for_status()
-        content_type = response.headers.get("content-type", "application/octet-stream")
-        return response.content, content_type
+        if response.status_code >= 400:
+            await response.aclose()
+            logger.warning(
+                "Storage download failed for path %s: status %s", path, response.status_code
+            )
+            raise StorageError("Storage download failed")
+
+        async def _stream(resp: httpx.Response) -> AsyncGenerator[bytes, None]:
+            try:
+                async for chunk in resp.aiter_bytes():
+                    yield chunk
+            finally:
+                await resp.aclose()
+
+        return _stream(response)
 
     async def delete(self, token: str, path: str) -> None:
-        url = f"{self.base_url}/storage/v1/object/{self.bucket}/{path}"
-        response = await self.client.delete(url, headers=self._headers(token))
-        if response.status_code in (401, 403):
+        url = f"{self.base_url}/storage/v1/object/{BUCKET}/{path}"
+        try:
+            response = await self.client.delete(url, headers=self._headers(token))
+        except httpx.HTTPError as exc:
+            logger.warning("Storage delete request failed for path %s: %s", path, type(exc).__name__)
+            raise StorageError("Storage delete failed") from exc
+        if response.status_code == 401:
             raise StorageAuthError("Storage rejected deletion")
+        if response.status_code == 403:
+            raise StorageAuthError("Storage access denied")
         if response.status_code == 404:
             raise ObjectNotFound("Object not found in storage")
-        response.raise_for_status()
+        if response.status_code >= 400:
+            logger.warning(
+                "Storage delete failed for path %s: status %s", path, response.status_code
+            )
+            raise StorageError("Storage delete failed")
 
     async def list_prefix(self, token: str, prefix: str) -> list[str]:
-        url = f"{self.base_url}/storage/v1/object/list/{self.bucket}"
-        response = await self.client.post(
-            url,
-            json={"prefix": prefix, "limit": 1000},
-            headers=self._headers(token),
-        )
-        if response.status_code in (401, 403):
+        url = f"{self.base_url}/storage/v1/object/list/{BUCKET}"
+        try:
+            response = await self.client.post(
+                url,
+                json={"prefix": prefix, "limit": 1000},
+                headers=self._headers(token),
+            )
+        except httpx.HTTPError as exc:
+            logger.warning("Storage list request failed for prefix %s: %s", prefix, type(exc).__name__)
+            raise StorageError("Storage list failed") from exc
+        if response.status_code == 401:
             raise StorageAuthError("Storage rejected list")
-        response.raise_for_status()
+        if response.status_code == 403:
+            raise StorageAuthError("Storage access denied")
+        if response.status_code >= 400:
+            logger.warning(
+                "Storage list failed for prefix %s: status %s", prefix, response.status_code
+            )
+            raise StorageError("Storage list failed")
         items: list[dict[str, Any]] = response.json()
         return [item["name"] for item in items if "name" in item]
+
+    async def close(self) -> None:
+        await self.client.aclose()
 
 
 class MemoryStorageBackend(StorageBackend):
@@ -186,16 +255,31 @@ class MemoryStorageBackend(StorageBackend):
         if not await self._is_active_member(verified.user_id, org_id):
             raise StorageAuthError("User is not an active member of this organization")
 
-    async def upload(self, token: str, path: str, data: bytes, content_type: str) -> None:
+    async def upload(
+        self, token: str, path: str, data: AsyncIterable[bytes], content_type: str
+    ) -> None:
         await self._validate(token, path)
-        self.objects[path] = data
+        chunks: list[bytes] = []
+        if isinstance(data, bytes):
+            chunks = [data]
+        else:
+            async for chunk in data:
+                chunks.append(chunk)
+        self.objects[path] = b"".join(chunks)
         self.content_types[path] = content_type
 
-    async def download(self, token: str, path: str) -> tuple[bytes, str]:
+    async def download(self, token: str, path: str) -> AsyncGenerator[bytes, None]:
         await self._validate(token, path)
         if path not in self.objects:
             raise ObjectNotFound("Object not found")
-        return self.objects[path], self.content_types.get(path, "application/octet-stream")
+        data = self.objects[path]
+
+        async def _stream() -> AsyncGenerator[bytes, None]:
+            chunk_size = 4096
+            for i in range(0, len(data), chunk_size):
+                yield data[i : i + chunk_size]
+
+        return _stream()
 
     async def delete(self, token: str, path: str) -> None:
         await self._validate(token, path)

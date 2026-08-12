@@ -95,12 +95,12 @@ Uploaded customer artifacts. The object bytes live in Supabase Storage private b
 
 Constraints:
 - `FOREIGN KEY (account_id, org_id) REFERENCES accounts(id, org_id)`
-- `FOREIGN KEY (opportunity_id, org_id) REFERENCES opportunities(id, org_id)`
-- `uploaded_by` references `public.users`
+- `FOREIGN KEY (opportunity_id, account_id, org_id) REFERENCES opportunities(id, account_id, org_id)`
+- `FOREIGN KEY (uploaded_by, org_id) REFERENCES memberships(user_id, org_id)`
 - `org_id` references `public.organizations`
 - Indexes on `org_id`, `(account_id, org_id)`, `(opportunity_id, org_id)`, and `uploaded_by`
 
-RLS on `org_id` using the same signed tenant-context token as accounts and opportunities. The API streams file contents through FastAPI; the SPA never holds storage credentials. Uploads are validated for size (`TRANSCRIPT_MAX_BYTES`, default 10 MiB), allowed text extensions (`.txt`, `.md`, `.vtt`, `.srt`), valid UTF-8, and no NUL bytes before any object or metadata is created.
+RLS on `org_id` using the same signed tenant-context token as accounts and opportunities. The API streams file contents through FastAPI; the SPA never holds storage credentials. Uploads are validated for size (`TRANSCRIPT_MAX_BYTES`, default 10 MiB), allowed text extensions (`.txt`, `.md`, `.vtt`, `.srt`), valid UTF-8, no NUL bytes, and disallowed HTML/executable/binary signatures before any object or metadata is created.
 
 ### `jobs`
 
