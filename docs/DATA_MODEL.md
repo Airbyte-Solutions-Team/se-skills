@@ -191,6 +191,16 @@ A generated skill output. The original Markdown and sidecar are immutable once w
 
 RLS on `org_id`. The generated content and sidecar must never be overwritten; any correction creates a new `output_versions` row.
 
+**Slice 5B persistence boundary (specified in Slice 5A, implemented in Slice 5B):**
+1. The worker resolves the authorized transcript and approved prior context for the job.
+2. It materializes read-only inputs into a job-scoped sandbox workspace.
+3. The sandbox runtime writes `output.md` and `sidecar.json` to a temporary output area.
+4. The worker reads both files from outside the sandbox and runs `output_schema.parse_output` to validate them.
+5. Only validated artifacts are written to the private org-scoped Storage object at `content_storage_path` and to the `outputs` row.
+6. `complete_job` receives the authoritative `result_output_id`.
+7. If validation fails, the job result is `failure` or `invalid` and no `outputs` row is created; invalid artifacts are distinguishable from execution failures.
+8. Compensating cleanup: if Storage write succeeds but the `outputs` row insert fails, the Storage object is deleted and the job is marked `failure` with a redacted metadata error. If the `outputs` row insert succeeds but Storage fails, the row is rolled back by the transaction and the attempt is requeued or dead-lettered.
+
 ### `reviews`
 
 Review/correction/approval actions on an output. `output_version_id` is null when the action applies to the immutable original generated `outputs` row; it references an `output_versions` row when the action applies to a correction. Approvals always reference a specific reviewed version (original or corrected); corrections create a new `output_versions` row rather than overwriting the original output.

@@ -15,7 +15,7 @@ import logging
 import re
 from itertools import zip_longest
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 1
 
+Mode = Literal["full", "brief"]
+
 
 class SkillOutputSchema(BaseModel):
     """Schema definition for one skill's Markdown output."""
@@ -32,6 +34,14 @@ class SkillOutputSchema(BaseModel):
     skill: str
     required_sections: list[str] = Field(default_factory=list)
     required_at_a_glance_labels: list[str] = Field(default_factory=list)
+    brief_required_sections: list[str] | None = None
+    brief_required_at_a_glance_labels: list[str] | None = None
+    conditional_sections: list[str] = Field(default_factory=list)
+    source_coverage_required: bool = False
+    forbid_placeholders: bool = False
+    strict_at_a_glance: bool = False
+    strict_sections: bool = False
+    strict: bool = False
 
 
 class OutputMetadata(BaseModel):
@@ -40,6 +50,7 @@ class OutputMetadata(BaseModel):
     skill: str
     title: str | None = None
     date: str | None = None
+    mode: str = "full"  # "full" | "brief"
     at_a_glance: dict[str, str] = Field(default_factory=dict)
     sections: dict[str, str] = Field(default_factory=dict)
     required_sections: list[str] = Field(default_factory=list)
@@ -102,6 +113,56 @@ _SKILL_SCHEMAS: dict[str, SkillOutputSchema] = {
         skill="pov-gsheet",
         required_sections=["receipt", "source-coverage"],
         required_at_a_glance_labels=["google-sheet-url", "status"],
+    ),
+    "post-call": SkillOutputSchema(
+        skill="post-call",
+        required_sections=[
+            "key-takeaways",
+            "deal-health-signals",
+            "new-objections-concerns-surfaced",
+            "action-items",
+            "next-step",
+            "source-coverage",
+            "attendees",
+            "coaching-observations",
+        ],
+        required_at_a_glance_labels=[
+            "call-type",
+            "call-date",
+            "attendees",
+            "action-items",
+            "next-step",
+            "deal-assessment-update-needed",
+        ],
+        brief_required_sections=[
+            "key-takeaways",
+            "action-items",
+            "next-step",
+            "source-coverage",
+        ],
+        brief_required_at_a_glance_labels=[
+            "call-type",
+            "call-date",
+            "attendees",
+            "action-items",
+            "next-step",
+            "deal-assessment-update-needed",
+        ],
+        # Conditional sections may be absent; if present, they must be non-empty.
+        # Slice 5B may add transcript-entity triggers (e.g. "Sources & Destinations"
+        # required when the transcript names a system) for now a present heading is
+        # treated as the model's decision to include that conditional section.
+        conditional_sections=[
+            "sources-destinations",
+            "technical-notes",
+            "meddpicc-quick-pass",
+            "open-questions-follow-ups",
+        ],
+        source_coverage_required=True,
+        forbid_placeholders=True,
+        strict_at_a_glance=True,
+        strict_sections=True,
+        strict=True,
     ),
 }
 
@@ -210,6 +271,12 @@ def _extract_sections(text: str) -> dict[str, str]:
     current_lines: list[str] = []
     in_code_fence = False
 
+    def _set_body(key: str, lines: list[str]) -> None:
+        body = "\n".join(lines).strip()
+        # If the same heading appears more than once, keep the first non-empty body.
+        if key not in sections or not sections[key]:
+            sections[key] = body
+
     for line in text.splitlines():
         fence_match = re.match(r"^(```|~~~)", line)
         if fence_match:
@@ -217,7 +284,7 @@ def _extract_sections(text: str) -> dict[str, str]:
 
         if not in_code_fence and line.startswith("## "):
             if current_key is not None:
-                sections[current_key] = "\n".join(current_lines).strip()
+                _set_body(current_key, current_lines)
             current_key = _normalize_heading(line[3:])
             current_lines = []
             continue
@@ -229,10 +296,80 @@ def _extract_sections(text: str) -> dict[str, str]:
             # Glance are captured separately.
             pass
 
-    if current_key is not None and current_key not in sections:
-        sections[current_key] = "\n".join(current_lines).strip()
+    if current_key is not None:
+        _set_body(current_key, current_lines)
 
     return sections
+
+
+# ---------------------------------------------------------------------------
+# Post-call validation helpers
+# ---------------------------------------------------------------------------
+
+# Bracket text that is allowed and does not indicate an unfilled template.
+_PLACEHOLDER_ALLOWED_BRACKETS = frozenset({
+    "stated",
+    "inferred",
+    "x",
+    "x",
+    " ",
+    "",
+})
+
+
+def _is_allowed_bracket_content(content: str) -> bool:
+    """Return True for checkboxes, tags, and callouts rather than placeholders."""
+    content = content.strip()
+    if content.lower() in _PLACEHOLDER_ALLOWED_BRACKETS:
+        return True
+    if content.startswith("!"):
+        # Markdown callouts such as [!verdict], [!risk], [!info].
+        return True
+    if content.isdigit():
+        # Counts such as ==[3]== or [3].
+        return True
+    # Checkbox states.
+    if re.fullmatch(r"[xX ]?", content):
+        return True
+    return False
+
+
+def _find_placeholders(text: str) -> list[str]:
+    """Find bracketed text that looks like an unfilled template placeholder."""
+    placeholders: list[str] = []
+    if not text:
+        return placeholders
+    for match in re.finditer(r"\[([^\]]+)\]", text):
+        inner = match.group(1)
+        if not _is_allowed_bracket_content(inner):
+            placeholders.append(match.group(0))
+    return placeholders
+
+
+def _validate_source_coverage_post_call(body: str) -> list[str]:
+    """Source Coverage for post-call must claim a complete read with N / N lines (N > 0)."""
+    errors: list[str] = []
+    if not body or not body.strip():
+        errors.append("Source Coverage section is empty.")
+        return errors
+    match = re.search(r"(\d+)\s*/\s*(\d+)\s*(?:line|lines|ln|lns)", body, re.IGNORECASE)
+    if not match:
+        errors.append("Source Coverage must report concrete read/total line counts (e.g. '612 / 612 lines').")
+        return errors
+    read_count = int(match.group(1))
+    total_count = int(match.group(2))
+    if total_count <= 0:
+        errors.append("Source Coverage total line count must be greater than 0.")
+    if read_count < total_count:
+        errors.append(f"Source Coverage reports a partial read ({read_count} / {total_count} lines).")
+    elif read_count > total_count:
+        errors.append(f"Source Coverage read count exceeds total ({read_count} / {total_count} lines).")
+    if read_count == total_count and total_count > 0:
+        if "full" not in body.lower() and "complete" not in body.lower():
+            # Encourage an explicit full/complete statement; not a hard failure on
+            # its own if counts are equal, but combined with missing counts it fails.
+            pass
+    return errors
 
 
 # ---------------------------------------------------------------------------
@@ -243,24 +380,16 @@ def parse_output(
     skill: str,
     text: str,
     reference_freshness_at_generation: list[ReferenceFreshness] | None = None,
+    mode: Mode = "full",
 ) -> OutputMetadata:
     """Parse a generated Markdown output and validate it against the skill schema.
 
-    Returns an `OutputMetadata` object with extracted fields, missing required
-    sections, a `valid` flag, and a `validation_status`. The parser is defensive:
-    malformed or non-conforming documents are reported rather than raised.
+    Returns an `OutputMetadata` sidecar with extracted fields, missing required
+    sections, a `valid` flag, and a `validation_status`.
 
-    `validation_status` can be:
-    - `"valid"` — the output follows the current contract and no required
-      sections are missing.
-    - `"invalid"` — the output follows the current contract but is missing
-      one or more required sections (including a missing `**Date:**` line or
-      `Source Coverage`).
-    - `"unvalidated"` — the output does not have enough current-format markers
-      (title, At a Glance, and at least one non-source-coverage required
-      section) for us to confidently validate it. This is used for legacy
-      outputs that predate the current required-section contract so they are not
-      presented as definitively broken.
+    For strict schemas (e.g. `post-call`), every candidate resolves to either
+    `"valid"` or `"invalid"`; `"unvalidated"` is only used for non-strict or
+    unrecognized skill outputs that lack enough current-format markers.
     """
     schema = _SKILL_SCHEMAS.get(skill)
     title = _extract_title(text)
@@ -269,22 +398,46 @@ def parse_output(
     sections = _extract_sections(text)
 
     required: list[str] = list(schema.required_sections) if schema else []
+    required_at_a_glance: list[str] = list(schema.required_at_a_glance_labels) if schema else []
+    if mode == "brief" and schema:
+        if schema.brief_required_sections is not None:
+            required = list(schema.brief_required_sections)
+        if schema.brief_required_at_a_glance_labels is not None:
+            required_at_a_glance = list(schema.brief_required_at_a_glance_labels)
+
+    def _resolve_heading(required_key: str) -> str | None:
+        """Return the actual normalized heading key in `sections` that covers the required key.
+
+        A heading matches when the required key's tokens are a subset of the
+        found heading's tokens (e.g. "key-takeaways" matches "key-takeaways-and-decisions").
+        """
+        parts = set(required_key.split("-"))
+        for found in sections:
+            if parts <= set(found.split("-")):
+                return found
+        return None
+
+    def _heading_present(required_key: str) -> bool:
+        """A required section is present if a normalized H2 heading covers it."""
+        return _resolve_heading(required_key) is not None
 
     def _section_present(required_key: str) -> bool:
         """A required section is present if a heading or At a Glance label covers it."""
+        if _heading_present(required_key):
+            return True
         parts = set(required_key.split("-"))
-        if any(parts <= set(found.split("-")) for found in sections):
-            return True
-        if any(parts <= set(label.split("-")) for label in at_a_glance):
-            return True
-        return False
+        return any(parts <= set(label.split("-")) for label in at_a_glance)
 
-    # If we have no schema for this skill, we cannot validate it.
+    section_check = _heading_present if (schema and schema.strict_sections) else _section_present
+    strict = bool(schema and schema.strict)
+
+    # Unknown skills cannot be validated; return an unvalidated marker.
     if schema is None:
         return OutputMetadata(
             skill=skill,
             title=title,
             date=date,
+            mode=mode,
             at_a_glance=at_a_glance,
             sections={k: v[:5000] for k, v in sections.items()},
             required_sections=[],
@@ -296,23 +449,32 @@ def parse_output(
             reference_freshness_at_generation=reference_freshness_at_generation,
         )
 
-    missing: list[str] = [s for s in required if not _section_present(s)]
+    missing: list[str] = [s for s in required if not section_check(s)]
+
+    # Conditional sections are not required to be present, but if a heading for one
+    # appears in the document the runtime has decided to include it and it must have
+    # a non-empty body. Slice 5B can add transcript-entity triggers later.
+    present_conditional: list[str] = []
+    if schema and schema.conditional_sections:
+        for key in schema.conditional_sections:
+            if _resolve_heading(key) is not None:
+                present_conditional.append(key)
 
     # A document must have enough current-format markers for us to confidently
     # say it is incomplete. Legacy outputs may use older headings; without a
     # title, At a Glance block, and at least one non-source-coverage required
-    # section, we treat the result as "unvalidated" rather than "invalid". A
-    # missing **Date:** line, by contrast, is a concrete validation error once
-    # we have recognized the current format.
+    # section, we treat the result as "unvalidated" rather than "invalid".
     non_source_required = [s for s in required if s != "source-coverage"]
-    has_non_source_required = any(_section_present(s) for s in non_source_required)
+    has_non_source_required = any(section_check(s) for s in non_source_required)
     has_current_markers = bool(title and at_a_glance and has_non_source_required)
 
-    if not has_current_markers:
+    # Strict schemas must always resolve to valid/invalid, never unvalidated.
+    if not has_current_markers and not strict:
         return OutputMetadata(
             skill=skill,
             title=title,
             date=date,
+            mode=mode,
             at_a_glance=at_a_glance,
             sections={k: v[:5000] for k, v in sections.items()},
             required_sections=required,
@@ -325,12 +487,60 @@ def parse_output(
         )
 
     errors: list[str] = []
-    if missing:
-        errors.append(f"Missing required sections: {', '.join(missing)}.")
+    if mode not in ("full", "brief"):
+        errors.append("Invalid output mode; must be 'full' or 'brief'.")
+
+    if not title:
+        errors.append("No H1 title found.")
     if not date:
         errors.append("No **Date:** line found in the title block.")
+    if strict and not at_a_glance:
+        errors.append("No At a Glance section found.")
+
+    if missing:
+        errors.append(f"Missing required sections: {', '.join(missing)}.")
+
+    missing_labels = [label for label in required_at_a_glance if label not in at_a_glance]
+    if missing_labels and schema and schema.strict_at_a_glance:
+        errors.append(f"Missing At a Glance fields: {', '.join(missing_labels)}.")
+
+    # In strict mode, required and present conditional sections must have non-empty,
+    # meaningful bodies. The resolved (possibly expanded) heading is used so an
+    # empty "Key Takeaways and Decisions" cannot masquerade as a present section.
+    if strict:
+        for required_key in required:
+            found_key = _resolve_heading(required_key)
+            if found_key is not None:
+                body = sections[found_key].strip()
+                if not body:
+                    errors.append(f"Required section '{required_key}' is empty.")
+        for conditional_key in present_conditional:
+            found_key = _resolve_heading(conditional_key)
+            if found_key is not None:
+                body = sections[found_key].strip()
+                if not body:
+                    errors.append(f"Conditional section '{conditional_key}' is empty.")
+
     if "source-coverage" not in sections:
         errors.append("Missing Source Coverage section.")
+    elif schema and schema.source_coverage_required:
+        errors.extend(_validate_source_coverage_post_call(sections["source-coverage"]))
+
+    # Strict outputs must not ship with unfilled template placeholders anywhere.
+    if schema and schema.forbid_placeholders:
+        for source, label in [(title, "title"), (date, "date")]:
+            if source:
+                placeholders = _find_placeholders(source)
+                if placeholders:
+                    errors.append(f"Unresolved placeholder(s) in {label}: {', '.join(placeholders)}.")
+        for label, value in at_a_glance.items():
+            placeholders = _find_placeholders(value)
+            if placeholders:
+                errors.append(f"Unresolved placeholder(s) in At a Glance '{label}': {', '.join(placeholders)}.")
+        for section_key, body in sections.items():
+            placeholders = _find_placeholders(body)
+            if placeholders:
+                errors.append(f"Unresolved placeholder(s) in section '{section_key}': {', '.join(placeholders)}.")
 
     valid = not errors
     validation_status = "valid" if valid else "invalid"
@@ -339,6 +549,7 @@ def parse_output(
         skill=skill,
         title=title,
         date=date,
+        mode=mode,
         at_a_glance=at_a_glance,
         sections={k: v[:5000] for k, v in sections.items()},
         required_sections=required,
@@ -357,7 +568,7 @@ def write_sidecar(md_path: Path, metadata: OutputMetadata) -> None:
     sidecar.write_text(json.dumps(metadata.model_dump(), indent=2), encoding="utf-8")
 
 
-def read_or_parse_sidecar(md_path: Path, skill: str) -> OutputMetadata:
+def read_or_parse_sidecar(md_path: Path, skill: str, mode: Mode | None = None) -> OutputMetadata:
     """Return metadata from the sidecar if fresh, otherwise parse the Markdown and write it."""
     sidecar = md_path.with_suffix(md_path.suffix + ".json")
     if sidecar.exists():
@@ -366,14 +577,22 @@ def read_or_parse_sidecar(md_path: Path, skill: str) -> OutputMetadata:
             sc_mtime = sidecar.stat().st_mtime
             if sc_mtime >= md_mtime:
                 data = json.loads(sidecar.read_text(encoding="utf-8"))
-                if data.get("schema_version") == SCHEMA_VERSION:
+                if data.get("schema_version") != SCHEMA_VERSION:
+                    logger.info("Sidecar schema version %s != %s; reparsing", data.get("schema_version"), SCHEMA_VERSION)
+                elif data.get("skill") != skill:
+                    logger.info("Sidecar skill %s != %s; reparsing", data.get("skill"), skill)
+                else:
                     return OutputMetadata(**data)
-                logger.info("Sidecar schema version %s != %s; reparsing", data.get("schema_version"), SCHEMA_VERSION)
+                # If we are reparsing, trust the sidecar mode unless the caller overrode it.
+                if mode is None:
+                    mode = data.get("mode", "full")
         except (OSError, ValueError, TypeError):
             logger.warning("Failed to read sidecar %s; reparsing", sidecar)
 
+    if mode is None:
+        mode = "full"
     text = md_path.read_text(encoding="utf-8")
-    metadata = parse_output(skill, text)
+    metadata = parse_output(skill, text, mode=mode)
     try:
         write_sidecar(md_path, metadata)
     except OSError:
@@ -407,6 +626,16 @@ _ACTION_SECTION_SUBSTRINGS = ("action", "next-step", "close-criteria", "what-wou
 
 _DISPLAY_TITLE_OVERRIDES = {
     "at-a-glance": "At a Glance",
+    "key-takeaways": "Key Takeaways",
+    "deal-health-signals": "Deal Health Signals",
+    "new-objections-concerns-surfaced": "New Objections / Concerns Surfaced",
+    "action-items": "Action Items",
+    "next-step": "Next Step",
+    "sources-destinations": "Sources & Destinations",
+    "technical-notes": "Technical Notes",
+    "open-questions-follow-ups": "Open Questions / Follow-ups",
+    "attendees": "Attendees",
+    "meddpicc-quick-pass": "MEDDPICC Quick Pass",
     "meddpicc-pre-scorecard": "MEDDPICC Pre-Scorecard",
     "probability-verdict": "Probability Verdict",
     "what-would-close-it": "What Would Close It",
