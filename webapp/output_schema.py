@@ -15,7 +15,7 @@ import logging
 import re
 from itertools import zip_longest
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -24,6 +24,8 @@ from reference_freshness import ReferenceChange, ReferenceFreshness, compute_ref
 logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 1
+
+Mode = Literal["full", "brief"]
 
 
 class SkillOutputSchema(BaseModel):
@@ -39,6 +41,7 @@ class SkillOutputSchema(BaseModel):
     forbid_placeholders: bool = False
     strict_at_a_glance: bool = False
     strict_sections: bool = False
+    strict: bool = False
 
 
 class OutputMetadata(BaseModel):
@@ -155,6 +158,7 @@ _SKILL_SCHEMAS: dict[str, SkillOutputSchema] = {
         forbid_placeholders=True,
         strict_at_a_glance=True,
         strict_sections=True,
+        strict=True,
     ),
 }
 
@@ -333,7 +337,7 @@ def _find_placeholders(text: str) -> list[str]:
 
 
 def _validate_source_coverage_post_call(body: str) -> list[str]:
-    """Source Coverage for post-call must claim a complete read with N / N lines."""
+    """Source Coverage for post-call must claim a complete read with N / N lines (N > 0)."""
     errors: list[str] = []
     if not body or not body.strip():
         errors.append("Source Coverage section is empty.")
@@ -344,14 +348,17 @@ def _validate_source_coverage_post_call(body: str) -> list[str]:
         return errors
     read_count = int(match.group(1))
     total_count = int(match.group(2))
+    if total_count <= 0:
+        errors.append("Source Coverage total line count must be greater than 0.")
     if read_count < total_count:
         errors.append(f"Source Coverage reports a partial read ({read_count} / {total_count} lines).")
     elif read_count > total_count:
         errors.append(f"Source Coverage read count exceeds total ({read_count} / {total_count} lines).")
-    if "full" not in body.lower() and "complete" not in body.lower() and read_count == total_count:
-        # Encourage an explicit full/complete statement; not a hard failure on
-        # its own if counts are equal, but combined with missing counts it fails.
-        pass
+    if read_count == total_count and total_count > 0:
+        if "full" not in body.lower() and "complete" not in body.lower():
+            # Encourage an explicit full/complete statement; not a hard failure on
+            # its own if counts are equal, but combined with missing counts it fails.
+            pass
     return errors
 
 
@@ -363,25 +370,16 @@ def parse_output(
     skill: str,
     text: str,
     reference_freshness_at_generation: list[ReferenceFreshness] | None = None,
-    mode: str = "full",
+    mode: Mode = "full",
 ) -> OutputMetadata:
     """Parse a generated Markdown output and validate it against the skill schema.
 
-    Returns an `OutputMetadata` object with extracted fields, missing required
-    sections, a `valid` flag, and a `validation_status`. The parser is defensive:
-    malformed or non-conforming documents are reported rather than raised.
+    Returns an `OutputMetadata` sidecar with extracted fields, missing required
+    sections, a `valid` flag, and a `validation_status`.
 
-    `validation_status` can be:
-    - `"valid"` — the output follows the current contract and no required
-      sections are missing.
-    - `"invalid"` — the output follows the current contract but is missing
-      one or more required sections (including a missing `**Date:**` line or
-      `Source Coverage`).
-    - `"unvalidated"` — the output does not have enough current-format markers
-      (title, At a Glance, and at least one non-source-coverage required
-      section) for us to confidently validate it. This is used for legacy
-      outputs that predate the current required-section contract so they are not
-      presented as definitively broken.
+    For strict schemas (e.g. `post-call`), every candidate resolves to either
+    `"valid"` or `"invalid"`; `"unvalidated"` is only used for non-strict or
+    unrecognized skill outputs that lack enough current-format markers.
     """
     schema = _SKILL_SCHEMAS.get(skill)
     title = _extract_title(text)
@@ -410,8 +408,9 @@ def parse_output(
         return any(parts <= set(label.split("-")) for label in at_a_glance)
 
     section_check = _heading_present if (schema and schema.strict_sections) else _section_present
+    strict = bool(schema and schema.strict)
 
-    # If we have no schema for this skill, we cannot validate it.
+    # Unknown skills cannot be validated; return an unvalidated marker.
     if schema is None:
         return OutputMetadata(
             skill=skill,
@@ -434,14 +433,13 @@ def parse_output(
     # A document must have enough current-format markers for us to confidently
     # say it is incomplete. Legacy outputs may use older headings; without a
     # title, At a Glance block, and at least one non-source-coverage required
-    # section, we treat the result as "unvalidated" rather than "invalid". A
-    # missing **Date:** line, by contrast, is a concrete validation error once
-    # we have recognized the current format.
+    # section, we treat the result as "unvalidated" rather than "invalid".
     non_source_required = [s for s in required if s != "source-coverage"]
     has_non_source_required = any(section_check(s) for s in non_source_required)
     has_current_markers = bool(title and at_a_glance and has_non_source_required)
 
-    if not has_current_markers:
+    # Strict schemas must always resolve to valid/invalid, never unvalidated.
+    if not has_current_markers and not strict:
         return OutputMetadata(
             skill=skill,
             title=title,
@@ -459,6 +457,16 @@ def parse_output(
         )
 
     errors: list[str] = []
+    if mode not in ("full", "brief"):
+        errors.append("Invalid output mode; must be 'full' or 'brief'.")
+
+    if not title:
+        errors.append("No H1 title found.")
+    if not date:
+        errors.append("No **Date:** line found in the title block.")
+    if strict and not at_a_glance:
+        errors.append("No At a Glance section found.")
+
     if missing:
         errors.append(f"Missing required sections: {', '.join(missing)}.")
 
@@ -466,16 +474,20 @@ def parse_output(
     if missing_labels and schema and schema.strict_at_a_glance:
         errors.append(f"Missing At a Glance fields: {', '.join(missing_labels)}.")
 
-    if not date:
-        errors.append("No **Date:** line found in the title block.")
-    if not title:
-        errors.append("No H1 title found.")
+    # In strict mode, required sections must have non-empty, meaningful bodies.
+    if strict:
+        for required_key in required:
+            if required_key in sections:
+                body = sections[required_key].strip()
+                if not body:
+                    errors.append(f"Required section '{required_key}' is empty.")
+
     if "source-coverage" not in sections:
         errors.append("Missing Source Coverage section.")
     elif schema and schema.source_coverage_required:
         errors.extend(_validate_source_coverage_post_call(sections["source-coverage"]))
 
-    # Post-call outputs must not ship with unfilled template placeholders.
+    # Strict outputs must not ship with unfilled template placeholders anywhere.
     if schema and schema.forbid_placeholders:
         for source, label in [(title, "title"), (date, "date")]:
             if source:
@@ -517,7 +529,7 @@ def write_sidecar(md_path: Path, metadata: OutputMetadata) -> None:
     sidecar.write_text(json.dumps(metadata.model_dump(), indent=2), encoding="utf-8")
 
 
-def read_or_parse_sidecar(md_path: Path, skill: str) -> OutputMetadata:
+def read_or_parse_sidecar(md_path: Path, skill: str, mode: Mode | None = None) -> OutputMetadata:
     """Return metadata from the sidecar if fresh, otherwise parse the Markdown and write it."""
     sidecar = md_path.with_suffix(md_path.suffix + ".json")
     if sidecar.exists():
@@ -532,11 +544,16 @@ def read_or_parse_sidecar(md_path: Path, skill: str) -> OutputMetadata:
                     logger.info("Sidecar skill %s != %s; reparsing", data.get("skill"), skill)
                 else:
                     return OutputMetadata(**data)
+                # If we are reparsing, trust the sidecar mode unless the caller overrode it.
+                if mode is None:
+                    mode = data.get("mode", "full")
         except (OSError, ValueError, TypeError):
             logger.warning("Failed to read sidecar %s; reparsing", sidecar)
 
+    if mode is None:
+        mode = "full"
     text = md_path.read_text(encoding="utf-8")
-    metadata = parse_output(skill, text)
+    metadata = parse_output(skill, text, mode=mode)
     try:
         write_sidecar(md_path, metadata)
     except OSError:

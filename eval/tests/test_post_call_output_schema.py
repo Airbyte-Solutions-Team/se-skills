@@ -100,3 +100,61 @@ def test_post_call_malformed_sidecar_skill_mismatch(tmp_path: Path, repo_root: P
     assert meta.skill == "post-call"
     assert meta.valid is True
     assert meta.validation_status == "valid"
+
+
+def test_post_call_empty_text_is_invalid() -> None:
+    meta = output_schema.parse_output("post-call", "", mode="full")
+    assert meta.valid is False
+    assert meta.validation_status == "invalid"
+    assert any("H1 title" in e or "At a Glance" in e for e in meta.validation_errors)
+
+
+def test_post_call_missing_h1_title(repo_root: Path) -> None:
+    text = _load_fixture(repo_root, "post-call-brief.md").replace("# Call Summary: Acme", "## Call Summary: Acme")
+    meta = output_schema.parse_output("post-call", text, mode="brief")
+    assert meta.valid is False
+    assert meta.validation_status == "invalid"
+    assert any("H1 title" in e for e in meta.validation_errors)
+
+
+def test_post_call_missing_at_a_glance(repo_root: Path) -> None:
+    text = _load_fixture(repo_root, "post-call-brief.md").replace("### At a Glance", "### Removed")
+    meta = output_schema.parse_output("post-call", text, mode="brief")
+    assert meta.valid is False
+    assert meta.validation_status == "invalid"
+    assert any("At a Glance" in e for e in meta.validation_errors)
+
+
+def test_post_call_empty_required_section(repo_root: Path) -> None:
+    text = _load_fixture(repo_root, "post-call-brief.md").replace(
+        "## Action Items\n- [ ] **SE** — Schedule technical deep-dive with security lead by June 14\n- [ ] **Champion** — Introduce SE to the security reviewer\n",
+        "## Action Items\n",
+    )
+    meta = output_schema.parse_output("post-call", text, mode="brief")
+    assert meta.valid is False
+    assert meta.validation_status == "invalid"
+    assert any("action-items" in e.lower() for e in meta.validation_errors)
+
+
+def test_post_call_zero_source_coverage(repo_root: Path) -> None:
+    text = _load_fixture(repo_root, "post-call-brief.md").replace("(612 / 612 lines)", "(0 / 0 lines)")
+    meta = output_schema.parse_output("post-call", text, mode="brief")
+    assert meta.valid is False
+    assert meta.validation_status == "invalid"
+    assert any("greater than 0" in e.lower() for e in meta.validation_errors)
+
+
+def test_post_call_invalid_mode(repo_root: Path) -> None:
+    text = _load_fixture(repo_root, "post-call-brief.md")
+    meta = output_schema.parse_output("post-call", text, mode="verbose")  # type: ignore[arg-type]
+    assert meta.valid is False
+    assert meta.validation_status == "invalid"
+    assert any("mode" in e.lower() for e in meta.validation_errors)
+
+
+def test_legacy_non_strict_skill_returns_unvalidated_when_markers_missing() -> None:
+    # Legacy outputs without current-format markers should not be marked invalid.
+    text = "# Old Style Output\n\nSome prose without At a Glance or source coverage."
+    meta = output_schema.parse_output("biz-qual", text, mode="full")
+    assert meta.valid is True
+    assert meta.validation_status == "unvalidated"

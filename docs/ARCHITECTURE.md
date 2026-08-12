@@ -92,7 +92,7 @@ This is a logical view. Concrete technology choices (Supabase, worker framework,
 
 ## Agent-runtime isolation model (resolved in ADR-005 for Slice 5B)
 
-The hosted runtime is not "load a `SKILL.md` and call `messages.create()` once." It is a multi-step agent environment that preserves the behavior the local skills rely on. Slice 4 intentionally did not implement this runtime; ADR-005 in `docs/decisions/ADR-005-runtime-and-sandbox.md` resolves the technology choice. The implementation is deferred to Slice 5B, while `webapp/hosted/runtime_contract.py` and `webapp/output_schema.py` already encode the contract the runtime must satisfy:
+The hosted runtime is not a single-shot `messages.create()` call. It is a manual multi-step Anthropic Messages API typed-tool loop that preserves the behavior the local skills rely on. Slice 4 intentionally did not implement this runtime; ADR-005 in `docs/decisions/ADR-005-runtime-and-sandbox.md` resolves the technology choice. The implementation is deferred to Slice 5B, while `webapp/hosted/runtime_contract.py`, `webapp/output_schema.py`, and `webapp/hosted/agent_loop_harness.py` already encode the contract and a feasibility harness the runtime must satisfy:
 
 - **Source/file discovery:** the runtime can list and read the files the job owns (transcripts, prior outputs, reference data).
 - **Full transcript reads:** transcripts are loaded entirely into context; no arbitrary truncation that would break source-coverage claims.
@@ -101,7 +101,7 @@ The hosted runtime is not "load a `SKILL.md` and call `messages.create()` once."
 - **Self-checks:** the runtime can verify required output sections and source coverage before finalizing.
 - **Source coverage and artifact generation:** the output Markdown must still include `At a Glance`, `Source Coverage`, and skill-specific required sections; sidecar validation is run after generation.
 
-The runtime is executed inside an isolated gVisor-backed `runsc` container:
+The runtime is executed inside an isolated gVisor-backed `runsc` container running the manual typed-tool loop:
 
 - One ephemeral sandbox per attempt.
 - No access to the host filesystem except explicitly mounted allowlisted paths (read-only transcript and prior context, writable temporary output workspace).
@@ -116,7 +116,7 @@ The runtime is executed inside an isolated gVisor-backed `runsc` container:
 | Capability | Hosted runtime | Local runtime |
 |---|---|---|
 | Identity | Supabase Auth / org membership | OS user / Claude Code user |
-| Skill invocation | Worker sandbox with the Anthropic Agent SDK and mediated typed tools (Slice 5B) | `claude -p` with `acceptEdits` default; reviewed shell skills can use `bypassPermissions` |
+| Skill invocation | Worker sandbox with a manual Anthropic Messages API typed-tool loop and worker-side model proxy (Slice 5B) | `claude -p` with `acceptEdits` default; reviewed shell skills can use `bypassPermissions` |
 | File access | Mounted allowlisted files only | Full local workspace, `~/.claude/skills/`, repos |
 | Network | Allowlist only | Host network |
 | MCPs/tools | Approved, audited subset | User's full `~/.claude.json` MCP config |
