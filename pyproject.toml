@@ -23,11 +23,13 @@ dev = [
     "pyjwt[crypto]>=2.10.0",
     "testcontainers[postgres]>=4.0.0",
     "pytest-asyncio>=0.23",
+    "python-multipart>=0.0.12",
 ]
 hosted = [
     "asyncpg>=0.30.0",
     "pyjwt[crypto]>=2.10.0",
     "httpx>=0.25",
+    "python-multipart>=0.0.12",
 ]
 
 [tool.pytest.ini_options]

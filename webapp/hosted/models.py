@@ -123,6 +123,38 @@ class OpportunityList(BaseModel):
     opportunities: list[OpportunityOut]
 
 
+class TranscriptOut(BaseModel):
+    id: uuid.UUID
+    org_id: uuid.UUID
+    account_id: uuid.UUID
+    opportunity_id: uuid.UUID | None
+    original_filename: str
+    size_bytes: int
+    mime_type: str
+    uploaded_by: uuid.UUID
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def from_record(cls, record: Any) -> "TranscriptOut":
+        return cls(
+            id=record["id"],
+            org_id=record["org_id"],
+            account_id=record["account_id"],
+            opportunity_id=record.get("opportunity_id"),
+            original_filename=record["original_filename"],
+            size_bytes=record["size_bytes"],
+            mime_type=record["mime_type"],
+            uploaded_by=record["uploaded_by"],
+            created_at=record["created_at"],
+            updated_at=record["updated_at"],
+        )
+
+
+class TranscriptList(BaseModel):
+    transcripts: list[TranscriptOut]
+
+
 def slugify(name: str) -> str:
     s = re.sub(r"[^A-Za-z0-9]+", "-", name.strip()).strip("-").lower()
     return s[:80] or "unnamed"

@@ -35,7 +35,9 @@ def add_hosted_routers(app: FastAPI) -> None:
         return
 
     from fastapi import APIRouter
-    from . import accounts
+    from . import accounts, storage, transcripts
+
+    app.state.storage_backend = storage.get_backend()
 
     auth_router = APIRouter(prefix="/api/auth", tags=["auth"])
     auth_router.add_api_route("/config", _auth_config, methods=["GET"])
@@ -43,3 +45,4 @@ def add_hosted_routers(app: FastAPI) -> None:
 
     app.include_router(auth_router)
     app.include_router(accounts.router)
+    app.include_router(transcripts.router)

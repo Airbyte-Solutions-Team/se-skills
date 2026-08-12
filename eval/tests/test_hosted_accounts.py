@@ -10,12 +10,10 @@ import hashlib
 import hmac
 import json
 import os
-import sys
 import threading
 import uuid
-from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any, AsyncGenerator
+from typing import Any
 
 import asyncpg
 import jwt
@@ -23,186 +21,15 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
-from testcontainers.postgres import PostgresContainer
 
 
-@pytest.fixture(scope="session")
-def postgres_container() -> Any:
-    container = PostgresContainer("postgres:15", password="test", dbname="test")
-    with container as postgres:
-        yield postgres
-
-
-@pytest.fixture(scope="session")
-def db_urls(postgres_container: Any) -> dict[str, str]:
-    host = postgres_container.get_container_host_ip()
-    port = postgres_container.get_exposed_port(5432)
-    # testcontainers/postgres creates a superuser named 'test' with password 'test'.
-    migrate = f"postgresql://test:test@{host}:{port}/test"
-    return {
-        "MIGRATE_DATABASE_URL": migrate,
-        "DATABASE_URL": f"postgresql://app_user:app_user_password@{host}:{port}/test",
-        "DATABASE_ADMIN_URL": f"postgresql://app_admin:app_admin_password@{host}:{port}/test",
-    }
-
-
-@pytest.fixture(scope="session")
-async def hosted_env(db_urls: dict[str, str]) -> dict[str, str]:
-    """Set hosted environment variables and run migrations once."""
-    env = {
-        "HOSTED_MODE": "1",
-        "SUPABASE_URL": "https://example.supabase.co",
-        "SUPABASE_ANON_KEY": "anon-key",
-        "HOSTED_JWT_ALGORITHM": "HS256",
-        "HOSTED_JWT_SECRET": "super-secret-32-byte-test-jwt-key!",
-        "HOSTED_CONTEXT_SECRET": "test-context-secret-32-bytes!!",
-        "BETA_ALLOWED_EMAILS": "test@airbyte.io,other@airbyte.io",
-        **db_urls,
-    }
-    for key, value in env.items():
-        os.environ[key] = value
-
-    # Drop cached hosted modules so they re-import with the new config.
-    modules_to_drop = [
-        name
-        for name in list(sys.modules)
-        if name in ("app", "webapp.app")
-        or name.startswith("webapp.hosted")
-        or name.startswith("hosted")
-    ]
-    for name in modules_to_drop:
-        del sys.modules[name]
-
-    from webapp.hosted import config, migrations
-
-    await migrations.migrate(
-        env["MIGRATE_DATABASE_URL"],
-        config.MIGRATIONS_DIR,
-        app_user_password="app_user_password",
-        app_admin_password="app_admin_password",
-        context_secret=env["HOSTED_CONTEXT_SECRET"],
-    )
-    return env
-
-
-@pytest.fixture(scope="session")
-def app_client(hosted_env: dict[str, str]) -> Any:
-    import webapp.app as app_module
-
-    # `hosted_env` already reloaded `webapp.hosted.config` with the test
-    # container URLs, so importing `webapp.app` here picks up hosted mode.
-    with TestClient(app_module.app) as client:
-        yield client
-
-
-@pytest.fixture
-async def admin_pool(hosted_env: dict[str, str]) -> AsyncGenerator[asyncpg.Pool, None]:
-    pool = await asyncpg.create_pool(hosted_env["DATABASE_ADMIN_URL"], min_size=1, max_size=2)
-    try:
-        yield pool
-    finally:
-        await pool.close()
-
-
-@pytest.fixture
-async def user_pool(hosted_env: dict[str, str]) -> AsyncGenerator[asyncpg.Pool, None]:
-    pool = await asyncpg.create_pool(hosted_env["DATABASE_URL"], min_size=1, max_size=2)
-    try:
-        yield pool
-    finally:
-        await pool.close()
-
-
-async def _seed_member(
-    admin_pool: asyncpg.Pool,
-    email: str,
-    *,
-    org_name: str = "Airbyte",
-    org_slug: str = "airbyte",
-    active: bool = True,
-    role: str = "member",
-) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
-    async with admin_pool.acquire() as conn:
-        user_id = uuid.uuid4()
-        org_id = uuid.uuid4()
-        await conn.execute(
-            "INSERT INTO public.users (id, email) VALUES ($1, $2)",
-            user_id,
-            email,
-        )
-        await conn.execute(
-            "INSERT INTO public.organizations (id, name, slug) VALUES ($1, $2, $3)",
-            org_id,
-            org_name,
-            org_slug,
-        )
-        membership_id = uuid.uuid4()
-        await conn.execute(
-            """
-            INSERT INTO public.memberships (id, org_id, user_id, role, active)
-            VALUES ($1, $2, $3, $4, $5)
-            """,
-            membership_id,
-            org_id,
-            user_id,
-            role,
-            active,
-        )
-        return user_id, org_id, membership_id
-
-
-async def _seed_user_and_membership(
-    admin_pool: asyncpg.Pool,
-    email: str,
-    org_id: uuid.UUID,
-    active: bool = True,
-) -> uuid.UUID:
-    """Create a user and membership in an existing org."""
-    async with admin_pool.acquire() as conn:
-        user_id = uuid.uuid4()
-        await conn.execute(
-            "INSERT INTO public.users (id, email) VALUES ($1, $2)",
-            user_id,
-            email,
-        )
-        await conn.execute(
-            """
-            INSERT INTO public.memberships (id, org_id, user_id, role, active)
-            VALUES ($1, $2, $3, $4, $5)
-            """,
-            uuid.uuid4(),
-            org_id,
-            user_id,
-            "member",
-            active,
-        )
-        return user_id
-
-
-def _token(user_id: uuid.UUID, email: str) -> str:
-    now = datetime.now(timezone.utc).timestamp()
-    return jwt.encode(
-        {
-            "sub": str(user_id),
-            "email": email,
-            "aud": "authenticated",
-            "iat": now,
-            "exp": now + 3600,
-        },
-        os.environ["HOSTED_JWT_SECRET"],
-        algorithm="HS256",
-    )
-
-
-def _auth_header(user_id: uuid.UUID, email: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {_token(user_id, email)}"}
-
-
-def _context_token(user_id: uuid.UUID) -> str:
-    """Return the signed context token the application would set for a user."""
-    secret = os.environ["HOSTED_CONTEXT_SECRET"].encode("utf-8")
-    user_text = str(user_id).encode("utf-8")
-    return f"{user_id}:{hmac.new(secret, user_text, hashlib.sha256).hexdigest()}"
+from .hosted_helpers import (
+    _auth_header,
+    _context_token,
+    _seed_member,
+    _seed_user_and_membership,
+    _token,
+)
 
 
 @pytest.mark.hosted

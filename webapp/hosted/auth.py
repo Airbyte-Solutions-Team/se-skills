@@ -85,7 +85,7 @@ def verify_token(token: str) -> VerifiedToken:
     return VerifiedToken(user_id=user_id, email=email, raw=payload)
 
 
-def _get_token_from_request(request: Request) -> str:
+def get_token_from_request(request: Request) -> str:
     auth = (request.headers.get("authorization") or "").strip()
     if auth.lower().startswith(_BEARER_PREFIX):
         return auth[len(_BEARER_PREFIX):].strip()
@@ -110,7 +110,7 @@ def _tenant_context_token(user_id: uuid.UUID) -> str:
 
 async def require_user(request: Request) -> User:
     """FastAPI dependency that validates the bearer token."""
-    token = _get_token_from_request(request)
+    token = get_token_from_request(request)
     try:
         verified = verify_token(token)
     except AuthError:

@@ -1,0 +1,106 @@
+"""Shared session fixtures for hosted integration tests."""
+from __future__ import annotations
+
+import os
+import sys
+from collections.abc import AsyncGenerator
+from typing import Any
+
+import asyncpg
+import pytest
+from fastapi.testclient import TestClient
+from testcontainers.postgres import PostgresContainer
+
+
+@pytest.fixture(scope="session")
+def postgres_container() -> Any:
+    container = PostgresContainer("postgres:15", password="test", dbname="test")
+    with container as postgres:
+        yield postgres
+
+
+@pytest.fixture(scope="session")
+def db_urls(postgres_container: Any) -> dict[str, str]:
+    host = postgres_container.get_container_host_ip()
+    port = postgres_container.get_exposed_port(5432)
+    migrate = f"postgresql://test:test@{host}:{port}/test"
+    return {
+        "MIGRATE_DATABASE_URL": migrate,
+        "DATABASE_URL": f"postgresql://app_user:app_user_password@{host}:{port}/test",
+        "DATABASE_ADMIN_URL": f"postgresql://app_admin:app_admin_password@{host}:{port}/test",
+    }
+
+
+@pytest.fixture(scope="session")
+async def hosted_env(db_urls: dict[str, str]) -> dict[str, str]:
+    """Set hosted environment variables and run migrations once."""
+    env = {
+        "HOSTED_MODE": "1",
+        "SUPABASE_URL": "https://example.supabase.co",
+        "SUPABASE_ANON_KEY": "anon-key",
+        "SUPABASE_STORAGE_BUCKET": "transcripts",
+        "HOSTED_JWT_ALGORITHM": "HS256",
+        "HOSTED_JWT_SECRET": "super-secret-32-byte-test-jwt-key!",
+        "HOSTED_CONTEXT_SECRET": "test-context-secret-32-bytes!!",
+        "BETA_ALLOWED_EMAILS": "test@airbyte.io,other@airbyte.io",
+        **db_urls,
+    }
+    for key, value in env.items():
+        os.environ[key] = value
+
+    modules_to_drop = [
+        name
+        for name in list(sys.modules)
+        if name in ("app", "webapp.app")
+        or name.startswith("webapp.hosted")
+        or name.startswith("hosted")
+    ]
+    for name in modules_to_drop:
+        del sys.modules[name]
+
+    from webapp.hosted import config, migrations
+
+    await migrations.migrate(
+        env["MIGRATE_DATABASE_URL"],
+        config.MIGRATIONS_DIR,
+        app_user_password="app_user_password",
+        app_admin_password="app_admin_password",
+        context_secret=env["HOSTED_CONTEXT_SECRET"],
+    )
+    return env
+
+
+@pytest.fixture
+async def admin_pool(hosted_env: dict[str, str]) -> AsyncGenerator[asyncpg.Pool, None]:
+    """Function-scoped admin pool (separate loop from the app under TestClient)."""
+    pool = await asyncpg.create_pool(hosted_env["DATABASE_ADMIN_URL"], min_size=1, max_size=2)
+    try:
+        yield pool
+    finally:
+        await pool.close()
+
+
+@pytest.fixture
+async def user_pool(hosted_env: dict[str, str]) -> AsyncGenerator[asyncpg.Pool, None]:
+    """Function-scoped app_user pool (separate loop from the app under TestClient)."""
+    pool = await asyncpg.create_pool(hosted_env["DATABASE_URL"], min_size=1, max_size=2)
+    try:
+        yield pool
+    finally:
+        await pool.close()
+
+
+@pytest.fixture(scope="session")
+def app_client(hosted_env: dict[str, str]) -> Any:
+    """Return a TestClient for the hosted app with an in-memory storage backend."""
+    # Use the same top-level `hosted` package that app.py imports so the
+    # in-memory backend is visible to the transcript routes.
+    import hosted
+    from hosted import storage
+
+    storage.set_backend(storage.MemoryStorageBackend())
+    import webapp.app as app_module
+
+    with TestClient(app_module.app) as client:
+        yield client
+    storage.clear_backend()

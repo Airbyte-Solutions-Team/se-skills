@@ -85,30 +85,43 @@ This is the source of truth for productionalization slices and progress. Each sl
 
 ## Slice 3: Transcript upload and private storage
 
-**Status:** `Proposed`
+**Status:** `In Progress`
 
 **Product outcome:** SEs can upload a transcript for an account/opportunity and have it stored privately, organization-scoped, and referenced by the API.
 
 **Scope:**
-- Private object storage integration (Supabase Storage is the working hypothesis).
-- `transcripts` table with `org_id`, `account_id`, `opportunity_id`, `storage_path`, `uploaded_by`.
-- Upload API and SPA UI; signed-URL or streaming download.
-- Validation: file type, size limits, safe filename handling.
+- Private object storage using Supabase Storage (Product Owner-approved for the beta). The `transcripts` bucket is private and RLS policies derive the user from the Supabase JWT and verify active membership against the `org_id` prefix.
+- `transcripts` table with `org_id`, `account_id`, optional `opportunity_id`, server-generated `storage_path`, `original_filename`, `size_bytes`, `mime_type`, `uploaded_by`, and timestamps. Composite foreign keys enforce same-organization relationships.
+- FastAPI upload/list/download/delete endpoints that stream through the API, validate content independently of browser filename/MIME, and use the authenticated user's bearer token for Supabase Storage REST calls (public `SUPABASE_ANON_KEY` only; no service-role key in normal request paths).
+- SPA account/opportunity selection, upload progress/list, download, and delete states.
+- `TRANSCRIPT_MAX_BYTES` default of 10 MiB; accepted `.txt`, `.md`, `.vtt`, `.srt`; rejection of HTML, archives, executables, binary files, invalid UTF-8, and NUL bytes.
 
 **Dependencies:** Slice 2.
 
 **Acceptance criteria:**
-- Uploaded transcripts are stored under an org-scoped path.
-- The SPA cannot access storage without the API.
-- Listing transcripts for an account only returns transcripts in the active organization.
-- Deleting an account also removes or marks transcripts for deletion.
-- `transcripts` to `accounts`/`opportunities` preserve `org_id` and are enforced by the database; cross-org references fail at the DB boundary and in application authorization tests.
+- Authenticated active members can upload, list, download, and delete transcripts for an account in their organization.
+- Uploading against an opportunity succeeds only when the opportunity belongs to the selected account and organization.
+- Unauthenticated, inactive-membership, and non-member requests are rejected.
+- Browser-supplied or spoofed `org_id`, `user_id`, storage path, `account_id`, or `opportunity_id` cannot bypass authorization.
+- Cross-organization transcript/account and transcript/opportunity relationships fail at the database boundary.
+- Direct `app_user` database access cannot read or mutate another organization's transcript metadata.
+- Direct Storage requests using a user token cannot read, write, replace, list, or delete another organization's objects; anonymous access fails.
+- The API never uses or exposes a service-role credential during normal transcript operations.
+- Invalid types, oversized files, invalid UTF-8, NUL-containing content, unsafe filenames, and empty files are rejected safely.
+- Upload and deletion partial-failure behavior is covered by tests.
+- Hosted mode exposes no local filesystem, skill, shell, transcription, or integration routes.
+- Existing Slice 2 hosted tests, non-hosted tests, and deterministic evaluations continue to pass.
+- `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/DATA_MODEL.md`, and `webapp/README.md` reflect the approved provider and trust boundary.
 
 **Non-goals:**
-- No transcript parsing or transcription.
-- No skill execution.
-- No live audio capture.
-- No Gong/Salesforce import.
+- No transcript parsing, chunking, summarization, or transcription.
+- No PDF, DOCX, audio, video, image, ZIP, or arbitrary document uploads.
+- No Live Transcribe, Gong, Salesforce, or Google imports.
+- No account deletion or retention-policy implementation.
+- No jobs, workers, queues, agent runtime, skill execution, or model calls.
+- No public object URLs or permanent signed URLs.
+- No production deployment or real customer-data migration.
+- No broad frontend redesign.
 
 ---
 
