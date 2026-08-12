@@ -160,3 +160,24 @@ data store instead of `~/airbyte-work`.
 
 - `team-members.yaml` — who shows on the main page. Edit to add teammates.
 - Ownership is per-account via the `.owner` file; unowned accounts show to everyone.
+
+## Hosted mode (optional)
+
+Set `HOSTED_MODE=1` to use Supabase Auth + Postgres instead of the local filesystem. Required environment variables:
+
+- `SUPABASE_URL` / `SUPABASE_ANON_KEY` — SPA Supabase Auth configuration.
+- `DATABASE_URL` — `postgresql://app_user:PASSWORD@host/db` (the runtime role, `NOBYPASSRLS`).
+- `DATABASE_ADMIN_URL` — `postgresql://app_admin:PASSWORD@host/db` (used only for migrations, `BYPASSRLS`).
+- `MIGRATE_DATABASE_URL` — a superuser/admin connection used to run `scripts/migrate.py`.
+- `APP_USER_PASSWORD` / `APP_ADMIN_PASSWORD` — the role passwords created by the migration.
+- `HOSTED_CONTEXT_SECRET` — a strong shared secret used to sign tenant-context tokens between the app and the database. Generate a long random value and keep it with `APP_USER_PASSWORD`/`APP_ADMIN_PASSWORD`.
+- `HOSTED_JWT_ALGORITHM` (`HS256` for local tests, `RS256` for Supabase) and `HOSTED_JWT_SECRET` or Supabase JWKS.
+
+Run migrations before starting the app:
+
+```bash
+HOSTED_MODE=1 \
+  MIGRATE_DATABASE_URL=postgresql://postgres:...@db/se-skills \
+  APP_USER_PASSWORD=... APP_ADMIN_PASSWORD=... HOSTED_CONTEXT_SECRET=... \
+  uv run scripts/migrate.py
+```

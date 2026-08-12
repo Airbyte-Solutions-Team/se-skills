@@ -1,6 +1,7 @@
 -- 001_initial_schema.sql
 -- Roles, organizations, memberships, users, accounts, opportunities,
--- resolver functions, RLS policies, and DB-enforced same-org_id parent/child relationships.
+-- signed tenant-context functions, RLS policies, and DB-enforced same-org_id
+-- parent/child relationships.
 
 -- Application roles. Passwords are passed as transaction-local GUCs by the
 -- migration runner and are never interpolated into SQL. app_admin is used for
@@ -31,6 +32,32 @@ END $$;
 
 GRANT USAGE, CREATE ON SCHEMA public TO app_admin;
 GRANT USAGE ON SCHEMA public TO app_user;
+
+-- pgcrypto is required for the signed tenant-context tokens used by resolver
+-- and RLS functions.
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;
+
+-- Private schema for the shared signing secret. Only app_admin can access it;
+-- app_user has no privileges here.
+CREATE SCHEMA IF NOT EXISTS app_private;
+ALTER SCHEMA app_private OWNER TO app_admin;
+
+DO $$
+DECLARE
+    v_secret TEXT := current_setting('migration.context_secret');
+BEGIN
+    IF v_secret IS NULL OR v_secret = '' THEN
+        RAISE EXCEPTION 'migration.context_secret must be set to a non-empty value';
+    END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS app_private.context_secret (
+    secret TEXT NOT NULL
+);
+TRUNCATE app_private.context_secret;
+INSERT INTO app_private.context_secret (secret) VALUES (current_setting('migration.context_secret'));
+ALTER TABLE app_private.context_secret OWNER TO app_admin;
+REVOKE ALL ON TABLE app_private.context_secret FROM PUBLIC, app_user;
 
 -- Users are global identifiers (a person can belong to multiple organizations
 -- through memberships). The app upserts a public.users row on sign-in.
@@ -106,53 +133,155 @@ CREATE INDEX IF NOT EXISTS idx_opportunities_org_id ON public.opportunities(org_
 CREATE INDEX IF NOT EXISTS idx_opportunities_account_id ON public.opportunities(account_id, org_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_opportunities_id_org ON public.opportunities(id, org_id);
 
--- Narrow resolver functions. They are SECURITY DEFINER and owned by app_admin
--- so the web process (which connects as app_user) can resolve membership
--- without receiving broad table privileges or BYPASSRLS.
-CREATE OR REPLACE FUNCTION public.resolve_active_membership()
+-- Tenant-context functions. The signed context token is produced by the
+-- application from a verified JWT user id and a shared secret stored in
+-- app_private.context_secret. app_user can set the GUC that carries the token,
+-- but cannot produce a valid token without the secret. SECURITY DEFINER
+-- functions verify the token at the DB boundary and then resolve membership or
+-- evaluate row-level access.
+CREATE OR REPLACE FUNCTION app_private.verify_context_token(p_context_token TEXT)
+RETURNS TABLE(user_id UUID)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+    v_parts TEXT[];
+    v_user_id_text TEXT;
+    v_mac TEXT;
+    v_secret TEXT;
+    v_user_id UUID;
+BEGIN
+    IF p_context_token IS NULL OR p_context_token = '' THEN
+        RETURN;
+    END IF;
+
+    v_parts := string_to_array(p_context_token, ':');
+    IF array_length(v_parts, 1) <> 2 THEN
+        RETURN;
+    END IF;
+
+    v_user_id_text := v_parts[1];
+    v_mac := v_parts[2];
+
+    SELECT secret INTO v_secret FROM app_private.context_secret LIMIT 1;
+    IF v_secret IS NULL OR v_secret = '' THEN
+        RETURN;
+    END IF;
+
+    IF v_mac <> encode(public.hmac(v_user_id_text, v_secret, 'sha256'), 'hex') THEN
+        RETURN;
+    END IF;
+
+    BEGIN
+        v_user_id := v_user_id_text::uuid;
+    EXCEPTION WHEN invalid_text_representation THEN
+        RETURN;
+    END;
+
+    RETURN QUERY SELECT v_user_id;
+END;
+$$;
+
+ALTER FUNCTION app_private.verify_context_token(TEXT) OWNER TO app_admin;
+
+CREATE OR REPLACE FUNCTION public.current_request_user_id()
+RETURNS UUID
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+    SELECT user_id FROM app_private.verify_context_token(current_setting('app.context_token', true));
+$$;
+
+ALTER FUNCTION public.current_request_user_id() OWNER TO app_admin;
+
+DROP FUNCTION IF EXISTS public.resolve_active_membership();
+
+CREATE OR REPLACE FUNCTION public.resolve_active_membership(p_context_token TEXT)
 RETURNS TABLE(membership_id UUID, org_id UUID, role TEXT)
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = ''
 AS $$
     SELECT m.id, m.org_id, m.role
     FROM public.memberships m
-    WHERE m.user_id = current_setting('app.current_user_id', true)::UUID
+    WHERE m.user_id = (SELECT user_id FROM app_private.verify_context_token(p_context_token))
       AND m.active = true
     ORDER BY m.created_at
     LIMIT 1;
 $$;
+
+ALTER FUNCTION public.resolve_active_membership(TEXT) OWNER TO app_admin;
+
+CREATE OR REPLACE FUNCTION public.is_active_org_member(p_org_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.memberships m
+        WHERE m.user_id = (SELECT user_id FROM app_private.verify_context_token(current_setting('app.context_token', true)))
+          AND m.org_id = p_org_id
+          AND m.active = true
+    );
+$$;
+
+ALTER FUNCTION public.is_active_org_member(UUID) OWNER TO app_admin;
 
 CREATE OR REPLACE FUNCTION public.is_active_org_member(p_user_id UUID, p_org_id UUID)
 RETURNS BOOLEAN
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = ''
 AS $$
     SELECT EXISTS (
-        SELECT 1 FROM public.memberships m
-        WHERE m.user_id = p_user_id
-          AND m.org_id = p_org_id
-          AND m.active = true
+        SELECT 1 FROM public.memberships target
+        WHERE target.user_id = p_user_id
+          AND target.org_id = p_org_id
+          AND target.active = true
+          AND EXISTS (
+              SELECT 1 FROM public.memberships caller
+              WHERE caller.user_id = (SELECT user_id FROM app_private.verify_context_token(current_setting('app.context_token', true)))
+                AND caller.org_id = p_org_id
+                AND caller.active = true
+          )
     );
 $$;
 
-ALTER FUNCTION public.resolve_active_membership() OWNER TO app_admin;
 ALTER FUNCTION public.is_active_org_member(UUID, UUID) OWNER TO app_admin;
 
--- Least-privilege grants for the application role.
+-- Least-privilege grants for the application role. No default PUBLIC execute on
+-- security-sensitive functions; grants are explicit and minimal.
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.accounts, public.opportunities TO app_user;
 GRANT SELECT ON TABLE public.users, public.organizations, public.memberships TO app_user;
 GRANT REFERENCES ON TABLE public.users, public.organizations, public.accounts TO app_user;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_user;
-GRANT EXECUTE ON FUNCTION public.resolve_active_membership() TO app_user;
+
+REVOKE ALL ON FUNCTION public.resolve_active_membership(TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.resolve_active_membership(TEXT) TO app_user;
+
+REVOKE ALL ON FUNCTION public.is_active_org_member(UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.is_active_org_member(UUID) TO app_user;
+
+REVOKE ALL ON FUNCTION public.is_active_org_member(UUID, UUID) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.is_active_org_member(UUID, UUID) TO app_user;
+
+REVOKE ALL ON FUNCTION public.current_request_user_id() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.current_request_user_id() TO app_user;
+
+REVOKE ALL ON FUNCTION app_private.verify_context_token(TEXT) FROM PUBLIC;
+-- Intentionally not granted to app_user; only app_admin-owned functions use it.
 
 -- app_admin retains full schema access for migrations.
 GRANT ALL ON ALL TABLES IN SCHEMA public TO app_admin;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO app_admin;
+GRANT ALL ON ALL FUNCTIONS IN SCHEMA public TO app_admin;
 
 -- Default privileges only for app_admin; app_user must receive explicit
 -- grants for any future table/sequence/function.
@@ -160,9 +289,10 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO app_admin;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO app_admin;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO app_admin;
 
--- Row-level security. Tenant access is bound to the verified user plus an
--- active membership. The context is set per-request by the API using
--- transaction-scoped GUCs (app.current_org_id and app.current_user_id).
+-- Row-level security. Tenant access is bound to a signed context token that the
+-- runtime role cannot forge. The token carries a verified user id; the DB
+-- verifies the signature and checks an active membership before returning or
+-- modifying any tenant-scoped row.
 ALTER TABLE public.organizations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.memberships ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.accounts ENABLE ROW LEVEL SECURITY;
@@ -172,37 +302,29 @@ ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS org_tenant_organizations ON public.organizations;
 CREATE POLICY org_tenant_organizations ON public.organizations
     FOR SELECT TO app_user
-    USING (
-        id = current_setting('app.current_org_id', true)::UUID
-        AND public.is_active_org_member(current_setting('app.current_user_id', true)::UUID, id)
-    );
+    USING (public.is_active_org_member(id));
 
 DROP POLICY IF EXISTS org_tenant_memberships ON public.memberships;
 CREATE POLICY org_tenant_memberships ON public.memberships
     FOR SELECT TO app_user
     USING (
-        user_id = current_setting('app.current_user_id', true)::UUID
-        AND org_id = current_setting('app.current_org_id', true)::UUID
+        user_id = public.current_request_user_id()
         AND active = true
     );
 
 DROP POLICY IF EXISTS org_tenant_accounts ON public.accounts;
 CREATE POLICY org_tenant_accounts ON public.accounts
     FOR ALL TO app_user
-    USING (
-        org_id = current_setting('app.current_org_id', true)::UUID
-        AND public.is_active_org_member(current_setting('app.current_user_id', true)::UUID, org_id)
-    );
+    USING (public.is_active_org_member(org_id))
+    WITH CHECK (public.is_active_org_member(org_id));
 
 DROP POLICY IF EXISTS org_tenant_opportunities ON public.opportunities;
 CREATE POLICY org_tenant_opportunities ON public.opportunities
     FOR ALL TO app_user
-    USING (
-        org_id = current_setting('app.current_org_id', true)::UUID
-        AND public.is_active_org_member(current_setting('app.current_user_id', true)::UUID, org_id)
-    );
+    USING (public.is_active_org_member(org_id))
+    WITH CHECK (public.is_active_org_member(org_id));
 
 DROP POLICY IF EXISTS org_tenant_users ON public.users;
 CREATE POLICY org_tenant_users ON public.users
     FOR SELECT TO app_user
-    USING (id = current_setting('app.current_user_id', true)::UUID);
+    USING (id = public.current_request_user_id());

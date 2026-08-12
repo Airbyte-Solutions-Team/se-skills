@@ -21,6 +21,7 @@ class OrgContext(BaseModel):
     org_id: uuid.UUID
     membership_id: uuid.UUID | None = None
     role: str = "member"
+    context_token: str = ""
 
 
 class AccountCreate(BaseModel):

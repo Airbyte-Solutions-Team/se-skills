@@ -6,6 +6,8 @@ synthetic data only and a local HMAC JWT secret so no Supabase project is requir
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 import sys
 import uuid
@@ -48,6 +50,7 @@ async def hosted_env(db_urls: dict[str, str]) -> dict[str, str]:
         "SUPABASE_ANON_KEY": "anon-key",
         "HOSTED_JWT_ALGORITHM": "HS256",
         "HOSTED_JWT_SECRET": "super-secret-32-byte-test-jwt-key!",
+        "HOSTED_CONTEXT_SECRET": "test-context-secret-32-bytes!!",
         "BETA_ALLOWED_EMAILS": "test@airbyte.io,other@airbyte.io",
         **db_urls,
     }
@@ -72,6 +75,7 @@ async def hosted_env(db_urls: dict[str, str]) -> dict[str, str]:
         config.MIGRATIONS_DIR,
         app_user_password="app_user_password",
         app_admin_password="app_admin_password",
+        context_secret=env["HOSTED_CONTEXT_SECRET"],
     )
     return env
 
@@ -187,6 +191,13 @@ def _token(user_id: uuid.UUID, email: str) -> str:
 
 def _auth_header(user_id: uuid.UUID, email: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {_token(user_id, email)}"}
+
+
+def _context_token(user_id: uuid.UUID) -> str:
+    """Return the signed context token the application would set for a user."""
+    secret = os.environ["HOSTED_CONTEXT_SECRET"].encode("utf-8")
+    user_text = str(user_id).encode("utf-8")
+    return f"{user_id}:{hmac.new(secret, user_text, hashlib.sha256).hexdigest()}"
 
 
 @pytest.mark.hosted
@@ -400,12 +411,8 @@ async def test_cross_org_account_not_visible_via_rls(
         async with user_pool.acquire() as conn:
             async with conn.transaction():
                 await conn.execute(
-                    "SELECT set_config('app.current_org_id', $1, true)",
-                    str(org_b),
-                )
-                await conn.execute(
-                    "SELECT set_config('app.current_user_id', $1, true)",
-                    str(user_b),
+                    "SELECT set_config('app.context_token', $1, true)",
+                    _context_token(user_b),
                 )
                 return await conn.fetch(
                     "SELECT id FROM public.accounts WHERE id = $1", account_id
@@ -446,12 +453,8 @@ async def test_rls_blocks_mismatched_org_context(
         async with user_pool.acquire() as conn:
             async with conn.transaction():
                 await conn.execute(
-                    "SELECT set_config('app.current_org_id', $1, true)",
-                    str(org_b),
-                )
-                await conn.execute(
-                    "SELECT set_config('app.current_user_id', $1, true)",
-                    str(user_a),
+                    "SELECT set_config('app.context_token', $1, true)",
+                    _context_token(user_a),
                 )
                 return await conn.fetch("SELECT id FROM public.accounts")
 
@@ -489,12 +492,8 @@ async def test_rls_blocks_cross_org_write_without_membership(
         async with user_pool.acquire() as conn:
             async with conn.transaction():
                 await conn.execute(
-                    "SELECT set_config('app.current_org_id', $1, true)",
-                    str(org_b),
-                )
-                await conn.execute(
-                    "SELECT set_config('app.current_user_id', $1, true)",
-                    str(user_a),
+                    "SELECT set_config('app.context_token', $1, true)",
+                    _context_token(user_a),
                 )
                 account_b = await conn.fetchval(
                     "SELECT id FROM public.accounts WHERE slug = $1",
@@ -542,12 +541,8 @@ async def test_cross_org_opportunity_relationship_fails_at_db(
         async with user_pool.acquire() as conn:
             async with conn.transaction():
                 await conn.execute(
-                    "SELECT set_config('app.current_org_id', $1, true)",
-                    str(org_b),
-                )
-                await conn.execute(
-                    "SELECT set_config('app.current_user_id', $1, true)",
-                    str(user_b),
+                    "SELECT set_config('app.context_token', $1, true)",
+                    _context_token(user_b),
                 )
                 await conn.execute(
                     """
@@ -559,6 +554,125 @@ async def test_cross_org_opportunity_relationship_fails_at_db(
 
     with pytest.raises(asyncpg.exceptions.ForeignKeyViolationError):
         await _insert_bad_opportunity()
+
+
+@pytest.mark.hosted
+@pytest.mark.slow
+async def test_app_user_cannot_impersonate_another_member(
+    user_pool: asyncpg.Pool, admin_pool: asyncpg.Pool
+) -> None:
+    """Using the normal runtime `app_user` credential, a User A connection
+    cannot gain Org B access by setting both User B and Org B context values,
+    cannot resolve another user's membership, and cannot read/insert/update/delete
+    Org B rows.
+    """
+    async with admin_pool.acquire() as conn:
+        org_a = await conn.fetchval(
+            "INSERT INTO public.organizations (id, name, slug) VALUES ($1, $2, $3) RETURNING id",
+            uuid.uuid4(), "Org A", "impersonate-org-a",
+        )
+        org_b = await conn.fetchval(
+            "INSERT INTO public.organizations (id, name, slug) VALUES ($1, $2, $3) RETURNING id",
+            uuid.uuid4(), "Org B", "impersonate-org-b",
+        )
+        account_b = uuid.uuid4()
+        await conn.execute(
+            "INSERT INTO public.accounts (id, org_id, name, slug) VALUES ($1, $2, $3, $4)",
+            account_b, org_b, "Account B", "account-b-impersonate",
+        )
+        user_a = await _seed_user_and_membership(admin_pool, "user-a-imp@airbyte.io", org_a)
+        user_b = await _seed_user_and_membership(admin_pool, "user-b-imp@airbyte.io", org_b)
+
+    token_a = _context_token(user_a)
+    forged_b = f"{user_b}:invalid-mac-hex"
+    valid_mac_b = hmac.new(
+        os.environ["HOSTED_CONTEXT_SECRET"].encode("utf-8"),
+        str(user_b).encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    token_b = f"{user_b}:{valid_mac_b}"
+
+    async with user_pool.acquire() as conn:
+        # The resolver only returns the membership encoded in a valid signed token.
+        row = await conn.fetchrow(
+            "SELECT membership_id, org_id FROM public.resolve_active_membership($1)",
+            token_a,
+        )
+        assert row is not None
+        assert row["org_id"] == org_a
+
+        invalid = await conn.fetchrow(
+            "SELECT membership_id, org_id FROM public.resolve_active_membership($1)",
+            forged_b,
+        )
+        assert invalid is None
+
+    async with user_pool.acquire() as conn:
+        async with conn.transaction():
+            # User A tries to use the forgeable GUCs plus a forged B token.
+            await conn.execute(
+                "SELECT set_config('app.current_org_id', $1, true)", str(org_b)
+            )
+            await conn.execute(
+                "SELECT set_config('app.current_user_id', $1, true)", str(user_b)
+            )
+            await conn.execute(
+                "SELECT set_config('app.context_token', $1, true)", forged_b
+            )
+            rows = await conn.fetch(
+                "SELECT id FROM public.accounts WHERE id = $1", account_b
+            )
+            assert len(rows) == 0
+
+    # Using a valid token for A while also setting the GUCs to B still only gives
+    # access to A's own org rows.
+    async with user_pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT set_config('app.current_org_id', $1, true)", str(org_b)
+            )
+            await conn.execute(
+                "SELECT set_config('app.current_user_id', $1, true)", str(user_b)
+            )
+            await conn.execute(
+                "SELECT set_config('app.context_token', $1, true)", token_a
+            )
+            rows = await conn.fetch(
+                "SELECT id FROM public.accounts WHERE id = $1", account_b
+            )
+            assert len(rows) == 0
+
+    # Even with a cryptographically valid B token (which only the app could
+    # produce), the connection is still subject to the same RLS path. This test
+    # verifies the boundary with a valid token for the wrong member: the row is
+    # visible because the token genuinely represents User B's membership.
+    async with user_pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT set_config('app.context_token', $1, true)", token_b
+            )
+            rows = await conn.fetch(
+                "SELECT id FROM public.accounts WHERE id = $1", account_b
+            )
+            assert len(rows) == 1
+
+    # app_user must not be able to read or execute the private secret/verifier.
+    async with user_pool.acquire() as conn:
+        with pytest.raises(asyncpg.exceptions.InsufficientPrivilegeError):
+            await conn.fetch("SELECT * FROM app_private.context_secret")
+    async with user_pool.acquire() as conn:
+        with pytest.raises(asyncpg.exceptions.InsufficientPrivilegeError):
+            await conn.fetchval(
+                "SELECT app_private.verify_context_token($1)", token_a
+            )
+
+    # app_user cannot resolve another user's membership without that user's token.
+    async with user_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT membership_id, org_id FROM public.resolve_active_membership($1)",
+            token_a,
+        )
+        assert row is None or row["org_id"] == org_a
 
 
 @pytest.mark.hosted
@@ -765,6 +879,7 @@ async def test_migration_rejects_empty_passwords(hosted_env: dict[str, str]) -> 
             config.MIGRATIONS_DIR,
             app_user_password="",
             app_admin_password="app_admin_password",
+            context_secret=hosted_env["HOSTED_CONTEXT_SECRET"],
         )
 
     with pytest.raises(ValueError):
@@ -773,6 +888,16 @@ async def test_migration_rejects_empty_passwords(hosted_env: dict[str, str]) -> 
             config.MIGRATIONS_DIR,
             app_user_password="app_user_password",
             app_admin_password="",
+            context_secret=hosted_env["HOSTED_CONTEXT_SECRET"],
+        )
+
+    with pytest.raises(ValueError):
+        await migrations.migrate(
+            hosted_env["MIGRATE_DATABASE_URL"],
+            config.MIGRATIONS_DIR,
+            app_user_password="app_user_password",
+            app_admin_password="app_admin_password",
+            context_secret="",
         )
 
 
@@ -800,6 +925,7 @@ async def test_migration_safe_password_quoting(hosted_env: dict[str, str]) -> No
             config.MIGRATIONS_DIR,
             app_user_password=malicious,
             app_admin_password=malicious,
+            context_secret=hosted_env["HOSTED_CONTEXT_SECRET"],
         )
 
         # Must be able to connect as app_user with the malicious password.

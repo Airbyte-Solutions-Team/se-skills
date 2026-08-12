@@ -1,6 +1,8 @@
 """JWT verification and FastAPI auth/org dependencies for the hosted app."""
 from __future__ import annotations
 
+import hmac
+import hashlib
 import logging
 import uuid
 from contextlib import asynccontextmanager
@@ -82,6 +84,22 @@ def _get_token_from_request(request: Request) -> str:
     return (request.cookies.get("se-hosted-token") or "").strip()
 
 
+def _tenant_context_token(user_id: uuid.UUID) -> str:
+    """Return a signed context token for the verified user.
+
+    The token is `user_id:hmac(user_id, secret)`. The database stores the same
+    secret in an app_private table and verifies the signature inside SECURITY
+    DEFINER functions, so the runtime `app_user` role cannot forge another
+    user's tenant context.
+    """
+    if not config.HOSTED_CONTEXT_SECRET:
+        raise AuthError("Hosted context secret not configured", status.HTTP_500_INTERNAL_SERVER_ERROR)
+    secret = config.HOSTED_CONTEXT_SECRET.encode("utf-8")
+    user_text = str(user_id).encode("utf-8")
+    mac = hmac.new(secret, user_text, hashlib.sha256).hexdigest()
+    return f"{user_id}:{mac}"
+
+
 async def require_user(request: Request) -> User:
     """FastAPI dependency that validates the bearer token."""
     token = _get_token_from_request(request)
@@ -99,30 +117,24 @@ async def _resolve_org(pool: asyncpg.Pool, user: User) -> OrgContext | None:
     """Look up the user's active membership using the `app_user` pool.
 
     Membership resolution is delegated to a narrow `SECURITY DEFINER` function
-    owned by the migration role. The web process never connects as the
-    `BYPASSRLS` migration/DDL principal.
+    owned by the migration role. The function verifies a signed context token so
+    the web process never relies on caller-settable GUCs for identity.
     """
+    context_token = _tenant_context_token(user.id)
     async with pool.acquire() as conn:
-        async with conn.transaction():
-            # The resolver function reads the verified user id from a
-            # transaction-scoped GUC and returns only that user's active
-            # membership. Using set_config with a parameter keeps the UUID out of
-            # the SQL string.
-            await conn.execute(
-                "SELECT set_config('app.current_user_id', $1, true)",
-                str(user.id),
-            )
-            row = await conn.fetchrow(
-                "SELECT membership_id, org_id, role FROM public.resolve_active_membership()"
-            )
-            if row is None:
-                return None
-            return OrgContext(
-                user=user,
-                org_id=row["org_id"],
-                membership_id=row["membership_id"],
-                role=row["role"],
-            )
+        row = await conn.fetchrow(
+            "SELECT membership_id, org_id, role FROM public.resolve_active_membership($1)",
+            context_token,
+        )
+        if row is None:
+            return None
+        return OrgContext(
+            user=user,
+            org_id=row["org_id"],
+            membership_id=row["membership_id"],
+            role=row["role"],
+            context_token=context_token,
+        )
 
 
 async def require_org(
@@ -141,20 +153,17 @@ async def require_org(
 async def tenant_connection(request: Request, org: OrgContext):
     """Yield an `app_user` connection with the verified tenant context set.
 
-    `app.current_org_id` and `app.current_user_id` are set in a transaction with
-    `set_config(..., is_local=true)` so the values are automatically cleared on
-    commit or rollback. This prevents one request from leaking organization
-    context to another request that reuses the same pool connection.
+    The signed context token is set as a transaction-local GUC
+    (`app.context_token`) and is verified by `SECURITY DEFINER` functions for
+    every RLS policy check. It is automatically cleared on commit or rollback,
+    preventing one request from leaking context to another request that reuses
+    the same pool connection.
     """
     pool: asyncpg.Pool = request.app.state.hosted_user_pool
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute(
-                "SELECT set_config('app.current_org_id', $1, true)",
-                str(org.org_id),
-            )
-            await conn.execute(
-                "SELECT set_config('app.current_user_id', $1, true)",
-                str(org.user.id),
+                "SELECT set_config('app.context_token', $1, true)",
+                org.context_token,
             )
             yield conn

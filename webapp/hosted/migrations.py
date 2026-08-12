@@ -11,12 +11,14 @@ logger = logging.getLogger(__name__)
 
 _MIGRATION_NAME_RE = re.compile(r"^(\d{3})_.*\.sql$")
 
-# GUC names used to pass role passwords into migrations without string
-# substitution. The migration runner sets these inside each transaction with
-# `set_config`, and migrations read them with `current_setting` inside `format`
-# (which safely quotes the literal).
+# GUC names used to pass role passwords and the shared context secret into
+# migrations without string substitution. The migration runner sets these inside
+# each transaction with `set_config`, and migrations read them with
+# `current_setting` inside `format` (which safely quotes literals) or direct GUC
+# access for the context secret.
 _APP_USER_PASSWORD_GUC = "migration.app_user_password"
 _APP_ADMIN_PASSWORD_GUC = "migration.app_admin_password"
+_CONTEXT_SECRET_GUC = "migration.context_secret"
 
 
 async def ensure_migrations_table(conn: asyncpg.Connection) -> None:
@@ -53,20 +55,28 @@ def _validate_passwords(app_user_password: str, app_admin_password: str) -> None
         raise ValueError("app_admin_password must be a non-empty string")
 
 
+def _validate_context_secret(context_secret: str) -> None:
+    if not context_secret:
+        raise ValueError("context_secret must be a non-empty string")
+
+
 async def migrate(
     dsn: str,
     migrations_dir: Path,
     *,
     app_user_password: str,
     app_admin_password: str,
+    context_secret: str,
 ) -> list[str]:
     """Apply all unapplied migrations under a single admin connection.
 
-    Role passwords are passed as transaction-local GUCs and read by the SQL
-    migration using `format(... %L, current_setting(...))`. They are never
-    interpolated into migration text.
+    Role passwords and the shared tenant-context signing secret are passed as
+    transaction-local GUCs. The SQL migration reads the passwords through
+    `current_setting` inside `format(... %L, current_setting(...))` and the
+    secret directly, so nothing is interpolated into migration text.
     """
     _validate_passwords(app_user_password, app_admin_password)
+    _validate_context_secret(context_secret)
 
     pool = await asyncpg.create_pool(dsn, min_size=1, max_size=1)
     try:
@@ -87,6 +97,11 @@ async def migrate(
                         "SELECT set_config($1, $2, true)",
                         _APP_ADMIN_PASSWORD_GUC,
                         app_admin_password,
+                    )
+                    await conn.execute(
+                        "SELECT set_config($1, $2, true)",
+                        _CONTEXT_SECRET_GUC,
+                        context_secret,
                     )
                     sql = path.read_text()
                     await conn.execute(sql)

@@ -25,6 +25,12 @@ APP_ADMIN_PASSWORD = os.environ.get("APP_ADMIN_PASSWORD", "")
 HOSTED_JWT_ALGORITHM = os.environ.get("HOSTED_JWT_ALGORITHM", "RS256")
 HOSTED_JWT_SECRET = os.environ.get("HOSTED_JWT_SECRET", "")
 
+# Shared secret used to sign the tenant context token that the application
+# passes to the database. The DB stores the same secret in app_private and
+# verifies the token inside SECURITY DEFINER functions so the app_user role
+# cannot forge a different user's tenant context.
+HOSTED_CONTEXT_SECRET = os.environ.get("HOSTED_CONTEXT_SECRET", "")
+
 BETA_ALLOWED_EMAILS = {e.strip().lower() for e in (os.environ.get("BETA_ALLOWED_EMAILS") or "").split(",") if e.strip()}
 BETA_ALLOW_AIRBYTE_DOMAIN = (os.environ.get("BETA_ALLOW_AIRBYTE_DOMAIN") or "").lower() in ("1", "true", "yes")
 
