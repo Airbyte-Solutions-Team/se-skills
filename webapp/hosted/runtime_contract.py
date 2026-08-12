@@ -147,14 +147,22 @@ class TokenUsage(BaseModel):
     total_tokens: int | None = None
 
     @model_validator(mode="after")
-    def _compute_total(self) -> "TokenUsage":
+    def _compute_and_validate_total(self) -> "TokenUsage":
+        if self.input_tokens < 0 or self.output_tokens < 0:
+            raise RuntimeValidationError("Token counts must be non-negative")
+        total = self.input_tokens + self.output_tokens
+        if self.cache_creation_input_tokens is not None:
+            if self.cache_creation_input_tokens < 0:
+                raise RuntimeValidationError("Cache creation token count must be non-negative")
+            total += self.cache_creation_input_tokens
+        if self.cache_read_input_tokens is not None:
+            if self.cache_read_input_tokens < 0:
+                raise RuntimeValidationError("Cache read token count must be non-negative")
+            total += self.cache_read_input_tokens
         if self.total_tokens is None:
-            total = self.input_tokens + self.output_tokens
-            if self.cache_creation_input_tokens:
-                total += self.cache_creation_input_tokens
-            if self.cache_read_input_tokens:
-                total += self.cache_read_input_tokens
             object.__setattr__(self, "total_tokens", total)
+        elif self.total_tokens != total:
+            raise RuntimeValidationError("total_tokens must equal the sum of input, output, and cache token counts")
         return self
 
 
@@ -169,18 +177,41 @@ class ExecutionMetadata(BaseModel):
     cost: float | None = None
 
 
+FAILURE_MESSAGES: dict[FailureCategory, str] = {
+    "cancelled": "Execution was cancelled",
+    "configuration_error": "Runtime configuration error",
+    "forbidden_tool": "Disallowed tool requested",
+    "input_error": "Invalid manifest or input file",
+    "model_error": "Model request or response error",
+    "output_error": "Sandbox produced invalid output",
+    "runtime_error": "Runtime error",
+    "timeout": "Execution timed out",
+    "tool_input_error": "Tool received invalid arguments",
+    "unknown_tool": "Unknown tool requested",
+}
+
+
 class RedactedFailure(BaseModel):
     """Categorized, non-sensitive failure information for the job ledger.
 
-    `message` must be a fixed, generic string controlled by the worker, never a
-    model-supplied or transcript-derived value. Detailed diagnostics are kept
-    out of the durable job payload.
+    `message` is derived from the closed `category` by the trusted worker. It
+    is never an arbitrary, model-supplied, or transcript-derived string.
+    Detailed diagnostics are kept out of the durable job payload.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     category: FailureCategory
-    message: str
+    message: str = ""
+
+    @model_validator(mode="after")
+    def _enforce_fixed_message(self) -> "RedactedFailure":
+        expected = FAILURE_MESSAGES[self.category]
+        if not self.message:
+            object.__setattr__(self, "message", expected)
+        elif self.message != expected:
+            raise RuntimeValidationError("Failure message must be the fixed generic string for the category")
+        return self
 
 
 class SandboxOutputSidecar(BaseModel):

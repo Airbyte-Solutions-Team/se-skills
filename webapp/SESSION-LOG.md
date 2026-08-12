@@ -2,10 +2,17 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 11, 2026 — HEAD `1c9465c` on `devin/slice5a-runtime-contract`. Slice 5A fourth review fixes: real Messages API round-trip, closed failure categories, all typed tools, manifest prior completeness. PR #43 draft._
+_Last updated: August 11, 2026 — HEAD `TBD` on `devin/slice5a-runtime-contract`. Slice 5A fifth review fixes: fail-closed stop dispatch for unknown/`None` stop reasons, category-only redacted failure contract, model-report category mapping. PR #43 draft._
 
 
 ## Built this session (newest first — see `git log`)
+
+- **PR #43 fifth review blocker fixes: fail-closed stop dispatch, category-only redacted failures, and model-report category mapping (August 11).**
+  1. **Fail-closed stop dispatch.** `webapp/hosted/agent_loop_harness.py` now treats only the Anthropic `tool_use` stop reason as authorization to dispatch `tool_use` blocks. `end_turn` / `stop_sequence` may terminate a turn only when no tools are present; every other value, including `max_tokens`, `refusal`, `pause_turn`, `model_context_window_exceeded`, unknown future values, and `None`, fails closed as `model_error` before any tool is executed.
+  2. **Category-only redacted failure contract.** `webapp/hosted/runtime_contract.py` adds a `FAILURE_MESSAGES` mapping from closed `FailureCategory` to a fixed generic message. `RedactedFailure` derives the message from its category and rejects arbitrary caller-supplied text, so model-controlled strings cannot reach the job ledger.
+  3. **`report_failure` maps to a host-owned generic category.** `ReportFailureInput` now accepts only the model-report category `model_reported_failure` and the runtime maps any valid report to the host-owned `model_error` category with the fixed generic message. The tool JSON schema reflects the closed enum and no longer accepts a `message` field.
+  4. **Token usage integrity.** `TokenUsage` computes `total_tokens` from input/output/cache components and rejects a caller-supplied `total_tokens` that disagrees with the computed sum or any negative token count.
+  5. **Tests.** Added `eval/tests/test_runtime_contract.py` cases for fixed-message derivation, arbitrary message rejection, and inconsistent `total_tokens`. Added `eval/tests/test_agent_loop_harness.py` cases for `model_context_window_exceeded`, unknown/`None` stop reasons, `end_turn`/`stop_sequence` success after `write_output`, and model attempts to report `cancelled`/`timeout`/`configuration_error`.
 
 - **PR #43 review blocker fixes: manual typed-tool runtime, strict post-call validation, and serializable contract (August 11).**
   1. **ADR revised to a manual Anthropic Messages API loop.** `docs/decisions/ADR-005-runtime-and-sandbox.md` now recommends a manual typed-tool loop with a worker-side model proxy inside a gVisor-backed `runsc` container. The Agent SDK is explicitly rejected because public documentation describes it as "Claude Code as a library" that bundles the `claude` CLI, and it lacks a documented model-HTTP proxy that keeps the Anthropic API key out of the sandbox. Exact versions recorded: `httpx` 0.28.1, Anthropic Messages API `2023-06-01`, target model `claude-sonnet-4-6` (configured by the worker).

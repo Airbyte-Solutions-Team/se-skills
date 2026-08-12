@@ -23,6 +23,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from webapp.hosted.runtime_contract import (
+    FAILURE_MESSAGES,
     CancellationToken,
     ExecutionMetadata,
     FailureCategory,
@@ -34,6 +35,9 @@ from webapp.hosted.runtime_contract import (
     SkillRuntime,
     TokenUsage,
 )
+
+
+ModelReportCategory = Literal["model_reported_failure"]
 
 
 # ---------------------------------------------------------------------------
@@ -185,13 +189,13 @@ class WriteOutputInput(BaseModel):
 class ReportFailureInput(BaseModel):
     """Arguments for report_failure.
 
-    The model may only report a closed failure category. The persisted message is
-    generic; any model-supplied detail is not written to the durable job payload.
+    The model may only report a closed model-report category. The runtime maps it
+    to the host-owned `model_error` category with a fixed, generic message.
+    Any model-supplied detail is not written to the durable job payload.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    category: FailureCategory
-    message: str = "Unknown failure"
+    category: ModelReportCategory
 
 
 # ---------------------------------------------------------------------------
@@ -251,12 +255,14 @@ def _tool_definitions(allowed: frozenset[str]) -> list[ToolDefinition]:
         ),
         "report_failure": ToolDefinition(
             name="report_failure",
-            description="Report a non-recoverable failure with a redacted reason.",
+            description="Report a non-recoverable failure with a redacted model-report category.",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "category": {"type": "string"},
-                    "message": {"type": "string"},
+                    "category": {
+                        "type": "string",
+                        "enum": ["model_reported_failure"],
+                    },
                 },
                 "required": ["category"],
             },
@@ -423,24 +429,27 @@ class TypedToolRuntime:
             model_name = response.model
             total_input += response.usage.input_tokens
             total_output += response.usage.output_tokens
-            if response.usage.cache_creation_input_tokens:
+            if response.usage.cache_creation_input_tokens is not None:
                 total_cache_creation += response.usage.cache_creation_input_tokens
-            if response.usage.cache_read_input_tokens:
+            if response.usage.cache_read_input_tokens is not None:
                 total_cache_read += response.usage.cache_read_input_tokens
 
             tool_use_blocks = [block for block in response.content if isinstance(block, ToolUseBlock)]
 
-            # Fail-closed on terminal stop reasons before dispatching any tool calls.
-            if response.stop_reason in {"max_tokens", "refusal", "pause_turn"}:
-                return _failure("model_error")
-            if response.stop_reason in {"end_turn", "stop_sequence"}:
+            # Only the Anthropic `tool_use` stop reason authorizes tool dispatch.
+            # `end_turn` / `stop_sequence` may terminate the turn only when no tools
+            # are present; every other stop reason (including `max_tokens`,
+            # `refusal`, `pause_turn`, `model_context_window_exceeded`, unknown
+            # future values, and `None`) is treated as a model error.
+            if response.stop_reason == "tool_use":
+                if not tool_use_blocks:
+                    return _failure("model_error")
+            elif response.stop_reason in {"end_turn", "stop_sequence"}:
                 if tool_use_blocks:
                     return _failure("model_error")
                 break
-            if not tool_use_blocks:
-                if response.stop_reason == "tool_use":
-                    return _failure("model_error")
-                break
+            else:
+                return _failure("model_error")
 
             messages.append(Message(role="assistant", content=list(response.content)))
 
@@ -452,7 +461,7 @@ class TypedToolRuntime:
 
                 result = _run_tool(tool, job, output_dir, transcript_text)
                 if isinstance(result, RedactedFailure):
-                    return _failure(result.category, result.message)
+                    return _failure(result.category)
 
                 results.append(ToolResultBlock(tool_use_id=tool.id, content=result))
 
@@ -484,23 +493,9 @@ class TypedToolRuntime:
 # Helpers
 # ---------------------------------------------------------------------------
 
-FAILURE_MESSAGES: dict[FailureCategory, str] = {
-    "cancelled": "Execution was cancelled",
-    "configuration_error": "Runtime configuration error",
-    "forbidden_tool": "Disallowed tool requested",
-    "input_error": "Invalid manifest or input file",
-    "model_error": "Model request or response error",
-    "output_error": "Sandbox produced invalid output",
-    "runtime_error": "Runtime error",
-    "timeout": "Execution timed out",
-    "tool_input_error": "Tool received invalid arguments",
-    "unknown_tool": "Unknown tool requested",
-}
-
-
-def _failure(category: FailureCategory, message: str | None = None) -> RuntimeResult:
-    """Return a redacted failure. If no message is supplied a fixed generic one is used."""
-    return RuntimeResult(failure=RedactedFailure(category=category, message=message or FAILURE_MESSAGES[category]))
+def _failure(category: FailureCategory) -> RuntimeResult:
+    """Return a redacted failure with the fixed generic message for the category."""
+    return RuntimeResult(failure=RedactedFailure(category=category))
 
 
 def _default_client(base_url: str) -> httpx.AsyncClient:
@@ -578,7 +573,7 @@ def _run_tool(
         try:
             return cls.model_validate(data)
         except ValidationError:
-            return RedactedFailure(category="tool_input_error", message=FAILURE_MESSAGES["tool_input_error"])
+            return RedactedFailure(category="tool_input_error")
 
     input_dir = Path(job.input_workspace)
 
@@ -594,14 +589,14 @@ def _run_tool(
             return parsed
         ref = parsed.ref
         if ref not in job.input_manifest.prior_context_refs:
-            return RedactedFailure(category="input_error", message=FAILURE_MESSAGES["input_error"])
+            return RedactedFailure(category="input_error")
         prior_path = input_dir / ref
         try:
             prior_path.relative_to(input_dir)
         except ValueError:
-            return RedactedFailure(category="input_error", message=FAILURE_MESSAGES["input_error"])
+            return RedactedFailure(category="input_error")
         if not prior_path.is_file():
-            return RedactedFailure(category="input_error", message=FAILURE_MESSAGES["input_error"])
+            return RedactedFailure(category="input_error")
         return prior_path.read_text(encoding="utf-8")[:100_000]
 
     if tool.name == "list_priors":
@@ -630,7 +625,7 @@ def _run_tool(
         try:
             sidecar = SandboxOutputSidecar(**parsed.sidecar)
         except ValidationError:
-            return RedactedFailure(category="output_error", message=FAILURE_MESSAGES["output_error"])
+            return RedactedFailure(category="output_error")
         (output_dir / "output.md").write_text(parsed.markdown, encoding="utf-8")
         (output_dir / "sidecar.json").write_text(sidecar.model_dump_json(indent=2), encoding="utf-8")
         return "Output written"
@@ -645,12 +640,12 @@ def _run_tool(
         parsed = _parse(ReportFailureInput, tool.input)
         if isinstance(parsed, RedactedFailure):
             return parsed
-        # The model-supplied message is treated as untrusted and is not propagated
-        # verbatim to the job ledger. The category is closed and the message is
-        # fixed and generic.
-        return RedactedFailure(category=parsed.category, message="Model reported a failure")
+        # The model-report category is mapped to the host-owned generic model_error
+        # category with a fixed, generic message. Model-supplied text is not
+        # propagated to the job ledger.
+        return RedactedFailure(category="model_error")
 
-    return RedactedFailure(category="unknown_tool", message=FAILURE_MESSAGES["unknown_tool"])
+    return RedactedFailure(category="unknown_tool")
 
 
 async def _collect_result(

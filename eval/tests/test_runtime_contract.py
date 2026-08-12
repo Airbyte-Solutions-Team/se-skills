@@ -274,7 +274,7 @@ def test_runtime_result_cannot_be_both_output_and_failure() -> None:
         RuntimeResult(
             output_artifact="# Title",
             sidecar=SandboxOutputSidecar(skill="post-call"),
-            failure=RedactedFailure(category="runtime_error", message="Runtime error"),
+            failure=RedactedFailure(category="runtime_error"),
         )
 
 
@@ -348,7 +348,7 @@ async def test_fake_runtime_stops_on_cancellation() -> None:
         async def execute(self, job: RuntimeJob, cancellation: object) -> RuntimeResult:
             if cancellation.is_cancelled():
                 return RuntimeResult(
-                    failure=RedactedFailure(category="cancelled", message="Cancelled by worker"),
+                    failure=RedactedFailure(category="cancelled"),
                 )
             return RuntimeResult(
                 output_artifact="# Title",
@@ -359,3 +359,28 @@ async def test_fake_runtime_stops_on_cancellation() -> None:
     result = await CancellingRuntime().execute(job, _FakeCancellationToken(cancelled=True))
     assert result.failure is not None
     assert result.output_artifact is None
+
+
+def test_redacted_failure_derives_fixed_message() -> None:
+    failure = RedactedFailure(category="runtime_error")
+    assert failure.message == "Runtime error"
+
+
+def test_redacted_failure_rejects_arbitrary_message() -> None:
+    with pytest.raises(ValidationError, match="Failure message"):
+        RedactedFailure(category="runtime_error", message="Arbitrary attacker-controlled text")
+
+
+def test_redacted_failure_rejects_model_error_message_with_wrong_category() -> None:
+    with pytest.raises(ValidationError, match="Failure message"):
+        RedactedFailure(category="input_error", message="Model request or response error")
+
+
+def test_token_usage_computes_total_with_cache() -> None:
+    usage = TokenUsage(input_tokens=100, output_tokens=50, cache_creation_input_tokens=10, cache_read_input_tokens=5)
+    assert usage.total_tokens == 165
+
+
+def test_token_usage_rejects_inconsistent_total() -> None:
+    with pytest.raises(ValidationError, match="total_tokens"):
+        TokenUsage(input_tokens=100, output_tokens=50, total_tokens=999)

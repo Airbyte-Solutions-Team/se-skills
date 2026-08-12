@@ -110,7 +110,7 @@ class _FixedToken(CancellationToken):
         self._event.set()
 
 
-def _model_response(content: list[dict[str, Any]], usage: dict[str, int] | None = None, stop_reason: str = "tool_use") -> httpx.Response:
+def _model_response(content: list[dict[str, Any]], usage: dict[str, int] | None = None, stop_reason: str | None = "tool_use") -> httpx.Response:
     payload = {
         "id": "msg_" + uuid.uuid4().hex[:8],
         "type": "message",
@@ -774,6 +774,55 @@ async def test_typed_tool_runtime_fails_tool_use_with_non_tool_stop_reason(tmp_p
     assert result.failure.category == "model_error"
 
 
+@pytest.mark.parametrize("stop_reason", ["model_context_window_exceeded", "unknown_future_stop", None])
+@pytest.mark.asyncio
+async def test_typed_tool_runtime_fails_unknown_or_missing_stop_reason_with_tool_block(tmp_path: Path, stop_reason: str | None) -> None:
+    """Only the known `tool_use` stop reason authorizes tool dispatch; unknown or `None` stop reasons fail closed."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _model_response(
+            [{"type": "tool_use", "id": "toolu_write", "name": "write_output", "input": {"markdown": "# Bad", "sidecar": {"skill": "post-call"}}}],
+            stop_reason=stop_reason,
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.AsyncClient(transport=transport, base_url="http://worker-proxy:8080")
+    runtime = TypedToolRuntime(model_client=client)
+    job = _job(tmp_path)
+
+    result = await runtime.execute(job, _FixedToken())
+
+    assert result.failure is not None
+    assert result.failure.category == "model_error"
+
+
+@pytest.mark.parametrize("stop_reason", ["end_turn", "stop_sequence"])
+@pytest.mark.asyncio
+async def test_typed_tool_runtime_allows_end_turn_after_write_output(tmp_path: Path, stop_reason: str) -> None:
+    """A non-tool stop reason with no tool_use blocks ends the turn once output has been written."""
+
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return _model_response(
+                [{"type": "tool_use", "id": "toolu_write", "name": "write_output", "input": {"markdown": "# Title", "sidecar": {"skill": "post-call", "skill_version": "1.0", "mode": "full", "title": "Title", "date": "June 11, 2026", "source_coverage": "Read transcript.txt in full (1 / 1 lines)."}}}],
+            )
+        return _model_response([{"type": "text", "text": "Done."}], stop_reason=stop_reason)
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.AsyncClient(transport=transport, base_url="http://worker-proxy:8080")
+    runtime = TypedToolRuntime(model_client=client)
+    job = _job(tmp_path)
+
+    result = await runtime.execute(job, _FixedToken())
+
+    assert result.failure is None
+    assert result.output_artifact == "# Title"
+
+
 @pytest.mark.asyncio
 async def test_typed_tool_runtime_executes_list_priors(tmp_path: Path) -> None:
     """list_priors returns the manifest-authorized prior refs in sorted order."""
@@ -943,3 +992,45 @@ async def test_typed_tool_runtime_rejects_transcript_aliased_as_prior(tmp_path: 
 
     assert result.failure is not None
     assert result.failure.category == "input_error"
+
+
+@pytest.mark.asyncio
+async def test_typed_tool_runtime_report_failure_maps_to_host_generic_category(tmp_path: Path) -> None:
+    """A valid model report_failure is mapped to the host-owned model_error category."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _model_response(
+            [{"type": "tool_use", "id": "toolu_report", "name": "report_failure", "input": {"category": "model_reported_failure"}}],
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.AsyncClient(transport=transport, base_url="http://worker-proxy:8080")
+    runtime = TypedToolRuntime(model_client=client)
+    job = _job(tmp_path, tools={"read_transcript", "write_output", "finish", "report_failure"})
+
+    result = await runtime.execute(job, _FixedToken())
+
+    assert result.failure is not None
+    assert result.failure.category == "model_error"
+    assert result.failure.message == "Model request or response error"
+
+
+@pytest.mark.parametrize("bad_category", ["cancelled", "timeout", "configuration_error"])
+@pytest.mark.asyncio
+async def test_typed_tool_runtime_rejects_model_reporting_host_owned_categories(tmp_path: Path, bad_category: str) -> None:
+    """The model may not report host-owned lifecycle categories such as cancelled or timeout."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _model_response(
+            [{"type": "tool_use", "id": "toolu_report", "name": "report_failure", "input": {"category": bad_category}}],
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.AsyncClient(transport=transport, base_url="http://worker-proxy:8080")
+    runtime = TypedToolRuntime(model_client=client)
+    job = _job(tmp_path, tools={"read_transcript", "write_output", "finish", "report_failure"})
+
+    result = await runtime.execute(job, _FixedToken())
+
+    assert result.failure is not None
+    assert result.failure.category == "tool_input_error"
