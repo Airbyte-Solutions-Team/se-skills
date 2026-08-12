@@ -28,6 +28,7 @@ def db_urls(postgres_container: Any) -> dict[str, str]:
         "MIGRATE_DATABASE_URL": migrate,
         "DATABASE_URL": f"postgresql://app_user:app_user_password@{host}:{port}/test",
         "DATABASE_ADMIN_URL": f"postgresql://app_admin:app_admin_password@{host}:{port}/test",
+        "AUTHENTICATED_DATABASE_URL": f"postgresql://authenticated:authenticated_password@{host}:{port}/test",
         "AUTHENTICATOR_DATABASE_URL": f"postgresql://authenticator:authenticator_password@{host}:{port}/test",
     }
 
@@ -72,7 +73,7 @@ async def _ensure_storage_schema(admin_dsn: str) -> None:
             DO $$
             BEGIN
                 IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
-                    CREATE ROLE authenticated WITH LOGIN;
+                    CREATE ROLE authenticated WITH LOGIN NOINHERIT PASSWORD 'authenticated_password';
                 END IF;
                 IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticator') THEN
                     CREATE ROLE authenticator WITH LOGIN NOINHERIT PASSWORD 'authenticator_password';
@@ -186,6 +187,22 @@ async def authenticator_pool(hosted_env: dict[str, str]) -> AsyncGenerator[async
     """
     pool = await asyncpg.create_pool(
         hosted_env["AUTHENTICATOR_DATABASE_URL"], min_size=1, max_size=2
+    )
+    try:
+        yield pool
+    finally:
+        await pool.close()
+
+
+@pytest.fixture
+async def authenticated_pool(hosted_env: dict[str, str]) -> AsyncGenerator[asyncpg.Pool, None]:
+    """Function-scoped pool connected as the browser-visible authenticated role.
+
+    This role must have no direct Storage object privileges and must not be able
+    to switch to app_storage.
+    """
+    pool = await asyncpg.create_pool(
+        hosted_env["AUTHENTICATED_DATABASE_URL"], min_size=1, max_size=2
     )
     try:
         yield pool

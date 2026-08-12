@@ -68,16 +68,6 @@ END $$;
 
 GRANT USAGE ON SCHEMA public TO app_storage;
 
--- Supabase's authenticator role must be able to switch into app_storage based on
--- the JWT role claim. In production this is the role Supabase Auth uses when a
--- request arrives with `role = "app_storage"` in the JWT.
-DO $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'authenticator') THEN
-        EXECUTE 'GRANT app_storage TO authenticator';
-    END IF;
-END $$;
-
 -- Narrow, app_admin-owned helper for Storage RLS policies. The app_storage role
 -- cannot read public.memberships directly, but it can execute this
 -- fixed-search-path function to test active membership.
@@ -114,6 +104,15 @@ BEGIN
     IF NOT auth_exists THEN
         RAISE EXCEPTION 'auth schema is required when storage schema is present';
     END IF;
+
+    -- Supabase's authenticator role is the entry point for JWT-driven role
+    -- switching; it must be able to switch into app_storage based on the JWT
+    -- role claim. Fail clearly if Storage is present but the platform role is
+    -- absent, because without it the backend-signed app_storage JWT cannot work.
+    IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'authenticator') THEN
+        RAISE EXCEPTION 'authenticator role is required when storage schema is present';
+    END IF;
+    EXECUTE 'GRANT app_storage TO authenticator';
 
     -- The transcripts bucket is fixed to this name in code and policies. Create
     -- it private, and force an existing bucket private as well. Fail loudly if

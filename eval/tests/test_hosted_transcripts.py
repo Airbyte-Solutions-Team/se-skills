@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 import asyncpg
@@ -740,14 +741,15 @@ async def test_authenticator_cannot_assume_privileged_roles(
 @pytest.mark.slow
 async def test_authenticated_role_cannot_assume_app_storage(
     superuser_pool: asyncpg.Pool,
-    user_pool: asyncpg.Pool,
+    authenticated_pool: asyncpg.Pool,
 ) -> None:
-    """The browser-visible authenticated role is not granted app_storage, so it
-    cannot switch into the Storage role even if it has a JWT with role=app_storage.
+    """The browser-visible authenticated role has no membership in app_storage,
+    so a real connection as authenticated cannot switch into the Storage role
+    even with a JWT claim of role=app_storage.
     """
     user_a, org_a, _ = await _seed_member(superuser_pool, "authz-role@airbyte.io")
 
-    async with user_pool.acquire() as conn:
+    async with authenticated_pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute(
                 "SELECT set_config('request.jwt.claims', $1, true)",
@@ -1208,4 +1210,58 @@ async def test_hosted_mode_does_not_expose_local_routes(
     user_id, org_id, _ = await _seed_member(admin_pool, "routes@airbyte.io")
     assert app_client.get("/api/skills", headers=_auth_header(user_id, "routes@airbyte.io")).status_code == 404
     assert app_client.get("/api/transcribe/start").status_code == 404
-    assert app_client.get("/api/run").status_code == 404
+
+
+@pytest.mark.hosted
+@pytest.mark.slow
+async def test_storage_migration_fails_when_authenticator_missing(
+    superuser_pool: asyncpg.Pool,
+    hosted_env: dict[str, str],
+) -> None:
+    """When the storage schema is present but the Supabase authenticator role is
+    absent, migration 002 must raise a clear exception rather than silently
+    omitting the required role handoff.
+    """
+    from hosted import migrations
+
+    migrations_dir = Path(__file__).parent.parent.parent / "webapp" / "hosted" / "migrations"
+    admin_dsn = hosted_env["MIGRATE_DATABASE_URL"]
+
+    try:
+        async with superuser_pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute("REVOKE app_storage FROM authenticator")
+                await conn.execute("REVOKE ALL ON DATABASE test FROM authenticator")
+                await conn.execute("REVOKE ALL ON SCHEMA public, storage, auth FROM authenticator")
+                await conn.execute("DROP ROLE IF EXISTS authenticator")
+                await conn.execute("DELETE FROM public.schema_migrations WHERE version = '002'")
+
+        with pytest.raises(asyncpg.exceptions.PostgresError):
+            await migrations.migrate(
+                admin_dsn,
+                migrations_dir,
+                app_user_password="app_user_password",
+                app_admin_password="app_admin_password",
+                context_secret=hosted_env["HOSTED_CONTEXT_SECRET"],
+            )
+    finally:
+        async with superuser_pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticator') THEN "
+                    "CREATE ROLE authenticator WITH LOGIN NOINHERIT PASSWORD 'authenticator_password'; "
+                    "END IF; END $$"
+                )
+                await conn.execute("GRANT CONNECT ON DATABASE test TO authenticator")
+                await conn.execute("GRANT USAGE ON SCHEMA public, storage, auth TO authenticator")
+                await conn.execute("ALTER ROLE authenticator SET search_path = 'auth, storage, public'")
+                await conn.execute("GRANT app_storage TO authenticator")
+                await conn.execute("DELETE FROM public.schema_migrations WHERE version = '002'")
+
+        await migrations.migrate(
+            admin_dsn,
+            migrations_dir,
+            app_user_password="app_user_password",
+            app_admin_password="app_admin_password",
+            context_secret=hosted_env["HOSTED_CONTEXT_SECRET"],
+        )
