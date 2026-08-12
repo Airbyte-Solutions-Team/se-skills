@@ -77,23 +77,30 @@ Constraints: `UNIQUE(account_id, slug)` (which also implies per-org because acco
 
 ### `transcripts` (and other documents)
 
-Uploaded customer artifacts. Stored as objects in private storage; Postgres keeps metadata.
+Uploaded customer artifacts. The object bytes live in Supabase Storage private buckets; Postgres keeps metadata.
 
 | Column | Purpose |
 |---|---|
-| `id` (PK) | UUID |
+| `id` (PK) | UUID (also embedded in the generated storage path) |
 | `org_id` (FK, indexed) | Organization owner |
 | `account_id` (FK) | Account |
 | `opportunity_id` (FK, nullable) | Opportunity |
-| `type` | `transcript`, `note`, `document` |
-| `filename` | Original filename |
-| `storage_path` | Private object-storage key (org-scoped) |
+| `storage_path` | Server-generated private object-storage key (`org_id/account_id/{opportunity_id/}transcripts/{transcript_id}`) |
+| `original_filename` | Original filename, kept only as metadata |
 | `size_bytes` | File size |
-| `mime_type` | MIME type |
+| `mime_type` | MIME type (derived from original filename) |
 | `uploaded_by` (FK to users) | Uploader |
 | `created_at` | Timestamp |
+| `updated_at` | Timestamp |
 
-RLS on `org_id`. The API streams or signs URLs for downloads; the SPA does not hold storage credentials.
+Constraints:
+- `FOREIGN KEY (account_id, org_id) REFERENCES accounts(id, org_id)`
+- `FOREIGN KEY (opportunity_id, account_id, org_id) REFERENCES opportunities(id, account_id, org_id)`
+- `FOREIGN KEY (uploaded_by, org_id) REFERENCES memberships(user_id, org_id)`
+- `org_id` references `public.organizations`
+- Indexes on `org_id`, `(account_id, org_id)`, `(opportunity_id, org_id)`, and `uploaded_by`
+
+RLS on `org_id` using the same signed tenant-context token as accounts and opportunities. Storage object access uses a dedicated `app_storage` Postgres role: FastAPI signs a short-lived JWT (`role: "app_storage"`, `sub: user_id`) with the server-side `SUPABASE_JWT_SECRET` for Supabase Storage REST calls, and the browser-visible `authenticated` role has no `storage.objects` privileges. The API streams file contents through FastAPI; the SPA never holds storage credentials. Uploads are validated for size (`TRANSCRIPT_MAX_BYTES`, default 10 MiB), allowed text extensions (`.txt`, `.md`, `.vtt`, `.srt`), valid UTF-8, no NUL bytes, and disallowed HTML/executable/binary signatures before any object or metadata is created.
 
 ### `jobs`
 

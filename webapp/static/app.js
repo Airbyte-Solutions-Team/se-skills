@@ -3560,6 +3560,15 @@ async function route() {
       if (HOSTED) return pageHosted();
       return pageMembers();
     }
+    if (h.startsWith("/hosted/accounts/")) {
+      const parts = h.split("/"); // ["", "hosted", "accounts", accountId, ...]
+      const accountId = decodeURIComponent(parts[3]);
+      if (parts[4] === "opportunities" && parts[5]) {
+        const opportunityId = decodeURIComponent(parts[5]);
+        return pageHostedAccountOpportunity(accountId, opportunityId);
+      }
+      return pageHostedAccount(accountId);
+    }
     if (h === "/hosted") return pageHosted();
     // In hosted mode only the auth/org/account surface is available. Unknown
     // client-side hashes should redirect back to the hosted landing page
@@ -3950,10 +3959,10 @@ async function pageHostedAccounts(session) {
   const accounts = data.accounts || [];
   const list = accounts.length
     ? `<div class="hosted-list">${accounts.map((a) => `
-        <div class="card">
+        <a class="card" href="#/hosted/accounts/${encodeURIComponent(a.id)}">
           <h3>${esc(a.name)}</h3>
           <div class="meta">${esc(a.slug)}</div>
-        </div>`).join("")}</div>`
+        </a>`).join("")}</div>`
     : `<div class="empty">No accounts yet.</div>`;
   view.innerHTML = `
     <div class="hosted-page">
@@ -3987,6 +3996,192 @@ async function pageHostedAccounts(session) {
       errEl.textContent = e.message;
       errEl.classList.remove("hidden");
     }
+  };
+}
+
+async function uploadHostedTranscript(accountId, opportunityId, fileInput, onError) {
+  const file = fileInput.files?.[0];
+  if (!file) return;
+  const url = opportunityId
+    ? `/api/hosted/accounts/${encodeURIComponent(accountId)}/opportunities/${encodeURIComponent(opportunityId)}/transcripts`
+    : `/api/hosted/accounts/${encodeURIComponent(accountId)}/transcripts`;
+  const body = new FormData();
+  body.append("file", file, file.name);
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${HOSTED_TOKEN}` },
+      body,
+    });
+    if (!r.ok) {
+      const data = await r.json().catch(() => ({}));
+      throw new Error(data.detail || r.statusText);
+    }
+    fileInput.value = "";
+    onError("");
+  } catch (e) {
+    onError(e.message || "Upload failed");
+  }
+}
+
+async function downloadHostedTranscript(accountId, transcriptId, opportunityId) {
+  const url = opportunityId
+    ? `/api/hosted/accounts/${encodeURIComponent(accountId)}/opportunities/${encodeURIComponent(opportunityId)}/transcripts/${encodeURIComponent(transcriptId)}/download`
+    : `/api/hosted/accounts/${encodeURIComponent(accountId)}/transcripts/${encodeURIComponent(transcriptId)}/download`;
+  const r = await fetch(url, { headers: { "Authorization": `Bearer ${HOSTED_TOKEN}` } });
+  if (!r.ok) {
+    alert(`Download failed: ${r.statusText}`);
+    return;
+  }
+  const blob = await r.blob();
+  const disposition = r.headers.get("content-disposition") || "";
+  const match = disposition.match(/filename="([^"]+)"/);
+  const filename = match ? match[1] : "transcript";
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+async function deleteHostedTranscript(accountId, transcriptId, opportunityId) {
+  if (!confirm("Delete this transcript?")) return;
+  const url = opportunityId
+    ? `/api/hosted/accounts/${encodeURIComponent(accountId)}/opportunities/${encodeURIComponent(opportunityId)}/transcripts/${encodeURIComponent(transcriptId)}`
+    : `/api/hosted/accounts/${encodeURIComponent(accountId)}/transcripts/${encodeURIComponent(transcriptId)}`;
+  try {
+    await api(url, { method: "DELETE" });
+    await pageHostedAccount(accountId, opportunityId);
+  } catch (e) {
+    alert(`Delete failed: ${e.message}`);
+  }
+}
+
+function renderHostedTranscriptList(transcripts, accountId, opportunityId) {
+  if (!transcripts.length) return `<div class="empty">No transcripts yet.</div>`;
+  return `<div class="hosted-list">${transcripts.map((t) => `
+    <div class="card">
+      <div class="row">
+        <span class="name">${esc(t.original_filename)}</span>
+        <span class="meta">${(t.size_bytes / 1024).toFixed(1)} KiB</span>
+      </div>
+      <div class="hosted-actions">
+        <button class="secondary" onclick="downloadHostedTranscript('${accountId}', '${t.id}', '${opportunityId || ""}')">Download</button>
+        <button class="danger" onclick="deleteHostedTranscript('${accountId}', '${t.id}', '${opportunityId || ""}')">Delete</button>
+      </div>
+    </div>`).join("")}</div>`;
+}
+
+function renderHostedUploadForm(accountId, opportunityId, opportunities) {
+  const oppSelect = opportunities && opportunities.length
+    ? `<select id="hosted-upload-opp">
+        <option value="">Account-wide transcript</option>
+        ${opportunities.map((o) => `<option value="${esc(o.id)}" ${o.id === opportunityId ? "selected" : ""}>${esc(o.name)}</option>`).join("")}
+       </select>`
+    : "";
+  return `
+    <form id="hosted-upload-form" class="create-box">
+      <label for="hosted-upload-file" class="sr-only">Choose transcript</label>
+      <input type="file" id="hosted-upload-file" accept=".txt,.md,.vtt,.srt" required />
+      ${oppSelect}
+      <button type="submit" class="primary">Upload transcript</button>
+    </form>
+    <div id="hosted-upload-error" class="status err hidden"></div>`;
+}
+
+async function pageHostedAccountOpportunity(accountId, opportunityId) {
+  if (!HOSTED_TOKEN) return pageHostedSignIn();
+  let session, account, opportunity, transcripts;
+  try {
+    session = await api("/api/auth/session");
+    const accounts = (await api("/api/hosted/accounts")).accounts || [];
+    account = accounts.find((a) => a.id === accountId);
+    const opportunities = (await api(`/api/hosted/accounts/${encodeURIComponent(accountId)}/opportunities`)).opportunities || [];
+    opportunity = opportunities.find((o) => o.id === opportunityId);
+    transcripts = (await api(`/api/hosted/accounts/${encodeURIComponent(accountId)}/opportunities/${encodeURIComponent(opportunityId)}/transcripts`)).transcripts || [];
+  } catch (e) {
+    return _hostedError(e);
+  }
+  setCrumbs([
+    { label: "Airbyte", href: "#/hosted" },
+    { label: account ? account.name : "Account", href: `#/hosted/accounts/${encodeURIComponent(accountId)}` },
+    { label: opportunity ? opportunity.name : "Opportunity" },
+  ]);
+  view.innerHTML = `
+    <div class="hosted-page">
+      <div class="section-head">
+        <h2>${esc(opportunity ? opportunity.name : "Opportunity")}</h2>
+        <span class="muted">${esc(session.user.email)}</span>
+      </div>
+      ${renderHostedUploadForm(accountId, opportunityId, null)}
+      <h3>Transcripts</h3>
+      ${renderHostedTranscriptList(transcripts, accountId, opportunityId)}
+    </div>`;
+  _wireHostedUpload(accountId, opportunityId);
+}
+
+async function pageHostedAccount(accountId, initialOpportunityId) {
+  if (!HOSTED_TOKEN) return pageHostedSignIn();
+  let session, account, opportunities, transcripts;
+  try {
+    session = await api("/api/auth/session");
+    const accounts = (await api("/api/hosted/accounts")).accounts || [];
+    account = accounts.find((a) => a.id === accountId);
+    opportunities = (await api(`/api/hosted/accounts/${encodeURIComponent(accountId)}/opportunities`)).opportunities || [];
+    const url = initialOpportunityId
+      ? `/api/hosted/accounts/${encodeURIComponent(accountId)}/opportunities/${encodeURIComponent(initialOpportunityId)}/transcripts`
+      : `/api/hosted/accounts/${encodeURIComponent(accountId)}/transcripts`;
+    transcripts = (await api(url)).transcripts || [];
+  } catch (e) {
+    return _hostedError(e);
+  }
+  setCrumbs([
+    { label: "Airbyte", href: "#/hosted" },
+    { label: account ? account.name : "Account" },
+  ]);
+  const oppList = opportunities.length
+    ? `<div class="hosted-opps"><strong>Opportunities:</strong> ${opportunities.map((o) => `<a href="#/hosted/accounts/${encodeURIComponent(accountId)}/opportunities/${encodeURIComponent(o.id)}">${esc(o.name)}</a>`).join(", ")}</div>`
+    : "";
+  view.innerHTML = `
+    <div class="hosted-page">
+      <div class="section-head">
+        <h2>${esc(account ? account.name : "Account")}</h2>
+        <span class="muted">${esc(session.user.email)}</span>
+      </div>
+      ${oppList}
+      ${renderHostedUploadForm(accountId, initialOpportunityId || "", opportunities)}
+      <h3>Transcripts</h3>
+      ${renderHostedTranscriptList(transcripts, accountId, initialOpportunityId || "")}
+    </div>`;
+  _wireHostedUpload(accountId, initialOpportunityId || "");
+}
+
+function _hostedError(e) {
+  view.innerHTML = `<div class="empty-box"><div class="empty-icon">⚠️</div><div class="empty-title">Error</div><div class="empty-body">${esc(e.message)}</div></div>`;
+}
+
+function _wireHostedUpload(accountId, opportunityId) {
+  const form = document.getElementById("hosted-upload-form");
+  if (!form) return;
+  form.onsubmit = async (ev) => {
+    ev.preventDefault();
+    const fileInput = document.getElementById("hosted-upload-file");
+    const oppSelect = document.getElementById("hosted-upload-opp");
+    const selectedOpp = oppSelect ? oppSelect.value : "";
+    const errEl = document.getElementById("hosted-upload-error");
+    errEl.classList.add("hidden");
+    await uploadHostedTranscript(accountId, selectedOpp || opportunityId, fileInput, (msg) => {
+      if (msg) {
+        errEl.textContent = msg;
+        errEl.classList.remove("hidden");
+      } else if (selectedOpp) {
+        pageHostedAccountOpportunity(accountId, selectedOpp);
+      } else {
+        pageHostedAccount(accountId, opportunityId);
+      }
+    });
   };
 }
 
