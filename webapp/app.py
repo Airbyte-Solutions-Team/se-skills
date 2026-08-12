@@ -48,11 +48,10 @@ except Exception as _hosted_exc:
     _HOSTED_IMPORT_ERROR = _hosted_exc
 
 
-def _hosted_mode_requested() -> bool:
-    return (os.environ.get("HOSTED_MODE") or "").lower() in ("1", "true", "yes")
+_HOSTED_MODE_REQUESTED = (os.environ.get("HOSTED_MODE") or "").lower() in ("1", "true", "yes")
 
 
-if _hosted_mode_requested() and not _HOSTED_AVAILABLE:
+if _HOSTED_MODE_REQUESTED and not _HOSTED_AVAILABLE:
     raise RuntimeError(
         "HOSTED_MODE is enabled but the hosted extension could not be imported. "
         "Verify that asyncpg and pyjwt are installed."
@@ -231,10 +230,6 @@ def create_app() -> FastAPI:
     if _HOSTED_AVAILABLE and hosted.config.is_hosted():
         _register_hosted_routers(app)
     else:
-        if _hosted_mode_requested():
-            # This branch is reached when the hosted module could not be imported;
-            # the module-level guard already raised, so this is defensive.
-            raise RuntimeError("Hosted mode requested but not available")
         _build_local_services(app)
 
     _register_common_routes(app)
