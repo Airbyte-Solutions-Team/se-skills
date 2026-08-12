@@ -13,6 +13,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 import persistence
+from webapp import app as app_module
+from webapp.routes import jobs as routes_jobs
 from webapp.services.job_service import JobService
 
 
@@ -349,8 +351,6 @@ def test_service_loads_at_init_and_marks_running_as_error(tmp_path) -> None:
 def test_route_api_jobs_response_shape(tmp_path, monkeypatch) -> None:
     """22/25. Router registration and unchanged route path."""
     from types import SimpleNamespace
-    from webapp import app as app_module
-    from webapp.routes import jobs as routes_jobs
 
     svc = JobService(tmp_path, model_for=_model_for, persist_run=_noop_persist)
     fake_request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(job_service=svc)))

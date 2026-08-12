@@ -47,28 +47,31 @@ This is the source of truth for productionalization slices and progress. Each sl
 
 ## Slice 2: Auth, organization, and data foundation
 
-**Status:** `Proposed`
+**Status:** `Complete` (PR #40)
 
 **Product outcome:** Users can sign in, belong to the single Airbyte beta organization, and create/list accounts scoped to that organization.
 
 **Scope:**
-- Identity provider integration (Supabase Auth is the working hypothesis; requires Product Owner approval before implementation).
-- `organizations` and `memberships` tables; active-organization resolution for the beta organization.
-- `accounts` and `opportunities` tables with `org_id`, `created_by`, `assigned_to`, and RLS policies.
-- FastAPI authentication middleware and organization-scoped authorization helpers.
-- SPA login flow (no org switcher in the beta; schema remains extensible to multiple organizations in the future).
-
-**Promotion to `Ready` dependency:** Product Owner approval of the beta Auth/DB/Storage provider and the authentication approach.
+- Supabase Auth with Google OAuth for Airbyte users (Product Owner-approved for the beta). Access is invite/pre-provisioned-membership only; an `@airbyte.com` email may be an onboarding check, but email domain is not the authorization boundary.
+- `organizations`, `memberships`, `accounts`, and `opportunities` tables with `org_id`, `created_by`, `assigned_to`, timestamps, uniqueness, and relationship constraints.
+- Postgres RLS with `app_user` (`NOBYPASSRLS`). The request context is a signed tenant token (`user_id:hmac(user_id, secret)`) set with transaction-scoped `SET LOCAL app.context_token`. The secret lives in an `app_private` schema that `app_user` cannot read; `SECURITY DEFINER` functions owned by `app_admin` verify the HMAC and active membership for every RLS check. The web process never holds a `BYPASSRLS` admin pool.
+- Least-privilege `app_user` grants: explicit `SELECT/INSERT/UPDATE/DELETE` on `accounts` and `opportunities`; `SELECT` on `users`, `organizations`, and `memberships`; `EXECUTE` on the membership resolver functions; no broad or default privileges. Default `PUBLIC` execute on `SECURITY DEFINER` functions is revoked and only `app_user` is granted explicit execute.
+- FastAPI authentication and organization-scoped authorization helpers that resolve organization context from the authenticated user's active membership and never trust a browser-supplied `org_id` or `user_id`.
+- Organization-scoped `accounts` list/create APIs and the `opportunities` data layer required by Slice 2.
+- Minimal SPA sign-in, signed-out, loading, error, account-list, and account-create states. The hosted SPA does not call local skill/execution endpoints.
+- `HOSTED_MODE=1` opt-in with fail-closed startup: local filesystem, integration, transcription, skill, and shell routes are not registered in hosted mode.
 
 **Dependencies:** Slice 1.
 
 **Acceptance criteria:**
-- A user can sign in and see only their organization's accounts.
-- Creating an account sets `org_id` and `created_by`.
-- `assigned_to` is metadata and does not change visibility.
-- Direct SQL queries return no rows for an organization the user is not a member of.
-- The API never authorizes using a user-supplied `org_id`.
-- Database constraints enforce that every tenant-scoped parent/child relationship (for example, `opportunities` to `accounts`) preserves `org_id`; cross-org relationship attempts fail at the DB boundary and in application authorization tests.
+- Authenticated members can list and create accounts in the Airbyte organization.
+- Unauthenticated, inactive-membership, and non-member requests are rejected.
+- A supplied or spoofed `org_id` cannot influence authorization.
+- `assigned_to` is metadata and does not change organization visibility.
+- Direct database access under the authenticated role cannot read or mutate another organization's rows.
+- Cross-organization opportunity/account relationships fail at the database boundary.
+- Relevant API authorization failures are covered by tests.
+- Existing deterministic evaluations and local workflow tests continue to pass.
 - No local filesystem state is required for sign-in or account CRUD.
 
 **Non-goals:**

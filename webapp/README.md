@@ -112,6 +112,7 @@ Notes:
 - **Live Transcribe** — transcribe a live call with an AI copilot ask-bar. Sessions are persisted to disk, so an app restart mid-call recovers the transcript; you can also name the mic and call channels (e.g. "You" / "Customer") instead of the default labels. If state cannot be written, a warning toast tells you the transcript may not survive a restart.
 - **Durable background jobs** — skill runs and live copilot deep-asks are persisted while in progress, so a server restart leaves the *job record* recoverable (or clearly marked as lost) rather than silently disappearing. The running child process cannot be reattached; persistence failures surface a warning toast.
 - **Skill-completion toasts** — run a skill, navigate away, and a top-right banner tells you when it's ready with an Open deep-link.
+- **Hosted beta (optional, `HOSTED_MODE=1`)** — sign in with Google via Supabase Auth, resolve your Airbyte organization membership, and list or create organization-owned accounts. When `HOSTED_MODE` is unset the app keeps using the local filesystem and local skill workflows.
 
 Invoking a skill shells out to Claude Code headless:
 ```
@@ -159,3 +160,24 @@ data store instead of `~/airbyte-work`.
 
 - `team-members.yaml` — who shows on the main page. Edit to add teammates.
 - Ownership is per-account via the `.owner` file; unowned accounts show to everyone.
+
+## Hosted mode (optional)
+
+Set `HOSTED_MODE=1` to use Supabase Auth + Postgres instead of the local filesystem. Required environment variables:
+
+- `SUPABASE_URL` / `SUPABASE_ANON_KEY` — SPA Supabase Auth configuration.
+- `DATABASE_URL` — `postgresql://app_user:PASSWORD@host/db` (the runtime role, `NOBYPASSRLS`).
+- `DATABASE_ADMIN_URL` — `postgresql://app_admin:PASSWORD@host/db` (used only for migrations, `BYPASSRLS`).
+- `MIGRATE_DATABASE_URL` — a superuser/admin connection used to run `scripts/migrate.py`.
+- `APP_USER_PASSWORD` / `APP_ADMIN_PASSWORD` — the role passwords created by the migration.
+- `HOSTED_CONTEXT_SECRET` — a strong shared secret used to sign tenant-context tokens between the app and the database. Generate a long random value and keep it with `APP_USER_PASSWORD`/`APP_ADMIN_PASSWORD`.
+- `HOSTED_JWT_ALGORITHM` (`HS256` for local tests, `RS256` for Supabase) and `HOSTED_JWT_SECRET` or Supabase JWKS.
+
+Run migrations before starting the app:
+
+```bash
+HOSTED_MODE=1 \
+  MIGRATE_DATABASE_URL=postgresql://postgres:...@db/se-skills \
+  APP_USER_PASSWORD=... APP_ADMIN_PASSWORD=... HOSTED_CONTEXT_SECRET=... \
+  uv run scripts/migrate.py
+```
