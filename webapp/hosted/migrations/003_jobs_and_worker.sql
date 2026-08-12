@@ -786,6 +786,31 @@ BEGIN
         RAISE EXCEPTION 'Attempt already finished';
     END IF;
 
+    -- Cancellation takes precedence over retry logic. Finalize the attempt as
+    -- cancelled so the job and its current attempt always agree, and keep the
+    -- redacted executor diagnostics on the attempt row.
+    IF v_job.cancel_requested_at IS NOT NULL THEN
+        UPDATE public.job_attempts
+        SET outcome = 'cancelled',
+            error_category = p_error_category,
+            error = p_error,
+            finished_at = clock_timestamp(),
+            runtime_version = COALESCE(p_runtime_version, v_attempt.runtime_version),
+            model = COALESCE(p_model, v_attempt.model)
+        WHERE id = v_attempt.id;
+
+        UPDATE public.jobs
+        SET status = 'cancelled',
+            cancelled_at = clock_timestamp(),
+            finished_at = clock_timestamp(),
+            timeout_at = NULL,
+            next_attempt_after = NULL,
+            started_at = NULL,
+            worker_id = NULL
+        WHERE id = p_job_id;
+        RETURN true;
+    END IF;
+
     v_outcome := CASE WHEN p_error_category = 'timeout' THEN 'timeout' ELSE 'failure' END;
 
     UPDATE public.job_attempts
@@ -796,18 +821,6 @@ BEGIN
         runtime_version = COALESCE(p_runtime_version, v_attempt.runtime_version),
         model = COALESCE(p_model, v_attempt.model)
     WHERE id = v_attempt.id;
-
-    -- Cancellation takes precedence over retry logic.
-    IF v_job.cancel_requested_at IS NOT NULL THEN
-        UPDATE public.jobs
-        SET status = 'cancelled',
-            cancelled_at = clock_timestamp(),
-            finished_at = clock_timestamp(),
-            timeout_at = NULL,
-            next_attempt_after = NULL
-        WHERE id = p_job_id;
-        RETURN true;
-    END IF;
 
     IF v_job.attempts >= v_job.max_attempts THEN
         v_status := CASE WHEN p_error_category = 'timeout' THEN 'timeout' ELSE 'failure' END;

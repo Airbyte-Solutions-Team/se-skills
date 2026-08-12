@@ -699,6 +699,51 @@ class _BlockingExecutor:
         self._release.set()
 
 
+class _FailingExecutor:
+    """Executor that blocks until told to raise, to test cancel-vs-failure races."""
+
+    def __init__(self, runtime_version: str = "slice4-failing", model: str = "failing") -> None:
+        self.runtime_version = runtime_version
+        self.model = model
+        self._started = asyncio.Event()
+        self._fail = asyncio.Event()
+
+    async def execute(self, job: dict[str, Any]) -> object:
+        self._started.set()
+        await self._fail.wait()
+        raise RuntimeError("executor failure after cancel requested")
+
+    def trigger_failure(self) -> None:
+        self._fail.set()
+
+
+class _HeartbeatFailingWorker(Worker):
+    """Worker that injects a heartbeat failure after a configurable number of calls."""
+
+    def __init__(
+        self,
+        pool: asyncpg.Pool,
+        executor: Any | None = None,
+        *,
+        fail_after: int = 0,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(pool, executor, **kwargs)
+        self.fail_after = fail_after
+        self._heartbeat_calls = 0
+
+    async def heartbeat(
+        self,
+        job_id: uuid.UUID,
+        attempt_number: int,
+        lease_token: uuid.UUID,
+    ) -> bool:
+        self._heartbeat_calls += 1
+        if self._heartbeat_calls > self.fail_after:
+            raise RuntimeError("injected heartbeat failure")
+        return await super().heartbeat(job_id, attempt_number, lease_token)
+
+
 @pytest.mark.hosted
 async def test_worker_enforces_wall_clock_deadline_and_reaches_timeout(
     admin_pool: asyncpg.Pool,
@@ -764,6 +809,100 @@ async def test_worker_cancels_blocking_executor_and_reaches_cancelled(
     detail = _get_job(app_client, user_id, job_id)
     assert detail["job"]["status"] == "cancelled"
     assert detail["attempts"][0]["outcome"] == "cancelled"
+
+
+@pytest.mark.hosted
+async def test_worker_heartbeat_failure_is_not_user_cancellation(
+    admin_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    app_client: TestClient,
+) -> None:
+    """A heartbeat failure stops the worker without marking the job as user-cancelled."""
+    user_id, _, account_id, transcript_id, _ = await _seed_job_ready_org(admin_pool)
+    job_id = _enqueue_via_api(
+        app_client, user_id, account_id, transcript_id, max_attempts=1
+    )
+
+    blocking = _BlockingExecutor()
+    worker = _HeartbeatFailingWorker(
+        worker_pool,
+        executor=blocking,
+        fail_after=0,
+        worker_name="heartbeat-fail",
+        heartbeat_interval=0.2,
+        timeout_seconds=1,
+    )
+    processed = await worker.run_once()
+    assert processed is True
+
+    # The worker should not have finalized the attempt as a user cancellation.
+    async with admin_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT status, cancel_requested_at, cancelled_at FROM public.jobs WHERE id = $1",
+            job_id,
+        )
+    assert row["status"] == "running"
+    assert row["cancel_requested_at"] is None
+    assert row["cancelled_at"] is None
+
+    # After the lease expires, recovery should produce a timeout, not cancelled.
+    await asyncio.sleep(1.5)
+    recovered = await worker_pool.fetchval(
+        "SELECT public.recover_expired_leases($1)", 0
+    )
+    assert recovered == 1
+
+    detail = _get_job(app_client, user_id, job_id)
+    assert detail["job"]["status"] == "timeout"
+    assert detail["job"]["cancelled_at"] is None
+    assert detail["attempts"][0]["outcome"] == "timeout"
+    assert detail["attempts"][0]["error_category"] == "lease_timeout"
+
+
+@pytest.mark.hosted
+async def test_cancel_vs_failure_finalizes_attempt_as_cancelled(
+    admin_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    user_pool: asyncpg.Pool,
+    app_client: TestClient,
+) -> None:
+    """A cancellation request racing with an executor error ends terminal and consistent."""
+    user_id, _, account_id, transcript_id, _ = await _seed_job_ready_org(admin_pool)
+    job_id = _enqueue_via_api(app_client, user_id, account_id, transcript_id)
+
+    failing = _FailingExecutor()
+    worker = Worker(
+        worker_pool,
+        executor=failing,
+        worker_name="cancel-vs-fail",
+        heartbeat_interval=10,
+        timeout_seconds=60,
+    )
+    process_task = asyncio.create_task(worker.process_one())
+    await asyncio.wait_for(failing._started.wait(), timeout=2)
+
+    # Request cancellation while the executor is still running; the executor will
+    # raise before the next heartbeat observes the cancellation request.
+    async with user_pool.acquire() as conn:
+        cancelled = await conn.fetchval(
+            "SELECT public.request_job_cancellation($1, $2)",
+            _context_token(user_id),
+            job_id,
+        )
+    assert cancelled is True
+    failing.trigger_failure()
+    await asyncio.wait_for(process_task, timeout=3)
+
+    detail = _get_job(app_client, user_id, job_id)
+    assert detail["job"]["status"] == "cancelled"
+    assert detail["job"]["finished_at"] is not None
+    assert not detail["job"]["dead_lettered"]
+    assert detail["job"]["next_attempt_after"] is None
+    assert len(detail["attempts"]) == 1
+    attempt = detail["attempts"][0]
+    assert attempt["outcome"] == "cancelled"
+    assert attempt["error_category"] == "executor_error"
+    assert "executor failure" in (attempt["error"] or "").lower()
 
 
 @pytest.mark.hosted

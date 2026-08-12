@@ -39,6 +39,10 @@ async def create_pool() -> asyncpg.Pool:
     )
 
 
+class HeartbeatLostError(Exception):
+    """Raised when the worker cannot heartbeat and should stop the attempt."""
+
+
 class Worker:
     """Polls the Postgres job ledger, claims jobs atomically, and runs them.
 
@@ -205,20 +209,26 @@ class Worker:
         lease_token: uuid.UUID,
         stop: asyncio.Event,
         cancel_requested: asyncio.Event,
+        heartbeat_lost: asyncio.Event,
         completed: asyncio.Event,
     ) -> None:
-        """Extend the DB lease until the job completes, times out, or cancels."""
+        """Extend the DB lease until the job completes, times out, or cancels.
+
+        Raises `HeartbeatLostError` if a heartbeat cannot be sent, so the worker
+        stops the attempt without falsely marking it as a user cancellation.
+        """
         while not stop.is_set() and not completed.is_set():
             try:
                 requested = await self.heartbeat(job_id, attempt_number, lease_token)
             except Exception as exc:
-                logger.debug(
-                    "Heartbeat failed for job %s attempt %s: %s",
+                logger.warning(
+                    "Heartbeat lost for job %s attempt %s: %s",
                     job_id,
                     attempt_number,
                     exc,
                 )
-                return
+                heartbeat_lost.set()
+                raise HeartbeatLostError("Heartbeat failed") from exc
             if requested:
                 cancel_requested.set()
                 return
@@ -255,6 +265,7 @@ class Worker:
         executor_task: asyncio.Task[ExecutorResult] = asyncio.create_task(self.executor.execute(job))
         heartbeat_stop = asyncio.Event()
         cancel_requested = asyncio.Event()
+        heartbeat_lost = asyncio.Event()
         completed = asyncio.Event()
         monitor_task = asyncio.create_task(
             self._heartbeat_monitor(
@@ -263,6 +274,7 @@ class Worker:
                 lease_token,
                 heartbeat_stop,
                 cancel_requested,
+                heartbeat_lost,
                 completed,
             )
         )
@@ -297,8 +309,22 @@ class Worker:
                 )
                 return True
 
-            if monitor_task in done:
-                # A cancellation was requested or heartbeating failed.
+            if heartbeat_lost.is_set():
+                # The heartbeat monitor lost its lease; stop the attempt and let
+                # lease recovery pick it up. Do not treat this as a user
+                # cancellation.
+                executor_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await executor_task
+                logger.warning(
+                    "Job %s attempt %s heartbeat lost; leaving for lease recovery",
+                    job_id,
+                    attempt_number,
+                )
+                return True
+
+            if cancel_requested.is_set():
+                # A member requested cancellation while the job was running.
                 executor_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await executor_task

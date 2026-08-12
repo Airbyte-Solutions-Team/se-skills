@@ -2,10 +2,15 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 11, 2026 — HEAD `a64d60b` on `devin/slice4-durable-jobs`. Closed PR #42 review blockers: immutable wall-clock execution deadline with `asyncio.wait_for`, race-safe transitions with conditional status predicates and consistent job→attempt lock order, atomic idempotent enqueue with full request fingerprint comparison, and honest queue-lifecycle UI/runtime lineage. Kept PR draft and Slice 4 `In Progress`._
+_Last updated: August 11, 2026 — HEAD TBD on `devin/slice4-durable-jobs`. Follow-up PR #42 review blockers: distinguish heartbeat loss from user cancellation, make cancelled job/failed-attempt outcome consistent, and refresh PR description/docs. Kept PR draft and Slice 4 `In Progress`._
 
 
 ## Built this session (newest first — see `git log`)
+
+- **PR #42 follow-up review blocker fixes (August 11).**
+  1. **Heartbeat loss is not user cancellation.** `webapp/hosted/worker.py` `Worker._heartbeat_monitor` now raises `HeartbeatLostError` and sets a `heartbeat_lost` event when `heartbeat()` fails; `process_one` stops the attempt without calling `cancel_job`, letting `recover_expired_leases` handle the abandoned attempt after the lease expires. Added `_HeartbeatFailingWorker` and `test_worker_heartbeat_failure_is_not_user_cancellation` to prove the job is never reported as `cancelled`.
+  2. **Cancel-vs-failure terminal consistency.** `webapp/hosted/migrations/003_jobs_and_worker.sql` `fail_job` now checks `v_job.cancel_requested_at` before writing the attempt outcome; if cancellation was requested it finalizes the current attempt as `cancelled` (keeping executor diagnostics on the attempt row), sets the job to `cancelled`, and skips retry/dead-letter bookkeeping. Added `_FailingExecutor` and `test_cancel_vs_failure_finalizes_attempt_as_cancelled` to prove the terminal job and current attempt agree.
+  3. **Docs and PR description.** Refreshed `docs/ARCHITECTURE.md`, `webapp/SESSION-LOG.md`, and the PR description to match exact-head behavior.
 
 - **PR #42 Slice 4 review blocker fixes (August 11).**
   1. **Immutable execution deadline and mid-run cancellation.** `webapp/hosted/worker.py` `process_one` wraps `executor.execute` in an immutable wall-clock deadline (`asyncio.wait_for`) separate from the heartbeat lease; a cancellation request is observed in the heartbeat monitor and interrupts the executor; terminal cancellation/timeout states are reached without the executor returning normally.
