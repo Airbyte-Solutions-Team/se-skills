@@ -161,6 +161,7 @@ class JobAttemptOut(BaseModel):
     attempt_number: int
     worker_id: str | None
     runtime_version: str | None
+    model: str | None
     started_at: datetime
     finished_at: datetime | None
     heartbeat_at: datetime | None
@@ -183,6 +184,7 @@ class JobAttemptOut(BaseModel):
             attempt_number=record["attempt_number"],
             worker_id=record.get("worker_id"),
             runtime_version=record.get("runtime_version"),
+            model=record.get("model"),
             started_at=record["started_at"],
             finished_at=record.get("finished_at"),
             heartbeat_at=record.get("heartbeat_at"),

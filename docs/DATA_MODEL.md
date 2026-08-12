@@ -154,7 +154,8 @@ Append-only attempt history for a job. `jobs` remains the aggregate ledger; `job
 | `job_id` (FK) | Parent job; composite FK `(job_id, org_id)` enforces same-organization parent |
 | `attempt_number` | Integer, starting at 1 |
 | `worker_id` | Worker/runtime that ran this attempt |
-| `runtime_version` | Sandbox/runtime image version for this attempt |
+| `runtime_version` | Actual sandbox/runtime image version recorded for this attempt |
+| `model` | Actual model recorded for this attempt |
 | `lease_token` | Heartbeat/lease token for claim liveness (nullable) |
 | `started_at` / `finished_at` | Timestamps |
 | `heartbeat_at` | Last worker heartbeat/lease renewal |

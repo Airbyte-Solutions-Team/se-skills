@@ -12,6 +12,7 @@ import logging
 import os
 import socket
 import uuid
+from contextlib import suppress
 from typing import Any
 
 import asyncpg
@@ -44,6 +45,13 @@ class Worker:
     The worker is intentionally separate from the FastAPI process and uses a
     dedicated database identity. It does not read transcript bodies, call
     models, execute shell commands, or access the local filesystem by default.
+
+    Each claimed job has two separate timeout concepts:
+    - `timeout_seconds`: immutable wall-clock execution deadline for the
+      `executor.execute` call. It is measured from the moment the job is claimed
+      and is never extended by heartbeats.
+    - `heartbeat_interval` / `timeout_seconds` lease: the database `timeout_at`
+      column is refreshed by heartbeats so a crashed worker can be recovered.
     """
 
     def __init__(
@@ -110,10 +118,13 @@ class Worker:
         job_id: uuid.UUID,
         attempt_number: int,
         lease_token: uuid.UUID,
-    ) -> None:
-        """Extend the lease for a running attempt."""
+    ) -> bool:
+        """Extend the lease for a running attempt and observe cancellation.
+
+        Returns `True` when the job has a pending cancellation request.
+        """
         async with self.pool.acquire() as conn:
-            await conn.execute(
+            return await conn.fetchval(
                 "SELECT public.worker_heartbeat($1, $2, $3, $4)",
                 job_id,
                 attempt_number,
@@ -128,12 +139,12 @@ class Worker:
         lease_token: uuid.UUID,
         result: ExecutorResult,
     ) -> None:
-        """Record a successful attempt completion."""
+        """Record a successful attempt completion with actual runtime lineage."""
         async with self.pool.acquire() as conn:
             await conn.execute(
                 """
                 SELECT public.complete_job(
-                    $1, $2, $3, $4, $5, $6::jsonb, $7
+                    $1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9
                 )
                 """,
                 job_id,
@@ -143,6 +154,8 @@ class Worker:
                 result.validation_status,
                 json.dumps(result.token_usage),
                 result.cost,
+                result.runtime_version,
+                result.model,
             )
 
     async def fail(
@@ -154,15 +167,67 @@ class Worker:
         error: str,
     ) -> None:
         """Record a failed attempt, with bounded retry or terminal state."""
+        runtime_version = getattr(self.executor, "runtime_version", None)
+        model = getattr(self.executor, "model", None)
         async with self.pool.acquire() as conn:
             await conn.execute(
-                "SELECT public.fail_job($1, $2, $3, $4, $5)",
+                """
+                SELECT public.fail_job($1, $2, $3, $4, $5, NULL, $6, $7)
+                """,
                 job_id,
                 attempt_number,
                 lease_token,
                 error_category,
                 error,
+                runtime_version,
+                model,
             )
+
+    async def cancel(
+        self,
+        job_id: uuid.UUID,
+        attempt_number: int,
+        lease_token: uuid.UUID,
+    ) -> None:
+        """Record a clean worker-side cancellation."""
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                "SELECT public.cancel_job($1, $2, $3)",
+                job_id,
+                attempt_number,
+                lease_token,
+            )
+
+    async def _heartbeat_monitor(
+        self,
+        job_id: uuid.UUID,
+        attempt_number: int,
+        lease_token: uuid.UUID,
+        stop: asyncio.Event,
+        cancel_requested: asyncio.Event,
+        completed: asyncio.Event,
+    ) -> None:
+        """Extend the DB lease until the job completes, times out, or cancels."""
+        while not stop.is_set() and not completed.is_set():
+            try:
+                requested = await self.heartbeat(job_id, attempt_number, lease_token)
+            except Exception as exc:
+                logger.debug(
+                    "Heartbeat failed for job %s attempt %s: %s",
+                    job_id,
+                    attempt_number,
+                    exc,
+                )
+                return
+            if requested:
+                cancel_requested.set()
+                return
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=self.heartbeat_interval)
+            except asyncio.TimeoutError:
+                continue
+            except asyncio.CancelledError:
+                return
 
     async def process_one(self) -> bool:
         """Claim, execute, and finalize one job. Returns True if a job ran."""
@@ -185,39 +250,101 @@ class Worker:
             "source_manifest": claim["source_manifest"],
         }
 
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + self.timeout_seconds
+        executor_task: asyncio.Task[ExecutorResult] = asyncio.create_task(self.executor.execute(job))
         heartbeat_stop = asyncio.Event()
+        cancel_requested = asyncio.Event()
+        completed = asyncio.Event()
+        monitor_task = asyncio.create_task(
+            self._heartbeat_monitor(
+                job_id,
+                attempt_number,
+                lease_token,
+                heartbeat_stop,
+                cancel_requested,
+                completed,
+            )
+        )
 
-        async def _heartbeat_loop() -> None:
-            while not heartbeat_stop.is_set():
-                try:
-                    await self.heartbeat(job_id, attempt_number, lease_token)
-                except Exception as exc:
-                    logger.debug("Heartbeat failed for job %s attempt %s: %s", job_id, attempt_number, exc)
-                    return
-                try:
-                    await asyncio.wait_for(heartbeat_stop.wait(), timeout=self.heartbeat_interval)
-                except asyncio.TimeoutError:
-                    continue
-
-        heartbeat_task: asyncio.Task[None] | None = None
         try:
-            heartbeat_task = asyncio.create_task(_heartbeat_loop())
-            result = await self.executor.execute(job)
-            await self.complete(job_id, attempt_number, lease_token, result)
-            return True
-        except Exception as exc:
-            logger.warning("Job %s attempt %s failed: %s", job_id, attempt_number, exc)
-            error = str(exc)[:500]
+            timeout = max(deadline - loop.time(), 0)
+            done, pending = await asyncio.wait(
+                {executor_task, monitor_task},
+                timeout=timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            if not done:
+                # Immutable execution deadline exceeded.
+                executor_task.cancel()
+                monitor_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await executor_task
+                with suppress(asyncio.CancelledError):
+                    await monitor_task
+                logger.warning(
+                    "Job %s attempt %s exceeded wall-clock deadline",
+                    job_id,
+                    attempt_number,
+                )
+                await self.fail(
+                    job_id,
+                    attempt_number,
+                    lease_token,
+                    "timeout",
+                    "Execution exceeded wall-clock deadline",
+                )
+                return True
+
+            if monitor_task in done:
+                # A cancellation was requested or heartbeating failed.
+                executor_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await executor_task
+                logger.info(
+                    "Job %s attempt %s cancelled during execution",
+                    job_id,
+                    attempt_number,
+                )
+                await self.cancel(job_id, attempt_number, lease_token)
+                return True
+
+            # Executor finished before the deadline.
+            completed.set()
+            heartbeat_stop.set()
+            monitor_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await monitor_task
+
             try:
-                await self.fail(job_id, attempt_number, lease_token, "executor_error", error)
-            except Exception as fail_exc:
-                logger.warning("Failed to record job failure: %s", fail_exc)
+                result = await executor_task
+            except Exception as exc:
+                logger.warning(
+                    "Job %s attempt %s executor raised: %s",
+                    job_id,
+                    attempt_number,
+                    exc,
+                )
+                await self.fail(
+                    job_id,
+                    attempt_number,
+                    lease_token,
+                    "executor_error",
+                    str(exc)[:500],
+                )
+                return True
+
+            if cancel_requested.is_set():
+                await self.cancel(job_id, attempt_number, lease_token)
+            else:
+                await self.complete(job_id, attempt_number, lease_token, result)
             return True
         finally:
             heartbeat_stop.set()
-            if heartbeat_task is not None:
-                heartbeat_task.cancel()
-                try:
-                    await heartbeat_task
-                except asyncio.CancelledError:
-                    pass
+            if not executor_task.done():
+                executor_task.cancel()
+            if not monitor_task.done():
+                monitor_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await asyncio.gather(executor_task, monitor_task, return_exceptions=True)

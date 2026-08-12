@@ -2,10 +2,17 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 11, 2026 — HEAD `8ac047d` on `devin/slice4-durable-jobs`. Implemented Slice 4 durable asynchronous jobs: Postgres-backed job ledger and queue, separate worker process, deterministic `EchoExecutor`, organization-scoped job APIs, and minimal SPA job status/enqueue UI. Marked Slice 3 Complete and Slice 4 Complete in `docs/ROADMAP.md`._
+_Last updated: August 11, 2026 — HEAD `TBD` on `devin/slice4-durable-jobs`. Closed PR #42 review blockers: immutable wall-clock execution deadline with `asyncio.wait_for`, race-safe transitions with conditional status predicates and consistent job→attempt lock order, atomic idempotent enqueue with full request fingerprint comparison, and honest queue-lifecycle UI/runtime lineage. Kept PR draft and Slice 4 `In Progress`._
 
 
 ## Built this session (newest first — see `git log`)
+
+- **PR #42 Slice 4 review blocker fixes (August 11).**
+  1. **Immutable execution deadline and mid-run cancellation.** `webapp/hosted/worker.py` `process_one` wraps `executor.execute` in an immutable wall-clock deadline (`asyncio.wait_for`) separate from the heartbeat lease; a cancellation request is observed in the heartbeat monitor and interrupts the executor; terminal cancellation/timeout states are reached without the executor returning normally.
+  2. **Race-safe transitions and consistent locking.** `webapp/hosted/migrations/003_jobs_and_worker.sql` updates `request_job_cancellation` to lock the job row and use status-predicated updates; `worker_heartbeat`, `complete_job`, `fail_job`, `cancel_job`, and `recover_expired_leases` now lock `public.jobs` before `public.job_attempts` and verify status/lease tokens before mutating. `worker_heartbeat` returns whether cancellation was requested.
+  3. **Atomic idempotency with full fingerprint.** `enqueue_job` uses `INSERT ... ON CONFLICT (org_id, idempotency_key) DO NOTHING` and then compares the stored row against every material field (`account_id`, `transcript_id`, `opportunity_id`, `skill`, `skill_version`, `model`, `runtime_version`, `max_attempts`, `payload`, `input_refs`, `source_manifest`) before replaying.
+  4. **Honest UI and executor lineage.** `webapp/static/app.js` renames the action to **Run queue lifecycle test**, removes client-authored `model`/`runtime_version`, and labels terminal statuses as producing no real post-call output. `webapp/hosted/executor.py` `ExecutorResult` carries `model` and `runtime_version`; `webapp/hosted/worker.py` persists actual executor metadata on `job_attempts` via `complete_job`/`fail_job`.
+  5. **Tests.** Added blocking-executor timeout/cancellation terminal-state tests, concurrent cancel-vs-claim/cancel-vs-complete/recovery-vs-finalize tests, simultaneous identical enqueue tests, and same-key conflict tests for each material field in `eval/tests/test_hosted_jobs.py`.
 
 - **Slice 4: durable asynchronous jobs (August 11).**
   1. **Database migration.** `webapp/hosted/migrations/003_jobs_and_worker.sql` adds `public.jobs` and `public.job_attempts` with explicit `org_id`, composite foreign keys to `accounts`, `opportunities`, and `transcripts` that enforce same-organization ownership, the `app_worker` role, and `SECURITY DEFINER` queue functions (`enqueue_job`, `claim_next_job`, `worker_heartbeat`, `complete_job`, `fail_job`, `cancel_job`, `recover_expired_leases`) with empty `search_path`, revoked `PUBLIC` execute, and explicit transition validation.

@@ -672,6 +672,458 @@ async def test_job_payloads_do_not_contain_secrets_or_transcript_bodies(
     assert refs["transcript_id"] == str(transcript_id)
 
 
+class _BlockingExecutor:
+    """Executor that blocks until released, to test timeouts and cancellation."""
+
+    def __init__(self, runtime_version: str = "slice4-blocking", model: str = "blocking") -> None:
+        self.runtime_version = runtime_version
+        self.model = model
+        self._started = asyncio.Event()
+        self._release = asyncio.Event()
+
+    async def execute(self, job: dict[str, Any]) -> object:
+        self._started.set()
+        await self._release.wait()
+        # Should only be reached if the test releases before cancellation/timeout.
+        from webapp.hosted.executor import ExecutorResult
+        return ExecutorResult(
+            output_id=None,
+            validation_status="unvalidated",
+            token_usage={},
+            cost=0.0,
+            runtime_version=self.runtime_version,
+            model=self.model,
+        )
+
+    def release(self) -> None:
+        self._release.set()
+
+
+@pytest.mark.hosted
+async def test_worker_enforces_wall_clock_deadline_and_reaches_timeout(
+    admin_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    app_client: TestClient,
+) -> None:
+    """A blocking executor that exceeds the wall-clock deadline ends in `timeout`."""
+    user_id, _, account_id, transcript_id, _ = await _seed_job_ready_org(admin_pool)
+    job_id = _enqueue_via_api(app_client, user_id, account_id, transcript_id, max_attempts=1)
+
+    blocking = _BlockingExecutor()
+    worker = Worker(
+        worker_pool,
+        executor=blocking,
+        worker_name="blocking-timeout",
+        heartbeat_interval=0.2,
+        timeout_seconds=1,
+    )
+    processed = await worker.run_once()
+    assert processed is True
+
+    detail = _get_job(app_client, user_id, job_id)
+    assert detail["job"]["status"] == "timeout"
+    assert detail["attempts"][0]["outcome"] == "timeout"
+    assert detail["attempts"][0]["error_category"] == "timeout"
+    assert "wall-clock" in (detail["attempts"][0]["error"] or "").lower()
+
+
+@pytest.mark.hosted
+async def test_worker_cancels_blocking_executor_and_reaches_cancelled(
+    admin_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    user_pool: asyncpg.Pool,
+    app_client: TestClient,
+) -> None:
+    """A cancellation request while the executor is blocked reaches `cancelled`."""
+    user_id, _, account_id, transcript_id, _ = await _seed_job_ready_org(admin_pool)
+    job_id = _enqueue_via_api(app_client, user_id, account_id, transcript_id)
+
+    blocking = _BlockingExecutor()
+    worker = Worker(
+        worker_pool,
+        executor=blocking,
+        worker_name="blocking-cancel",
+        heartbeat_interval=0.2,
+        timeout_seconds=10,
+    )
+
+    process_task = asyncio.create_task(worker.process_one())
+    await asyncio.wait_for(blocking._started.wait(), timeout=2)
+
+    # Request cancellation through the API using an app_user connection.
+    async with user_pool.acquire() as conn:
+        cancelled = await conn.fetchval(
+            "SELECT public.request_job_cancellation($1, $2)",
+            _context_token(user_id),
+            job_id,
+        )
+    assert cancelled is True
+
+    await asyncio.wait_for(process_task, timeout=3)
+
+    detail = _get_job(app_client, user_id, job_id)
+    assert detail["job"]["status"] == "cancelled"
+    assert detail["attempts"][0]["outcome"] == "cancelled"
+
+
+@pytest.mark.hosted
+async def test_concurrent_cancel_vs_claim_is_consistent(
+    admin_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    user_pool: asyncpg.Pool,
+    app_client: TestClient,
+) -> None:
+    """A cancel request racing with a worker claim ends terminal with no orphan attempt."""
+    user_id, _, account_id, transcript_id, _ = await _seed_job_ready_org(admin_pool)
+    job_id = _enqueue_via_api(app_client, user_id, account_id, transcript_id)
+
+    blocking = _BlockingExecutor()
+    worker = Worker(
+        worker_pool,
+        executor=blocking,
+        worker_name="race-claim-cancel",
+        heartbeat_interval=0.2,
+        timeout_seconds=10,
+    )
+
+    async def process() -> bool:
+        return await worker.process_one()
+
+    async def cancel() -> bool:
+        async with user_pool.acquire() as conn:
+            return await conn.fetchval(
+                "SELECT public.request_job_cancellation($1, $2)",
+                _context_token(user_id),
+                job_id,
+            )
+
+    results = await asyncio.gather(process(), cancel(), return_exceptions=True)
+    assert all(isinstance(r, Exception) is False for r in results)
+
+    detail = _get_job(app_client, user_id, job_id)
+    assert detail["job"]["status"] == "cancelled"
+    assert detail["job"]["finished_at"] is not None
+    open_attempts = [a for a in detail["attempts"] if a["outcome"] is None]
+    assert not open_attempts
+
+
+@pytest.mark.hosted
+async def test_concurrent_cancel_vs_complete_is_terminal_and_consistent(
+    admin_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    user_pool: asyncpg.Pool,
+    app_client: TestClient,
+) -> None:
+    """A cancel request racing with a complete finalizer ends terminal with no orphan attempt."""
+    user_id, _, account_id, transcript_id, _ = await _seed_job_ready_org(admin_pool)
+    job_id = _enqueue_via_api(app_client, user_id, account_id, transcript_id)
+
+    claim = await _claim(worker_pool, "race-complete-cancel", timeout_seconds=60)
+    assert claim is not None
+
+    async def cancel() -> bool:
+        async with user_pool.acquire() as conn:
+            return await conn.fetchval(
+                "SELECT public.request_job_cancellation($1, $2)",
+                _context_token(user_id),
+                job_id,
+            )
+
+    async def complete() -> bool:
+        await _complete_job(worker_pool, claim, token_usage={"input_tokens": 0})
+        return True
+
+    results = await asyncio.gather(cancel(), complete(), return_exceptions=True)
+    # One call may legitimately raise a transition-race exception.
+    exceptions = [r for r in results if isinstance(r, Exception)]
+    assert len(exceptions) <= 1
+
+    detail = _get_job(app_client, user_id, job_id)
+    assert detail["job"]["status"] in ("cancelled", "success")
+    assert detail["job"]["finished_at"] is not None
+    open_attempts = [a for a in detail["attempts"] if a["outcome"] is None]
+    assert not open_attempts
+
+
+@pytest.mark.hosted
+async def test_recovery_vs_finalize_does_not_leave_open_attempt(
+    admin_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    app_client: TestClient,
+) -> None:
+    """Recovery of an expired lease beats a stale finalizer and closes the attempt."""
+    user_id, _, account_id, transcript_id, _ = await _seed_job_ready_org(admin_pool)
+    job_id = _enqueue_via_api(app_client, user_id, account_id, transcript_id)
+
+    claim = await _claim(worker_pool, "race-recovery", timeout_seconds=1)
+    assert claim is not None
+
+    await asyncio.sleep(1.5)
+    recovered = await worker_pool.fetchval("SELECT public.recover_expired_leases($1)", 0)
+    assert recovered == 1
+
+    with pytest.raises(asyncpg.exceptions.PostgresError):
+        await _complete_job(worker_pool, claim)
+
+    detail = _get_job(app_client, user_id, job_id)
+    assert detail["job"]["status"] == "queued"
+    assert detail["attempts"][0]["outcome"] == "timeout"
+    assert detail["attempts"][0]["error_category"] == "lease_timeout"
+
+
+@pytest.mark.hosted
+async def test_recovery_vs_finalize_race_is_terminal_or_requeued(
+    admin_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    app_client: TestClient,
+) -> None:
+    """Recovery and a stale finalizer racing on an expired lease leave no open attempt."""
+    user_id, _, account_id, transcript_id, _ = await _seed_job_ready_org(admin_pool)
+    job_id = _enqueue_via_api(app_client, user_id, account_id, transcript_id)
+
+    claim = await _claim(worker_pool, "race-recovery-2", timeout_seconds=1)
+    assert claim is not None
+
+    await asyncio.sleep(1.5)
+
+    async def recover() -> int:
+        return await worker_pool.fetchval("SELECT public.recover_expired_leases($1)", 0) or 0
+
+    async def complete() -> None:
+        await _complete_job(worker_pool, claim)
+
+    results = await asyncio.gather(recover(), complete(), return_exceptions=True)
+    exceptions = [r for r in results if isinstance(r, Exception)]
+    assert len(exceptions) <= 1
+
+    detail = _get_job(app_client, user_id, job_id)
+    assert detail["job"]["status"] in ("queued", "success")
+    open_attempts = [a for a in detail["attempts"] if a["outcome"] is None]
+    assert not open_attempts
+
+
+@pytest.mark.hosted
+async def test_worker_persists_actual_executor_runtime_metadata(
+    admin_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    app_client: TestClient,
+) -> None:
+    """A successful attempt records the executor's actual model and runtime version."""
+    user_id, _, account_id, transcript_id, _ = await _seed_job_ready_org(admin_pool)
+    job_id = _enqueue_via_api(app_client, user_id, account_id, transcript_id)
+
+    worker = Worker(worker_pool, worker_name="runtime-lineage")
+    processed = await worker.run_once()
+    assert processed is True
+
+    detail = _get_job(app_client, user_id, job_id)
+    attempt = detail["attempts"][0]
+    assert attempt["outcome"] == "success"
+    assert attempt["runtime_version"] == "slice4-echo"
+    assert attempt["model"] == "echo"
+
+
+@pytest.mark.hosted
+async def test_simultaneous_identical_enqueue_returns_one_job(
+    admin_pool: asyncpg.Pool,
+    user_pool: asyncpg.Pool,
+    app_client: TestClient,
+) -> None:
+    """Two concurrent identical enqueue requests produce one job and two 201s."""
+    user_id, org_id, account_id, transcript_id, _ = await _seed_job_ready_org(admin_pool)
+    key = "concurrent-idem"
+
+    async def enqueue() -> dict:
+        async with user_pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT * FROM public.enqueue_job(
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+                    $12::jsonb, $13::jsonb, $14::jsonb
+                )
+                """,
+                _context_token(user_id),
+                account_id,
+                transcript_id,
+                None,
+                "post-call",
+                "1.0",
+                "echo",
+                "slice4",
+                key,
+                3,
+                300,
+                json.dumps({}),
+                json.dumps({"transcript_id": str(transcript_id)}),
+                json.dumps({"transcript_id": str(transcript_id)}),
+            )
+        return dict(row) if row else {}
+
+    results = await asyncio.gather(enqueue(), enqueue())
+    assert results[0]["job_id"] == results[1]["job_id"]
+
+
+@pytest.mark.hosted
+@pytest.mark.parametrize(
+    "field,new_value",
+    [
+        pytest.param("skill", "different-skill", id="skill"),
+        pytest.param("skill_version", "2.0", id="skill_version"),
+        pytest.param("model", "different-model", id="model"),
+        pytest.param("runtime_version", "different-runtime", id="runtime_version"),
+        pytest.param("max_attempts", 5, id="max_attempts"),
+        pytest.param("payload", json.dumps({"extra": "different"}), id="payload_jsonb"),
+    ],
+)
+async def test_idempotency_key_conflict_for_each_material_field(
+    admin_pool: asyncpg.Pool,
+    user_pool: asyncpg.Pool,
+    app_client: TestClient,
+    field: str,
+    new_value: Any,
+) -> None:
+    """Reusing the same idempotency key with a changed material field returns 409."""
+    user_id, org_id, account_id, transcript_id, _ = await _seed_job_ready_org(admin_pool)
+    key = f"idem-{field}"
+
+    base_args = [
+        _context_token(user_id),
+        account_id,
+        transcript_id,
+        None,
+        "post-call",
+        "1.0",
+        "echo",
+        "slice4",
+        key,
+        3,
+        300,
+        json.dumps({}),
+        json.dumps({"transcript_id": str(transcript_id)}),
+        json.dumps({"transcript_id": str(transcript_id)}),
+    ]
+
+    async with user_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT * FROM public.enqueue_job(
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+                $12::jsonb, $13::jsonb, $14::jsonb
+            )
+            """,
+            *base_args,
+        )
+    job_id = row["job_id"]
+
+    # Build the conflicting call by mutating the chosen field.
+    arg_names = [
+        "context_token",
+        "account_id",
+        "transcript_id",
+        "opportunity_id",
+        "skill",
+        "skill_version",
+        "model",
+        "runtime_version",
+        "idempotency_key",
+        "max_attempts",
+        "timeout_seconds",
+        "payload",
+        "input_refs",
+        "source_manifest",
+    ]
+    conflict_args = list(base_args)
+    field_index = arg_names.index(field)
+    conflict_args[field_index] = new_value
+    if field == "payload":
+        conflict_args[11] = new_value  # payload is at index 11
+
+    async with user_pool.acquire() as conn:
+        with pytest.raises(asyncpg.exceptions.PostgresError):
+            await conn.fetchrow(
+                """
+                SELECT * FROM public.enqueue_job(
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+                    $12::jsonb, $13::jsonb, $14::jsonb
+                )
+                """,
+                *conflict_args,
+            )
+
+    # Original job should still exist and be the only one for the key.
+    async with admin_pool.acquire() as conn:
+        count = await conn.fetchval(
+            "SELECT COUNT(*) FROM public.jobs WHERE org_id = $1 AND idempotency_key = $2",
+            org_id,
+            key,
+        )
+    assert count == 1
+
+
+@pytest.mark.hosted
+async def test_idempotency_key_conflict_for_changed_ids_and_json(
+    admin_pool: asyncpg.Pool,
+    user_pool: asyncpg.Pool,
+    app_client: TestClient,
+) -> None:
+    """Reusing the key with a changed account, transcript, input_refs, or source_manifest is a 409."""
+    user_id, org_id, account_id, transcript_id, _ = await _seed_job_ready_org(admin_pool)
+    other_account = await _seed_account(admin_pool, org_id, user_id, name="Other Account")
+    other_transcript = await _seed_transcript(admin_pool, org_id, other_account, None, user_id)
+    key = "idem-ids-json"
+
+    async def call(
+        *,
+        acc: uuid.UUID = account_id,
+        trans: uuid.UUID = transcript_id,
+        input_refs: dict | None = None,
+        source_manifest: dict | None = None,
+    ) -> dict:
+        async with user_pool.acquire() as conn:
+            return await conn.fetchrow(
+                """
+                SELECT * FROM public.enqueue_job(
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+                    $12::jsonb, $13::jsonb, $14::jsonb
+                )
+                """,
+                _context_token(user_id),
+                acc,
+                trans,
+                None,
+                "post-call",
+                "1.0",
+                "echo",
+                "slice4",
+                key,
+                3,
+                300,
+                json.dumps({}),
+                json.dumps(input_refs or {"transcript_id": str(trans)}),
+                json.dumps(source_manifest or {"transcript_id": str(trans)}),
+            )
+
+    row = await call()
+    job_id = row["job_id"]
+
+    with pytest.raises(asyncpg.exceptions.PostgresError):
+        await call(acc=other_account)
+    with pytest.raises(asyncpg.exceptions.PostgresError):
+        await call(trans=other_transcript)
+    with pytest.raises(asyncpg.exceptions.PostgresError):
+        await call(input_refs={"transcript_id": str(transcript_id), "extra": True})
+    with pytest.raises(asyncpg.exceptions.PostgresError):
+        await call(source_manifest={"transcript_id": str(transcript_id), "extra": True})
+
+    async with admin_pool.acquire() as conn:
+        count = await conn.fetchval(
+            "SELECT COUNT(*) FROM public.jobs WHERE org_id = $1 AND idempotency_key = $2",
+            org_id,
+            key,
+        )
+    assert count == 1
+
+
 # Helper functions
 
 
@@ -757,9 +1209,9 @@ async def _heartbeat(
     pool: asyncpg.Pool,
     claim: dict,
     timeout_seconds: int,
-) -> None:
+) -> bool:
     async with pool.acquire() as conn:
-        await conn.fetchval(
+        return await conn.fetchval(
             "SELECT public.worker_heartbeat($1, $2, $3, $4)",
             claim["job_id"],
             claim["attempt_number"],
@@ -776,11 +1228,13 @@ async def _complete_job(
     validation_status: str = "unvalidated",
     token_usage: dict | None = None,
     cost: float = 0.0,
+    runtime_version: str | None = "slice4-echo",
+    model: str | None = "echo",
 ) -> None:
     async with pool.acquire() as conn:
         await conn.fetchval(
             """
-            SELECT public.complete_job($1, $2, $3, $4, $5, $6::jsonb, $7)
+            SELECT public.complete_job($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9)
             """,
             claim["job_id"],
             claim["attempt_number"],
@@ -789,6 +1243,8 @@ async def _complete_job(
             validation_status,
             json.dumps(token_usage or {}),
             cost,
+            runtime_version,
+            model,
         )
 
 
@@ -798,16 +1254,20 @@ async def _fail_job(
     error_category: str,
     error: str,
     backoff_seconds: int | None = None,
+    runtime_version: str | None = "slice4-echo",
+    model: str | None = "echo",
 ) -> None:
     async with pool.acquire() as conn:
         await conn.fetchval(
-            "SELECT public.fail_job($1, $2, $3, $4, $5, $6)",
+            "SELECT public.fail_job($1, $2, $3, $4, $5, $6, $7, $8)",
             claim["job_id"],
             claim["attempt_number"],
             claim["lease_token"],
             error_category,
             error,
             backoff_seconds,
+            runtime_version,
+            model,
         )
 
 

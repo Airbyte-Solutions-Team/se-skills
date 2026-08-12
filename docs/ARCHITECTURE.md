@@ -69,24 +69,25 @@ This is a logical view. Concrete technology choices (Supabase, worker framework,
 ### Job ledger / queue (Slice 4)
 
 - `public.jobs` is the durable job ledger. Primary statuses are `queued`, `running`, `success`, `failure`, `cancelled`, and `timeout`. `retry-wait` and dead-letter are scheduling metadata, not additional primary statuses.
-- `public.job_attempts` is an append-only table. Each claim creates a row with `attempt_number`, `worker_id`, `runtime_version`, a random `lease_token`, `started_at`, `heartbeat_at`, and `timeout_at`.
+- `public.job_attempts` is an append-only table. Each claim creates a row with `attempt_number`, `worker_id`, a random `lease_token`, `started_at`, `heartbeat_at`, and `timeout_at`. The attempt row later records the actual executor `runtime_version` and `model`, which may differ from the requested values stored on `public.jobs`.
 - Every job and attempt has an explicit non-null `org_id`. Composite foreign keys on `(transcript_id, account_id, org_id)`, `(opportunity_id, account_id, org_id)`, and `(account_id, org_id)` enforce that all inputs belong to the same organization.
 - `payload`, `input_refs`, and `source_manifest` contain only stable IDs and non-sensitive lineage metadata. They never contain transcript bodies, secrets, bearer tokens, storage credentials, or browser-supplied paths.
 - Claiming is transactional: `claim_next_job` selects one eligible `queued` job with `FOR UPDATE SKIP LOCKED`, transitions it to `running`, creates an attempt row, increments `attempts`, sets `worker_id`, `started_at`, and `timeout_at`, and returns the attempt metadata including the lease token. Only one worker can win the row lock.
-- `worker_heartbeat` updates `heartbeat_at` and `timeout_at` for the current attempt and lease token.
-- `complete_job` and `fail_job` require the current attempt number and lease token, lock the attempt row, verify the job is `running`, and then either record `success`/`failure` or requeue with backoff. A stale token cannot mutate a reclaimed job.
-- `recover_expired_leases` scans `running` rows whose `timeout_at` has passed, marks the abandoned attempt with a `timeout` outcome, and either requeues the job with bounded backoff when attempts remain or moves it to terminal `failure` with `dead_lettered = true`.
-- `request_job_cancellation` sets `cancel_requested_at` for queued or running jobs. A queued job becomes `cancelled` immediately; a running job is finalized by the worker on its next heartbeat or completion attempt.
-- Idempotent enqueue: `enqueue_job` accepts an optional `idempotency_key`. The same key and equivalent scope (org, account, transcript, opportunity, skill) returns the original job; a conflicting reuse raises a safe `409`-style error.
+- `worker_heartbeat` locks the job row, then the attempt row, updates `heartbeat_at` and `timeout_at` for the current attempt and lease token, and returns whether `cancel_requested_at` has been set.
+- `complete_job` and `fail_job` require the current attempt number and lease token, lock the job row first and then the attempt row, verify the job is `running` and the lease token is current, and then either record `success`/`failure` or requeue with backoff. A stale token cannot mutate a reclaimed job. `complete_job` persists the actual executor `runtime_version` and `model` on the attempt row.
+- `recover_expired_leases` scans `running` rows whose `timeout_at` has passed, locks the job row, locks the open attempt row, marks the abandoned attempt with a `timeout` outcome, and either requeues the job with bounded backoff when attempts remain or moves it to terminal `failure` with `dead_lettered = true`.
+- `request_job_cancellation` locks the job row and uses status-predicated updates. A queued job becomes `cancelled` immediately; a running job sets `cancel_requested_at` and is finalized by the worker on its next heartbeat or completion attempt.
+- Idempotent enqueue: `enqueue_job` accepts an optional `idempotency_key`. It inserts atomically with `ON CONFLICT (org_id, idempotency_key) DO NOTHING` and then compares the stored request fingerprint (account, transcript, opportunity, skill, skill_version, model, runtime_version, max_attempts, payload, input_refs, source_manifest). Identical requests return the original job; a conflicting reuse raises a safe `409`-style error.
 - Delivery is at-least-once; result commits are idempotent within the current attempt. No job state lives in process memory or on local disk.
 - Redis is intentionally not used. Postgres row locks, leases, and recovery functions are sufficient for the beta workload and avoid an additional infrastructure dependency.
 
 ### Workers
 
 - A separate worker process (`scripts/run_hosted_worker.py`) polls `claim_next_job` and runs an injected executor.
+- The worker enforces an immutable wall-clock execution deadline around `executor.execute` (using `asyncio.wait_for`) that is independent of the heartbeat lease. If the deadline expires, the worker cancels the executor and records a terminal `timeout`. If a cancellation request is observed, the heartbeat monitor cancels the executor and the worker records `cancelled`.
 - Slice 4 ships a deterministic `EchoExecutor` that returns synthetic metadata and a `null` `output_id`. It proves the queue lifecycle without invoking a skill, model, shell command, container, or sandbox.
 - Future slices will replace `EchoExecutor` with an isolated sandbox that mounts allowlisted transcript/output files and runs the skill runtime with allowlisted tools, credentials, and network destinations.
-- Report completion, failure, or retry to the job ledger.
+- Report completion, failure, or retry to the job ledger, including the actual executor `runtime_version` and `model` on each attempt.
 
 ## Agent-runtime isolation model (deferred to Slice 5)
 
@@ -126,9 +127,9 @@ The runtime is executed inside an isolated sandbox:
 
 1. **API enqueue:** `POST /api/hosted/accounts/{account_id}/jobs` calls `public.enqueue_job`, verifies the caller's active membership, validates the transcript/opportunity/account organization chain, and inserts a `queued` record. It returns `job_id`, `job_status`, and `job_created_at`.
 2. **Worker claim:** `claim_next_job` selects the oldest eligible `queued` job with `FOR UPDATE SKIP LOCKED`, transitions it to `running`, creates an append-only `job_attempts` row with a random `lease_token`, and sets `timeout_at`. The row lock guarantees only one worker owns the attempt.
-3. **Heartbeat:** the worker calls `worker_heartbeat` to extend `timeout_at` while it runs the executor.
-4. **Slice 4 execution:** the worker runs the deterministic `EchoExecutor`, which returns synthetic metadata and a `null` `output_id`. No skill, model, shell, container, or sandbox is invoked.
-5. **Success:** `complete_job` verifies the current attempt/lease token, updates the attempt to `success`, and sets the job to `success` with `finished_at`, `token_usage`, and `cost`.
+3. **Heartbeat:** the worker calls `worker_heartbeat` to extend `timeout_at` while it runs the executor; `worker_heartbeat` also returns whether `cancel_requested_at` is set.
+4. **Slice 4 execution:** the worker runs the deterministic `EchoExecutor` under an immutable wall-clock deadline. The executor returns synthetic metadata and a `null` `output_id`. No skill, model, shell, container, or sandbox is invoked.
+5. **Success:** `complete_job` locks the job then the attempt, verifies the current attempt/lease token, persists the actual executor `runtime_version` and `model` on the attempt, and sets the job to `success` with `finished_at`, `token_usage`, and `cost`.
 6. **Retryable failure:** `fail_job` checks `cancel_requested_at` first, records the attempt outcome (`failure` or `timeout`), and either requeues the job with a persisted backoff when `attempts < max_attempts` or moves it to terminal `failure` with `dead_lettered = true`.
 7. **Timeout:** a `running` job whose `timeout_at` expires is recovered by `recover_expired_leases`, which records the abandoned attempt as `timeout` and either requeues or dead-letters the job. The final status is `timeout`, distinct from `failure`.
 8. **Cancellation:** `request_job_cancellation` sets `cancel_requested_at`. A queued job becomes `cancelled` immediately; a running job is finalized by the worker on the next heartbeat or completion attempt, with `cancel_job` setting `status = 'cancelled'`.

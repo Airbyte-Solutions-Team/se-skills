@@ -127,7 +127,7 @@ This is the source of truth for productionalization slices and progress. Each sl
 
 ## Slice 4: Durable asynchronous jobs
 
-**Status:** `Complete` (PR #42)
+**Status:** `In Progress` (PR #42; blocked on reviewer acceptance of review fixes)
 
 **Product outcome:** An authenticated member can select an uploaded transcript, enqueue a durable `post-call` job, a separate worker claims and runs it, and the member sees the terminal job status. All state is persisted in Postgres; no job state depends on process memory or local filesystem.
 

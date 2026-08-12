@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS public.job_attempts (
     attempt_number INTEGER NOT NULL,
     worker_id TEXT,
     runtime_version TEXT,
+    model TEXT,
     lease_token UUID,
     started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     finished_at TIMESTAMPTZ,
@@ -190,6 +191,7 @@ DECLARE
     v_job_id UUID;
     v_job_status TEXT;
     v_created TIMESTAMPTZ;
+    v_null_uuid UUID := '00000000-0000-0000-0000-000000000000'::uuid;
 BEGIN
     -- Resolve the account's organization first; all relationships must match it.
     SELECT a.org_id INTO v_org_id
@@ -224,28 +226,65 @@ BEGIN
         END IF;
     END IF;
 
-    -- Idempotency: same key in the same organization must repeat the same scope.
+    -- Idempotency: atomic insert-or-select with a full request fingerprint.
+    -- The unique index serializes concurrent requests with the same key, so
+    -- only the first insert wins; the loser selects and compares the stored row.
     IF p_idempotency_key IS NOT NULL THEN
-        SELECT id, j.status AS job_status, j.created_at AS job_created_at,
-               account_id, transcript_id, opportunity_id, skill
-          INTO v_existing
-        FROM public.jobs j
-        WHERE j.org_id = v_org_id AND j.idempotency_key = p_idempotency_key;
+        INSERT INTO public.jobs (
+            org_id, account_id, opportunity_id, transcript_id, requester_id,
+            skill, skill_version, model, runtime_version, status,
+            payload, input_refs, source_manifest, max_attempts, timeout_at, idempotency_key
+        ) VALUES (
+            v_org_id, p_account_id, p_opportunity_id, p_transcript_id, v_user_id,
+            p_skill, p_skill_version, p_model, p_runtime_version, 'queued',
+            p_payload, p_input_refs, p_source_manifest,
+            COALESCE(p_max_attempts, 3),
+            NULL,
+            p_idempotency_key
+        )
+        ON CONFLICT (org_id, idempotency_key) DO NOTHING
+        RETURNING id, jobs.status, jobs.created_at
+          INTO v_job_id, v_job_status, v_created;
 
-        IF FOUND THEN
-            IF v_existing.account_id <> p_account_id
-                OR v_existing.transcript_id <> p_transcript_id
-                OR COALESCE(v_existing.opportunity_id, '00000000-0000-0000-0000-000000000000'::uuid) <> COALESCE(p_opportunity_id, '00000000-0000-0000-0000-000000000000'::uuid)
-                OR v_existing.skill <> p_skill THEN
-                RAISE EXCEPTION 'Idempotency key conflict: same key reused with different scope'
-                    USING ERRCODE = '40901';
-            END IF;
-            job_id := v_existing.id;
-            job_status := v_existing.job_status;
-            job_created_at := v_existing.job_created_at;
+        IF v_job_id IS NOT NULL THEN
+            job_id := v_job_id;
+            job_status := v_job_status;
+            job_created_at := v_created;
             RETURN NEXT;
             RETURN;
         END IF;
+
+        SELECT id, status, created_at, account_id, transcript_id, opportunity_id,
+               skill, skill_version, model, runtime_version, max_attempts,
+               payload, input_refs, source_manifest
+          INTO v_existing
+        FROM public.jobs
+        WHERE org_id = v_org_id AND idempotency_key = p_idempotency_key;
+
+        IF v_existing IS NULL THEN
+            RAISE EXCEPTION 'Idempotency race: existing row disappeared';
+        END IF;
+
+        IF v_existing.account_id <> p_account_id
+            OR v_existing.transcript_id <> p_transcript_id
+            OR COALESCE(v_existing.opportunity_id, v_null_uuid) <> COALESCE(p_opportunity_id, v_null_uuid)
+            OR v_existing.skill <> p_skill
+            OR v_existing.skill_version <> p_skill_version
+            OR COALESCE(v_existing.model, '') <> COALESCE(p_model, '')
+            OR COALESCE(v_existing.runtime_version, '') <> COALESCE(p_runtime_version, '')
+            OR v_existing.max_attempts <> COALESCE(p_max_attempts, 3)
+            OR v_existing.payload <> p_payload
+            OR v_existing.input_refs <> p_input_refs
+            OR v_existing.source_manifest <> p_source_manifest THEN
+            RAISE EXCEPTION 'Idempotency key conflict: same key reused with different scope'
+                USING ERRCODE = '40901';
+        END IF;
+
+        job_id := v_existing.id;
+        job_status := v_existing.status;
+        job_created_at := v_existing.created_at;
+        RETURN NEXT;
+        RETURN;
     END IF;
 
     INSERT INTO public.jobs (
@@ -277,6 +316,8 @@ GRANT EXECUTE ON FUNCTION public.enqueue_job(TEXT, UUID, UUID, UUID, TEXT, TEXT,
 
 -- Request job cancellation from the API. Queued jobs move immediately to
 -- `cancelled`; running jobs record a cancellation request for the worker.
+-- The job row is locked and all transitions are conditional on the status at
+-- the moment of the update to avoid races with claim/complete/fail.
 CREATE OR REPLACE FUNCTION public.request_job_cancellation(
     p_context_token TEXT,
     p_job_id UUID
@@ -289,9 +330,9 @@ AS $$
 DECLARE
     v_job RECORD;
     v_user_id UUID;
-    v_membership RECORD;
+    v_updated INTEGER;
 BEGIN
-    SELECT * INTO v_job FROM public.jobs WHERE id = p_job_id;
+    SELECT * INTO v_job FROM public.jobs WHERE id = p_job_id FOR UPDATE;
     IF v_job IS NULL THEN
         RAISE EXCEPTION 'Job not found';
     END IF;
@@ -314,7 +355,11 @@ BEGIN
             finished_at = clock_timestamp(),
             timeout_at = NULL,
             next_attempt_after = NULL
-        WHERE id = p_job_id;
+        WHERE id = p_job_id
+          AND status = 'queued';
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Job transition race: no longer queued';
+        END IF;
         RETURN true;
     END IF;
 
@@ -322,7 +367,12 @@ BEGIN
     UPDATE public.jobs
     SET cancel_requested_at = clock_timestamp(),
         cancelled_by = v_user_id
-    WHERE id = p_job_id;
+    WHERE id = p_job_id
+      AND status = 'running'
+      AND cancel_requested_at IS NULL;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Job transition race: no longer running';
+    END IF;
     RETURN true;
 END;
 $$;
@@ -349,7 +399,9 @@ GRANT EXECUTE ON FUNCTION public.worker_backoff_interval(INTEGER) TO app_worker;
 
 -- Recover expired running leases. Marks abandoned attempts, then either
 -- requeues with a backoff or moves the job to a terminal timeout/dead-letter
--- state when no attempts remain.
+-- state when no attempts remain. The cursor locks the job row; the open attempt
+-- is locked explicitly before mutation so recovery shares the same job→attempt
+-- lock order as heartbeat/complete/fail.
 CREATE OR REPLACE FUNCTION public.recover_expired_leases(
     p_backoff_seconds INTEGER DEFAULT NULL
 )
@@ -360,6 +412,7 @@ SET search_path = ''
 AS $$
 DECLARE
     v_job RECORD;
+    v_attempt RECORD;
     v_count INTEGER := 0;
     v_backoff INTERVAL;
 BEGIN
@@ -373,21 +426,34 @@ BEGIN
         ORDER BY timeout_at
         FOR UPDATE SKIP LOCKED
     LOOP
-        -- Mark the abandoned attempt as a timeout.
+        -- Lock the open attempt before updating to avoid racing with a
+        -- heartbeat or finalizer on the same attempt.
+        SELECT * INTO v_attempt
+        FROM public.job_attempts
+        WHERE job_id = v_job.id
+          AND attempt_number = v_job.attempts
+          AND outcome IS NULL
+        FOR UPDATE;
+
+        IF v_attempt IS NULL THEN
+            -- The attempt is already finalized; skip this job.
+            CONTINUE;
+        END IF;
+
         UPDATE public.job_attempts
         SET outcome = 'timeout',
             error_category = 'lease_timeout',
             error = 'Worker lease expired before heartbeat or completion',
             finished_at = clock_timestamp()
-        WHERE job_id = v_job.id
-          AND attempt_number = v_job.attempts
-          AND outcome IS NULL;
+        WHERE id = v_attempt.id;
 
         IF v_job.attempts >= v_job.max_attempts THEN
             UPDATE public.jobs
             SET status = 'timeout',
                 finished_at = clock_timestamp(),
                 timeout_at = NULL,
+                started_at = NULL,
+                worker_id = NULL,
                 dead_lettered = true,
                 error = 'Lease timeout after maximum attempts'
             WHERE id = v_job.id;
@@ -506,7 +572,10 @@ REVOKE ALL ON FUNCTION public.claim_next_job(TEXT, INTEGER) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.claim_next_job(TEXT, INTEGER) TO app_worker;
 
 -- Extend a running attempt's lease. Requires the current attempt number and
--- lease token, so a stale or reclaimed lease cannot be renewed.
+-- lease token, so a stale or reclaimed lease cannot be renewed. Locks the job
+-- row first and then the attempt row to preserve the job→attempt lock order
+-- used by complete/fail/cancel and recovery. Returns true when a cancellation
+-- has been requested for the running job.
 CREATE OR REPLACE FUNCTION public.worker_heartbeat(
     p_job_id UUID,
     p_attempt_number INTEGER,
@@ -520,9 +589,22 @@ SET search_path = ''
 AS $$
 DECLARE
     v_attempt RECORD;
-    v_status TEXT;
+    v_job RECORD;
     v_timeout TIMESTAMPTZ;
 BEGIN
+    SELECT * INTO v_job
+    FROM public.jobs
+    WHERE id = p_job_id
+    FOR UPDATE;
+
+    IF v_job IS NULL THEN
+        RAISE EXCEPTION 'Job not found';
+    END IF;
+
+    IF v_job.status IS DISTINCT FROM 'running' THEN
+        RAISE EXCEPTION 'Job is not running';
+    END IF;
+
     SELECT * INTO v_attempt
     FROM public.job_attempts
     WHERE job_id = p_job_id
@@ -535,11 +617,6 @@ BEGIN
 
     IF v_attempt.outcome IS NOT NULL THEN
         RAISE EXCEPTION 'Attempt already finished';
-    END IF;
-
-    SELECT status INTO v_status FROM public.jobs WHERE id = p_job_id;
-    IF v_status IS DISTINCT FROM 'running' THEN
-        RAISE EXCEPTION 'Job is not running';
     END IF;
 
     v_timeout := clock_timestamp() + make_interval(secs => p_timeout_seconds);
@@ -552,7 +629,7 @@ BEGIN
     SET timeout_at = v_timeout
     WHERE id = p_job_id;
 
-    RETURN true;
+    RETURN v_job.cancel_requested_at IS NOT NULL;
 END;
 $$;
 
@@ -562,7 +639,9 @@ GRANT EXECUTE ON FUNCTION public.worker_heartbeat(UUID, INTEGER, UUID, INTEGER) 
 
 -- Complete a running attempt. If cancellation was requested, the job becomes
 -- `cancelled` regardless of the supplied result. Otherwise the job reaches a
--- successful terminal state and records aggregate metadata.
+-- successful terminal state and records aggregate metadata. Actual executor
+-- runtime metadata is persisted on the attempt row, distinct from the requested
+-- model/runtime stored on the job.
 CREATE OR REPLACE FUNCTION public.complete_job(
     p_job_id UUID,
     p_attempt_number INTEGER,
@@ -570,7 +649,9 @@ CREATE OR REPLACE FUNCTION public.complete_job(
     p_result_output_id UUID,
     p_validation_status TEXT,
     p_token_usage JSONB,
-    p_cost NUMERIC
+    p_cost NUMERIC,
+    p_runtime_version TEXT DEFAULT NULL,
+    p_model TEXT DEFAULT NULL
 )
 RETURNS BOOLEAN
 LANGUAGE plpgsql
@@ -581,6 +662,19 @@ DECLARE
     v_attempt RECORD;
     v_job RECORD;
 BEGIN
+    SELECT * INTO v_job
+    FROM public.jobs
+    WHERE id = p_job_id
+    FOR UPDATE;
+
+    IF v_job IS NULL THEN
+        RAISE EXCEPTION 'Job not found';
+    END IF;
+
+    IF v_job.status <> 'running' THEN
+        RAISE EXCEPTION 'Job is not running';
+    END IF;
+
     SELECT * INTO v_attempt
     FROM public.job_attempts
     WHERE job_id = p_job_id
@@ -595,14 +689,12 @@ BEGIN
         RAISE EXCEPTION 'Attempt already finished';
     END IF;
 
-    SELECT * INTO v_job FROM public.jobs WHERE id = p_job_id FOR UPDATE;
-    IF v_job IS NULL OR v_job.status <> 'running' THEN
-        RAISE EXCEPTION 'Job is not running';
-    END IF;
-
     IF v_job.cancel_requested_at IS NOT NULL THEN
         UPDATE public.job_attempts
-        SET outcome = 'cancelled', finished_at = clock_timestamp()
+        SET outcome = 'cancelled',
+            finished_at = clock_timestamp(),
+            runtime_version = COALESCE(p_runtime_version, v_attempt.runtime_version),
+            model = COALESCE(p_model, v_attempt.model)
         WHERE id = v_attempt.id;
 
         UPDATE public.jobs
@@ -618,7 +710,9 @@ BEGIN
     SET outcome = 'success',
         finished_at = clock_timestamp(),
         token_usage = COALESCE(p_token_usage, '{}'),
-        cost = p_cost
+        cost = p_cost,
+        runtime_version = COALESCE(p_runtime_version, v_attempt.runtime_version),
+        model = COALESCE(p_model, v_attempt.model)
     WHERE id = v_attempt.id;
 
     UPDATE public.jobs
@@ -635,20 +729,23 @@ BEGIN
 END;
 $$;
 
-ALTER FUNCTION public.complete_job(UUID, INTEGER, UUID, UUID, TEXT, JSONB, NUMERIC) OWNER TO app_admin;
-REVOKE ALL ON FUNCTION public.complete_job(UUID, INTEGER, UUID, UUID, TEXT, JSONB, NUMERIC) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.complete_job(UUID, INTEGER, UUID, UUID, TEXT, JSONB, NUMERIC) TO app_worker;
+ALTER FUNCTION public.complete_job(UUID, INTEGER, UUID, UUID, TEXT, JSONB, NUMERIC, TEXT, TEXT) OWNER TO app_admin;
+REVOKE ALL ON FUNCTION public.complete_job(UUID, INTEGER, UUID, UUID, TEXT, JSONB, NUMERIC, TEXT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.complete_job(UUID, INTEGER, UUID, UUID, TEXT, JSONB, NUMERIC, TEXT, TEXT) TO app_worker;
 
 -- Mark a running attempt as failed. Retryable errors requeue the job with a
 -- backoff; exhausted attempts produce a terminal `failure` or `timeout` state
--- depending on the error category.
+-- depending on the error category. Actual executor runtime metadata is stored
+-- on the attempt row when available. Uses job→attempt locking order.
 CREATE OR REPLACE FUNCTION public.fail_job(
     p_job_id UUID,
     p_attempt_number INTEGER,
     p_lease_token UUID,
     p_error_category TEXT,
     p_error TEXT,
-    p_backoff_seconds INTEGER DEFAULT NULL
+    p_backoff_seconds INTEGER DEFAULT NULL,
+    p_runtime_version TEXT DEFAULT NULL,
+    p_model TEXT DEFAULT NULL
 )
 RETURNS BOOLEAN
 LANGUAGE plpgsql
@@ -662,6 +759,19 @@ DECLARE
     v_outcome TEXT;
     v_status TEXT;
 BEGIN
+    SELECT * INTO v_job
+    FROM public.jobs
+    WHERE id = p_job_id
+    FOR UPDATE;
+
+    IF v_job IS NULL THEN
+        RAISE EXCEPTION 'Job not found';
+    END IF;
+
+    IF v_job.status <> 'running' THEN
+        RAISE EXCEPTION 'Job is not running';
+    END IF;
+
     SELECT * INTO v_attempt
     FROM public.job_attempts
     WHERE job_id = p_job_id
@@ -676,18 +786,15 @@ BEGIN
         RAISE EXCEPTION 'Attempt already finished';
     END IF;
 
-    SELECT * INTO v_job FROM public.jobs WHERE id = p_job_id FOR UPDATE;
-    IF v_job IS NULL OR v_job.status <> 'running' THEN
-        RAISE EXCEPTION 'Job is not running';
-    END IF;
-
     v_outcome := CASE WHEN p_error_category = 'timeout' THEN 'timeout' ELSE 'failure' END;
 
     UPDATE public.job_attempts
     SET outcome = v_outcome,
         error_category = p_error_category,
         error = p_error,
-        finished_at = clock_timestamp()
+        finished_at = clock_timestamp(),
+        runtime_version = COALESCE(p_runtime_version, v_attempt.runtime_version),
+        model = COALESCE(p_model, v_attempt.model)
     WHERE id = v_attempt.id;
 
     -- Cancellation takes precedence over retry logic.
@@ -708,6 +815,8 @@ BEGIN
         SET status = v_status,
             finished_at = clock_timestamp(),
             timeout_at = NULL,
+            started_at = NULL,
+            worker_id = NULL,
             next_attempt_after = NULL,
             dead_lettered = true,
             error = p_error
@@ -734,11 +843,13 @@ BEGIN
 END;
 $$;
 
-ALTER FUNCTION public.fail_job(UUID, INTEGER, UUID, TEXT, TEXT, INTEGER) OWNER TO app_admin;
-REVOKE ALL ON FUNCTION public.fail_job(UUID, INTEGER, UUID, TEXT, TEXT, INTEGER) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.fail_job(UUID, INTEGER, UUID, TEXT, TEXT, INTEGER) TO app_worker;
+ALTER FUNCTION public.fail_job(UUID, INTEGER, UUID, TEXT, TEXT, INTEGER, TEXT, TEXT) OWNER TO app_admin;
+REVOKE ALL ON FUNCTION public.fail_job(UUID, INTEGER, UUID, TEXT, TEXT, INTEGER, TEXT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.fail_job(UUID, INTEGER, UUID, TEXT, TEXT, INTEGER, TEXT, TEXT) TO app_worker;
 
 -- Worker finalizer for cancellation when the worker wants to stop cleanly.
+-- Locks the job row first and then the attempt row to preserve the job→attempt
+-- lock order and avoid races with heartbeat/complete/fail/recovery.
 CREATE OR REPLACE FUNCTION public.cancel_job(
     p_job_id UUID,
     p_attempt_number INTEGER,
@@ -751,7 +862,21 @@ SET search_path = ''
 AS $$
 DECLARE
     v_attempt RECORD;
+    v_job RECORD;
 BEGIN
+    SELECT * INTO v_job
+    FROM public.jobs
+    WHERE id = p_job_id
+    FOR UPDATE;
+
+    IF v_job IS NULL THEN
+        RAISE EXCEPTION 'Job not found';
+    END IF;
+
+    IF v_job.status <> 'running' THEN
+        RAISE EXCEPTION 'Job is not running';
+    END IF;
+
     SELECT * INTO v_attempt
     FROM public.job_attempts
     WHERE job_id = p_job_id

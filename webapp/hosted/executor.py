@@ -20,6 +20,7 @@ class ExecutorResult:
     token_usage: dict[str, Any]
     cost: float | None
     runtime_version: str
+    model: str
 
 
 @runtime_checkable
@@ -39,11 +40,11 @@ class EchoExecutor:
     transcript bodies or make outbound calls.
     """
 
-    def __init__(self, runtime_version: str = "slice4-echo") -> None:
+    def __init__(self, runtime_version: str = "slice4-echo", model: str = "echo") -> None:
         self.runtime_version = runtime_version
+        self.model = model
 
     async def execute(self, job: dict[str, Any]) -> ExecutorResult:
-        source_manifest = job.get("source_manifest") or {}
         token_usage = {
             "input_tokens": 0,
             "output_tokens": 0,
@@ -55,4 +56,5 @@ class EchoExecutor:
             token_usage=token_usage,
             cost=0.0,
             runtime_version=self.runtime_version,
+            model=self.model,
         )
