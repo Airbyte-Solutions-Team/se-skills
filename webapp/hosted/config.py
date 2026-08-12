@@ -50,9 +50,17 @@ def hosted_public_config() -> dict:
     }
 
 
+def supabase_issuer() -> str:
+    """Return the expected issuer for Supabase Auth access tokens."""
+    if not SUPABASE_URL:
+        return ""
+    return f"{SUPABASE_URL.rstrip('/')}/auth/v1"
+
+
 def jwks_url() -> str:
+    """Return the Supabase Auth JWKS endpoint for the project."""
     base = SUPABASE_URL.rstrip("/")
-    return f"{base}/.well-known/jwks.json"
+    return f"{base}/auth/v1/.well-known/jwks.json"
 
 
 def require_hosted() -> None:

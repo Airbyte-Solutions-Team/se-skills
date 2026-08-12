@@ -43,21 +43,29 @@ def _signing_key(token: str) -> Any:
     if config.HOSTED_JWT_ALGORITHM.upper() != "RS256":
         raise AuthError("Unsupported JWT algorithm", status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    if not config.SUPABASE_URL:
+        raise AuthError("SUPABASE_URL is required for RS256 verification", status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     return db.jwks_client().get_signing_key_from_jwt(token)
 
 
 def _decode(token: str) -> dict[str, Any]:
     key = _signing_key(token)
+    decode_kwargs: dict[str, Any] = {
+        "algorithms": [config.HOSTED_JWT_ALGORITHM],
+        "audience": "authenticated",
+        "options": {"verify_exp": True, "verify_aud": True},
+    }
+    if config.HOSTED_JWT_ALGORITHM.upper() == "RS256":
+        issuer = config.supabase_issuer()
+        if issuer:
+            decode_kwargs["issuer"] = issuer
     try:
-        return jwt.decode(
-            token,
-            key,
-            algorithms=[config.HOSTED_JWT_ALGORITHM],
-            audience="authenticated",
-            options={"verify_exp": True, "verify_aud": True},
-        )
+        return jwt.decode(token, key, **decode_kwargs)
     except jwt.ExpiredSignatureError as exc:
         raise AuthError("Token expired") from exc
+    except jwt.InvalidIssuerError as exc:
+        raise AuthError("Invalid token issuer") from exc
     except jwt.InvalidTokenError as exc:
         raise AuthError("Invalid token") from exc
 

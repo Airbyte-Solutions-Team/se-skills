@@ -8,15 +8,20 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import sys
+import threading
 import uuid
 from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any, AsyncGenerator
 
 import asyncpg
 import jwt
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 from testcontainers.postgres import PostgresContainer
 
@@ -961,3 +966,124 @@ async def test_migration_safe_password_quoting(hosted_env: dict[str, str]) -> No
             )
         finally:
             await drop_conn.close()
+
+
+class _JwksHandler(BaseHTTPRequestHandler):
+    """Minimal HTTP handler that serves a JWKS document at the Supabase path."""
+
+    def __init__(self, jwks: dict[str, Any], *args: Any, **kwargs: Any) -> None:
+        self.jwks = jwks
+        super().__init__(*args, **kwargs)
+
+    def do_GET(self) -> None:
+        if self.path == "/auth/v1/.well-known/jwks.json":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(self.jwks).encode())
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, fmt: str, *args: Any) -> None:
+        pass
+
+
+def _rsa_jwks() -> tuple[rsa.RSAPrivateKey, dict[str, Any], str]:
+    """Generate a test RSA key pair and return the private key, JWKS, and kid."""
+    key_id = "test-key-1"
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    public_numbers = private_key.public_key().public_numbers()
+    jwks = {
+        "keys": [
+            {
+                "kty": "RSA",
+                "kid": key_id,
+                "use": "sig",
+                "alg": "RS256",
+                "n": jwt.utils.to_base64url_uint(public_numbers.n).decode("ascii"),
+                "e": jwt.utils.to_base64url_uint(public_numbers.e).decode("ascii"),
+            }
+        ]
+    }
+    return private_key, jwks, key_id
+
+
+@pytest.mark.hosted
+@pytest.mark.slow
+def test_rs256_jwks_url_and_issuer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The production RS256/JWKS path uses the correct Supabase JWKS endpoint and validates issuer."""
+    from webapp.hosted import auth, config, db
+
+    private_key, jwks, key_id = _rsa_jwks()
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+
+    server = HTTPServer(("127.0.0.1", 0), lambda *args, **kwargs: _JwksHandler(jwks, *args, **kwargs))
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        base_url = f"http://127.0.0.1:{port}"
+        monkeypatch.setattr(config, "SUPABASE_URL", base_url)
+        monkeypatch.setattr(config, "HOSTED_JWT_ALGORITHM", "RS256")
+        monkeypatch.setattr(config, "HOSTED_JWT_SECRET", "")
+        db.clear_jwks_client()
+
+        issuer = f"{base_url}/auth/v1"
+        user_id = uuid.uuid4()
+        valid_token = jwt.encode(
+            {
+                "sub": str(user_id),
+                "email": "rs256@airbyte.io",
+                "aud": "authenticated",
+                "iss": issuer,
+            },
+            private_pem,
+            algorithm="RS256",
+            headers={"kid": key_id},
+        )
+
+        # Correct JWKS URL includes /auth/v1/.
+        assert config.jwks_url() == f"{base_url}/auth/v1/.well-known/jwks.json"
+
+        verified = auth.verify_token(valid_token)
+        assert verified.user_id == user_id
+        assert verified.email == "rs256@airbyte.io"
+
+        # A token with a wrong issuer must be rejected.
+        bad_token = jwt.encode(
+            {
+                "sub": str(user_id),
+                "email": "wrong-issuer@airbyte.io",
+                "aud": "authenticated",
+                "iss": "https://evil.example.com/auth/v1",
+            },
+            private_pem,
+            algorithm="RS256",
+            headers={"kid": key_id},
+        )
+        with pytest.raises(auth.AuthError):
+            auth.verify_token(bad_token)
+    finally:
+        server.shutdown()
+        server.server_close()
+        db.clear_jwks_client()
+
+
+@pytest.mark.hosted
+def test_config_supabase_jwks_url() -> None:
+    """The configured JWKS URL is the Supabase Auth project JWKS endpoint."""
+    from webapp.hosted import config
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(config, "SUPABASE_URL", "https://example.supabase.co")
+    try:
+        assert config.jwks_url() == "https://example.supabase.co/auth/v1/.well-known/jwks.json"
+        assert config.supabase_issuer() == "https://example.supabase.co/auth/v1"
+    finally:
+        monkeypatch.undo()
