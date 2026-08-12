@@ -2,7 +2,7 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 11, 2026 — HEAD `TBD` on `devin/slice4-durable-jobs`. Closed PR #42 review blockers: immutable wall-clock execution deadline with `asyncio.wait_for`, race-safe transitions with conditional status predicates and consistent job→attempt lock order, atomic idempotent enqueue with full request fingerprint comparison, and honest queue-lifecycle UI/runtime lineage. Kept PR draft and Slice 4 `In Progress`._
+_Last updated: August 11, 2026 — HEAD `a64d60b` on `devin/slice4-durable-jobs`. Closed PR #42 review blockers: immutable wall-clock execution deadline with `asyncio.wait_for`, race-safe transitions with conditional status predicates and consistent job→attempt lock order, atomic idempotent enqueue with full request fingerprint comparison, and honest queue-lifecycle UI/runtime lineage. Kept PR draft and Slice 4 `In Progress`._
 
 
 ## Built this session (newest first — see `git log`)
