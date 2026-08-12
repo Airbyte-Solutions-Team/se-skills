@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from webapp.hosted.runtime_contract import (
     CancellationToken,
     ExecutionMetadata,
+    FailureCategory,
     NetworkDestination,
     RedactedFailure,
     RuntimeJob,
@@ -182,10 +183,14 @@ class WriteOutputInput(BaseModel):
 
 
 class ReportFailureInput(BaseModel):
-    """Arguments for report_failure."""
+    """Arguments for report_failure.
+
+    The model may only report a closed failure category. The persisted message is
+    generic; any model-supplied detail is not written to the durable job payload.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    category: str
+    category: FailureCategory
     message: str = "Unknown failure"
 
 
@@ -305,20 +310,22 @@ class TypedToolRuntime:
             return candidate
         return None
 
-    def _prior_paths(self, job: RuntimeJob) -> list[Path]:
-        """Return the manifest-authorized prior-context files, in sorted order."""
+    def _prior_paths(self, job: RuntimeJob) -> list[Path] | None:
+        """Return the manifest-authorized prior-context files, or None if any are missing or unsafe."""
         input_dir = Path(job.input_workspace)
         if not input_dir.exists():
-            return []
+            return None
         paths: list[Path] = []
         for ref in sorted(job.input_manifest.prior_context_refs):
             candidate = input_dir / ref
             try:
                 candidate.relative_to(input_dir)
             except ValueError:
-                continue
+                return None
             if candidate.is_file():
                 paths.append(candidate)
+            else:
+                return None
         return paths
 
     def _system_prompt(self, job: RuntimeJob) -> str:
@@ -342,29 +349,32 @@ class TypedToolRuntime:
     async def execute(self, job: RuntimeJob, cancellation: CancellationToken) -> RuntimeResult:
         """Run the manual typed-tool loop until the output is complete or the job expires."""
         if cancellation.is_cancelled():
-            return _failure("cancelled", "Cancelled before execution started")
+            return _failure("cancelled")
 
         transcript_path = self._transcript_path(job)
         if transcript_path is None:
-            return _failure("input_error", "No transcript found in input workspace")
+            return _failure("input_error")
 
+        if job.input_manifest.transcript_ref in job.input_manifest.prior_context_refs:
+            return _failure("input_error")
+
+        prior_paths = self._prior_paths(job)
+        if prior_paths is None:
+            return _failure("input_error")
         transcript_text = transcript_path.read_text(encoding="utf-8")
-        prior_texts = [p.read_text(encoding="utf-8") for p in self._prior_paths(job)]
+        prior_texts = [p.read_text(encoding="utf-8") for p in prior_paths]
 
         output_dir = Path(job.output_workspace)
         output_dir.mkdir(parents=True, exist_ok=True)
 
         try:
             proxy_url = _proxy_base_url(job.allowlist.network)
-        except (RuntimeError, ValueError) as exc:
-            return _failure("configuration_error", str(exc))
+        except (RuntimeError, ValueError):
+            return _failure("configuration_error")
 
         client = self.model_client or _default_client(proxy_url)
         if str(client.base_url) != proxy_url:
-            return _failure(
-                "configuration_error",
-                f"Model client base_url {client.base_url!r} does not match allowlisted proxy {proxy_url!r}",
-            )
+            return _failure("configuration_error")
 
         allowed_tools = job.allowlist.tools
         tools = _tool_definitions(allowed_tools)
@@ -384,11 +394,11 @@ class TypedToolRuntime:
 
         for _turn in range(self.max_turns):
             if cancellation.is_cancelled():
-                return _failure("cancelled", "Cancelled during agent loop")
+                return _failure("cancelled")
 
             now = datetime.now(timezone.utc)
             if now >= job.execution_deadline:
-                return _failure("timeout", "Execution deadline expired")
+                return _failure("timeout")
 
             remaining = (job.execution_deadline - now).total_seconds()
 
@@ -404,8 +414,8 @@ class TypedToolRuntime:
                     cancellation,
                     timeout=remaining,
                 )
-            except Exception as exc:
-                return _failure("model_error", f"Model request failed: {exc.__class__.__name__}")
+            except Exception:
+                return _failure("model_error")
 
             if isinstance(response, RuntimeResult):
                 return response
@@ -420,11 +430,17 @@ class TypedToolRuntime:
 
             tool_use_blocks = [block for block in response.content if isinstance(block, ToolUseBlock)]
 
+            # Fail-closed on terminal stop reasons before dispatching any tool calls.
+            if response.stop_reason in {"max_tokens", "refusal", "pause_turn"}:
+                return _failure("model_error")
+            if response.stop_reason in {"end_turn", "stop_sequence"}:
+                if tool_use_blocks:
+                    return _failure("model_error")
+                break
             if not tool_use_blocks:
-                terminal = response.stop_reason or "end_turn"
-                if terminal in {"end_turn", "stop_sequence"}:
-                    break
-                return _failure("model_error", f"Model stopped with {terminal}")
+                if response.stop_reason == "tool_use":
+                    return _failure("model_error")
+                break
 
             messages.append(Message(role="assistant", content=list(response.content)))
 
@@ -432,7 +448,7 @@ class TypedToolRuntime:
             finished = False
             for tool in tool_use_blocks:
                 if tool.name not in allowed_tools:
-                    return _failure("forbidden_tool", f"Tool '{tool.name}' is not in the job allowlist")
+                    return _failure("forbidden_tool")
 
                 result = _run_tool(tool, job, output_dir, transcript_text)
                 if isinstance(result, RedactedFailure):
@@ -451,7 +467,7 @@ class TypedToolRuntime:
                 break
 
         if not output_written:
-            return _failure("output_error", "No output was written before the loop ended")
+            return _failure("output_error")
 
         return await _collect_result(
             output_dir,
@@ -468,8 +484,23 @@ class TypedToolRuntime:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _failure(category: str, message: str) -> RuntimeResult:
-    return RuntimeResult(failure=RedactedFailure(category=category, message=message))
+FAILURE_MESSAGES: dict[FailureCategory, str] = {
+    "cancelled": "Execution was cancelled",
+    "configuration_error": "Runtime configuration error",
+    "forbidden_tool": "Disallowed tool requested",
+    "input_error": "Invalid manifest or input file",
+    "model_error": "Model request or response error",
+    "output_error": "Sandbox produced invalid output",
+    "runtime_error": "Runtime error",
+    "timeout": "Execution timed out",
+    "tool_input_error": "Tool received invalid arguments",
+    "unknown_tool": "Unknown tool requested",
+}
+
+
+def _failure(category: FailureCategory, message: str | None = None) -> RuntimeResult:
+    """Return a redacted failure. If no message is supplied a fixed generic one is used."""
+    return RuntimeResult(failure=RedactedFailure(category=category, message=message or FAILURE_MESSAGES[category]))
 
 
 def _default_client(base_url: str) -> httpx.AsyncClient:
@@ -508,20 +539,24 @@ async def _cancellable_await(
         request_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await request_task
-        return _failure("timeout", "Execution deadline reached during model request")
+        return _failure("timeout")
 
     if cancel_task in done:
         request_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await request_task
-        return _failure("cancelled", "Model request cancelled")
+        return _failure("cancelled")
 
     return request_task.result()
 
 
 async def _call_proxy(client: httpx.AsyncClient, request: MessageRequest) -> MessageResponse:
-    """POST a model turn to the worker proxy and parse the response."""
-    response = await client.post("/v1/messages", json=request.model_dump())
+    """POST a model turn to the worker proxy and parse the response.
+
+    `exclude_none=True` keeps unknown/redacted/thinking fallback blocks from
+    being reserialized with invented null fields that Anthropic rejects.
+    """
+    response = await client.post("/v1/messages", json=request.model_dump(exclude_none=True))
     response.raise_for_status()
     return MessageResponse(**response.json())
 
@@ -532,85 +567,90 @@ def _run_tool(
     output_dir: Path,
     transcript_text: str,
 ) -> str | RedactedFailure:
-    """Execute one typed tool in the sandbox."""
+    """Execute one typed tool in the sandbox.
+
+    Tool inputs are validated with strict Pydantic models. Failure diagnostics
+    returned to the job ledger are generic and do not echo model-controlled values
+    such as tool names, references, or sidecar fields.
+    """
 
     def _parse(cls, data: dict[str, Any]) -> Any:
         try:
             return cls.model_validate(data)
-        except ValidationError as exc:
-            return RedactedFailure(
-                category="tool_input_error",
-                message=f"Invalid input for tool '{tool.name}': {exc.__class__.__name__}",
-            )
+        except ValidationError:
+            return RedactedFailure(category="tool_input_error", message=FAILURE_MESSAGES["tool_input_error"])
 
     input_dir = Path(job.input_workspace)
 
     if tool.name == "read_transcript":
-        _parse(EmptyInput, tool.input)
+        parsed = _parse(EmptyInput, tool.input)
+        if isinstance(parsed, RedactedFailure):
+            return parsed
         return transcript_text[:500_000]
 
     if tool.name == "read_prior_context":
-        args = _parse(ReadPriorContextInput, tool.input)
-        if isinstance(args, RedactedFailure):
-            return args
-        ref = args.ref
+        parsed = _parse(ReadPriorContextInput, tool.input)
+        if isinstance(parsed, RedactedFailure):
+            return parsed
+        ref = parsed.ref
         if ref not in job.input_manifest.prior_context_refs:
-            return RedactedFailure(category="input_error", message=f"Prior context ref '{ref}' is not in the manifest")
+            return RedactedFailure(category="input_error", message=FAILURE_MESSAGES["input_error"])
         prior_path = input_dir / ref
         try:
             prior_path.relative_to(input_dir)
         except ValueError:
-            return RedactedFailure(category="input_error", message=f"Invalid prior context ref '{ref}'")
+            return RedactedFailure(category="input_error", message=FAILURE_MESSAGES["input_error"])
         if not prior_path.is_file():
-            return RedactedFailure(category="input_error", message=f"Prior context file '{ref}' not found")
+            return RedactedFailure(category="input_error", message=FAILURE_MESSAGES["input_error"])
         return prior_path.read_text(encoding="utf-8")[:100_000]
 
     if tool.name == "list_priors":
-        _parse(EmptyInput, tool.input)
+        parsed = _parse(EmptyInput, tool.input)
+        if isinstance(parsed, RedactedFailure):
+            return parsed
         return json.dumps([{"ref": ref, "index": i} for i, ref in enumerate(sorted(job.input_manifest.prior_context_refs))])
 
     if tool.name == "search_transcript":
-        args = _parse(SearchTranscriptInput, tool.input)
-        if isinstance(args, RedactedFailure):
-            return args
-        query = args.query.lower()
+        parsed = _parse(SearchTranscriptInput, tool.input)
+        if isinstance(parsed, RedactedFailure):
+            return parsed
+        query = parsed.query.lower()
         matches: list[str] = []
         for i, line in enumerate(transcript_text.splitlines(), start=1):
             if query in line.lower():
                 matches.append(f"Line {i}: {line.strip()[:200]}")
-            if len(matches) >= args.max_results:
+            if len(matches) >= parsed.max_results:
                 break
-        return "\n".join(matches) if matches else f"No matches for query: {args.query}"
+        return "\n".join(matches) if matches else "No matches"
 
     if tool.name == "write_output":
-        args = _parse(WriteOutputInput, tool.input)
-        if isinstance(args, RedactedFailure):
-            return args
+        parsed = _parse(WriteOutputInput, tool.input)
+        if isinstance(parsed, RedactedFailure):
+            return parsed
         try:
-            sidecar = SandboxOutputSidecar(**args.sidecar)
-        except ValidationError as exc:
-            return RedactedFailure(
-                category="output_error",
-                message=f"Invalid sidecar: {exc.__class__.__name__}",
-            )
-        (output_dir / "output.md").write_text(args.markdown, encoding="utf-8")
+            sidecar = SandboxOutputSidecar(**parsed.sidecar)
+        except ValidationError:
+            return RedactedFailure(category="output_error", message=FAILURE_MESSAGES["output_error"])
+        (output_dir / "output.md").write_text(parsed.markdown, encoding="utf-8")
         (output_dir / "sidecar.json").write_text(sidecar.model_dump_json(indent=2), encoding="utf-8")
         return "Output written"
 
     if tool.name == "finish":
-        _parse(EmptyInput, tool.input)
+        parsed = _parse(EmptyInput, tool.input)
+        if isinstance(parsed, RedactedFailure):
+            return parsed
         return "Finished"
 
     if tool.name == "report_failure":
-        args = _parse(ReportFailureInput, tool.input)
-        if isinstance(args, RedactedFailure):
-            return args
+        parsed = _parse(ReportFailureInput, tool.input)
+        if isinstance(parsed, RedactedFailure):
+            return parsed
         # The model-supplied message is treated as untrusted and is not propagated
-        # verbatim to the job ledger. The category is preserved because it is a
-        # closed failure type; the message is generic.
-        return RedactedFailure(category=args.category, message="Model reported a failure")
+        # verbatim to the job ledger. The category is closed and the message is
+        # fixed and generic.
+        return RedactedFailure(category=parsed.category, message="Model reported a failure")
 
-    return RedactedFailure(category="unknown_tool", message=f"Unhandled tool '{tool.name}'")
+    return RedactedFailure(category="unknown_tool", message=FAILURE_MESSAGES["unknown_tool"])
 
 
 async def _collect_result(
@@ -625,28 +665,29 @@ async def _collect_result(
     """Read the candidate output from the sandbox workspace and return a RuntimeResult.
 
     The sidecar is not fabricated: a missing or malformed sidecar fails the attempt.
+    Failure diagnostics are generic and do not echo model-controlled sidecar fields.
     """
     output_md = output_dir / "output.md"
     sidecar_path = output_dir / "sidecar.json"
 
     if not output_md.exists():
-        return _failure("output_error", "No output.md produced by the sandbox runtime")
+        return _failure("output_error")
 
     if not sidecar_path.exists():
-        return _failure("output_error", "No sidecar.json produced by the sandbox runtime")
+        return _failure("output_error")
 
     try:
         sidecar_data = json.loads(sidecar_path.read_text(encoding="utf-8"))
         sidecar = SandboxOutputSidecar(**sidecar_data)
-    except (OSError, ValueError) as exc:
-        return _failure("output_error", f"Malformed sidecar.json: {exc.__class__.__name__}")
+    except (OSError, ValueError):
+        return _failure("output_error")
 
     if sidecar.skill != job.skill:
-        return _failure("output_error", f"Sidecar skill {sidecar.skill!r} does not match job skill {job.skill!r}")
+        return _failure("output_error")
     if sidecar.skill_version != job.skill_version:
-        return _failure("output_error", f"Sidecar skill_version {sidecar.skill_version!r} does not match job skill_version {job.skill_version!r}")
+        return _failure("output_error")
     if sidecar.mode != job.mode:
-        return _failure("output_error", f"Sidecar mode {sidecar.mode!r} does not match job mode {job.mode!r}")
+        return _failure("output_error")
 
     markdown = output_md.read_text(encoding="utf-8")
     return RuntimeResult(
@@ -658,7 +699,8 @@ async def _collect_result(
             token_usage=TokenUsage(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
-                total_tokens=None,
+                cache_creation_input_tokens=cache_creation_input_tokens or None,
+                cache_read_input_tokens=cache_read_input_tokens or None,
             ),
             cost=None,
         ),

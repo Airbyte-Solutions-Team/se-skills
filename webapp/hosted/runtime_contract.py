@@ -26,6 +26,18 @@ class RuntimeValidationError(ValueError):
 Mode = Literal["full", "brief"]
 ValidationStatus = Literal["valid", "invalid", "unvalidated"]
 NetworkScheme = Literal["http", "https"]
+FailureCategory = Literal[
+    "cancelled",
+    "configuration_error",
+    "forbidden_tool",
+    "input_error",
+    "model_error",
+    "output_error",
+    "runtime_error",
+    "timeout",
+    "tool_input_error",
+    "unknown_tool",
+]
 
 # Closed set of typed tool names a runtime may register. Generic capabilities such
 # as Bash, Git, Browser, Http, McpDiscover, and BypassPermissions are deliberately
@@ -130,7 +142,20 @@ class TokenUsage(BaseModel):
 
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_creation_input_tokens: int | None = None
+    cache_read_input_tokens: int | None = None
     total_tokens: int | None = None
+
+    @model_validator(mode="after")
+    def _compute_total(self) -> "TokenUsage":
+        if self.total_tokens is None:
+            total = self.input_tokens + self.output_tokens
+            if self.cache_creation_input_tokens:
+                total += self.cache_creation_input_tokens
+            if self.cache_read_input_tokens:
+                total += self.cache_read_input_tokens
+            object.__setattr__(self, "total_tokens", total)
+        return self
 
 
 class ExecutionMetadata(BaseModel):
@@ -145,11 +170,16 @@ class ExecutionMetadata(BaseModel):
 
 
 class RedactedFailure(BaseModel):
-    """Categorized, non-sensitive failure information for the job ledger."""
+    """Categorized, non-sensitive failure information for the job ledger.
+
+    `message` must be a fixed, generic string controlled by the worker, never a
+    model-supplied or transcript-derived value. Detailed diagnostics are kept
+    out of the durable job payload.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    category: str
+    category: FailureCategory
     message: str
 
 

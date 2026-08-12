@@ -274,7 +274,7 @@ def test_runtime_result_cannot_be_both_output_and_failure() -> None:
         RuntimeResult(
             output_artifact="# Title",
             sidecar=SandboxOutputSidecar(skill="post-call"),
-            failure=RedactedFailure(category="executor_error", message="nope"),
+            failure=RedactedFailure(category="runtime_error", message="Runtime error"),
         )
 
 

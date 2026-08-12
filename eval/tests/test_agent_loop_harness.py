@@ -299,7 +299,6 @@ async def test_typed_tool_runtime_rejects_disabled_tool_not_in_allowlist(tmp_pat
 
     assert result.failure is not None
     assert result.failure.category == "forbidden_tool"
-    assert "report_failure" in result.failure.message
 
 
 @pytest.mark.asyncio
@@ -320,7 +319,7 @@ async def test_typed_tool_runtime_rejects_multiple_network_destinations(tmp_path
     result = await runtime.execute(job, _FixedToken())
 
     assert result.failure is not None
-    assert "exactly one network destination" in result.failure.message.lower()
+    assert result.failure.category == "configuration_error"
 
 
 @pytest.mark.asyncio
@@ -332,7 +331,7 @@ async def test_typed_tool_runtime_rejects_injected_client_origin_mismatch(tmp_pa
     result = await runtime.execute(job, _FixedToken())
 
     assert result.failure is not None
-    assert "base_url" in result.failure.message.lower() or "proxy" in result.failure.message.lower()
+    assert result.failure.category == "configuration_error"
 
 
 @pytest.mark.asyncio
@@ -346,7 +345,7 @@ async def test_typed_tool_runtime_rejects_missing_transcript(tmp_path: Path) -> 
     result = await runtime.execute(job, _FixedToken())
 
     assert result.failure is not None
-    assert "transcript" in result.failure.message.lower()
+    assert result.failure.category == "input_error"
 
 
 def test_typed_tool_runtime_ignores_unlisted_input_files(tmp_path: Path) -> None:
@@ -492,7 +491,7 @@ async def test_typed_tool_runtime_rejects_invalid_sidecar_in_write_output(tmp_pa
     result = await runtime.execute(job, _FixedToken())
 
     assert result.failure is not None
-    assert "sidecar" in result.failure.message.lower()
+    assert result.failure.category in {"tool_input_error", "output_error"}
 
 
 @pytest.mark.asyncio
@@ -570,7 +569,11 @@ async def test_typed_tool_runtime_handles_refusal_stop_reason(tmp_path: Path) ->
 
 @pytest.mark.asyncio
 async def test_typed_tool_runtime_parses_real_messages_api_response_shape(tmp_path: Path) -> None:
-    """A worker-proxy pass-through response with cache usage and stop_sequence must parse."""
+    """A worker-proxy pass-through response with cache usage and stop_sequence must parse.
+
+    The second request must round-trip the parsed assistant content without inventing
+    null fields for unknown/thinking fallback blocks.
+    """
     fixture = {
         "id": "msg_01234",
         "type": "message",
@@ -607,8 +610,11 @@ async def test_typed_tool_runtime_parses_real_messages_api_response_shape(tmp_pa
         },
     }
 
+    requests: list[dict[str, Any]] = []
+
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content.decode("utf-8"))
+        requests.append(body)
         tool_names = {
             item.get("name")
             for m in body.get("messages", [])
@@ -618,6 +624,35 @@ async def test_typed_tool_runtime_parses_real_messages_api_response_shape(tmp_pa
         }
         if "write_output" not in tool_names:
             return httpx.Response(200, json=fixture)
+
+        # Assert the round-trip request does not invent null fields.
+        assistant_messages = [m for m in body.get("messages", []) if m.get("role") == "assistant"]
+        assert len(assistant_messages) == 1
+        assistant = assistant_messages[0]
+        assert assistant.get("content") == [
+            {"type": "thinking", "thinking": "planning...", "signature": "sig"},
+            {"type": "text", "text": "Okay, I will write the output."},
+            {
+                "type": "tool_use",
+                "id": "toolu_write",
+                "name": "write_output",
+                "input": {
+                    "markdown": "# Call Summary\n\n**Date:** June 11, 2026\n\n### At a Glance\n- **Call type:** Discovery",
+                    "sidecar": {
+                        "skill": "post-call",
+                        "skill_version": "1.0",
+                        "mode": "full",
+                        "title": "Call Summary",
+                        "date": "June 11, 2026",
+                        "source_coverage": "Read transcript.txt in full (612 / 612 lines).",
+                    },
+                },
+            },
+        ]
+        assert "stop_reason" not in body
+        assert "stop_sequence" not in body
+        assert "stop_details" not in body
+
         return _model_response(
             [{"type": "tool_use", "id": "toolu_finish", "name": "finish", "input": {}}],
             usage={"input_tokens": 10, "output_tokens": 5},
@@ -633,6 +668,10 @@ async def test_typed_tool_runtime_parses_real_messages_api_response_shape(tmp_pa
     assert result.failure is None
     assert result.output_artifact is not None
     assert result.sidecar is not None
+    assert result.execution_metadata.token_usage.cache_creation_input_tokens == 10
+    assert result.execution_metadata.token_usage.cache_read_input_tokens == 200
+    assert result.execution_metadata.token_usage.total_tokens == 375  # 100+50+10+200+10+5
+    assert len(requests) == 2
 
 
 def test_message_response_parses_anthropic_shape() -> None:
@@ -685,4 +724,222 @@ async def test_typed_tool_runtime_rejects_sidecar_skill_version_mismatch(tmp_pat
     result = await runtime.execute(job, _FixedToken())
 
     assert result.failure is not None
-    assert "skill_version" in result.failure.message.lower()
+    assert result.failure.category == "output_error"
+
+
+@pytest.mark.parametrize("stop_reason", ["max_tokens", "refusal", "pause_turn"])
+@pytest.mark.asyncio
+async def test_typed_tool_runtime_fails_mixed_tool_with_terminal_stop_reason(tmp_path: Path, stop_reason: str) -> None:
+    """A terminal stop reason must fail closed even when the response also contains a tool_use block."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _model_response(
+            [
+                {"type": "text", "text": "Truncated."},
+                {"type": "tool_use", "id": "toolu_write", "name": "write_output", "input": {"markdown": "# Bad", "sidecar": {"skill": "post-call"}}},
+            ],
+            stop_reason=stop_reason,
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.AsyncClient(transport=transport, base_url="http://worker-proxy:8080")
+    runtime = TypedToolRuntime(model_client=client)
+    job = _job(tmp_path)
+
+    result = await runtime.execute(job, _FixedToken())
+
+    assert result.failure is not None
+    assert result.failure.category == "model_error"
+
+
+@pytest.mark.parametrize("stop_reason", ["end_turn", "stop_sequence"])
+@pytest.mark.asyncio
+async def test_typed_tool_runtime_fails_tool_use_with_non_tool_stop_reason(tmp_path: Path, stop_reason: str) -> None:
+    """A non-tool stop reason with tool_use blocks is inconsistent and must fail."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _model_response(
+            [{"type": "tool_use", "id": "toolu_write", "name": "write_output", "input": {"markdown": "# Bad", "sidecar": {"skill": "post-call"}}}],
+            stop_reason=stop_reason,
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.AsyncClient(transport=transport, base_url="http://worker-proxy:8080")
+    runtime = TypedToolRuntime(model_client=client)
+    job = _job(tmp_path)
+
+    result = await runtime.execute(job, _FixedToken())
+
+    assert result.failure is not None
+    assert result.failure.category == "model_error"
+
+
+@pytest.mark.asyncio
+async def test_typed_tool_runtime_executes_list_priors(tmp_path: Path) -> None:
+    """list_priors returns the manifest-authorized prior refs in sorted order."""
+    requests: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode("utf-8"))
+        requests.append(body)
+        assistant_messages = [m for m in body.get("messages", []) if m.get("role") == "assistant"]
+        tool_names = {
+            item.get("name")
+            for m in assistant_messages
+            for item in m.get("content", [])
+            if item.get("type") == "tool_use"
+        }
+        if "list_priors" not in tool_names:
+            return _model_response([{"type": "tool_use", "id": "toolu_list", "name": "list_priors", "input": {}}])
+
+        # Verify the tool_result for list_priors contains the sorted manifest refs.
+        user_messages = [m for m in body.get("messages", []) if m.get("role") == "user"]
+        last_user_content = user_messages[-1].get("content", [])
+        list_results = [
+            item for item in last_user_content
+            if item.get("type") == "tool_result" and item.get("tool_use_id") == "toolu_list"
+        ]
+        if list_results:
+            assert json.loads(list_results[0]["content"]) == [
+                {"ref": "prior-123.md", "index": 0},
+                {"ref": "prior-456.md", "index": 1},
+            ]
+            return _model_response(
+                [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_write",
+                        "name": "write_output",
+                        "input": {
+                            "markdown": "# Call Summary",
+                            "sidecar": {
+                                "skill": "post-call",
+                                "skill_version": "1.0",
+                                "mode": "full",
+                                "title": "Call Summary",
+                                "date": "June 11, 2026",
+                                "source_coverage": "Read transcript.txt in full (10 / 10 lines).",
+                            },
+                        },
+                    }
+                ]
+            )
+
+        return _model_response([{"type": "tool_use", "id": "toolu_finish", "name": "finish", "input": {}}])
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.AsyncClient(transport=transport, base_url="http://worker-proxy:8080")
+    runtime = TypedToolRuntime(model_client=client)
+    job = _job(tmp_path, priors={"prior-456.md": "Second", "prior-123.md": "First"}, tools={"read_transcript", "list_priors", "write_output", "finish"})
+
+    result = await runtime.execute(job, _FixedToken())
+
+    assert result.failure is None
+    assert result.output_artifact is not None
+
+
+@pytest.mark.asyncio
+async def test_typed_tool_runtime_executes_search_transcript(tmp_path: Path) -> None:
+    """search_transcript returns matching lines from the manifest-authorized transcript."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode("utf-8"))
+        assistant_messages = [m for m in body.get("messages", []) if m.get("role") == "assistant"]
+        tool_inputs = {
+            item.get("name"): item.get("input", {})
+            for m in assistant_messages
+            for item in m.get("content", [])
+            if item.get("type") == "tool_use"
+        }
+        if "search_transcript" not in tool_inputs:
+            return _model_response([{"type": "tool_use", "id": "toolu_search", "name": "search_transcript", "input": {"query": "Sample"}}])
+
+        user_messages = [m for m in body.get("messages", []) if m.get("role") == "user"]
+        last_user_content = user_messages[-1].get("content", [])
+        search_results = [
+            item for item in last_user_content
+            if item.get("type") == "tool_result" and item.get("tool_use_id") == "toolu_search"
+        ]
+        if search_results:
+            assert "Line 1:" in search_results[0]["content"]
+            return _model_response(
+                [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_write",
+                        "name": "write_output",
+                        "input": {
+                            "markdown": "# Call Summary",
+                            "sidecar": {
+                                "skill": "post-call",
+                                "skill_version": "1.0",
+                                "mode": "full",
+                                "title": "Call Summary",
+                                "date": "June 11, 2026",
+                                "source_coverage": "Read transcript.txt in full (1 / 1 lines).",
+                            },
+                        },
+                    }
+                ]
+            )
+
+        return _model_response([{"type": "tool_use", "id": "toolu_finish", "name": "finish", "input": {}}])
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.AsyncClient(transport=transport, base_url="http://worker-proxy:8080")
+    runtime = TypedToolRuntime(model_client=client)
+    job = _job(tmp_path, transcript_text="Sample transcript line", tools={"read_transcript", "search_transcript", "write_output", "finish"})
+
+    result = await runtime.execute(job, _FixedToken())
+
+    assert result.failure is None
+    assert result.output_artifact is not None
+
+
+@pytest.mark.parametrize("tool_name,extra_input", [
+    ("read_transcript", {"extra": "x"}),
+    ("list_priors", {"extra": "x"}),
+    ("finish", {"extra": "x"}),
+])
+@pytest.mark.asyncio
+async def test_typed_tool_runtime_rejects_malformed_empty_input(tmp_path: Path, tool_name: str, extra_input: dict[str, Any]) -> None:
+    """Tools with empty inputs must reject extra/malformed arguments."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _model_response([{"type": "tool_use", "id": "toolu", "name": tool_name, "input": extra_input}])
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.AsyncClient(transport=transport, base_url="http://worker-proxy:8080")
+    runtime = TypedToolRuntime(model_client=client)
+    job = _job(tmp_path, tools={"read_transcript", "list_priors", "write_output", "finish"})
+
+    result = await runtime.execute(job, _FixedToken())
+
+    assert result.failure is not None
+    assert result.failure.category == "tool_input_error"
+
+
+@pytest.mark.asyncio
+async def test_typed_tool_runtime_rejects_missing_manifest_prior(tmp_path: Path) -> None:
+    """A declared prior-context file that is missing must fail before any model call."""
+    job = _job(tmp_path, priors={"missing.md": "placeholder"})
+    (Path(job.input_workspace) / "missing.md").unlink()
+
+    # No model call should be made; an empty MockTransport that raises on use is safe.
+    runtime = TypedToolRuntime()
+    result = await runtime.execute(job, _FixedToken())
+
+    assert result.failure is not None
+    assert result.failure.category == "input_error"
+
+
+@pytest.mark.asyncio
+async def test_typed_tool_runtime_rejects_transcript_aliased_as_prior(tmp_path: Path) -> None:
+    """The transcript ref must not be reused as a prior-context ref."""
+    job = _job(tmp_path, priors={"transcript.txt": "Also a prior"})
+
+    runtime = TypedToolRuntime()
+    result = await runtime.execute(job, _FixedToken())
+
+    assert result.failure is not None
+    assert result.failure.category == "input_error"
