@@ -28,6 +28,7 @@ def db_urls(postgres_container: Any) -> dict[str, str]:
         "MIGRATE_DATABASE_URL": migrate,
         "DATABASE_URL": f"postgresql://app_user:app_user_password@{host}:{port}/test",
         "DATABASE_ADMIN_URL": f"postgresql://app_admin:app_admin_password@{host}:{port}/test",
+        "AUTHENTICATOR_DATABASE_URL": f"postgresql://authenticator:authenticator_password@{host}:{port}/test",
     }
 
 
@@ -73,16 +74,23 @@ async def _ensure_storage_schema(admin_dsn: str) -> None:
                 IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
                     CREATE ROLE authenticated WITH LOGIN;
                 END IF;
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticator') THEN
+                    CREATE ROLE authenticator WITH LOGIN NOINHERIT PASSWORD 'authenticator_password';
+                END IF;
                 IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_storage') THEN
                     CREATE ROLE app_storage NOLOGIN NOBYPASSRLS NOINHERIT;
                 END IF;
+                -- Supabase's authenticator role must be able to switch to app_storage
+                -- based on the JWT role claim, even in the test shim.
+                GRANT app_storage TO authenticator;
             END $$;
 
             CREATE SCHEMA IF NOT EXISTS auth;
 
-            GRANT CONNECT ON DATABASE test TO authenticated, app_storage;
-            GRANT USAGE ON SCHEMA public, storage, auth TO authenticated, app_storage;
+            GRANT CONNECT ON DATABASE test TO authenticated, app_storage, authenticator;
+            GRANT USAGE ON SCHEMA public, storage, auth TO authenticated, app_storage, authenticator;
             ALTER ROLE authenticated SET search_path = 'auth, storage, public';
+            ALTER ROLE authenticator SET search_path = 'auth, storage, public';
 
             CREATE OR REPLACE FUNCTION auth.uid()
             RETURNS UUID AS $$
@@ -163,6 +171,22 @@ async def user_pool(hosted_env: dict[str, str]) -> AsyncGenerator[asyncpg.Pool, 
 async def superuser_pool(hosted_env: dict[str, str]) -> AsyncGenerator[asyncpg.Pool, None]:
     """Function-scoped superuser pool for role-impersonation tests."""
     pool = await asyncpg.create_pool(hosted_env["MIGRATE_DATABASE_URL"], min_size=1, max_size=2)
+    try:
+        yield pool
+    finally:
+        await pool.close()
+
+
+@pytest.fixture
+async def authenticator_pool(hosted_env: dict[str, str]) -> AsyncGenerator[asyncpg.Pool, None]:
+    """Function-scoped pool connected as the Supabase authenticator role.
+
+    This role is the entry point for JWT-driven role switching; it must be able
+    to `SET ROLE app_storage` but not privileged roles such as `app_admin`.
+    """
+    pool = await asyncpg.create_pool(
+        hosted_env["AUTHENTICATOR_DATABASE_URL"], min_size=1, max_size=2
+    )
     try:
         yield pool
     finally:

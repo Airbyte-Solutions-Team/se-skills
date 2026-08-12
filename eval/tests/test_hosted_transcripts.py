@@ -665,6 +665,100 @@ async def test_authenticated_role_cannot_access_storage_objects(
 
 @pytest.mark.hosted
 @pytest.mark.slow
+async def test_authenticator_can_assume_app_storage_for_storage_operations(
+    superuser_pool: asyncpg.Pool,
+    authenticator_pool: asyncpg.Pool,
+) -> None:
+    """Supabase's authenticator role must be able to switch into app_storage
+    based on the JWT role claim and perform allowed same-org operations, but it
+    cannot access storage.objects directly without switching roles.
+    """
+    user_a, org_a, _ = await _seed_member(superuser_pool, "authn-a@airbyte.io")
+    account_a = await _seed_account(superuser_pool, org_a, user_a)
+    path_a = f"{org_a}/{account_a}/transcripts/{uuid.uuid4()}"
+
+    def _jwt_claims(user_id: uuid.UUID) -> str:
+        return json.dumps({"sub": str(user_id), "role": "app_storage"})
+
+    # Without SET ROLE, the authenticator role has no storage.objects privileges
+    # even though it is a member of app_storage (membership is NOINHERIT).
+    async with authenticator_pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT set_config('request.jwt.claims', $1, true)", _jwt_claims(user_a)
+            )
+            with pytest.raises(asyncpg.exceptions.PostgresError):
+                await conn.execute(
+                    "INSERT INTO storage.objects (bucket_id, name) VALUES ('transcripts', $1)",
+                    path_a,
+                )
+
+    # After SET ROLE app_storage, an active member can insert, select, update, and delete.
+    async with authenticator_pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("SET LOCAL ROLE app_storage")
+            await conn.execute(
+                "SELECT set_config('request.jwt.claims', $1, true)", _jwt_claims(user_a)
+            )
+            await conn.execute(
+                "INSERT INTO storage.objects (bucket_id, name) VALUES ('transcripts', $1)",
+                path_a,
+            )
+            rows = await conn.fetch(
+                "SELECT name FROM storage.objects WHERE name = $1", path_a
+            )
+            assert len(rows) == 1
+            await conn.execute(
+                "UPDATE storage.objects SET metadata = '{\"x\":1}'::jsonb WHERE name = $1",
+                path_a,
+            )
+            await conn.execute("DELETE FROM storage.objects WHERE name = $1", path_a)
+
+
+@pytest.mark.hosted
+@pytest.mark.slow
+async def test_authenticator_cannot_assume_privileged_roles(
+    superuser_pool: asyncpg.Pool,
+    authenticator_pool: asyncpg.Pool,
+) -> None:
+    """The authenticator role must not be able to switch into privileged
+    migration/admin roles, only app_storage.
+    """
+    user_a, org_a, _ = await _seed_member(superuser_pool, "authn-priv@airbyte.io")
+
+    async with authenticator_pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT set_config('request.jwt.claims', $1, true)",
+                json.dumps({"sub": str(user_a), "role": "app_admin"}),
+            )
+            with pytest.raises(asyncpg.exceptions.PostgresError):
+                await conn.execute("SET LOCAL ROLE app_admin")
+
+
+@pytest.mark.hosted
+@pytest.mark.slow
+async def test_authenticated_role_cannot_assume_app_storage(
+    superuser_pool: asyncpg.Pool,
+    user_pool: asyncpg.Pool,
+) -> None:
+    """The browser-visible authenticated role is not granted app_storage, so it
+    cannot switch into the Storage role even if it has a JWT with role=app_storage.
+    """
+    user_a, org_a, _ = await _seed_member(superuser_pool, "authz-role@airbyte.io")
+
+    async with user_pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT set_config('request.jwt.claims', $1, true)",
+                json.dumps({"sub": str(user_a), "role": "app_storage"}),
+            )
+            with pytest.raises(asyncpg.exceptions.PostgresError):
+                await conn.execute("SET LOCAL ROLE app_storage")
+
+
+@pytest.mark.hosted
+@pytest.mark.slow
 async def test_storage_bucket_is_private_after_migration(
     superuser_pool: asyncpg.Pool,
 ) -> None:

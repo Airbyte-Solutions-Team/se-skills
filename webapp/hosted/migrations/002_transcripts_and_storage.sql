@@ -68,6 +68,16 @@ END $$;
 
 GRANT USAGE ON SCHEMA public TO app_storage;
 
+-- Supabase's authenticator role must be able to switch into app_storage based on
+-- the JWT role claim. In production this is the role Supabase Auth uses when a
+-- request arrives with `role = "app_storage"` in the JWT.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'authenticator') THEN
+        EXECUTE 'GRANT app_storage TO authenticator';
+    END IF;
+END $$;
+
 -- Narrow, app_admin-owned helper for Storage RLS policies. The app_storage role
 -- cannot read public.memberships directly, but it can execute this
 -- fixed-search-path function to test active membership.
