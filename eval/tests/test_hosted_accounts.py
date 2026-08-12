@@ -777,11 +777,16 @@ async def test_migration_safe_password_quoting(hosted_env: dict[str, str]) -> No
             await user_conn.close()
         if admin_conn:
             await admin_conn.close()
-        # Restore the global app_user password for the shared container.
+        # Restore the global app_user and app_admin passwords for the shared
+        # container; roles are cluster-wide, so the malicious migration changed
+        # them even though it targeted a separate database.
         restore_conn = await asyncpg.connect(hosted_env["MIGRATE_DATABASE_URL"])
         try:
             await restore_conn.execute(
                 f"ALTER ROLE app_user WITH PASSWORD 'app_user_password'"
+            )
+            await restore_conn.execute(
+                f"ALTER ROLE app_admin WITH PASSWORD 'app_admin_password'"
             )
         finally:
             await restore_conn.close()
