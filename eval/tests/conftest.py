@@ -28,6 +28,7 @@ def db_urls(postgres_container: Any) -> dict[str, str]:
         "MIGRATE_DATABASE_URL": migrate,
         "DATABASE_URL": f"postgresql://app_user:app_user_password@{host}:{port}/test",
         "DATABASE_ADMIN_URL": f"postgresql://app_admin:app_admin_password@{host}:{port}/test",
+        "DATABASE_WORKER_URL": f"postgresql://app_worker:app_worker_password@{host}:{port}/test",
         "AUTHENTICATED_DATABASE_URL": f"postgresql://authenticated:authenticated_password@{host}:{port}/test",
         "AUTHENTICATOR_DATABASE_URL": f"postgresql://authenticator:authenticator_password@{host}:{port}/test",
     }
@@ -115,6 +116,7 @@ async def hosted_env(db_urls: dict[str, str]) -> dict[str, str]:
         "HOSTED_JWT_SECRET": "super-secret-32-byte-test-jwt-key!",
         "SUPABASE_JWT_SECRET": "super-secret-32-byte-test-storage-jwt-key!",
         "HOSTED_CONTEXT_SECRET": "test-context-secret-32-bytes!!",
+        "APP_WORKER_PASSWORD": "app_worker_password",
         "BETA_ALLOWED_EMAILS": "test@airbyte.io,other@airbyte.io",
         **db_urls,
     }
@@ -143,6 +145,7 @@ async def hosted_env(db_urls: dict[str, str]) -> dict[str, str]:
         hosted.config.MIGRATIONS_DIR,
         app_user_password="app_user_password",
         app_admin_password="app_admin_password",
+        app_worker_password="app_worker_password",
         context_secret=env["HOSTED_CONTEXT_SECRET"],
     )
     return env
@@ -203,6 +206,18 @@ async def authenticated_pool(hosted_env: dict[str, str]) -> AsyncGenerator[async
     """
     pool = await asyncpg.create_pool(
         hosted_env["AUTHENTICATED_DATABASE_URL"], min_size=1, max_size=2
+    )
+    try:
+        yield pool
+    finally:
+        await pool.close()
+
+
+@pytest.fixture
+async def worker_pool(hosted_env: dict[str, str]) -> AsyncGenerator[asyncpg.Pool, None]:
+    """Function-scoped pool connected as the least-privilege worker role."""
+    pool = await asyncpg.create_pool(
+        hosted_env["DATABASE_WORKER_URL"], min_size=1, max_size=2
     )
     try:
         yield pool

@@ -18,6 +18,7 @@ _MIGRATION_NAME_RE = re.compile(r"^(\d{3})_.*\.sql$")
 # access for the context secret.
 _APP_USER_PASSWORD_GUC = "migration.app_user_password"
 _APP_ADMIN_PASSWORD_GUC = "migration.app_admin_password"
+_APP_WORKER_PASSWORD_GUC = "migration.app_worker_password"
 _CONTEXT_SECRET_GUC = "migration.context_secret"
 
 
@@ -60,12 +61,18 @@ def _validate_context_secret(context_secret: str) -> None:
         raise ValueError("context_secret must be a non-empty string")
 
 
+def _validate_worker_password(app_worker_password: str) -> None:
+    if not app_worker_password:
+        raise ValueError("app_worker_password must be a non-empty string")
+
+
 async def migrate(
     dsn: str,
     migrations_dir: Path,
     *,
     app_user_password: str,
     app_admin_password: str,
+    app_worker_password: str,
     context_secret: str,
 ) -> list[str]:
     """Apply all unapplied migrations under a single admin connection.
@@ -76,6 +83,7 @@ async def migrate(
     secret directly, so nothing is interpolated into migration text.
     """
     _validate_passwords(app_user_password, app_admin_password)
+    _validate_worker_password(app_worker_password)
     _validate_context_secret(context_secret)
 
     pool = await asyncpg.create_pool(dsn, min_size=1, max_size=1)
@@ -102,6 +110,11 @@ async def migrate(
                         "SELECT set_config($1, $2, true)",
                         _CONTEXT_SECRET_GUC,
                         context_secret,
+                    )
+                    await conn.execute(
+                        "SELECT set_config($1, $2, true)",
+                        _APP_WORKER_PASSWORD_GUC,
+                        app_worker_password,
                     )
                     sql = path.read_text()
                     await conn.execute(sql)

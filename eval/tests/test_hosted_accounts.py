@@ -711,6 +711,7 @@ async def test_migration_rejects_empty_passwords(hosted_env: dict[str, str]) -> 
             config.MIGRATIONS_DIR,
             app_user_password="",
             app_admin_password="app_admin_password",
+            app_worker_password="app_worker_password",
             context_secret=hosted_env["HOSTED_CONTEXT_SECRET"],
         )
 
@@ -720,6 +721,7 @@ async def test_migration_rejects_empty_passwords(hosted_env: dict[str, str]) -> 
             config.MIGRATIONS_DIR,
             app_user_password="app_user_password",
             app_admin_password="",
+            app_worker_password="app_worker_password",
             context_secret=hosted_env["HOSTED_CONTEXT_SECRET"],
         )
 
@@ -729,6 +731,17 @@ async def test_migration_rejects_empty_passwords(hosted_env: dict[str, str]) -> 
             config.MIGRATIONS_DIR,
             app_user_password="app_user_password",
             app_admin_password="app_admin_password",
+            app_worker_password="",
+            context_secret=hosted_env["HOSTED_CONTEXT_SECRET"],
+        )
+
+    with pytest.raises(ValueError):
+        await migrations.migrate(
+            hosted_env["MIGRATE_DATABASE_URL"],
+            config.MIGRATIONS_DIR,
+            app_user_password="app_user_password",
+            app_admin_password="app_admin_password",
+            app_worker_password="app_worker_password",
             context_secret="",
         )
 
@@ -757,6 +770,7 @@ async def test_migration_safe_password_quoting(hosted_env: dict[str, str]) -> No
             config.MIGRATIONS_DIR,
             app_user_password=malicious,
             app_admin_password=malicious,
+            app_worker_password=malicious,
             context_secret=hosted_env["HOSTED_CONTEXT_SECRET"],
         )
 
@@ -787,6 +801,9 @@ async def test_migration_safe_password_quoting(hosted_env: dict[str, str]) -> No
             )
             await restore_conn.execute(
                 f"ALTER ROLE app_admin WITH PASSWORD 'app_admin_password'"
+            )
+            await restore_conn.execute(
+                f"ALTER ROLE app_worker WITH PASSWORD 'app_worker_password'"
             )
         finally:
             await restore_conn.close()

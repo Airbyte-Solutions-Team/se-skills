@@ -4059,6 +4059,47 @@ async function deleteHostedTranscript(accountId, transcriptId, opportunityId) {
   }
 }
 
+async function enqueueHostedJob(accountId, transcriptId, opportunityId) {
+  const statusEl = document.getElementById(`job-status-${transcriptId}`);
+  if (statusEl) statusEl.textContent = "Enqueuing…";
+  try {
+    const payload = {
+      account_id: accountId,
+      transcript_id: transcriptId,
+      opportunity_id: opportunityId || null,
+      skill: "post-call",
+      skill_version: "1.0",
+      model: "echo",
+      runtime_version: "slice4",
+      max_attempts: 3,
+    };
+    const job = await api(`/api/hosted/accounts/${encodeURIComponent(accountId)}/jobs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (statusEl) statusEl.textContent = `Job ${job.status}`;
+    pollHostedJob(job.id, statusEl);
+  } catch (e) {
+    if (statusEl) statusEl.textContent = `Error: ${esc(e.message)}`;
+  }
+}
+
+async function pollHostedJob(jobId, statusEl) {
+  if (!statusEl) return;
+  while (true) {
+    await new Promise((r) => setTimeout(r, 1500));
+    try {
+      const detail = await api(`/api/hosted/jobs/${encodeURIComponent(jobId)}`);
+      const job = detail.job || {};
+      statusEl.textContent = `Job ${job.status}${job.dead_lettered ? " (dead-letter)" : ""}${job.error ? ": " + esc(job.error) : ""}`;
+      if (["success", "failure", "cancelled", "timeout"].includes(job.status)) break;
+    } catch {
+      break;
+    }
+  }
+}
+
 function renderHostedTranscriptList(transcripts, accountId, opportunityId) {
   if (!transcripts.length) return `<div class="empty">No transcripts yet.</div>`;
   return `<div class="hosted-list">${transcripts.map((t) => `
@@ -4068,9 +4109,11 @@ function renderHostedTranscriptList(transcripts, accountId, opportunityId) {
         <span class="meta">${(t.size_bytes / 1024).toFixed(1)} KiB</span>
       </div>
       <div class="hosted-actions">
-        <button class="secondary" onclick="downloadHostedTranscript('${accountId}', '${t.id}', '${opportunityId || ""}')">Download</button>
-        <button class="danger" onclick="deleteHostedTranscript('${accountId}', '${t.id}', '${opportunityId || ""}')">Delete</button>
+        <button class="primary" onclick="enqueueHostedJob('${esc(accountId)}', '${esc(t.id)}', '${esc(opportunityId || "")}')">Run post-call</button>
+        <button class="secondary" onclick="downloadHostedTranscript('${esc(accountId)}', '${esc(t.id)}', '${esc(opportunityId || "")}')">Download</button>
+        <button class="danger" onclick="deleteHostedTranscript('${esc(accountId)}', '${esc(t.id)}', '${esc(opportunityId || "")}')">Delete</button>
       </div>
+      <div id="job-status-${esc(t.id)}" class="job-status" aria-live="polite"></div>
     </div>`).join("")}</div>`;
 }
 
