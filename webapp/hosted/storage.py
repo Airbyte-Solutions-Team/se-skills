@@ -26,10 +26,12 @@ from . import config
 
 logger = logging.getLogger(__name__)
 
-# Supabase Storage bucket used for transcript objects. This is fixed in the
-# migration policies; runtime configuration of the bucket name is not supported
-# because the RLS policies are static SQL.
-BUCKET = "transcripts"
+# Supabase Storage bucket names. These are fixed in the migration policies;
+# runtime configuration of the bucket name is not supported because the RLS
+# policies are static SQL. The default remains "transcripts" for backwards
+# compatibility.
+DEFAULT_BUCKET = "transcripts"
+OUTPUTS_BUCKET = "outputs"
 
 
 class StorageError(Exception):
@@ -45,24 +47,35 @@ class StorageAuthError(StorageError):
 
 
 class StorageBackend:
-    """Abstract storage backend for transcript bytes."""
+    """Abstract storage backend for private organization-scoped objects."""
 
     async def upload(
-        self, user_id: uuid.UUID, path: str, data: AsyncIterable[bytes], content_type: str
+        self,
+        user_id: uuid.UUID,
+        path: str,
+        data: AsyncIterable[bytes],
+        content_type: str,
+        bucket: str = DEFAULT_BUCKET,
     ) -> None:
-        """Upload an object at *path* with the given byte stream and content type."""
+        """Upload an object at *path* in *bucket* with the given byte stream."""
         raise NotImplementedError
 
-    async def download(self, user_id: uuid.UUID, path: str) -> AsyncGenerator[bytes, None]:
-        """Return an async iterator over the object's bytes."""
+    async def download(
+        self, user_id: uuid.UUID, path: str, bucket: str = DEFAULT_BUCKET
+    ) -> AsyncGenerator[bytes, None]:
+        """Return an async iterator over the object's bytes from *bucket*."""
         raise NotImplementedError
 
-    async def delete(self, user_id: uuid.UUID, path: str) -> None:
-        """Delete the object at *path*."""
+    async def delete(
+        self, user_id: uuid.UUID, path: str, bucket: str = DEFAULT_BUCKET
+    ) -> None:
+        """Delete the object at *path* in *bucket*."""
         raise NotImplementedError
 
-    async def list_prefix(self, user_id: uuid.UUID, prefix: str) -> list[str]:
-        """Return object paths under *prefix*."""
+    async def list_prefix(
+        self, user_id: uuid.UUID, prefix: str, bucket: str = DEFAULT_BUCKET
+    ) -> list[str]:
+        """Return object paths under *prefix* in *bucket*."""
         raise NotImplementedError
 
     async def close(self) -> None:
@@ -76,7 +89,7 @@ class SupabaseStorageBackend(StorageBackend):
     The public anon key is sent only as the `apikey` project identifier. The
     `Authorization` header carries a short-lived JWT signed by the backend with
     `SUPABASE_JWT_SECRET` and the `app_storage` role. The Storage RLS policies
-    for the `transcripts` bucket then verify the `sub` claim against an active
+    for each private bucket then verify the `sub` claim against an active
     membership in the organization path segment.
     """
 
@@ -114,9 +127,14 @@ class SupabaseStorageBackend(StorageBackend):
         }
 
     async def upload(
-        self, user_id: uuid.UUID, path: str, data: AsyncIterable[bytes], content_type: str
+        self,
+        user_id: uuid.UUID,
+        path: str,
+        data: AsyncIterable[bytes],
+        content_type: str,
+        bucket: str = DEFAULT_BUCKET,
     ) -> None:
-        url = f"{self.base_url}/storage/v1/object/{BUCKET}/{path}"
+        url = f"{self.base_url}/storage/v1/object/{bucket}/{path}"
         headers = {
             **self._headers(user_id),
             "Content-Type": content_type,
@@ -137,8 +155,10 @@ class SupabaseStorageBackend(StorageBackend):
             )
             raise StorageError("Storage upload failed")
 
-    async def download(self, user_id: uuid.UUID, path: str) -> AsyncGenerator[bytes, None]:
-        url = f"{self.base_url}/storage/v1/object/authenticated/{BUCKET}/{path}"
+    async def download(
+        self, user_id: uuid.UUID, path: str, bucket: str = DEFAULT_BUCKET
+    ) -> AsyncGenerator[bytes, None]:
+        url = f"{self.base_url}/storage/v1/object/authenticated/{bucket}/{path}"
         request = self.client.build_request("GET", url, headers=self._headers(user_id))
         try:
             response = await self.client.send(request, stream=True)
@@ -173,8 +193,8 @@ class SupabaseStorageBackend(StorageBackend):
 
         return _stream(response)
 
-    async def delete(self, user_id: uuid.UUID, path: str) -> None:
-        url = f"{self.base_url}/storage/v1/object/{BUCKET}/{path}"
+    async def delete(self, user_id: uuid.UUID, path: str, bucket: str = DEFAULT_BUCKET) -> None:
+        url = f"{self.base_url}/storage/v1/object/{bucket}/{path}"
         try:
             response = await self.client.delete(url, headers=self._headers(user_id))
         except httpx.HTTPError as exc:
@@ -192,8 +212,8 @@ class SupabaseStorageBackend(StorageBackend):
             )
             raise StorageError("Storage delete failed")
 
-    async def list_prefix(self, user_id: uuid.UUID, prefix: str) -> list[str]:
-        url = f"{self.base_url}/storage/v1/object/list/{BUCKET}"
+    async def list_prefix(self, user_id: uuid.UUID, prefix: str, bucket: str = DEFAULT_BUCKET) -> list[str]:
+        url = f"{self.base_url}/storage/v1/object/list/{bucket}"
         try:
             response = await self.client.post(
                 url,
@@ -235,28 +255,34 @@ class MemoryStorageBackend(StorageBackend):
         self.objects: dict[str, bytes] = {}
         self.content_types: dict[str, str] = {}
         self._provided_pool = admin_pool
-        self._lazy_pool: asyncpg.Pool | None = None
-
-    async def _pool(self) -> asyncpg.Pool:
-        if self._provided_pool is not None:
-            return self._provided_pool
-        if self._lazy_pool is None:
-            if not config.DATABASE_ADMIN_URL:
-                raise RuntimeError("DATABASE_ADMIN_URL is required for MemoryStorageBackend")
-            self._lazy_pool = await asyncpg.create_pool(
-                config.DATABASE_ADMIN_URL, min_size=1, max_size=2
-            )
-        return self._lazy_pool
 
     async def _is_active_member(self, user_id: uuid.UUID, org_id: uuid.UUID) -> bool:
-        pool = await self._pool()
-        async with pool.acquire() as conn:
+        """Check membership using the provided pool or a per-call connection.
+
+        A fresh connection is used when no admin pool is supplied so the backend
+        can be exercised from different event loops in tests.
+        """
+        if self._provided_pool is not None:
+            async with self._provided_pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT 1 FROM public.memberships WHERE user_id = $1 AND org_id = $2 AND active = true",
+                    user_id,
+                    org_id,
+                )
+                return row is not None
+
+        if not config.DATABASE_ADMIN_URL:
+            raise RuntimeError("DATABASE_ADMIN_URL is required for MemoryStorageBackend")
+        conn = await asyncpg.connect(config.DATABASE_ADMIN_URL)
+        try:
             row = await conn.fetchrow(
                 "SELECT 1 FROM public.memberships WHERE user_id = $1 AND org_id = $2 AND active = true",
                 user_id,
                 org_id,
             )
             return row is not None
+        finally:
+            await conn.close()
 
     async def _validate(self, user_id: uuid.UUID | None, path: str) -> None:
         if not user_id:
@@ -272,23 +298,32 @@ class MemoryStorageBackend(StorageBackend):
             raise StorageAuthError("User is not an active member of this organization")
 
     async def upload(
-        self, user_id: uuid.UUID | None, path: str, data: AsyncIterable[bytes], content_type: str
+        self,
+        user_id: uuid.UUID | None,
+        path: str,
+        data: AsyncIterable[bytes],
+        content_type: str,
+        bucket: str = DEFAULT_BUCKET,
     ) -> None:
         await self._validate(user_id, path)
+        key = f"{bucket}:{path}"
         chunks: list[bytes] = []
         if isinstance(data, bytes):
             chunks = [data]
         else:
             async for chunk in data:
                 chunks.append(chunk)
-        self.objects[path] = b"".join(chunks)
-        self.content_types[path] = content_type
+        self.objects[key] = b"".join(chunks)
+        self.content_types[key] = content_type
 
-    async def download(self, user_id: uuid.UUID | None, path: str) -> AsyncGenerator[bytes, None]:
+    async def download(
+        self, user_id: uuid.UUID | None, path: str, bucket: str = DEFAULT_BUCKET
+    ) -> AsyncGenerator[bytes, None]:
         await self._validate(user_id, path)
-        if path not in self.objects:
+        key = f"{bucket}:{path}"
+        if key not in self.objects:
             raise ObjectNotFound("Object not found")
-        data = self.objects[path]
+        data = self.objects[key]
 
         async def _stream() -> AsyncGenerator[bytes, None]:
             chunk_size = 4096
@@ -297,25 +332,29 @@ class MemoryStorageBackend(StorageBackend):
 
         return _stream()
 
-    async def delete(self, user_id: uuid.UUID | None, path: str) -> None:
+    async def delete(
+        self, user_id: uuid.UUID | None, path: str, bucket: str = DEFAULT_BUCKET
+    ) -> None:
         await self._validate(user_id, path)
-        if path not in self.objects:
+        key = f"{bucket}:{path}"
+        if key not in self.objects:
             raise ObjectNotFound("Object not found")
-        del self.objects[path]
-        self.content_types.pop(path, None)
+        del self.objects[key]
+        self.content_types.pop(key, None)
 
-    async def list_prefix(self, user_id: uuid.UUID | None, prefix: str) -> list[str]:
+    async def list_prefix(
+        self, user_id: uuid.UUID | None, prefix: str, bucket: str = DEFAULT_BUCKET
+    ) -> list[str]:
         # For listing we only verify the org prefix, matching the Supabase policy.
         parts = prefix.split("/")
         if not parts or not parts[0]:
             raise StorageAuthError("Invalid list prefix")
         await self._validate(user_id, parts[0])
-        return [path for path in self.objects if path.startswith(prefix)]
+        key_prefix = f"{bucket}:{prefix}"
+        return [path[len(bucket) + 1:] for path in self.objects if path.startswith(key_prefix)]
 
     async def close(self) -> None:
-        if self._lazy_pool is not None:
-            await self._lazy_pool.close()
-            self._lazy_pool = None
+        pass
 
 
 _backend: StorageBackend | None = None

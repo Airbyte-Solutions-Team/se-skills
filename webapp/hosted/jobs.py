@@ -16,6 +16,15 @@ from .models import JobCreate, JobDetail, JobList, JobOut, OrgContext
 router = APIRouter(prefix="/api/hosted", tags=["hosted"])
 
 
+def _safe_runtime_filename(name: str) -> str:
+    """Return a safe filename for the runtime workspace from the original filename."""
+    base = name.strip().replace(" ", "_")
+    base = "".join(c for c in base if c.isalnum() or c in ("_", "-", "."))
+    if not base or base.startswith("."):
+        base = "transcript.txt"
+    return base
+
+
 def _source_manifest_from_transcript(
     transcript: asyncpg.Record, opportunity_id: uuid.UUID | None
 ) -> dict[str, Any]:
@@ -30,6 +39,7 @@ def _source_manifest_from_transcript(
         "opportunity_id": str(opportunity_id) if opportunity_id else None,
         "org_id": str(transcript["org_id"]),
         "original_filename": transcript["original_filename"],
+        "transcript_ref": _safe_runtime_filename(transcript["original_filename"]),
         "mime_type": transcript["mime_type"],
         "size_bytes": transcript["size_bytes"],
         "storage_path": transcript["storage_path"],

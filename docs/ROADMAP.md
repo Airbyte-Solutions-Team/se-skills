@@ -204,28 +204,57 @@ This is the source of truth for productionalization slices and progress. Each sl
 
 ---
 
-## Slice 5B: Isolated hosted post-call runtime
+## Slice 5B1: Trusted worker-side post-call orchestration and output persistence
 
-**Status:** `Proposed`
+**Status:** `In Progress`
 
-**Product outcome:** A `post-call` skill can run asynchronously in the selected isolated sandbox and produce a validated Markdown output from an uploaded transcript.
+**Product outcome:** A `post-call` job can be claimed by a trusted worker, materialize authorized inputs, invoke an injected `SkillRuntime`, validate the returned artifact outside the runtime, and persist a valid output to private org-scoped Storage and Postgres with an authoritative `outputs` row.
 
 **Scope:**
-- Implement the sandbox technology and agent-runtime integration chosen in Slice 5A.
-- Worker resolves authorized transcript and prior context, mounts read-only inputs into the sandbox, runs the agent loop with allowlisted tools and network destinations, retrieves Markdown + sidecar, validates them outside the sandbox, writes the output to private org-scoped Storage, creates the `outputs` row, and completes the job with `result_output_id`.
-- Implement the `outputs`/`output_versions`/`reviews` schema and Storage RLS/policies needed for generated outputs (if not already present from Slice 5A specification).
-- Implement compensating cleanup for partial Storage/metadata failures.
+- Add the `outputs`, `output_versions`, and `reviews` schema; create a private generated-output Storage bucket and enforce org-scoped RLS and least-privilege role grants.
+- Implement a `PostCallOrchestrator` that resolves job/transcript/prior-context references against trusted DB state, rejects missing or cross-org/cross-account/mismatched/duplicated/aliased/unlisted inputs, fetches transcript/prior content through the trusted Storage boundary, builds a job-scoped read-only temporary input workspace, invokes an injected `SkillRuntime`, reads Markdown and candidate sidecar outside the runtime, validates them with `output_schema.parse_output`, persists only valid artifacts, and always destroys the temporary workspaces.
+- Extend `complete_job`/`fail_job` to record `result_output_id`, `validation_status`, and deterministic validation failures while preserving Slice 4's lease, heartbeat, cancellation, and recovery semantics.
+- Add organization-scoped output list/detail/content APIs and the smallest SPA change needed to view a completed job's Markdown and validation status through the existing `nh3` sanitization boundary.
+- Add deterministic, LLM-free transcript-entity triggers for `Sources & Destinations`, `Technical Notes`, and `MEDDPICC Quick Pass` conditional sections.
+- Update the ADR: mark the core runtime decision (`SkillRuntime` boundary, worker-side validation, private Storage persistence, deny-by-default network allowlist) as `Accepted`; leave the production Anthropic proxy/runsc image/deployment-host/cloud-provisioning choices as explicit Slice 5B2 follow-ups.
 
 **Dependencies:** Slice 3, Slice 4, Slice 5A.
 
 **Acceptance criteria:**
-- `post-call` runs from an uploaded transcript and produces Markdown + sidecar.
-- Sandbox has no host filesystem access except mounted transcript and read-only reference data.
-- Sandbox network egress is allowlisted and deny-by-default.
+- `post-call` runs deterministically with a fake `SkillRuntime` in tests; no Anthropic key, runsc, Docker, or paid infrastructure is required.
+- Valid full and brief outputs create one immutable `outputs` row and one private Storage object per attempt; retrying the same attempt reuses the deterministic `output_id` without duplication or silent overwrite.
+- Invalid outputs, cross-org references, manifest mismatch, and sidecar validation-field injection are rejected before any `outputs` row or Storage object is created.
+- Worker DB role and Storage policies enforce the same boundaries as the application code.
+- Temporary input/output directories are removed on success and every failure path.
+- Deterministic eval, hosted/non-hosted tests, and local workflow tests continue to pass.
+
+**Non-goals:**
+- No production gVisor/runsc orchestration or live Anthropic calls.
+- No review/approval/export UI.
+- No Live Transcribe, Salesforce, Gong, or Google integrations.
+- No local `airbyte` / `airbyte-platform` repo access.
+
+---
+
+## Slice 5B2: Production gVisor sandbox and hosted model proxy
+
+**Status:** `Proposed`
+
+**Product outcome:** The trusted orchestration from Slice 5B1 runs inside a production gVisor container with a worker-side Anthropic Messages API proxy, completing the isolated hosted post-call runtime.
+
+**Scope:**
+- Implement the production Anthropic model proxy and gVisor/runsc image/lifecycle chosen in ADR-005.
+- Enforce job-level filesystem isolation, deny-by-default network egress, and immutable wall-clock deadlines inside the sandbox.
+- Provision deployment hosts and operational runbook; add gated real-sandbox integration tests marked/skipped when runsc is unavailable.
+
+**Dependencies:** Slice 5B1.
+
+**Acceptance criteria:**
+- `post-call` runs from an uploaded transcript inside the sandbox and produces Markdown + sidecar.
+- Sandbox has no host filesystem access except the mounted transcript and read-only reference data.
+- Sandbox network egress is allowlisted and deny-by-default; model calls are mediated through the worker-side proxy.
 - No unrestricted shell, `bypassPermissions`, Git, browser automation, or local repo access.
-- Output includes required sections (`At a Glance`, `Source Coverage`, etc.) and passes the deterministic validation contract.
-- `outputs` to `jobs`/`accounts`/`opportunities` preserve `org_id` and are enforced by the database; cross-org references fail at the DB boundary and in application authorization tests.
-- Validation status is recorded and surfaced in the UI.
+- Output includes required sections and passes the deterministic validation contract; the worker's validation result remains authoritative.
 
 **Non-goals:**
 - Not all skills.

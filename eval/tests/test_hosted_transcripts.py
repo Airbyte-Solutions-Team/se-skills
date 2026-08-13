@@ -828,7 +828,7 @@ async def test_supabase_storage_backend_uses_server_signed_app_storage_token(
 
     user_id = uuid.uuid4()
     backend = storage.SupabaseStorageBackend()
-    assert storage.BUCKET == "transcripts"
+    assert storage.DEFAULT_BUCKET == "transcripts"
     headers = backend._headers(user_id)
     assert headers["apikey"] == "anon-key"
     auth_header = headers["Authorization"]

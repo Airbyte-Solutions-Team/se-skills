@@ -169,14 +169,15 @@ class Worker:
         lease_token: uuid.UUID,
         error_category: str,
         error: str,
+        validation_status: str = "unvalidated",
+        runtime_version: str | None = None,
+        model: str | None = None,
     ) -> None:
         """Record a failed attempt, with bounded retry or terminal state."""
-        runtime_version = getattr(self.executor, "runtime_version", None)
-        model = getattr(self.executor, "model", None)
         async with self.pool.acquire() as conn:
             await conn.execute(
                 """
-                SELECT public.fail_job($1, $2, $3, $4, $5, NULL, $6, $7)
+                SELECT public.fail_job($1, $2, $3, $4, $5, NULL, $6, $7, $8)
                 """,
                 job_id,
                 attempt_number,
@@ -185,6 +186,7 @@ class Worker:
                 error,
                 runtime_version,
                 model,
+                validation_status,
             )
 
     async def cancel(
@@ -251,10 +253,16 @@ class Worker:
 
         job = {
             "job_id": str(job_id),
+            "attempt_number": attempt_number,
+            "lease_token": str(lease_token),
             "org_id": str(claim["org_id"]),
             "account_id": str(claim["account_id"]),
             "transcript_id": str(claim["transcript_id"]),
             "opportunity_id": str(claim["opportunity_id"]) if claim["opportunity_id"] else None,
+            "requester_id": str(claim["requester_id"]),
+            "skill_version": claim.get("skill_version") or "1.0",
+            "model": claim.get("model"),
+            "runtime_version": claim.get("runtime_version"),
             "payload": claim["payload"],
             "input_refs": claim["input_refs"],
             "source_manifest": claim["source_manifest"],
@@ -262,6 +270,7 @@ class Worker:
 
         loop = asyncio.get_event_loop()
         deadline = loop.time() + self.timeout_seconds
+        job["deadline_ts"] = deadline
         executor_task: asyncio.Task[ExecutorResult] = asyncio.create_task(self.executor.execute(job))
         heartbeat_stop = asyncio.Event()
         cancel_requested = asyncio.Event()
@@ -350,19 +359,32 @@ class Worker:
                     "Job %s attempt %s executor raised: %s",
                     job_id,
                     attempt_number,
-                    exc,
+                    type(exc).__name__,
                 )
                 await self.fail(
                     job_id,
                     attempt_number,
                     lease_token,
                     "executor_error",
-                    str(exc)[:500],
+                    "Executor failure: executor raised an exception",
+                    runtime_version=getattr(self.executor, "runtime_version", None),
+                    model=getattr(self.executor, "model", None),
                 )
                 return True
 
             if cancel_requested.is_set():
                 await self.cancel(job_id, attempt_number, lease_token)
+            elif getattr(result, "error_category", None):
+                await self.fail(
+                    job_id,
+                    attempt_number,
+                    lease_token,
+                    result.error_category,
+                    result.error or "Execution failed",
+                    validation_status=getattr(result, "validation_status", "unvalidated") or "unvalidated",
+                    runtime_version=result.runtime_version,
+                    model=result.model,
+                )
             else:
                 await self.complete(job_id, attempt_number, lease_token, result)
             return True

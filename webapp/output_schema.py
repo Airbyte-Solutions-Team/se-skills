@@ -373,6 +373,55 @@ def _validate_source_coverage_post_call(body: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Deterministic transcript-entity triggers for conditional sections
+# ---------------------------------------------------------------------------
+
+def _transcript_triggered_conditionals(transcript_text: str | None) -> set[str]:
+    """Return the conditional post-call sections required by transcript evidence.
+
+    These rules are deterministic and require no LLM. They scan the transcript for
+    entity and intent markers that make a conditional section decision-critical.
+    """
+    triggered: set[str] = set()
+    if not transcript_text:
+        return triggered
+
+    lowered = transcript_text.lower()
+
+    # Sources & Destinations is required when the call discusses connectors, systems,
+    # integrations, platforms, or APIs.
+    if any(term in lowered for term in (
+        "connector", "connectors", "source", "sources", "destination", "destinations",
+        "integration", "integrations", "system", "systems", "platform", "platforms",
+        "api", "apis", "data source", "data sources", "data warehouse",
+    )):
+        triggered.add("sources-destinations")
+
+    # Technical Notes is required when technical scope is discussed.
+    if any(term in lowered for term in (
+        "technical", "architecture", "infrastructure", "schema", "schemas",
+        "database", "databases", "cdc", "etl", "elt", "data pipeline",
+        "data pipelines", "warehouse", "data model", "data modeling",
+        "normalization", "dbt", "sql", "query", "queries", "dataset",
+        "engineering", "developer", "development", "custom connector",
+        "build", "building", "code", "script", "scripts",
+    )):
+        triggered.add("technical-notes")
+
+    # MEDDPICC Quick Pass is required when the transcript is attributable to an
+    # AE-led discovery or qualification call.
+    if any(term in lowered for term in (
+        "discovery call", "intro call", "initial call", "first call",
+        "qualification call", "ae-led", "account executive", "ae",
+        "meddpicc", "metrics", "economic buyer", "decision criteria",
+        "decision process", "identify pain", "champion", "competition",
+    )):
+        triggered.add("meddpicc-quick-pass")
+
+    return triggered
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -381,6 +430,7 @@ def parse_output(
     text: str,
     reference_freshness_at_generation: list[ReferenceFreshness] | None = None,
     mode: Mode = "full",
+    transcript_text: str | None = None,
 ) -> OutputMetadata:
     """Parse a generated Markdown output and validate it against the skill schema.
 
@@ -390,6 +440,10 @@ def parse_output(
     For strict schemas (e.g. `post-call`), every candidate resolves to either
     `"valid"` or `"invalid"`; `"unvalidated"` is only used for non-strict or
     unrecognized skill outputs that lack enough current-format markers.
+
+    `transcript_text` is used by the `post-call` schema to deterministically
+    trigger conditional sections (Sources & Destinations, Technical Notes,
+    MEDDPICC Quick Pass). It never uses an LLM.
     """
     schema = _SKILL_SCHEMAS.get(skill)
     title = _extract_title(text)
@@ -404,6 +458,13 @@ def parse_output(
             required = list(schema.brief_required_sections)
         if schema.brief_required_at_a_glance_labels is not None:
             required_at_a_glance = list(schema.brief_required_at_a_glance_labels)
+
+    # Conditional transcript-entity triggers are deterministic and additive.
+    if skill == "post-call" and schema and transcript_text is not None:
+        required = required + sorted(
+            c for c in _transcript_triggered_conditionals(transcript_text)
+            if c not in required
+        )
 
     def _resolve_heading(required_key: str) -> str | None:
         """Return the actual normalized heading key in `sections` that covers the required key.
@@ -453,7 +514,7 @@ def parse_output(
 
     # Conditional sections are not required to be present, but if a heading for one
     # appears in the document the runtime has decided to include it and it must have
-    # a non-empty body. Slice 5B can add transcript-entity triggers later.
+    # a non-empty body. Transcript-entity triggers are added by `_transcript_triggered_conditionals` and applied above for the `post-call` skill.
     present_conditional: list[str] = []
     if schema and schema.conditional_sections:
         for key in schema.conditional_sections:

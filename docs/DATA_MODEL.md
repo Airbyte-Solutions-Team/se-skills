@@ -174,32 +174,33 @@ A generated skill output. The original Markdown and sidecar are immutable once w
 
 | Column | Purpose |
 |---|---|
-| `id` (PK) | UUID |
+| `id` (PK) | UUID; deterministic per `job_id` + `attempt_number` to make retries idempotent |
 | `org_id` (FK, indexed) | Organization owner |
 | `account_id` (FK) | Account |
 | `opportunity_id` (FK, nullable) | Opportunity |
-| `job_id` (FK) | Job that produced it |
+| `job_id` (FK) | Job that produced it; composite FK `(job_id, account_id, org_id)` enforces same-organization ownership |
+| `transcript_id` (FK) | Transcript input; composite FK `(transcript_id, account_id, org_id)` enforces same-organization ownership |
+| `requester_id` (FK to memberships) | User who invoked the job |
 | `skill` | Skill id |
 | `skill_version` | Skill/prompt version or content hash used |
 | `model` | Model used |
 | `title` | Generated title |
-| `content_storage_path` | Private object-storage key for the immutable generated Markdown |
-| `sidecar` | JSON: validation status, missing sections, source coverage, reference freshness, etc. |
-| `status` | `unvalidated`, `valid`, `invalid` |
+| `content_storage_path` | Private org-scoped object-storage key for the immutable generated Markdown |
+| `sidecar` | JSON: validation status, validation errors, source coverage, reference freshness, etc. |
+| `validation_status` | `unvalidated`, `valid`, `invalid` |
 | `generated_at` | Timestamp |
-| `created_by` (FK to users) | Invoker |
 
-RLS on `org_id`. The generated content and sidecar must never be overwritten; any correction creates a new `output_versions` row.
+RLS on `org_id`. The generated Markdown and sidecar are immutable; any correction creates a new `output_versions` row.
 
-**Slice 5B persistence boundary (specified in Slice 5A, implemented in Slice 5B):**
-1. The worker resolves the authorized transcript and approved prior context for the job.
-2. It materializes read-only inputs into a job-scoped sandbox workspace.
-3. The sandbox runtime writes `output.md` and `sidecar.json` to a temporary output area.
-4. The worker reads both files from outside the sandbox and runs `output_schema.parse_output` to validate them.
-5. Only validated artifacts are written to the private org-scoped Storage object at `content_storage_path` and to the `outputs` row.
+**Slice 5B1 persistence boundary (implemented):**
+1. The worker resolves the authorized transcript and approved prior-context references for the job against trusted DB state.
+2. It materializes only manifest-listed inputs into a host-generated, job-scoped temporary workspace; no transcript bodies, credentials, signed URLs, or browser-supplied paths enter the runtime.
+3. The injected `SkillRuntime` writes `output.md` and `sidecar.json` to a temporary output area.
+4. The worker reads both files outside the sandbox and runs `output_schema.parse_output` to validate them; the worker's result is authoritative and the sidecar cannot assert `validation_status`.
+5. Only validated artifacts create an `outputs` row and a private org-scoped Storage object at `content_storage_path`.
 6. `complete_job` receives the authoritative `result_output_id`.
-7. If validation fails, the job result is `failure` or `invalid` and no `outputs` row is created; invalid artifacts are distinguishable from execution failures.
-8. Compensating cleanup: if Storage write succeeds but the `outputs` row insert fails, the Storage object is deleted and the job is marked `failure` with a redacted metadata error. If the `outputs` row insert succeeds but Storage fails, the row is rolled back by the transaction and the attempt is requeued or dead-lettered.
+7. If validation fails, the attempt is finalized with a fixed, redacted `output_error` category; no Storage object or `outputs` row is created, so invalid output is distinguishable from execution failure.
+8. Compensating cleanup: if Storage write succeeds but the `outputs` row insert fails, the Storage object is deleted. If the `outputs` row insert succeeds but Storage fails, the unvalidated row is rolled back by the transaction. Retries of the same attempt reuse the deterministic `output_id` without duplicating evidence.
 
 ### `reviews`
 

@@ -4068,6 +4068,9 @@ async function enqueueHostedJob(accountId, transcriptId, opportunityId) {
       transcript_id: transcriptId,
       opportunity_id: opportunityId || null,
       skill: "post-call",
+      skill_version: "1.0",
+      model: "claude-sonnet-4-6",
+      runtime_version: "slice5b1",
       max_attempts: 3,
     };
     const job = await api(`/api/hosted/accounts/${encodeURIComponent(accountId)}/jobs`, {
@@ -4076,13 +4079,13 @@ async function enqueueHostedJob(accountId, transcriptId, opportunityId) {
       body: JSON.stringify(payload),
     });
     if (statusEl) statusEl.textContent = `Queue test ${job.status}`;
-    pollHostedJob(job.id, statusEl);
+    pollHostedJob(job.id, accountId, statusEl);
   } catch (e) {
     if (statusEl) statusEl.textContent = `Error: ${esc(e.message)}`;
   }
 }
 
-async function pollHostedJob(jobId, statusEl) {
+async function pollHostedJob(jobId, accountId, statusEl) {
   if (!statusEl) return;
   while (true) {
     await new Promise((r) => setTimeout(r, 1500));
@@ -4090,7 +4093,17 @@ async function pollHostedJob(jobId, statusEl) {
       const detail = await api(`/api/hosted/jobs/${encodeURIComponent(jobId)}`);
       const job = detail.job || {};
       const terminal = ["success", "failure", "cancelled", "timeout"].includes(job.status);
-      statusEl.textContent = `Queue test ${job.status}${job.dead_lettered ? " (dead-letter)" : ""}${job.error ? ": " + esc(job.error) : ""}${terminal ? " — no real post-call output was produced" : ""}`;
+      if (terminal && job.status === "success" && job.result_output_id) {
+        const outputId = job.result_output_id;
+        try {
+          const content = await api(`/api/hosted/accounts/${encodeURIComponent(accountId)}/outputs/${encodeURIComponent(outputId)}/content`);
+          statusEl.innerHTML = `Completed (${esc(content.validation_status || "unvalidated")}) — <a href="javascript:void(0)" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'">View output</a><div style="display:none;border:1px solid #ccc;padding:1em;margin-top:0.5em;max-height:20em;overflow:auto;background:#fff;color:#000;">${content.html || ""}</div>`;
+        } catch {
+          statusEl.textContent = `Completed (${esc(job.validation_status || "unvalidated")}) — output content unavailable`;
+        }
+      } else {
+        statusEl.textContent = `Queue test ${job.status}${job.dead_lettered ? " (dead-letter)" : ""}${job.error ? ": " + esc(job.error) : ""}${terminal ? " — no real post-call output was produced" : ""}`;
+      }
       if (terminal) break;
     } catch {
       break;

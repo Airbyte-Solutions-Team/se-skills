@@ -1395,10 +1395,11 @@ async def _fail_job(
     backoff_seconds: int | None = None,
     runtime_version: str | None = "slice4-echo",
     model: str | None = "echo",
+    validation_status: str = "unvalidated",
 ) -> None:
     async with pool.acquire() as conn:
         await conn.fetchval(
-            "SELECT public.fail_job($1, $2, $3, $4, $5, $6, $7, $8)",
+            "SELECT public.fail_job($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             claim["job_id"],
             claim["attempt_number"],
             claim["lease_token"],
@@ -1407,6 +1408,7 @@ async def _fail_job(
             backoff_seconds,
             runtime_version,
             model,
+            validation_status,
         )
 
 

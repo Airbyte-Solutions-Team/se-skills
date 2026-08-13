@@ -2,10 +2,10 @@
 
 | | |
 |---|---|
-| **Status** | Proposed — awaiting Product Owner / security review |
+| **Status** | Accepted — core runtime decision operative for Slice 5B1; cloud host / runsc provisioning / live Anthropic proxy remain Slice 5B2 decisions |
 | **Date** | 2026-08-11 |
 | **Deciders** | Devin (implementation), requester (review) |
-| **Applies to** | Slice 5B: isolated hosted post-call execution |
+| **Applies to** | Slice 5B1 (trusted worker-side orchestration) and Slice 5B2 (gVisor sandbox + production model proxy) |
 
 ## Context
 
@@ -198,9 +198,11 @@ A managed service without a gVisor or microVM layer does not provide the job-lev
 
 ## Decision
 
-For Slice 5B we will use **Option 1: a manual Anthropic Messages API typed-tool loop with a worker-side model proxy, running inside a per-job gVisor-backed `runsc` container.**
+For the post-call runtime we will use **Option 1: a manual Anthropic Messages API typed-tool loop with a worker-side model proxy, running inside a per-job gVisor-backed `runsc` container.**
 
-This gives us the highest agent fidelity with the smallest trusted surface area. The design is provider-neutral where possible and can be moved to Firecracker or a managed gVisor service without changing the worker contract.
+The core elements of this decision are now operative for Slice 5B1: the worker builds a `RuntimeJob`, the sandbox only receives a read-only input manifest and temporary output workspace, model calls are mediated through a worker-side proxy, and the worker validates and persists the final artifact outside the sandbox. gVisor/runsc image build, network namespace provisioning, deployment host selection, and the live Anthropic model proxy are explicitly deferred to Slice 5B2.
+
+This gives the highest agent fidelity with the smallest trusted surface area. The design is provider-neutral where possible and can be moved to Firecracker or a managed gVisor service without changing the worker contract.
 
 ## Trust boundary and data flow
 
@@ -255,7 +257,7 @@ Storage (app_storage signed JWT) + outputs row (app_user via queue funcs)
 - **How tools are registered and allowlisted:** the worker passes an `Allowlist` of opaque tool names in the `RuntimeJob`. The runtime's closed tool registry rejects any tool not in the allowlist at dispatch, and each tool input is validated against a strict Pydantic model. Generic tools such as `Bash`, `Git`, `Browser`, `Http`, `McpDiscover`, and `BypassPermissions` are never allowed.
 - **How network destinations are enforced:** `NetworkDestination` is a closed Pydantic model (`extra="forbid"`) that accepts only `http`/`https` hostnames. The container network namespace is restricted to the worker model proxy. Egress is deny-by-default; the proxy checks the request destination against a per-skill allowlist before forwarding.
 - **How cancellation, deadline expiry, and worker crashes terminate or recover the sandbox:** `RuntimeJob` carries an immutable timezone-aware `execution_deadline` and a `CancellationToken` protocol. The harness races every in-flight model request against both cancellation and the deadline. The worker's `process_one` loop already monitors these signals. On expiry or cancellation, the worker stops the container. On worker crash, the Postgres lease expires and `recover_expired_leases` requeues the attempt.
-- **Which component validates and persists the final artifact:** the worker validates `output.md` and `sidecar.json` with `output_schema.parse_output` outside the sandbox. Valid artifacts are written to Storage and recorded in the `outputs` table; invalid artifacts are kept as execution metadata but do not become the `result_output_id`.
+- **Which component validates and persists the final artifact:** the worker validates `output.md` and `sidecar.json` with `output_schema.parse_output` outside the sandbox. Valid artifacts are written to private org-scoped Storage and recorded in the `outputs` table. Invalid artifacts are not persisted as Storage objects or `outputs` rows; the job is finalized with a fixed, redacted validation-failure category so invalid output is distinguishable from execution failure.
 
 ## Consequences
 
@@ -275,6 +277,9 @@ Storage (app_storage signed JWT) + outputs row (app_user via queue funcs)
 
 ## Open Product Owner decisions
 
+Core runtime decision accepted; the following are explicit Slice 5B2 operational follow-ups:
+
 1. Which cloud host will run the worker containers (self-managed Linux VM vs managed Kubernetes vs managed container service)?
 2. Do we want to prototype with Firecracker in parallel for a higher-isolation follow-up, or wait until after beta?
 3. Which Anthropic model identifier is the beta default, and how is it rotated? The contract requires `requested_model` at construction; `claude-sonnet-4-6` is the current example in the harness and tests.
+4. How is the gVisor/runsc image built, signed, and deployed, and who provisions the deny-by-default network namespace and model proxy?
