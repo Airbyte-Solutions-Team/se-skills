@@ -381,6 +381,8 @@ def _transcript_triggered_conditionals(transcript_text: str | None) -> set[str]:
 
     These rules are deterministic and require no LLM. They scan the transcript for
     entity and intent markers that make a conditional section decision-critical.
+    Token/phrase boundaries are used so incidental substrings (e.g. "ae" inside
+    "aeroplane" or "api" inside "rapid") do not trigger sections incorrectly.
     """
     triggered: set[str] = set()
     if not transcript_text:
@@ -390,32 +392,40 @@ def _transcript_triggered_conditionals(transcript_text: str | None) -> set[str]:
 
     # Sources & Destinations is required when the call discusses connectors, systems,
     # integrations, platforms, or APIs.
-    if any(term in lowered for term in (
-        "connector", "connectors", "source", "sources", "destination", "destinations",
-        "integration", "integrations", "system", "systems", "platform", "platforms",
-        "api", "apis", "data source", "data sources", "data warehouse",
-    )):
+    if re.search(
+        r"\b(?:connector|connectors|source|sources|destination|destinations|"
+        r"integration|integrations|system|systems|platform|platforms|api|apis|"
+        r"data source|data sources|data warehouse)\b",
+        lowered,
+    ):
         triggered.add("sources-destinations")
 
     # Technical Notes is required when technical scope is discussed.
-    if any(term in lowered for term in (
-        "technical", "architecture", "infrastructure", "schema", "schemas",
-        "database", "databases", "cdc", "etl", "elt", "data pipeline",
-        "data pipelines", "warehouse", "data model", "data modeling",
-        "normalization", "dbt", "sql", "query", "queries", "dataset",
-        "engineering", "developer", "development", "custom connector",
-        "build", "building", "code", "script", "scripts",
-    )):
+    if re.search(
+        r"\b(?:technical|architecture|infrastructure|schema|schemas|database|databases|"
+        r"cdc|etl|elt|data pipeline|data pipelines|warehouse|data model|data modeling|"
+        r"normalization|dbt|sql|query|queries|dataset|engineering|developer|development|"
+        r"custom connector|build|building|code|script|scripts)\b",
+        lowered,
+    ):
         triggered.add("technical-notes")
 
     # MEDDPICC Quick Pass is required when the transcript is attributable to an
-    # AE-led discovery or qualification call.
-    if any(term in lowered for term in (
-        "discovery call", "intro call", "initial call", "first call",
-        "qualification call", "ae-led", "account executive", "ae",
-        "meddpicc", "metrics", "economic buyer", "decision criteria",
-        "decision process", "identify pain", "champion", "competition",
-    )):
+    # AE-led discovery or qualification call. Both an AE-role marker and a
+    # discovery/qualification attribution must be present.
+    ae_role = re.search(
+        r"\b(?:ae|account executive|sales rep|sales representative|sdr|"
+        r"sales development rep|business development rep)\b",
+        lowered,
+    )
+    discovery = re.search(
+        r"\b(?:discovery call|discovery meeting|discovery session|intro call|"
+        r"initial call|first call|qualification call|qualifying call|qual call|"
+        r"meddpicc|metrics|economic buyer|decision criteria|decision process|"
+        r"identify pain|champion|competition)\b",
+        lowered,
+    )
+    if ae_role and discovery:
         triggered.add("meddpicc-quick-pass")
 
     return triggered

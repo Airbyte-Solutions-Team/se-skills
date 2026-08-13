@@ -13,6 +13,7 @@ import os
 import socket
 import uuid
 from contextlib import suppress
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import asyncpg
@@ -270,7 +271,9 @@ class Worker:
 
         loop = asyncio.get_event_loop()
         deadline = loop.time() + self.timeout_seconds
-        job["deadline_ts"] = deadline
+        # The executor boundary receives a timezone-aware UTC wall-clock deadline,
+        # not the event-loop monotonic clock.
+        job["deadline_ts"] = datetime.now(tz=timezone.utc) + timedelta(seconds=self.timeout_seconds)
         executor_task: asyncio.Task[ExecutorResult] = asyncio.create_task(self.executor.execute(job))
         heartbeat_stop = asyncio.Event()
         cancel_requested = asyncio.Event()

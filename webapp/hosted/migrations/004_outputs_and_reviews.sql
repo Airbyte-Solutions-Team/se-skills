@@ -149,18 +149,28 @@ CREATE TABLE IF NOT EXISTS public.output_versions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
     output_id UUID NOT NULL,
+    previous_version_id UUID,
     content_storage_path TEXT NOT NULL,
     sidecar JSONB NOT NULL DEFAULT '{}',
     change_summary TEXT,
-    created_by UUID,
+    created_by UUID REFERENCES public.users(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    FOREIGN KEY (output_id, org_id) REFERENCES public.outputs(id, org_id) ON DELETE CASCADE,
-    FOREIGN KEY (created_by, org_id) REFERENCES public.memberships(user_id, org_id) ON DELETE SET NULL
+    FOREIGN KEY (output_id, org_id) REFERENCES public.outputs(id, org_id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_output_versions_org_id ON public.output_versions(org_id);
 CREATE INDEX IF NOT EXISTS idx_output_versions_output_id ON public.output_versions(output_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_output_versions_id_org ON public.output_versions(id, org_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_output_versions_id_output_org ON public.output_versions(id, output_id, org_id);
+
+-- Idempotent migration support: ensure existing output_versions tables get the
+-- correction-chain column and a users-only FK for created_by.
+ALTER TABLE public.output_versions ADD COLUMN IF NOT EXISTS previous_version_id UUID;
+ALTER TABLE public.output_versions DROP CONSTRAINT IF EXISTS output_versions_created_by_fkey;
+ALTER TABLE public.output_versions ADD CONSTRAINT output_versions_created_by_fkey
+    FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+ALTER TABLE public.output_versions ADD CONSTRAINT output_versions_previous_version_fkey
+    FOREIGN KEY (previous_version_id, output_id, org_id) REFERENCES public.output_versions(id, output_id, org_id) ON DELETE RESTRICT;
 
 ALTER TABLE public.output_versions ENABLE ROW LEVEL SECURITY;
 
@@ -184,14 +194,23 @@ CREATE TABLE IF NOT EXISTS public.reviews (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CHECK (action IN ('approve', 'comment', 'correct')),
     FOREIGN KEY (output_id, org_id) REFERENCES public.outputs(id, org_id) ON DELETE CASCADE,
-    FOREIGN KEY (output_version_id, org_id) REFERENCES public.output_versions(id, org_id) ON DELETE SET NULL,
-    FOREIGN KEY (previous_version_id, org_id) REFERENCES public.output_versions(id, org_id) ON DELETE SET NULL,
+    FOREIGN KEY (output_version_id, output_id, org_id) REFERENCES public.output_versions(id, output_id, org_id) ON DELETE RESTRICT,
+    FOREIGN KEY (previous_version_id, output_id, org_id) REFERENCES public.output_versions(id, output_id, org_id) ON DELETE RESTRICT,
     FOREIGN KEY (user_id, org_id) REFERENCES public.memberships(user_id, org_id) ON DELETE RESTRICT
 );
 
 CREATE INDEX IF NOT EXISTS idx_reviews_org_id ON public.reviews(org_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_output_id ON public.reviews(output_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_id_org ON public.reviews(id, org_id);
+
+-- Idempotent migration support: ensure existing reviews tables have the
+-- output-version chain FKs scoped to the same output.
+ALTER TABLE public.reviews DROP CONSTRAINT IF EXISTS reviews_output_version_id_fkey;
+ALTER TABLE public.reviews DROP CONSTRAINT IF EXISTS reviews_previous_version_id_fkey;
+ALTER TABLE public.reviews ADD CONSTRAINT reviews_output_version_id_fkey
+    FOREIGN KEY (output_version_id, output_id, org_id) REFERENCES public.output_versions(id, output_id, org_id) ON DELETE RESTRICT;
+ALTER TABLE public.reviews ADD CONSTRAINT reviews_previous_version_id_fkey
+    FOREIGN KEY (previous_version_id, output_id, org_id) REFERENCES public.output_versions(id, output_id, org_id) ON DELETE RESTRICT;
 
 ALTER TABLE public.reviews ENABLE ROW LEVEL SECURITY;
 
@@ -211,7 +230,9 @@ CREATE OR REPLACE FUNCTION public.create_job_output(
     p_output_id UUID,
     p_content_storage_path TEXT,
     p_title TEXT,
-    p_sidecar JSONB
+    p_sidecar JSONB,
+    p_runtime_version TEXT DEFAULT NULL,
+    p_model TEXT DEFAULT NULL
 )
 RETURNS UUID
 LANGUAGE plpgsql
@@ -287,8 +308,8 @@ BEGIN
         COALESCE(p_sidecar, '{}'),
         v_job.skill,
         v_job.skill_version,
-        v_job.model,
-        v_job.runtime_version,
+        COALESCE(p_model, v_job.model),
+        COALESCE(p_runtime_version, v_job.runtime_version),
         'unvalidated',
         clock_timestamp()
     );
@@ -297,33 +318,174 @@ BEGIN
 END;
 $$;
 
-ALTER FUNCTION public.create_job_output(UUID, INTEGER, UUID, UUID, TEXT, TEXT, JSONB) OWNER TO app_admin;
-REVOKE ALL ON FUNCTION public.create_job_output(UUID, INTEGER, UUID, UUID, TEXT, TEXT, JSONB) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.create_job_output(UUID, INTEGER, UUID, UUID, TEXT, TEXT, JSONB) TO app_worker;
+ALTER FUNCTION public.create_job_output(UUID, INTEGER, UUID, UUID, TEXT, TEXT, JSONB, TEXT, TEXT) OWNER TO app_admin;
+REVOKE ALL ON FUNCTION public.create_job_output(UUID, INTEGER, UUID, UUID, TEXT, TEXT, JSONB, TEXT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.create_job_output(UUID, INTEGER, UUID, UUID, TEXT, TEXT, JSONB, TEXT, TEXT) TO app_worker;
 
 -- ---------------------------------------------------------------------------
 -- Worker function: roll back an unvalidated outputs row when Storage upload fails.
--- Only unvalidated rows may be removed; validated evidence is immutable.
+-- Only unvalidated rows belonging to the current running attempt may be removed.
 -- ---------------------------------------------------------------------------
+DROP FUNCTION IF EXISTS public.delete_job_output(UUID);
+
 CREATE OR REPLACE FUNCTION public.delete_job_output(
-    p_output_id UUID
+    p_output_id UUID,
+    p_job_id UUID,
+    p_attempt_number INTEGER,
+    p_lease_token UUID
 )
 RETURNS BOOLEAN
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = ''
 AS $$
+DECLARE
+    v_job RECORD;
+    v_attempt RECORD;
 BEGIN
+    SELECT * INTO v_job
+    FROM public.jobs
+    WHERE id = p_job_id
+    FOR UPDATE;
+
+    IF v_job IS NULL THEN
+        RAISE EXCEPTION 'Job not found';
+    END IF;
+
+    IF v_job.status <> 'running' THEN
+        RAISE EXCEPTION 'Job is not running';
+    END IF;
+
+    SELECT * INTO v_attempt
+    FROM public.job_attempts
+    WHERE job_id = p_job_id
+      AND attempt_number = p_attempt_number
+    FOR UPDATE;
+
+    IF v_attempt IS NULL OR v_attempt.lease_token <> p_lease_token THEN
+        RAISE EXCEPTION 'Invalid attempt or lease token';
+    END IF;
+
+    IF v_attempt.outcome IS NOT NULL THEN
+        RAISE EXCEPTION 'Attempt already finished';
+    END IF;
+
     DELETE FROM public.outputs
     WHERE id = p_output_id
+      AND job_id = p_job_id
       AND validation_status = 'unvalidated';
-    RETURN true;
+
+    RETURN FOUND;
 END;
 $$;
 
-ALTER FUNCTION public.delete_job_output(UUID) OWNER TO app_admin;
-REVOKE ALL ON FUNCTION public.delete_job_output(UUID) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.delete_job_output(UUID) TO app_worker;
+ALTER FUNCTION public.delete_job_output(UUID, UUID, INTEGER, UUID) OWNER TO app_admin;
+REVOKE ALL ON FUNCTION public.delete_job_output(UUID, UUID, INTEGER, UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.delete_job_output(UUID, UUID, INTEGER, UUID) TO app_worker;
+
+-- ---------------------------------------------------------------------------
+-- Worker function: resolve canonical transcript and approved prior-context
+-- references for a running attempt. Returns a JSONB object with trusted storage
+-- paths; any missing, aliased, cross-scope, or duplicate reference fails.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.resolve_job_inputs(
+    p_job_id UUID,
+    p_attempt_number INTEGER,
+    p_lease_token UUID,
+    p_prior_output_ids UUID[] DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+    v_job RECORD;
+    v_attempt RECORD;
+    v_transcript RECORD;
+    v_prior_id UUID;
+    v_prior RECORD;
+    v_priors JSONB := '[]'::jsonb;
+    v_seen UUID[] := ARRAY[]::UUID[];
+BEGIN
+    SELECT * INTO v_job
+    FROM public.jobs
+    WHERE id = p_job_id
+    FOR UPDATE;
+
+    IF v_job IS NULL THEN
+        RAISE EXCEPTION 'Job not found';
+    END IF;
+
+    IF v_job.status <> 'running' THEN
+        RAISE EXCEPTION 'Job is not running';
+    END IF;
+
+    SELECT * INTO v_attempt
+    FROM public.job_attempts
+    WHERE job_id = p_job_id
+      AND attempt_number = p_attempt_number
+    FOR UPDATE;
+
+    IF v_attempt IS NULL OR v_attempt.lease_token <> p_lease_token THEN
+        RAISE EXCEPTION 'Invalid attempt or lease token';
+    END IF;
+
+    IF v_attempt.outcome IS NOT NULL THEN
+        RAISE EXCEPTION 'Attempt already finished';
+    END IF;
+
+    SELECT * INTO v_transcript
+    FROM public.transcripts
+    WHERE id = v_job.transcript_id
+      AND account_id = v_job.account_id
+      AND org_id = v_job.org_id
+      AND (opportunity_id IS NOT DISTINCT FROM v_job.opportunity_id);
+
+    IF v_transcript IS NULL THEN
+        RAISE EXCEPTION 'Transcript not found or does not match job scope';
+    END IF;
+
+    IF p_prior_output_ids IS NOT NULL THEN
+        FOREACH v_prior_id IN ARRAY p_prior_output_ids LOOP
+            IF v_prior_id = ANY(v_seen) THEN
+                RAISE EXCEPTION 'Duplicate prior context reference: %', v_prior_id;
+            END IF;
+            v_seen := array_append(v_seen, v_prior_id);
+
+            SELECT id, content_storage_path INTO v_prior
+            FROM public.outputs
+            WHERE id = v_prior_id
+              AND org_id = v_job.org_id
+              AND account_id = v_job.account_id
+              AND (opportunity_id IS NOT DISTINCT FROM v_job.opportunity_id);
+
+            IF v_prior IS NULL THEN
+                RAISE EXCEPTION 'Prior output % not found or not approved for this scope', v_prior_id;
+            END IF;
+
+            v_priors := v_priors || jsonb_build_object('output_id', v_prior.id, 'storage_path', v_prior.content_storage_path);
+        END LOOP;
+    END IF;
+
+    RETURN jsonb_build_object(
+        'transcript_id', v_transcript.id,
+        'account_id', v_transcript.account_id,
+        'org_id', v_transcript.org_id,
+        'opportunity_id', v_transcript.opportunity_id,
+        'requester_id', v_job.requester_id,
+        'storage_path', v_transcript.storage_path,
+        'original_filename', v_transcript.original_filename,
+        'mime_type', v_transcript.mime_type,
+        'size_bytes', v_transcript.size_bytes,
+        'prior_outputs', v_priors
+    );
+END;
+$$;
+
+ALTER FUNCTION public.resolve_job_inputs(UUID, INTEGER, UUID, UUID[]) OWNER TO app_admin;
+REVOKE ALL ON FUNCTION public.resolve_job_inputs(UUID, INTEGER, UUID, UUID[]) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.resolve_job_inputs(UUID, INTEGER, UUID, UUID[]) TO app_worker;
 
 -- ---------------------------------------------------------------------------
 -- Worker function: retrieve an output's storage path for recovery/completion.
@@ -409,21 +571,6 @@ BEGIN
         RAISE EXCEPTION 'Attempt already finished';
     END IF;
 
-    IF p_result_output_id IS NOT NULL THEN
-        SELECT * INTO v_output
-        FROM public.outputs
-        WHERE id = p_result_output_id
-          AND job_id = p_job_id
-          AND org_id = v_job.org_id;
-        IF v_output IS NULL THEN
-            RAISE EXCEPTION 'Result output not found for this job';
-        END IF;
-        -- Mark the output as valid; the worker is the source of truth.
-        UPDATE public.outputs
-        SET validation_status = COALESCE(p_validation_status, 'unvalidated')
-        WHERE id = p_result_output_id;
-    END IF;
-
     IF v_job.cancel_requested_at IS NOT NULL THEN
         UPDATE public.job_attempts
         SET outcome = 'cancelled',
@@ -439,6 +586,22 @@ BEGIN
             timeout_at = NULL
         WHERE id = p_job_id;
         RETURN true;
+    END IF;
+
+    -- Only mark the output as valid when the job is not cancelled; otherwise the
+    -- row remains unvalidated and is not attached as a successful result.
+    IF p_result_output_id IS NOT NULL THEN
+        SELECT * INTO v_output
+        FROM public.outputs
+        WHERE id = p_result_output_id
+          AND job_id = p_job_id
+          AND org_id = v_job.org_id;
+        IF v_output IS NULL THEN
+            RAISE EXCEPTION 'Result output not found for this job';
+        END IF;
+        UPDATE public.outputs
+        SET validation_status = COALESCE(p_validation_status, 'unvalidated')
+        WHERE id = p_result_output_id;
     END IF;
 
     UPDATE public.job_attempts
@@ -457,7 +620,9 @@ BEGIN
         result_output_id = p_result_output_id,
         validation_status = COALESCE(p_validation_status, 'unvalidated'),
         token_usage = COALESCE(p_token_usage, '{}'),
-        cost = p_cost
+        cost = p_cost,
+        runtime_version = COALESCE(p_runtime_version, v_attempt.runtime_version, v_job.runtime_version),
+        model = COALESCE(p_model, v_attempt.model, v_job.model)
     WHERE id = p_job_id;
 
     RETURN true;
@@ -563,7 +728,9 @@ BEGIN
             next_attempt_after = NULL,
             dead_lettered = true,
             error = p_error,
-            validation_status = COALESCE(p_validation_status, v_job.validation_status)
+            validation_status = COALESCE(p_validation_status, v_job.validation_status),
+            runtime_version = COALESCE(p_runtime_version, v_attempt.runtime_version, v_job.runtime_version),
+            model = COALESCE(p_model, v_attempt.model, v_job.model)
         WHERE id = p_job_id;
     ELSE
         IF p_backoff_seconds IS NOT NULL THEN
@@ -580,7 +747,9 @@ BEGIN
             worker_id = NULL,
             next_attempt_after = clock_timestamp() + v_backoff,
             error = p_error,
-            validation_status = COALESCE(p_validation_status, v_job.validation_status)
+            validation_status = COALESCE(p_validation_status, v_job.validation_status),
+            runtime_version = COALESCE(p_runtime_version, v_attempt.runtime_version, v_job.runtime_version),
+            model = COALESCE(p_model, v_attempt.model, v_job.model)
         WHERE id = p_job_id;
     END IF;
 

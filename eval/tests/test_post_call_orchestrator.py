@@ -6,6 +6,7 @@ import json
 import time
 import uuid
 from collections.abc import AsyncGenerator
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -55,11 +56,13 @@ class FakePostCallRuntime:
         *,
         fail: Any = None,
         delay: float = 0.0,
+        execution_metadata: dict[str, Any] | None = None,
     ) -> None:
         self.markdown = markdown
         self.sidecar = sidecar
         self.fail = fail
         self.delay = delay
+        self.execution_metadata = execution_metadata or {}
 
     async def execute(self, job: Any, cancellation: Any) -> Any:
         from hosted.runtime_contract import CancellationToken, RedactedFailure, RuntimeResult
@@ -81,6 +84,7 @@ class FakePostCallRuntime:
         return RuntimeResult(
             output_artifact=self.markdown,
             sidecar=self.sidecar,
+            execution_metadata=self.execution_metadata,
         )
 
 
@@ -103,9 +107,9 @@ def _job_from_claim(claim: asyncpg.Record) -> dict[str, Any]:
         if isinstance(job.get(key), str):
             job[key] = json.loads(job[key])
     if "v_timeout" in job and job["v_timeout"] is not None:
-        job["deadline_ts"] = job["v_timeout"].timestamp()
+        job["deadline_ts"] = job["v_timeout"]
     elif "deadline" in job and job["deadline"] is not None:
-        job["deadline_ts"] = job["deadline"].timestamp()
+        job["deadline_ts"] = job["deadline"]
     else:
         job["deadline_ts"] = time.time() + 60
     return job
@@ -299,7 +303,7 @@ async def test_brief_mode_is_accepted(
             id="missing_technical_when_scope_discussed",
         ),
         pytest.param(
-            "Discovery call with MEDDPICC scoring.",
+            "The AE led a discovery call with MEDDPICC scoring.",
             _valid_full_output().replace("## MEDDPICC Quick Pass\n", ""),
             id="missing_meddpicc_when_discovery_call",
         ),
@@ -723,3 +727,261 @@ async def test_worker_cancels_post_call_runtime(
         headers=_auth_header(user_id, "orch-test@airbyte.io"),
     ).json()
     assert detail["job"]["status"] == "cancelled"
+
+
+class _DeadlineCapturingRuntime:
+    """Runtime that records the wall-clock execution deadline passed by the worker."""
+
+    def __init__(self, markdown: str, sidecar: dict) -> None:
+        self.markdown = markdown
+        self.sidecar = sidecar
+        self.received_deadline: datetime | None = None
+
+    async def execute(self, job: Any, cancellation: Any) -> Any:
+        from hosted.runtime_contract import RuntimeResult
+
+        self.received_deadline = job.execution_deadline
+        output_dir = Path(job.output_workspace)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "output.md").write_text(self.markdown, encoding="utf-8")
+        (output_dir / "sidecar.json").write_text(json.dumps(self.sidecar), encoding="utf-8")
+        return RuntimeResult(output_artifact=self.markdown, sidecar=self.sidecar)
+
+
+async def test_worker_passes_wall_clock_deadline_to_runtime(
+    admin_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    app_client: TestClient,
+    backend: Any,
+) -> None:
+    """The worker passes a timezone-aware UTC wall-clock deadline, not loop.time()."""
+    from hosted.post_call_orchestrator import PostCallExecutor
+    from hosted.worker import Worker
+
+    user_id, org_id, account_id, transcript_id, _ = await _seed_job_ready_org(admin_pool)
+    await _upload_transcript_content(
+        backend, user_id, org_id, account_id, transcript_id, "Discovery call."
+    )
+
+    response = app_client.post(
+        f"/api/hosted/accounts/{account_id}/jobs",
+        json={"account_id": str(account_id), "transcript_id": str(transcript_id), "skill": "post-call"},
+        headers=_auth_header(user_id, "orch-test@airbyte.io"),
+    )
+    job_id = response.json()["id"]
+
+    before = datetime.now(tz=timezone.utc)
+    runtime = _DeadlineCapturingRuntime(_valid_full_output(), _full_sidecar())
+    executor = PostCallExecutor(runtime, db_pool=worker_pool, storage_backend=backend)
+    worker = Worker(worker_pool, executor=executor, worker_name="orch-deadline", timeout_seconds=30)
+    await worker.run_once()
+
+    after = datetime.now(tz=timezone.utc)
+    assert runtime.received_deadline is not None
+    assert runtime.received_deadline.tzinfo is not None
+    assert before <= runtime.received_deadline <= after + timedelta(seconds=30)
+
+    detail = app_client.get(
+        f"/api/hosted/jobs/{job_id}",
+        headers=_auth_header(user_id, "orch-test@airbyte.io"),
+    ).json()
+    assert detail["job"]["status"] == "success"
+
+
+async def test_authoritative_input_rejects_same_org_substituted_transcript(
+    admin_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    app_client: TestClient,
+    backend: Any,
+) -> None:
+    """A manifest tampered to point at another same-org transcript is rejected."""
+    from hosted.post_call_orchestrator import PostCallExecutor
+
+    user_id, org_id, account_id, transcript1, _ = await _seed_job_ready_org(admin_pool)
+    transcript2 = await _seed_transcript(
+        admin_pool, org_id, account_id, None, user_id, filename="other.txt"
+    )
+    await _upload_transcript_content(
+        backend, user_id, org_id, account_id, transcript1, "First transcript."
+    )
+    await _upload_transcript_content(
+        backend, user_id, org_id, account_id, transcript2, "Second transcript."
+    )
+
+    response = app_client.post(
+        f"/api/hosted/accounts/{account_id}/jobs",
+        json={"account_id": str(account_id), "transcript_id": str(transcript1), "skill": "post-call"},
+        headers=_auth_header(user_id, "orch-test@airbyte.io"),
+    )
+    job_id = response.json()["id"]
+
+    async with worker_pool.acquire() as conn:
+        claim = await conn.fetchrow(
+            "SELECT * FROM public.claim_next_job($1, $2)", "orch-subst", 60
+        )
+    assert claim is not None
+    job = _job_from_claim(claim)
+    manifest = job["source_manifest"]
+    manifest["transcript_id"] = str(transcript2)
+    # Keep the storage_path pointing to the legitimate transcript so the tampering
+    # is detected by the canonical DB lookup, not by a missing object.
+    job["source_manifest"] = manifest
+
+    runtime = FakePostCallRuntime(_valid_full_output(), _full_sidecar())
+    executor = PostCallExecutor(runtime, db_pool=worker_pool, storage_backend=backend)
+    result = await executor.execute(job)
+    assert result.error_category == "input_error"
+    assert result.output_id is None
+
+
+async def test_retry_after_storage_upload_failure_recovers_without_duplicate(
+    admin_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    app_client: TestClient,
+    backend: Any,
+) -> None:
+    """A Storage upload failure after the outputs row is created is repaired on retry."""
+    from hosted.post_call_orchestrator import PostCallExecutor
+
+    user_id, org_id, account_id, transcript_id, _ = await _seed_job_ready_org(admin_pool)
+    await _upload_transcript_content(
+        backend, user_id, org_id, account_id, transcript_id, "Discovery call."
+    )
+
+    response = app_client.post(
+        f"/api/hosted/accounts/{account_id}/jobs",
+        json={"account_id": str(account_id), "transcript_id": str(transcript_id), "skill": "post-call"},
+        headers=_auth_header(user_id, "orch-test@airbyte.io"),
+    )
+    job_id = response.json()["id"]
+
+    async with worker_pool.acquire() as conn:
+        claim = await conn.fetchrow(
+            "SELECT * FROM public.claim_next_job($1, $2)", "retry-worker", 60
+        )
+    job = _job_from_claim(claim)
+
+    from hosted import storage as hosted_storage
+
+    original_upload = backend.upload
+    upload_attempts = 0
+
+    async def failing_then_real_upload(*args: Any, **kwargs: Any) -> Any:
+        nonlocal upload_attempts
+        upload_attempts += 1
+        if upload_attempts == 1:
+            raise hosted_storage.StorageError("injected upload failure")
+        return await original_upload(*args, **kwargs)
+
+    backend.upload = failing_then_real_upload
+
+    runtime = FakePostCallRuntime(_valid_full_output(), _full_sidecar())
+    executor = PostCallExecutor(runtime, db_pool=worker_pool, storage_backend=backend)
+
+    # First attempt: metadata row is inserted, Storage upload fails, orchestrator
+    # returns a redacted runtime error without completing the job.
+    result = await executor.execute(job)
+    assert result.error_category == "runtime_error"
+    assert result.output_id is None
+
+    # Second attempt with the same running lease: the unvalidated row already
+    # exists, the object is missing, and the orchestrator re-uploads the content.
+    result = await executor.execute(job)
+    assert result.error_category is None
+    assert result.output_id is not None
+    assert result.validation_status == "valid"
+
+    async with worker_pool.acquire() as conn:
+        await conn.execute(
+            """
+            SELECT public.complete_job(
+                $1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9
+            )
+            """,
+            job_id,
+            job["attempt_number"],
+            job["lease_token"],
+            result.output_id,
+            result.validation_status,
+            json.dumps(result.token_usage),
+            result.cost,
+            result.runtime_version,
+            result.model,
+        )
+
+    detail = app_client.get(
+        f"/api/hosted/jobs/{job_id}",
+        headers=_auth_header(user_id, "orch-test@airbyte.io"),
+    ).json()
+    assert detail["job"]["status"] == "success"
+    assert detail["job"]["result_output_id"] == str(result.output_id)
+
+    # Only one outputs row and one storage object should exist for this job.
+    async with admin_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT COUNT(*) AS cnt FROM public.outputs WHERE job_id = $1", job_id
+        )
+    assert row["cnt"] == 1
+    assert upload_attempts == 2
+
+
+async def test_runtime_provenance_is_preserved_on_output(
+    admin_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    app_client: TestClient,
+    backend: Any,
+) -> None:
+    """Token usage, model, runtime version, and cost from the runtime are persisted."""
+    from hosted.post_call_orchestrator import PostCallExecutor
+    from hosted.worker import Worker
+
+    user_id, org_id, account_id, transcript_id, _ = await _seed_job_ready_org(admin_pool)
+    await _upload_transcript_content(
+        backend, user_id, org_id, account_id, transcript_id, "Discovery call."
+    )
+
+    response = app_client.post(
+        f"/api/hosted/accounts/{account_id}/jobs",
+        json={"account_id": str(account_id), "transcript_id": str(transcript_id), "skill": "post-call"},
+        headers=_auth_header(user_id, "orch-test@airbyte.io"),
+    )
+    job_id = response.json()["id"]
+
+    runtime = FakePostCallRuntime(
+        _valid_full_output(),
+        _full_sidecar(),
+        execution_metadata={
+            "runtime_version": "test-runtime-9",
+            "model": "test-model-x",
+            "token_usage": {
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "cache_creation_input_tokens": 10,
+                "cache_read_input_tokens": 5,
+            },
+            "cost": 0.00123,
+        },
+    )
+    executor = PostCallExecutor(runtime, db_pool=worker_pool, storage_backend=backend)
+    worker = Worker(worker_pool, executor=executor, worker_name="orch-prov", timeout_seconds=30)
+    await worker.run_once()
+
+    detail = app_client.get(
+        f"/api/hosted/jobs/{job_id}",
+        headers=_auth_header(user_id, "orch-test@airbyte.io"),
+    ).json()
+    assert detail["job"]["status"] == "success"
+    assert detail["job"]["runtime_version"] == "test-runtime-9"
+    assert detail["job"]["model"] == "test-model-x"
+    assert detail["job"]["token_usage"]["total_tokens"] == 165
+    assert detail["job"]["cost"] == pytest.approx(0.00123, abs=1e-4)
+
+    output_id = detail["job"]["result_output_id"]
+    response = app_client.get(
+        f"/api/hosted/accounts/{account_id}/outputs/{output_id}",
+        headers=_auth_header(user_id, "orch-test@airbyte.io"),
+    )
+    assert response.status_code == 200
+    out = response.json()["output"]
+    assert out["runtime_version"] == "test-runtime-9"
+    assert out["model"] == "test-model-x"
