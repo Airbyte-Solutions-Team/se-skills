@@ -939,6 +939,77 @@ class PostCallOrchestrator:
 
         return True
 
+    async def cleanup_next_tombstone(
+        self,
+        worker_id: str,
+        lease_seconds: int = CLEANUP_LEASE_SECONDS,
+    ) -> bool:
+        """Discover, claim, delete, and finalize one tombstoned output.
+
+        A worker can poll this method without knowing the output id in advance.
+        The database locks one eligible tombstone with `FOR UPDATE SKIP LOCKED`,
+        returns the trusted Storage path, and the orchestrator removes the object
+        before finalizing the row.  The same worker may re-claim a tombstone it
+        already holds to retry a failed Storage delete.
+        """
+        if not worker_id or not isinstance(worker_id, str):
+            raise CleanupError("worker_id is required")
+        if lease_seconds <= 0 or lease_seconds > 3600:
+            raise CleanupError("lease_seconds must be between 1 and 3600")
+
+        async with self.db_pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM public.claim_next_tombstoned_output($1, $2)",
+                worker_id,
+                lease_seconds,
+            )
+        if row is None or row["content_storage_path"] is None:
+            return False
+
+        output_id = row["output_id"]
+        content_storage_path = row["content_storage_path"]
+        requester_id = row["requester_id"]
+
+        try:
+            await self.storage.delete(
+                requester_id, content_storage_path, bucket=storage.OUTPUTS_BUCKET
+            )
+        except storage.ObjectNotFound:
+            pass
+        except storage.StorageError as exc:
+            logger.warning(
+                "Storage delete failed for discovered tombstone %s: %s",
+                output_id,
+                type(exc).__name__,
+            )
+            raise CleanupError("failed to delete tombstoned storage object") from exc
+
+        async with self.db_pool.acquire() as conn:
+            try:
+                deleted = await conn.fetchval(
+                    "SELECT public.finalize_tombstone_delete($1, $2)",
+                    output_id,
+                    worker_id,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "finalize_tombstone_delete failed for discovered tombstone %s worker %s: %s",
+                    output_id,
+                    worker_id,
+                    type(exc).__name__,
+                )
+                raise CleanupError("failed to finalize tombstone delete") from exc
+
+        if not deleted:
+            logger.warning(
+                "finalize_tombstone_delete returned false for discovered tombstone %s worker %s",
+                output_id,
+                worker_id,
+            )
+            raise CleanupError("discovered tombstone row was not finalized")
+
+        return True
+
     async def _cleanup_tombstoned_output(
         self,
         job: dict[str, Any],
@@ -1138,9 +1209,7 @@ class PostCallOrchestrator:
             return self._redacted_failure("runtime_error", finalized=False)
 
         if completion_status == "cancelled":
-            await self._cleanup_staged_output(
-                job, output_id, attempt_number, lease_token
-            )
+            await self._cleanup_tombstoned_output(job, output_id)
             return self._redacted_failure("cancelled", finalized=True)
 
         return ExecutorResult(
@@ -1403,3 +1472,10 @@ class PostCallExecutor:
     async def execute(self, job: dict[str, Any]) -> ExecutorResult:
         context = OrchestratorContext(cancellation=self._cancellation)
         return await self.orchestrator.execute(job, context)
+
+    async def cleanup_next_tombstone(
+        self,
+        worker_id: str,
+        lease_seconds: int = CLEANUP_LEASE_SECONDS,
+    ) -> bool:
+        return await self.orchestrator.cleanup_next_tombstone(worker_id, lease_seconds)

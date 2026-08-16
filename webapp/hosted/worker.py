@@ -23,6 +23,8 @@ from .executor import EchoExecutor, Executor, ExecutorResult
 
 logger = logging.getLogger(__name__)
 
+CLEANUP_LEASE_SECONDS = 60
+
 
 def worker_id() -> str:
     """Return a stable identifier for this worker process."""
@@ -81,16 +83,39 @@ class Worker:
         """Signal the worker to stop after the current attempt completes."""
         self._stop.set()
 
+    async def cleanup_next_tombstone(self) -> bool:
+        """If the executor supports durable tombstone cleanup, clean one row.
+
+        Any failure is logged and suppressed so a tombstone cleanup problem
+        does not block the worker from processing jobs.
+        """
+        if not hasattr(self.executor, "cleanup_next_tombstone"):
+            return False
+        try:
+            return await self.executor.cleanup_next_tombstone(
+                self.worker_name, CLEANUP_LEASE_SECONDS
+            )
+        except Exception as exc:
+            logger.warning(
+                "Worker %s tombstone cleanup failed: %s",
+                self.worker_name,
+                type(exc).__name__,
+            )
+            return False
+
     async def run(self) -> None:
-        """Poll until stopped, recovering expired leases and claiming work."""
+        """Poll until stopped, recovering expired leases and cleaning tombstones."""
         logger.info("Worker %s started", self.worker_name)
         while not self._stop.is_set():
             try:
                 recovered = await self.recover_expired_leases()
                 if recovered:
                     logger.debug("Worker %s recovered %s expired lease(s)", self.worker_name, recovered)
+                cleaned = await self.cleanup_next_tombstone()
+                if cleaned:
+                    logger.debug("Worker %s cleaned one tombstone", self.worker_name)
                 processed = await self.process_one()
-                if not processed:
+                if not processed and not cleaned and not recovered:
                     await asyncio.wait_for(self._stop.wait(), timeout=self.poll_interval)
             except asyncio.TimeoutError:
                 continue
@@ -100,8 +125,9 @@ class Worker:
         logger.info("Worker %s stopped", self.worker_name)
 
     async def run_once(self) -> bool:
-        """Run a single poll/claim/execute cycle and return whether a job ran."""
+        """Run a single poll cycle: recover, clean tombstones, and claim work."""
         await self.recover_expired_leases()
+        await self.cleanup_next_tombstone()
         return await self.process_one()
 
     async def recover_expired_leases(self) -> int:

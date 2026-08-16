@@ -2,10 +2,16 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 11, 2026 — HEAD TBD on `devin/slice5b1-output-persistence`. PR #44 third review blocker fix: independently retryable tombstone cleanup after job/attempt finalization._
+_Last updated: August 11, 2026 — HEAD TBD on `devin/slice5b1-output-persistence`. PR #44 fourth review blocker fix: durable operational tombstone cleanup queue and reconciliation-path cancellation cleanup._
 
 
 ## Built this session (newest first — see `git log`)
+
+- **PR #44 fourth review blocker fix: operational tombstone cleanup queue and reconciliation-path cancellation cleanup (August 11).**
+  1. **Durable self-discovering cleanup queue.** Added `webapp/hosted/migrations/008_output_cleanup_queue.sql` with `public.claim_next_tombstoned_output(...)`, which uses `FOR UPDATE SKIP LOCKED` to atomically discover and claim the next tombstoned output. A worker can poll without knowing the output id; the same worker may re-claim to retry a failed Storage delete, while other workers are excluded until the lease expires. `claim_tombstoned_output(...)` is tightened to require a non-empty worker id and a strictly positive, bounded lease.
+  2. **Worker poll loop integrates tombstone cleanup.** `webapp/hosted/worker.py` adds `cleanup_next_tombstone()` and invokes it from `run()` and `run_once()`. `webapp/hosted/post_call_orchestrator.py` adds `PostCallOrchestrator.cleanup_next_tombstone(...)` and exposes it through `PostCallExecutor` so the generic worker can drive it.
+  3. **Reconciliation-path cancellation uses retryable cleanup.** `webapp/hosted/post_call_orchestrator.py` `_reconcile_existing_output` now routes a `complete_job` cancellation through `_cleanup_tombstoned_output` instead of the attempt-scoped `_cleanup_staged_output`, so a staged output being reconciled when cancellation wins inside `complete_job` has both its Storage object and tombstone row removed.
+  4. **Regressions.** Added tests for reconciliation-path cancel-inside-`complete_job`, a Storage-delete failure followed by automatic discovery and removal via a worker poll, concurrent workers claiming different tombstones (or only one claiming a single tombstone), expired-claim reclamation, live-claim exclusion, and `app_user` invisibility. Updated `docs/DATA_MODEL.md`, `webapp/README.md`, and this log.
 
 - **PR #44 third review blocker fix: retryable tombstone cleanup after job/attempt finalization (August 11).**
   1. **Lease-bound cleanup claim/finalize path.** Added `webapp/hosted/migrations/007_output_cleanup_retry.sql` with `cleanup_claimed_by`/`cleanup_claimed_at` columns on `public.outputs` and the `claim_tombstoned_output(...)` / `finalize_tombstone_delete(...)` worker security-definer pair. A worker claims a tombstoned output, receives the trusted Storage path, deletes the object, and only then deletes the row. The same worker may re-claim to retry a failed Storage delete; other workers are excluded until the lease expires.

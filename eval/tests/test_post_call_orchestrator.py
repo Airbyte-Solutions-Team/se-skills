@@ -26,6 +26,9 @@ from eval.tests.hosted_helpers import (
     _seed_opportunity,
     _seed_transcript,
 )
+from hosted import storage as hosted_storage
+from hosted.post_call_orchestrator import OrchestratorContext, PostCallOrchestrator
+from hosted.runtime_contract import RuntimeResult, SkillRuntime
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.hosted]
 
@@ -2082,3 +2085,455 @@ async def test_symlink_in_output_workspace_is_redacted_and_removed(
     assert not Path(runtime.output_workspace).exists()
     assert runtime.secret_path.exists()
     assert runtime.secret_path.read_text(encoding="utf-8") == "secret content"
+
+
+class _FailingDeleteMemoryBackend(hosted_storage.MemoryStorageBackend):
+    """Memory backend that fails the Nth delete call to simulate Storage errors."""
+
+    def __init__(self, *args: Any, fail_after: int = 1, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._delete_calls = 0
+        self._fail_after = fail_after
+
+    async def delete(
+        self,
+        user_id: uuid.UUID | None,
+        path: str,
+        bucket: str = hosted_storage.DEFAULT_BUCKET,
+    ) -> None:
+        self._delete_calls += 1
+        if self._delete_calls == self._fail_after:
+            raise hosted_storage.StorageError("injected storage delete failure")
+        return await super().delete(user_id, path, bucket)
+
+
+async def _create_tombstone_output(
+    admin_pool: asyncpg.Pool,
+    backend: Any,
+    user_id: uuid.UUID,
+    org_id: uuid.UUID,
+    account_id: uuid.UUID,
+    transcript_id: uuid.UUID,
+    worker_name: str | None = None,
+    claimed_at: datetime | None = None,
+) -> tuple[uuid.UUID, uuid.UUID, str]:
+    """Insert a cancelled job and a tombstoned output row with a Storage object."""
+    async with admin_pool.acquire() as conn:
+        job_row = await conn.fetchrow(
+            """
+            INSERT INTO public.jobs (
+                id, org_id, account_id, transcript_id, requester_id,
+                skill, skill_version, status, max_attempts
+            ) VALUES (gen_random_uuid(), $1, $2, $3, $4, 'post-call', '1.0', 'cancelled', 1)
+            RETURNING id
+            """,
+            org_id,
+            account_id,
+            transcript_id,
+            user_id,
+        )
+        job_id = job_row["id"]
+        output_id = uuid.uuid4()
+        storage_path = f"{org_id}/{account_id}/{transcript_id}/{output_id}/output.md"
+        await conn.execute(
+            """
+            INSERT INTO public.outputs (
+                id, org_id, job_id, account_id, transcript_id, requester_id,
+                content_storage_path, title, sidecar, skill, validation_status,
+                tombstoned_at, cleanup_claimed_by, cleanup_claimed_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, 'post-call',
+                      'unvalidated', clock_timestamp(), $10, $11)
+            """,
+            output_id,
+            org_id,
+            job_id,
+            account_id,
+            transcript_id,
+            user_id,
+            storage_path,
+            "title",
+            json.dumps({}),
+            worker_name,
+            claimed_at,
+        )
+
+    async def _stream() -> AsyncGenerator[bytes, None]:
+        yield b"staged output bytes"
+
+    await backend.upload(
+        user_id,
+        storage_path,
+        _stream(),
+        "text/markdown; charset=utf-8",
+        bucket=hosted_storage.OUTPUTS_BUCKET,
+    )
+    return job_id, output_id, storage_path
+
+
+async def _seed_and_upload_transcript(
+    admin_pool: asyncpg.Pool,
+    app_client: TestClient,
+    backend: Any,
+    text: str = "Discovery call.",
+) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID]:
+    """Create a user/org/account/transcript and upload the transcript file."""
+    user_id, org_id, account_id, transcript_id, _ = await _seed_job_ready_org(admin_pool)
+    await _upload_transcript_content(backend, user_id, org_id, account_id, transcript_id, text)
+    return user_id, org_id, account_id, transcript_id
+
+
+class _CountedRuntime(SkillRuntime):
+    """Runtime that records how many times it was invoked."""
+
+    def __init__(self, markdown: str, sidecar: dict[str, Any]) -> None:
+        self.markdown = markdown
+        self.sidecar = sidecar
+        self.calls = 0
+
+    async def execute(self, job: Any, cancellation: Any) -> Any:
+        self.calls += 1
+        output_dir = Path(job.output_workspace)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "output.md").write_text(self.markdown, encoding="utf-8")
+        (output_dir / "sidecar.json").write_text(json.dumps(self.sidecar), encoding="utf-8")
+        return RuntimeResult(output_artifact=self.markdown, sidecar=self.sidecar)
+
+
+class _FailFirstCompleteThenCancel(PostCallOrchestrator):
+    """Orchestrator that raises on the first complete_job call and cancels on the second."""
+
+    _admin_pool: asyncpg.Pool | None = None
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.complete_calls = 0
+
+    async def _complete_job_sql(
+        self,
+        job: dict[str, Any],
+        attempt_number: int,
+        lease_token: uuid.UUID,
+        persisted: Any,
+    ) -> str:
+        self.complete_calls += 1
+        if self.complete_calls == 1:
+            raise RuntimeError("injected complete_job failure")
+        if self._admin_pool is not None:
+            async with self._admin_pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE public.jobs SET cancel_requested_at = clock_timestamp() WHERE id = $1",
+                    uuid.UUID(job["job_id"]),
+                )
+        return await super()._complete_job_sql(job, attempt_number, lease_token, persisted)
+
+
+async def test_reconciliation_cancel_inside_complete_job_deletes_staged_evidence(
+    admin_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    app_client: TestClient,
+    backend: Any,
+) -> None:
+    """A staged output being reconciled is removed when cancellation wins inside complete_job."""
+    from hosted.post_call_orchestrator import OrchestratorContext, PostCallOrchestrator
+    from hosted.runtime_contract import SkillRuntime
+    from hosted.worker import Worker
+
+    user_id, org_id, account_id, transcript_id, _ = await _seed_job_ready_org(admin_pool)
+    await _upload_transcript_content(
+        backend, user_id, org_id, account_id, transcript_id, "Discovery call."
+    )
+
+    response = app_client.post(
+        f"/api/hosted/accounts/{account_id}/jobs",
+        json={"account_id": str(account_id), "transcript_id": str(transcript_id), "skill": "post-call"},
+        headers=_auth_header(user_id, "orch-test@airbyte.io"),
+    )
+    assert response.status_code == 201
+    job_id = response.json()["id"]
+
+    async with worker_pool.acquire() as conn:
+        claim = await conn.fetchrow(
+            "SELECT * FROM public.claim_next_job($1, $2)", "reconcile-cancel", 60
+        )
+    assert claim is not None
+    job = _job_from_claim(claim)
+
+    runtime = _CountedRuntime(_valid_full_output(), _full_sidecar())
+    orchestrator = _FailFirstCompleteThenCancel(
+        runtime, db_pool=worker_pool, storage_backend=backend
+    )
+    orchestrator._admin_pool = admin_pool
+
+    result1 = await orchestrator.execute(job, OrchestratorContext())
+    assert result1.error_category is not None
+    assert result1.finalized is False
+    assert runtime.calls == 1
+
+    async with admin_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT COUNT(*) AS cnt FROM public.outputs WHERE job_id = $1", job_id
+        )
+    assert row["cnt"] == 1
+
+    result2 = await orchestrator.execute(job, OrchestratorContext())
+    assert result2.error_category == "cancelled"
+    assert result2.finalized is True
+    assert result2.output_id is None
+    assert runtime.calls == 1, "runtime must not be rerun during reconciliation"
+
+    async with admin_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT COUNT(*) AS cnt FROM public.outputs WHERE job_id = $1", job_id
+        )
+    assert row["cnt"] == 0
+
+    output_keys = [
+        k for k in backend.objects if k.startswith(f"{hosted_storage.OUTPUTS_BUCKET}:")
+    ]
+    assert len(output_keys) == 0
+
+    detail = app_client.get(
+        f"/api/hosted/jobs/{job_id}",
+        headers=_auth_header(user_id, "orch-test@airbyte.io"),
+    ).json()
+    assert detail["job"]["status"] == "cancelled"
+    assert detail["job"]["result_output_id"] is None
+
+    list_resp = app_client.get(
+        f"/api/hosted/accounts/{account_id}/outputs",
+        headers=_auth_header(user_id, "orch-test@airbyte.io"),
+    )
+    assert list_resp.json()["outputs"] == []
+
+
+async def test_worker_poll_discovers_and_removes_tombstone_after_storage_delete_failure(
+    admin_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    user_pool: asyncpg.Pool,
+    app_client: TestClient,
+) -> None:
+    """A worker poll discovers a tombstone, retries a failed Storage delete, and removes it."""
+    from hosted.post_call_orchestrator import PostCallExecutor
+    from hosted.runtime_contract import SkillRuntime
+    from hosted.worker import Worker
+
+    class DummyRuntime(SkillRuntime):
+        async def execute(self, job: Any, cancellation: Any) -> Any:
+            raise AssertionError("runtime should not be invoked for cleanup")
+
+    failing_backend = _FailingDeleteMemoryBackend(admin_pool=admin_pool, fail_after=1)
+    user_id, org_id, account_id, transcript_id = await _seed_and_upload_transcript(
+        admin_pool, app_client, failing_backend
+    )
+
+    job_id, output_id, _ = await _create_tombstone_output(
+        admin_pool, failing_backend, user_id, org_id, account_id, transcript_id
+    )
+
+    executor = PostCallExecutor(
+        DummyRuntime(), db_pool=worker_pool, storage_backend=failing_backend
+    )
+    worker = Worker(worker_pool, executor=executor, worker_name="cleanup-poll-1")
+
+    # First poll: cleanup fails on the Storage delete, leaving a claimed tombstone.
+    processed = await worker.run_once()
+    assert processed is False
+
+    async with admin_pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM public.outputs WHERE id = $1", output_id)
+    assert row is not None
+    assert row["tombstoned_at"] is not None
+    assert row["cleanup_claimed_by"] == "cleanup-poll-1"
+
+    output_keys = [
+        k for k in failing_backend.objects if k.startswith(f"{hosted_storage.OUTPUTS_BUCKET}:")
+    ]
+    assert len(output_keys) == 1
+
+    # Second poll: the same worker re-claims and the Storage delete now succeeds.
+    processed = await worker.run_once()
+    assert processed is False
+
+    async with admin_pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM public.outputs WHERE id = $1", output_id)
+    assert row is None
+
+    output_keys = [
+        k for k in failing_backend.objects if k.startswith(f"{hosted_storage.OUTPUTS_BUCKET}:")
+    ]
+    assert len(output_keys) == 0
+
+    context_token = _context_token(user_id)
+    async with user_pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT set_config('app.context_token', $1, true)", context_token
+            )
+            rows = await conn.fetch(
+                "SELECT id FROM public.outputs WHERE org_id = $1", org_id
+            )
+    assert len(rows) == 0
+
+
+@pytest.mark.parametrize("tombstone_count", [1, 2])
+async def test_concurrent_cleanup_workers_claim_tombstones(
+    admin_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    app_client: TestClient,
+    tombstone_count: int,
+) -> None:
+    """Concurrent cleanup workers claim different tombstones or only one claims a single tombstone."""
+    from hosted.post_call_orchestrator import PostCallExecutor
+    from hosted.runtime_contract import SkillRuntime
+
+    class DummyRuntime(SkillRuntime):
+        async def execute(self, job: Any, cancellation: Any) -> Any:
+            raise AssertionError("runtime should not be invoked for cleanup")
+
+    test_backend = hosted_storage.MemoryStorageBackend(admin_pool=admin_pool)
+    user_id, org_id, account_id, transcript_id = await _seed_and_upload_transcript(
+        admin_pool, app_client, test_backend
+    )
+
+    tombstones: list[tuple[uuid.UUID, uuid.UUID, str]] = []
+    for _ in range(tombstone_count):
+        job_id, output_id, _ = await _create_tombstone_output(
+            admin_pool, test_backend, user_id, org_id, account_id, transcript_id
+        )
+        tombstones.append((job_id, output_id, _))
+
+    barrier = asyncio.Barrier(2)
+
+    async def cleanup(worker_name: str) -> bool:
+        executor = PostCallExecutor(
+            DummyRuntime(), db_pool=worker_pool, storage_backend=test_backend
+        )
+        await barrier.wait()
+        try:
+            return await executor.cleanup_next_tombstone(worker_name, lease_seconds=60)
+        except Exception:
+            return False
+
+    results = await asyncio.gather(cleanup("worker-a"), cleanup("worker-b"))
+    successes = [r for r in results if r]
+    failures = [r for r in results if not r]
+
+    assert len(successes) == tombstone_count
+    assert len(failures) == 2 - tombstone_count
+
+    async with admin_pool.acquire() as conn:
+        remaining = await conn.fetchval(
+            "SELECT COUNT(*) FROM public.outputs WHERE job_id = ANY($1)",
+            [t[0] for t in tombstones],
+        )
+    assert remaining == 0
+
+    output_keys = [
+        k for k in test_backend.objects if k.startswith(f"{hosted_storage.OUTPUTS_BUCKET}:")
+    ]
+    assert len(output_keys) == 0
+
+
+async def test_expired_claim_is_reclaimed_and_live_claim_is_not(
+    admin_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    user_pool: asyncpg.Pool,
+    app_client: TestClient,
+) -> None:
+    """An expired cleanup claim can be stolen by another worker; a live claim cannot."""
+    from hosted.post_call_orchestrator import PostCallExecutor
+    from hosted.runtime_contract import SkillRuntime
+
+    class DummyRuntime(SkillRuntime):
+        async def execute(self, job: Any, cancellation: Any) -> Any:
+            raise AssertionError("runtime should not be invoked for cleanup")
+
+    test_backend = hosted_storage.MemoryStorageBackend(admin_pool=admin_pool)
+    user_id, org_id, account_id, transcript_id = await _seed_and_upload_transcript(
+        admin_pool, app_client, test_backend
+    )
+
+    # Expired claim: worker1 claimed 2 seconds ago with a 1-second lease.
+    _, expired_output_id, _ = await _create_tombstone_output(
+        admin_pool,
+        test_backend,
+        user_id,
+        org_id,
+        account_id,
+        transcript_id,
+        worker_name="worker-expired",
+        claimed_at=datetime.now(tz=timezone.utc) - timedelta(seconds=2),
+    )
+
+    # Live claim: worker1 just claimed with a 60-second lease.
+    _, live_output_id, _ = await _create_tombstone_output(
+        admin_pool,
+        test_backend,
+        user_id,
+        org_id,
+        account_id,
+        transcript_id,
+        worker_name="worker-live",
+        claimed_at=datetime.now(tz=timezone.utc),
+    )
+
+    executor = PostCallExecutor(
+        DummyRuntime(), db_pool=worker_pool, storage_backend=test_backend
+    )
+
+    # Another worker can reclaim the expired tombstone.
+    success = await executor.cleanup_next_tombstone("worker-2", lease_seconds=1)
+    assert success is True
+
+    async with admin_pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM public.outputs WHERE id = $1", expired_output_id)
+    assert row is None
+
+    # The live-claimed tombstone is not reclaimed and its object remains.
+    success = await executor.cleanup_next_tombstone("worker-2", lease_seconds=60)
+    assert success is False
+
+    async with admin_pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM public.outputs WHERE id = $1", live_output_id)
+    assert row is not None
+
+    output_keys = [
+        k for k in test_backend.objects if k.startswith(f"{hosted_storage.OUTPUTS_BUCKET}:")
+    ]
+    assert len(output_keys) == 1
+
+    context_token = _context_token(user_id)
+    async with user_pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT set_config('app.context_token', $1, true)", context_token
+            )
+            rows = await conn.fetch(
+                "SELECT id FROM public.outputs WHERE org_id = $1", org_id
+            )
+    assert len(rows) == 0
+
+
+async def test_claim_next_tombstoned_output_validates_worker_id_and_lease(
+    worker_pool: asyncpg.Pool,
+) -> None:
+    """The cleanup queue rejects empty worker ids and invalid lease durations."""
+    async with worker_pool.acquire() as conn:
+        with pytest.raises(asyncpg.exceptions.RaiseError):
+            await conn.fetchrow(
+                "SELECT * FROM public.claim_next_tombstoned_output($1, $2)",
+                "",
+                60,
+            )
+        with pytest.raises(asyncpg.exceptions.RaiseError):
+            await conn.fetchrow(
+                "SELECT * FROM public.claim_next_tombstoned_output($1, $2)",
+                "worker",
+                0,
+            )
+        with pytest.raises(asyncpg.exceptions.RaiseError):
+            await conn.fetchrow(
+                "SELECT * FROM public.claim_next_tombstoned_output($1, $2)",
+                "worker",
+                3601,
+            )
