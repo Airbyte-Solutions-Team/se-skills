@@ -206,7 +206,7 @@ This is the source of truth for productionalization slices and progress. Each sl
 
 ## Slice 5B1: Trusted worker-side post-call orchestration and output persistence
 
-**Status:** `In Progress`
+**Status:** `Complete` (PR #44)
 
 **Product outcome:** A `post-call` job can be claimed by a trusted worker, materialize authorized inputs, invoke an injected `SkillRuntime`, validate the returned artifact outside the runtime, and persist a valid output to private org-scoped Storage and Postgres with an authoritative `outputs` row.
 
