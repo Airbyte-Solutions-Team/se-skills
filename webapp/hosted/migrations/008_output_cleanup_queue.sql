@@ -64,6 +64,11 @@ ALTER FUNCTION public.claim_tombstoned_output(UUID, TEXT, INTEGER) OWNER TO app_
 REVOKE ALL ON FUNCTION public.claim_tombstoned_output(UUID, TEXT, INTEGER) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.claim_tombstoned_output(UUID, TEXT, INTEGER) TO app_worker;
 
+-- Ensure finalize_tombstone_delete has the correct ownership and least-privilege grants.
+ALTER FUNCTION public.finalize_tombstone_delete(UUID, TEXT) OWNER TO app_admin;
+REVOKE ALL ON FUNCTION public.finalize_tombstone_delete(UUID, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.finalize_tombstone_delete(UUID, TEXT) TO app_worker;
+
 -- Atomically discover and claim the next tombstoned output that is not already
 -- held by another worker within its lease.  Same-worker re-claims are allowed
 -- so a worker can retry a failed Storage delete; other workers must wait for
