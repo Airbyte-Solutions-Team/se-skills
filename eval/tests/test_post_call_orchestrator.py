@@ -1406,3 +1406,315 @@ async def test_completion_failure_recovers_without_rerunning_runtime(
     ).json()
     assert detail["job"]["status"] == "success"
     assert detail["job"]["result_output_id"] == str(result2.output_id)
+
+
+@pytest.mark.parametrize(
+    "validation_status,tombstoned",
+    [
+        pytest.param("valid", False, id="valid_is_visible"),
+        pytest.param("unvalidated", False, id="unvalidated_is_hidden"),
+        pytest.param("invalid", False, id="invalid_is_hidden"),
+        pytest.param("valid", True, id="tombstoned_valid_is_hidden"),
+    ],
+)
+async def test_outputs_rls_hides_unvalidated_invalid_and_tombstoned_from_app_user(
+    admin_pool: asyncpg.Pool,
+    user_pool: asyncpg.Pool,
+    validation_status: str,
+    tombstoned: bool,
+) -> None:
+    """The tenant role can only read valid, non-tombstoned outputs at the DB boundary."""
+    user_id, org_id, account_id, transcript_id, _ = await _seed_job_ready_org(admin_pool)
+    tombstoned_at = datetime.now(tz=timezone.utc) if tombstoned else None
+
+    async with admin_pool.acquire() as conn:
+        job_row = await conn.fetchrow(
+            """
+            INSERT INTO public.jobs (
+                org_id, account_id, transcript_id, requester_id,
+                skill, skill_version, status, max_attempts
+            ) VALUES ($1, $2, $3, $4, 'post-call', '1.0', 'success', 1)
+            RETURNING id
+            """,
+            org_id,
+            account_id,
+            transcript_id,
+            user_id,
+        )
+        job_id = job_row["id"]
+        output_id = uuid.uuid4()
+        await conn.execute(
+            """
+            INSERT INTO public.outputs (
+                id, org_id, job_id, account_id, transcript_id, requester_id,
+                content_storage_path, title, sidecar, skill, validation_status, tombstoned_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, 'post-call', $10, $11)
+            """,
+            output_id,
+            org_id,
+            job_id,
+            account_id,
+            transcript_id,
+            user_id,
+            f"{org_id}/{account_id}/{transcript_id}/{output_id}/output.md",
+            "title",
+            json.dumps({}),
+            validation_status,
+            tombstoned_at,
+        )
+
+    context_token = _context_token(user_id)
+    async with user_pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("SELECT set_config('app.context_token', $1, true)", context_token)
+            rows = await conn.fetch(
+                "SELECT id, validation_status, tombstoned_at FROM public.outputs WHERE org_id = $1",
+                org_id,
+            )
+
+    if validation_status == "valid" and not tombstoned:
+        assert len(rows) == 1
+        assert rows[0]["id"] == output_id
+    else:
+        assert len(rows) == 0
+
+
+@pytest.mark.parametrize(
+    "cancel_after,description",
+    [
+        pytest.param(3, "cancellation after metadata row creation", id="after_metadata"),
+        pytest.param(4, "cancellation after storage upload", id="after_upload"),
+    ],
+)
+async def test_cleanup_failure_leaves_tombstone_and_cancels_job(
+    admin_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    app_client: TestClient,
+    cancel_after: int,
+    description: str,
+) -> None:
+    """A cancelled/timeout cleanup that cannot delete the Storage object leaves a tombstone."""
+    from hosted import storage as hosted_storage
+    from hosted.post_call_orchestrator import OrchestratorContext
+    from hosted.runtime_contract import RuntimeResult, SkillRuntime
+
+    class FailingDeleteMemoryBackend(hosted_storage.MemoryStorageBackend):
+        """Memory backend that fails the Nth delete call to simulate Storage errors."""
+
+        def __init__(self, *args: Any, fail_after: int = 1, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self._delete_calls = 0
+            self._fail_after = fail_after
+
+        async def delete(
+            self,
+            user_id: uuid.UUID | None,
+            path: str,
+            bucket: str = hosted_storage.DEFAULT_BUCKET,
+        ) -> None:
+            self._delete_calls += 1
+            if self._delete_calls == self._fail_after:
+                raise hosted_storage.StorageError("injected storage delete failure")
+            return await super().delete(user_id, path, bucket)
+
+    user_id, org_id, account_id, transcript_id, _ = await _seed_job_ready_org(admin_pool)
+    failing_backend = FailingDeleteMemoryBackend(admin_pool=admin_pool, fail_after=1)
+    await _upload_transcript_content(
+        failing_backend, user_id, org_id, account_id, transcript_id, "Discovery call."
+    )
+
+    response = app_client.post(
+        f"/api/hosted/accounts/{account_id}/jobs",
+        json={"account_id": str(account_id), "transcript_id": str(transcript_id), "skill": "post-call"},
+        headers=_auth_header(user_id, "orch-test@airbyte.io"),
+    )
+    assert response.status_code == 201
+    job_id = response.json()["id"]
+
+    async with worker_pool.acquire() as conn:
+        claim = await conn.fetchrow(
+            "SELECT * FROM public.claim_next_job($1, $2)", "cleanup-fail", 60
+        )
+    assert claim is not None
+    job = _job_from_claim(claim)
+
+    class CountedRuntime(SkillRuntime):
+        def __init__(self, markdown: str, sidecar: dict[str, Any]) -> None:
+            self.markdown = markdown
+            self.sidecar = sidecar
+
+        async def execute(self, job: Any, cancellation: Any) -> Any:
+            output_dir = Path(job.output_workspace)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            (output_dir / "output.md").write_text(self.markdown, encoding="utf-8")
+            (output_dir / "sidecar.json").write_text(json.dumps(self.sidecar), encoding="utf-8")
+            return RuntimeResult(output_artifact=self.markdown, sidecar=self.sidecar)
+
+    runtime = CountedRuntime(_valid_full_output(), _full_sidecar())
+    orchestrator = await _counting_cancel_orchestrator(
+        runtime, worker_pool, failing_backend, cancel_after
+    )
+    result = await orchestrator.execute(job, OrchestratorContext())
+    assert result.error_category == "cleanup_error"
+    assert result.output_id is None
+    assert result.finalized is True
+
+    detail = app_client.get(
+        f"/api/hosted/jobs/{job_id}",
+        headers=_auth_header(user_id, "orch-test@airbyte.io"),
+    ).json()
+    assert detail["job"]["status"] == "cancelled"
+
+    async with admin_pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM public.outputs WHERE job_id = $1", job_id)
+    assert row is not None
+    assert row["validation_status"] == "unvalidated"
+    assert row["tombstoned_at"] is not None
+
+    output_keys = [
+        k for k in failing_backend.objects if k.startswith(f"{hosted_storage.OUTPUTS_BUCKET}:")
+    ]
+    if cancel_after == 4:
+        # The object was uploaded before cleanup failed, so it remains in Storage.
+        assert len(output_keys) == 1
+    else:
+        # The object was never uploaded, so only the metadata tombstone remains.
+        assert len(output_keys) == 0
+
+    # The tenant API never exposes the tombstoned output.
+    list_resp = app_client.get(
+        f"/api/hosted/accounts/{account_id}/outputs",
+        headers=_auth_header(user_id, "orch-test@airbyte.io"),
+    )
+    assert list_resp.json()["outputs"] == []
+
+
+async def test_delete_job_output_preserves_tombstone_when_attempt_is_finished(
+    admin_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    app_client: TestClient,
+) -> None:
+    """If delete_job_output cannot run because the attempt finished, the tombstone remains."""
+    user_id, org_id, account_id, transcript_id, _ = await _seed_job_ready_org(admin_pool)
+
+    response = app_client.post(
+        f"/api/hosted/accounts/{account_id}/jobs",
+        json={"account_id": str(account_id), "transcript_id": str(transcript_id), "skill": "post-call"},
+        headers=_auth_header(user_id, "orch-test@airbyte.io"),
+    )
+    assert response.status_code == 201
+    job_id = response.json()["id"]
+    output_id = uuid.uuid4()
+    storage_path = f"{org_id}/{account_id}/{transcript_id}/{output_id}/output.md"
+
+    async with worker_pool.acquire() as conn:
+        claim = await conn.fetchrow(
+            "SELECT * FROM public.claim_next_job($1, $2)", "db-fail", 60
+        )
+    assert claim is not None
+
+    async with admin_pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO public.outputs (
+                id, org_id, job_id, account_id, transcript_id, requester_id,
+                content_storage_path, title, sidecar, skill, validation_status
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, 'post-call', 'unvalidated')
+            """,
+            output_id,
+            org_id,
+            job_id,
+            account_id,
+            transcript_id,
+            user_id,
+            storage_path,
+            "title",
+            json.dumps({}),
+        )
+
+    await worker_pool.fetchval(
+        "SELECT public.tombstone_job_output($1, $2, $3, $4)",
+        output_id,
+        job_id,
+        claim["attempt_number"],
+        claim["lease_token"],
+    )
+
+    # Simulate a terminal state where delete_job_output cannot proceed.
+    async with admin_pool.acquire() as conn:
+        await conn.execute("UPDATE public.jobs SET status = 'cancelled' WHERE id = $1", job_id)
+        await conn.execute(
+            "UPDATE public.job_attempts SET outcome = 'cancelled' WHERE job_id = $1 AND attempt_number = $2",
+            job_id,
+            claim["attempt_number"],
+        )
+
+    with pytest.raises(asyncpg.exceptions.RaiseError):
+        await worker_pool.fetchval(
+            "SELECT public.delete_job_output($1, $2, $3, $4)",
+            output_id,
+            job_id,
+            claim["attempt_number"],
+            claim["lease_token"],
+        )
+
+    async with admin_pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM public.outputs WHERE id = $1", output_id)
+    assert row is not None
+    assert row["tombstoned_at"] is not None
+    assert row["validation_status"] == "unvalidated"
+
+
+async def test_symlink_in_output_workspace_is_redacted_and_removed(
+    admin_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    app_client: TestClient,
+    backend: Any,
+) -> None:
+    """A runtime that writes a symlink as output.md produces a redacted output_error and cleanup."""
+    from hosted.post_call_orchestrator import OrchestratorContext, PostCallOrchestrator
+    from hosted.runtime_contract import RuntimeResult, SkillRuntime
+
+    user_id, org_id, account_id, transcript_id, _ = await _seed_job_ready_org(admin_pool)
+    await _upload_transcript_content(
+        backend, user_id, org_id, account_id, transcript_id, "Discovery call."
+    )
+
+    response = app_client.post(
+        f"/api/hosted/accounts/{account_id}/jobs",
+        json={"account_id": str(account_id), "transcript_id": str(transcript_id), "skill": "post-call"},
+        headers=_auth_header(user_id, "orch-test@airbyte.io"),
+    )
+    assert response.status_code == 201
+    job_id = response.json()["id"]
+
+    async with worker_pool.acquire() as conn:
+        claim = await conn.fetchrow(
+            "SELECT * FROM public.claim_next_job($1, $2)", "symlink-test", 60
+        )
+    assert claim is not None
+    job = _job_from_claim(claim)
+
+    class SymlinkRuntime(SkillRuntime):
+        async def execute(self, job: Any, cancellation: Any) -> Any:
+            output_dir = Path(job.output_workspace)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            self.output_workspace = str(output_dir)
+            self.secret_path = Path(tempfile.mktemp(prefix="symlink-target-"))
+            self.secret_path.write_text("secret content", encoding="utf-8")
+            (output_dir / "output.md").symlink_to(self.secret_path)
+            (output_dir / "sidecar.json").write_text(
+                json.dumps(_full_sidecar()), encoding="utf-8"
+            )
+            return RuntimeResult(output_artifact="", sidecar=_full_sidecar())
+
+    runtime = SymlinkRuntime()
+    orchestrator = PostCallOrchestrator(runtime, db_pool=worker_pool, storage_backend=backend)
+    result = await orchestrator.execute(job, OrchestratorContext())
+    assert result.error_category == "output_error"
+    assert result.output_id is None
+    assert result.finalized is False
+
+    assert not Path(runtime.output_workspace).exists()
+    assert runtime.secret_path.exists()
+    assert runtime.secret_path.read_text(encoding="utf-8") == "secret content"

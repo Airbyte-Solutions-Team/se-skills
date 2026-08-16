@@ -58,6 +58,10 @@ class RuntimeOutputError(ValueError):
     """Raised when the runtime output workspace contains an unsafe artifact."""
 
 
+class CleanupError(RuntimeOutputError):
+    """Raised when the orchestrator cannot remove staged output evidence."""
+
+
 @runtime_checkable
 class CancellationSource(Protocol):
     """Something the worker can poll to see if cancellation was requested."""
@@ -214,13 +218,20 @@ class PostCallOrchestrator:
     def _make_writable(path: Path) -> None:
         """Recursively chmod a workspace so `shutil.rmtree` can remove it.
 
-        Symlinks are not followed so a compromised runtime cannot redirect this
-        cleanup to an unrelated host path.
+        Symlinks are removed without following them and without chmod, because
+        `os.chmod(..., follow_symlinks=False)` raises `NotImplementedError` on
+        Linux for symlink targets.  Real files and directories are made writable.
         """
+        if path.is_symlink():
+            path.unlink()
+            return
         if not path.exists():
             return
-        os.chmod(str(path), 0o700, follow_symlinks=False)
-        if path.is_dir() and not path.is_symlink():
+        try:
+            os.chmod(str(path), 0o700, follow_symlinks=False)
+        except NotImplementedError:
+            return
+        if path.is_dir():
             for child in path.iterdir():
                 PostCallOrchestrator._make_writable(child)
 
@@ -770,20 +781,25 @@ class PostCallOrchestrator:
         attempt_number: int,
         lease_token: uuid.UUID,
     ) -> None:
-        """Delete an unvalidated outputs row and its Storage object."""
+        """Tombstone an unvalidated output, delete its Storage object, then delete the row.
+
+        The metadata row is tombstoned before the Storage object is removed so a
+        failed Storage delete leaves a durable, hidden record instead of orphaned
+        customer content.  If the row cannot be deleted after the object is gone,
+        the tombstone remains and a `CleanupError` is raised so the caller can
+        finalize the job without retrying.
+        """
         job_id = uuid.UUID(job["job_id"])
         org_id = uuid.UUID(job["org_id"])
         account_id = uuid.UUID(job["account_id"])
         transcript_id = uuid.UUID(job["transcript_id"])
         requester_id = uuid.UUID(job["requester_id"])
-        content_storage_path = _storage_path_for_output(
-            org_id, account_id, transcript_id, output_id
-        )
 
+        content_storage_path: str | None = None
         async with self.db_pool.acquire() as conn:
             try:
-                await conn.fetchval(
-                    "SELECT public.delete_job_output($1, $2, $3, $4)",
+                content_storage_path = await conn.fetchval(
+                    "SELECT public.tombstone_job_output($1, $2, $3, $4)",
                     output_id,
                     job_id,
                     attempt_number,
@@ -791,10 +807,16 @@ class PostCallOrchestrator:
                 )
             except Exception as exc:
                 logger.warning(
-                    "delete_job_output failed during cleanup for job %s: %s",
+                    "tombstone_job_output failed during cleanup for job %s: %s",
                     job_id,
                     type(exc).__name__,
                 )
+                raise CleanupError("failed to tombstone output row") from exc
+
+        if content_storage_path is None:
+            content_storage_path = _storage_path_for_output(
+                org_id, account_id, transcript_id, output_id
+            )
 
         try:
             await self.storage.delete(
@@ -808,6 +830,32 @@ class PostCallOrchestrator:
                 job_id,
                 type(exc).__name__,
             )
+            raise CleanupError("failed to delete staged storage object") from exc
+
+        async with self.db_pool.acquire() as conn:
+            try:
+                deleted = await conn.fetchval(
+                    "SELECT public.delete_job_output($1, $2, $3, $4)",
+                    output_id,
+                    job_id,
+                    attempt_number,
+                    lease_token,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "delete_job_output failed during cleanup for job %s: %s",
+                    job_id,
+                    type(exc).__name__,
+                )
+                raise CleanupError("failed to delete tombstoned output row") from exc
+
+        if not deleted:
+            logger.warning(
+                "delete_job_output returned false for job %s output %s",
+                job_id,
+                output_id,
+            )
+            raise CleanupError("tombstoned output row was not deleted")
 
     async def _reconcile_existing_output(
         self,
@@ -1153,6 +1201,8 @@ class PostCallOrchestrator:
                     context,
                     timeout_seconds,
                 )
+            except CleanupError:
+                raise
             except Exception as exc:
                 logger.warning(
                     "Post-call output persistence failed for job %s: %s",
@@ -1196,6 +1246,18 @@ class PostCallOrchestrator:
                 model=persisted.model,
                 finalized=True,
             )
+        except CleanupError as exc:
+            logger.warning(
+                "Post-call cleanup failed for job %s attempt %s: %s",
+                job.get("job_id", "unknown"),
+                job.get("attempt_number", "unknown"),
+                type(exc).__name__,
+            )
+            try:
+                await self._cancel_job_sql(job, attempt_number, lease_token)
+            except Exception:
+                pass
+            return self._redacted_failure("cleanup_error", finalized=True)
         except Exception as exc:
             logger.warning(
                 "Post-call orchestration failed for job %s attempt %s: %s",

@@ -57,7 +57,7 @@ async def list_account_outputs(
                    title, validation_status, sidecar, skill, skill_version, model,
                    runtime_version, generated_at, created_at
             FROM public.outputs
-            WHERE org_id = $1 AND account_id = $2 AND validation_status = 'valid'
+            WHERE org_id = $1 AND account_id = $2 AND validation_status = 'valid' AND tombstoned_at IS NULL
             ORDER BY created_at DESC
             """,
             org.org_id,
@@ -83,7 +83,7 @@ async def get_output(
                    title, validation_status, sidecar, skill, skill_version, model,
                    runtime_version, generated_at, created_at
             FROM public.outputs
-            WHERE org_id = $1 AND account_id = $2 AND id = $3 AND validation_status = 'valid'
+            WHERE org_id = $1 AND account_id = $2 AND id = $3 AND validation_status = 'valid' AND tombstoned_at IS NULL
             """,
             org.org_id,
             account_id,
@@ -110,7 +110,7 @@ async def get_output_content(
             """
             SELECT id, content_storage_path, validation_status
             FROM public.outputs
-            WHERE org_id = $1 AND account_id = $2 AND id = $3 AND validation_status = 'valid'
+            WHERE org_id = $1 AND account_id = $2 AND id = $3 AND validation_status = 'valid' AND tombstoned_at IS NULL
             """,
             org.org_id,
             account_id,

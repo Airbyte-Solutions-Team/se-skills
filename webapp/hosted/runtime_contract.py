@@ -28,6 +28,7 @@ ValidationStatus = Literal["valid", "invalid", "unvalidated"]
 NetworkScheme = Literal["http", "https"]
 FailureCategory = Literal[
     "cancelled",
+    "cleanup_error",
     "configuration_error",
     "forbidden_tool",
     "input_error",
@@ -179,6 +180,7 @@ class ExecutionMetadata(BaseModel):
 
 FAILURE_MESSAGES: dict[FailureCategory, str] = {
     "cancelled": "Execution was cancelled",
+    "cleanup_error": "Output cleanup failed",
     "configuration_error": "Runtime configuration error",
     "forbidden_tool": "Disallowed tool requested",
     "input_error": "Invalid manifest or input file",

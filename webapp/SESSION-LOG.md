@@ -2,10 +2,16 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 11, 2026 — HEAD TBD on `devin/slice5b1-output-persistence`. PR #44 review-blocker fixes for untrusted inputs, hostile filesystem objects, cancellation cleanup, completion-failure recovery, and prior-context validation._
+_Last updated: August 11, 2026 — HEAD TBD on `devin/slice5b1-output-persistence`. PR #44 second review-blocker fixes: database-level output visibility, durable staged-output cleanup, and symlink-safe workspace removal._
 
 
 ## Built this session (newest first — see `git log`)
+
+- **PR #44 second review blocker fixes: database-level output visibility, durable staged-output cleanup, and symlink-safe workspace removal (August 11).**
+  1. **Database/RLS hides unvalidated, invalid, and tombstoned outputs.** `webapp/hosted/migrations/006_output_tombstones_and_rls.sql` adds `tombstoned_at` to `public.outputs`, tightens `org_tenant_outputs` and dependent `output_versions`/`reviews` policies to `validation_status = 'valid' AND tombstoned_at IS NULL`, and replaces direct `DELETE` in `complete_job`/`cancel_job`/`fail_job` cancellation branches with `UPDATE ... SET tombstoned_at = clock_timestamp()`. A direct-SQL `app_user` test proves only valid, non-tombstoned rows are readable.
+  2. **Durable staged-output cleanup.** `webapp/hosted/post_call_orchestrator.py` `_cleanup_staged_output` now tombstones the `outputs` row first, deletes the Storage object, and only then deletes the row. A Storage-delete or DB-delete failure leaves a hidden tombstone record instead of orphaned content and raises `CleanupError`, which `execute` finalizes as a redacted `cleanup_error` after cancelling the job. `webapp/hosted/runtime_contract.py` adds `cleanup_error` to `FailureCategory`.
+  3. **Symlink-safe workspace removal.** `webapp/hosted/post_call_orchestrator.py` `_make_writable` unlinks symlinks before any `chmod` and tolerates `NotImplementedError` from `os.chmod(..., follow_symlinks=False)` on Linux, so a runtime-created symlink cannot make the `finally` block raise and leave the workspace behind. A full `execute` regression test proves a symlink `output.md` produces a redacted `output_error` and the workspace is removed.
+  4. **Tests and validation.** Added `eval/tests/test_post_call_orchestrator.py` regression tests for RLS visibility, Storage-delete failure after metadata creation and after upload, DB-delete failure preserving a tombstone, and symlink workspace cleanup. `pytest eval/` 867 passed, 1 skipped; `eval.runner` phase1 12/12 passed; `git diff --check`, `./scripts/check-sync.sh`, `node --check webapp/static/app.js`, and `python -m py_compile` on changed Python modules all clean.
 
 - **PR #44 review blocker fixes: read-only inputs, safe output ingestion, cancellation cleanup, completion-failure recovery, and valid-only prior outputs (August 11).**
   1. **Read-only materialized inputs.** `webapp/hosted/post_call_orchestrator.py` `_materialize_inputs` now `chmod`s the input directory to `0o555` and every manifest-listed transcript/prior file to `0o444` with `follow_symlinks=False`. A regression test asserts the directory and files are write-protected and that a non-root runtime cannot append to or create files inside the workspace.
