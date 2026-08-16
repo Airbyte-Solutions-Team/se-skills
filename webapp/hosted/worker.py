@@ -267,6 +267,7 @@ class Worker:
             "payload": claim["payload"],
             "input_refs": claim["input_refs"],
             "source_manifest": claim["source_manifest"],
+            "timeout_seconds": self.timeout_seconds,
         }
 
         loop = asyncio.get_event_loop()
@@ -274,11 +275,16 @@ class Worker:
         # The executor boundary receives a timezone-aware UTC wall-clock deadline,
         # not the event-loop monotonic clock.
         job["deadline_ts"] = datetime.now(tz=timezone.utc) + timedelta(seconds=self.timeout_seconds)
-        executor_task: asyncio.Task[ExecutorResult] = asyncio.create_task(self.executor.execute(job))
+
         heartbeat_stop = asyncio.Event()
         cancel_requested = asyncio.Event()
         heartbeat_lost = asyncio.Event()
         completed = asyncio.Event()
+
+        if hasattr(self.executor, "set_cancellation"):
+            self.executor.set_cancellation(cancel_requested)
+
+        executor_task: asyncio.Task[ExecutorResult] = asyncio.create_task(self.executor.execute(job))
         monitor_task = asyncio.create_task(
             self._heartbeat_monitor(
                 job_id,
@@ -376,8 +382,12 @@ class Worker:
                 return True
 
             if cancel_requested.is_set():
+                if getattr(result, "finalized", False):
+                    return True
                 await self.cancel(job_id, attempt_number, lease_token)
             elif getattr(result, "error_category", None):
+                if getattr(result, "finalized", False):
+                    return True
                 await self.fail(
                     job_id,
                     attempt_number,
@@ -389,6 +399,8 @@ class Worker:
                     model=result.model,
                 )
             else:
+                if getattr(result, "finalized", False):
+                    return True
                 await self.complete(job_id, attempt_number, lease_token, result)
             return True
         finally:

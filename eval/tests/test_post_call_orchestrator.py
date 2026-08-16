@@ -3,6 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import shutil
+import stat
+import tempfile
 import time
 import uuid
 from collections.abc import AsyncGenerator
@@ -646,8 +650,8 @@ async def test_output_api_enforces_org_isolation(
             """
             INSERT INTO public.outputs (
                 id, org_id, job_id, account_id, transcript_id, requester_id,
-                content_storage_path, title, sidecar, skill
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'post-call')
+                content_storage_path, title, sidecar, skill, validation_status
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'post-call', 'valid')
             """,
             output_id,
             org1,
@@ -884,30 +888,14 @@ async def test_retry_after_storage_upload_failure_recovers_without_duplicate(
     assert result.error_category == "runtime_error"
     assert result.output_id is None
 
-    # Second attempt with the same running lease: the unvalidated row already
-    # exists, the object is missing, and the orchestrator re-uploads the content.
+    # Second attempt with the same running lease: the unvalidated row does not
+    # exist because the failed upload was rolled back, so the runtime runs again
+    # and the orchestrator persists and finalizes the job.
     result = await executor.execute(job)
     assert result.error_category is None
     assert result.output_id is not None
     assert result.validation_status == "valid"
-
-    async with worker_pool.acquire() as conn:
-        await conn.execute(
-            """
-            SELECT public.complete_job(
-                $1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9
-            )
-            """,
-            job_id,
-            job["attempt_number"],
-            job["lease_token"],
-            result.output_id,
-            result.validation_status,
-            json.dumps(result.token_usage),
-            result.cost,
-            result.runtime_version,
-            result.model,
-        )
+    assert result.finalized is True
 
     detail = app_client.get(
         f"/api/hosted/jobs/{job_id}",
@@ -985,3 +973,436 @@ async def test_runtime_provenance_is_preserved_on_output(
     out = response.json()["output"]
     assert out["runtime_version"] == "test-runtime-9"
     assert out["model"] == "test-model-x"
+
+
+async def _create_prior_output(
+    admin_pool: asyncpg.Pool,
+    backend: Any,
+    user_id: uuid.UUID,
+    org_id: uuid.UUID,
+    account_id: uuid.UUID,
+    transcript_id: uuid.UUID,
+    job_status: str,
+    validation_status: str,
+) -> tuple[uuid.UUID, uuid.UUID, str]:
+    """Insert a fake prior job and output row, returning output id and content path."""
+    async with admin_pool.acquire() as conn:
+        prior_job = await conn.fetchrow(
+            """
+            INSERT INTO public.jobs (
+                org_id, account_id, transcript_id, requester_id,
+                skill, skill_version, status, max_attempts
+            ) VALUES ($1, $2, $3, $4, 'post-call', '1.0', $5, 1)
+            RETURNING id
+            """,
+            org_id,
+            account_id,
+            transcript_id,
+            user_id,
+            job_status,
+        )
+        prior_job_id = prior_job["id"]
+        output_id = uuid.uuid4()
+        storage_path = f"{org_id}/{account_id}/{transcript_id}/{output_id}/output.md"
+        await conn.execute(
+            """
+            INSERT INTO public.outputs (
+                id, org_id, job_id, account_id, transcript_id, requester_id,
+                content_storage_path, title, sidecar, skill, validation_status
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'Prior', '{}', 'post-call', $8)
+            """,
+            output_id,
+            org_id,
+            prior_job_id,
+            account_id,
+            transcript_id,
+            user_id,
+            storage_path,
+            validation_status,
+        )
+
+    from hosted import storage as hosted_storage
+
+    data = b"prior context"
+
+    async def _stream() -> AsyncGenerator[bytes, None]:
+        yield data
+
+    await backend.upload(
+        user_id, storage_path, _stream(), "text/markdown; charset=utf-8", bucket=hosted_storage.OUTPUTS_BUCKET
+    )
+    return prior_job_id, output_id, storage_path
+
+
+@pytest.mark.parametrize(
+    "job_status,validation_status,other_org,should_succeed",
+    [
+        pytest.param("success", "valid", False, True, id="valid_prior_is_accepted"),
+        pytest.param("success", "unvalidated", False, False, id="unvalidated_prior_rejected"),
+        pytest.param("success", "invalid", False, False, id="invalid_prior_rejected"),
+        pytest.param("cancelled", "valid", False, False, id="cancelled_orphan_prior_rejected"),
+        pytest.param("success", "valid", True, False, id="cross_scope_prior_rejected"),
+    ],
+)
+async def test_resolve_job_inputs_requires_valid_prior_outputs(
+    admin_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    app_client: TestClient,
+    backend: Any,
+    job_status: str,
+    validation_status: str,
+    other_org: bool,
+    should_succeed: bool,
+) -> None:
+    """resolve_job_inputs only allows valid, same-scope, successful-job outputs as priors."""
+    user_id, org_id, account_id, transcript_id, _ = await _seed_job_ready_org(admin_pool)
+    await _upload_transcript_content(
+        backend, user_id, org_id, account_id, transcript_id, "Discovery call."
+    )
+
+    response = app_client.post(
+        f"/api/hosted/accounts/{account_id}/jobs",
+        json={"account_id": str(account_id), "transcript_id": str(transcript_id), "skill": "post-call"},
+        headers=_auth_header(user_id, "orch-test@airbyte.io"),
+    )
+    assert response.status_code == 201
+    job_id = response.json()["id"]
+
+    if other_org:
+        other_user, other_org_id, other_account, other_transcript, _ = await _seed_job_ready_org(
+            admin_pool, "other@airbyte.io"
+        )
+        prior_org = other_org_id
+        prior_account = other_account
+        prior_transcript = other_transcript
+        prior_user = other_user
+    else:
+        prior_org = org_id
+        prior_account = account_id
+        prior_transcript = transcript_id
+        prior_user = user_id
+
+    _, prior_output_id, _ = await _create_prior_output(
+        admin_pool,
+        backend,
+        prior_user,
+        prior_org,
+        prior_account,
+        prior_transcript,
+        job_status,
+        validation_status,
+    )
+
+    async with worker_pool.acquire() as conn:
+        claim = await conn.fetchrow(
+            "SELECT * FROM public.claim_next_job($1, $2)", "prior-test", 60
+        )
+    assert claim is not None
+
+    if should_succeed:
+        raw = await worker_pool.fetchval(
+            "SELECT public.resolve_job_inputs($1, $2, $3, $4::uuid[])",
+            job_id,
+            claim["attempt_number"],
+            claim["lease_token"],
+            [prior_output_id],
+        )
+        result = json.loads(raw)
+        prior_ids = [entry["output_id"] for entry in result["prior_outputs"]]
+        assert str(prior_output_id) in prior_ids
+    else:
+        with pytest.raises(asyncpg.exceptions.RaiseError):
+            await worker_pool.fetchval(
+                "SELECT public.resolve_job_inputs($1, $2, $3, $4::uuid[])",
+                job_id,
+                claim["attempt_number"],
+                claim["lease_token"],
+                [prior_output_id],
+            )
+
+
+async def test_materialized_inputs_are_read_only(
+    admin_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    app_client: TestClient,
+    backend: Any,
+) -> None:
+    """_materialize_inputs writes transcript and prior files with read-only permissions."""
+    from hosted.post_call_orchestrator import PostCallOrchestrator
+    from hosted.runtime_contract import SkillRuntime
+
+    class DummyRuntime(SkillRuntime):
+        async def execute(self, job: Any, cancellation: Any) -> Any:
+            raise AssertionError("runtime should not be invoked")
+
+    user_id, org_id, account_id, transcript_id, _ = await _seed_job_ready_org(admin_pool)
+    await _upload_transcript_content(
+        backend, user_id, org_id, account_id, transcript_id, "Discovery call with Acme."
+    )
+
+    response = app_client.post(
+        f"/api/hosted/accounts/{account_id}/jobs",
+        json={"account_id": str(account_id), "transcript_id": str(transcript_id), "skill": "post-call"},
+        headers=_auth_header(user_id, "orch-test@airbyte.io"),
+    )
+    assert response.status_code == 201
+
+    async with worker_pool.acquire() as conn:
+        claim = await conn.fetchrow(
+            "SELECT * FROM public.claim_next_job($1, $2)", "readonly-test", 60
+        )
+    assert claim is not None
+    job = _job_from_claim(claim)
+
+    orchestrator = PostCallOrchestrator(DummyRuntime(), db_pool=worker_pool, storage_backend=backend)
+    source_manifest, manifest, prior_paths = await orchestrator._resolve_inputs(job)
+
+    input_dir = Path(tempfile.mkdtemp(prefix="test-input-"))
+    try:
+        await orchestrator._materialize_inputs(
+            manifest, source_manifest, prior_paths, user_id, input_dir
+        )
+        transcript_file = input_dir / manifest.transcript_ref
+        assert transcript_file.exists()
+        file_mode = stat.S_IMODE(transcript_file.stat().st_mode)
+        dir_mode = stat.S_IMODE(input_dir.stat().st_mode)
+        assert file_mode == 0o444, f"transcript file mode was {oct(file_mode)}"
+        assert dir_mode == 0o555, f"input directory mode was {oct(dir_mode)}"
+        assert os.access(transcript_file, os.W_OK) is False
+
+        if os.geteuid() != 0:
+            with pytest.raises(PermissionError):
+                (input_dir / "new.txt").write_text("tamper")
+            with pytest.raises(PermissionError):
+                transcript_file.open("a").write("tamper")
+    finally:
+        PostCallOrchestrator._make_writable(input_dir)
+        shutil.rmtree(input_dir, ignore_errors=True)
+
+
+@pytest.mark.parametrize(
+    "artifact_type",
+    [
+        pytest.param("symlink", id="symlink_redirect"),
+        pytest.param("fifo", id="fifo_substitute"),
+        pytest.param("oversized", id="oversized_file"),
+    ],
+)
+async def test_safe_read_output_rejects_hostile_filesystem_objects(artifact_type: str) -> None:
+    """_safe_read_text refuses to follow symlinks, open FIFOs, or read oversized files."""
+    from hosted.post_call_orchestrator import PostCallOrchestrator, RuntimeOutputError
+
+    tmp = Path(tempfile.mkdtemp(prefix="test-output-"))
+    try:
+        path = tmp / "output.md"
+        if artifact_type == "symlink":
+            secret = tmp / "secret.txt"
+            secret.write_text("secret content")
+            path.symlink_to(secret)
+        elif artifact_type == "fifo":
+            os.mkfifo(str(path))
+        elif artifact_type == "oversized":
+            path.write_bytes(b"")
+            os.truncate(str(path), 10 * 1024 * 1024 + 1)
+
+        with pytest.raises(RuntimeOutputError):
+            await asyncio.to_thread(PostCallOrchestrator._safe_read_text, path, 10 * 1024 * 1024)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+async def _counting_cancel_orchestrator(
+    runtime: Any,
+    db_pool: asyncpg.Pool,
+    backend: Any,
+    cancel_after: int,
+) -> Any:
+    """Return a PostCallOrchestrator whose _cancel_requested returns True after N calls."""
+    from hosted.post_call_orchestrator import PostCallOrchestrator
+
+    class CountingCancelOrchestrator(PostCallOrchestrator):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self._cancel_calls = 0
+            self._cancel_after = cancel_after
+
+        async def _cancel_requested(self, job: Any, context: Any, timeout_seconds: int) -> bool:
+            self._cancel_calls += 1
+            if self._cancel_calls >= self._cancel_after:
+                return True
+            return await super()._cancel_requested(job, context, timeout_seconds)
+
+    return CountingCancelOrchestrator(runtime, db_pool=db_pool, storage_backend=backend)
+
+
+@pytest.mark.parametrize(
+    "cancel_after,description",
+    [
+        pytest.param(2, "after metadata row creation"),
+        pytest.param(3, "after storage upload"),
+    ],
+)
+async def test_cancellation_after_persist_cleans_staged_output(
+    admin_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    app_client: TestClient,
+    backend: Any,
+    cancel_after: int,
+    description: str,
+) -> None:
+    """A cancellation that wins after the outputs row or object is staged removes both."""
+    from hosted.post_call_orchestrator import OrchestratorContext
+    from hosted.runtime_contract import RuntimeResult, SkillRuntime
+
+    class CountedRuntime(SkillRuntime):
+        def __init__(self, markdown: str, sidecar: dict[str, Any]) -> None:
+            self.markdown = markdown
+            self.sidecar = sidecar
+
+        async def execute(self, job: Any, cancellation: Any) -> Any:
+            output_dir = Path(job.output_workspace)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            (output_dir / "output.md").write_text(self.markdown, encoding="utf-8")
+            (output_dir / "sidecar.json").write_text(json.dumps(self.sidecar), encoding="utf-8")
+            return RuntimeResult(
+                output_artifact=self.markdown,
+                sidecar=self.sidecar,
+            )
+
+    user_id, org_id, account_id, transcript_id, _ = await _seed_job_ready_org(admin_pool)
+    await _upload_transcript_content(
+        backend, user_id, org_id, account_id, transcript_id, "Discovery call."
+    )
+
+    response = app_client.post(
+        f"/api/hosted/accounts/{account_id}/jobs",
+        json={"account_id": str(account_id), "transcript_id": str(transcript_id), "skill": "post-call"},
+        headers=_auth_header(user_id, "orch-test@airbyte.io"),
+    )
+    assert response.status_code == 201
+    job_id = response.json()["id"]
+
+    async with worker_pool.acquire() as conn:
+        claim = await conn.fetchrow(
+            "SELECT * FROM public.claim_next_job($1, $2)", "cancel-test", 60
+        )
+    assert claim is not None
+    job = _job_from_claim(claim)
+
+    runtime = CountedRuntime(_valid_full_output(), _full_sidecar())
+    orchestrator = await _counting_cancel_orchestrator(
+        runtime, worker_pool, backend, cancel_after
+    )
+    result = await orchestrator.execute(job, OrchestratorContext())
+    assert result.error_category == "cancelled"
+    assert result.finalized is True
+
+    async with admin_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT COUNT(*) AS cnt FROM public.outputs WHERE job_id = $1", job_id
+        )
+    assert row["cnt"] == 0
+
+    from hosted import storage as hosted_storage
+
+    key = None
+    for k in backend.objects:
+        if k.startswith(f"{hosted_storage.OUTPUTS_BUCKET}:"):
+            key = k
+    assert key is None, backend.objects
+
+
+async def test_completion_failure_recovers_without_rerunning_runtime(
+    admin_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    app_client: TestClient,
+    backend: Any,
+) -> None:
+    """A failed complete_job leaves staged evidence; the next attempt finalizes it without the runtime."""
+    from hosted.post_call_orchestrator import OrchestratorContext, PostCallOrchestrator
+    from hosted.runtime_contract import RuntimeResult, SkillRuntime
+
+    class CountedRuntime(SkillRuntime):
+        def __init__(self, markdown: str, sidecar: dict[str, Any]) -> None:
+            self.markdown = markdown
+            self.sidecar = sidecar
+            self.calls = 0
+
+        async def execute(self, job: Any, cancellation: Any) -> Any:
+            self.calls += 1
+            if self.calls > 1:
+                raise AssertionError("runtime should only run once")
+            output_dir = Path(job.output_workspace)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            (output_dir / "output.md").write_text(self.markdown, encoding="utf-8")
+            (output_dir / "sidecar.json").write_text(json.dumps(self.sidecar), encoding="utf-8")
+            return RuntimeResult(
+                output_artifact=self.markdown,
+                sidecar=self.sidecar,
+            )
+
+    class FailOnceComplete(PostCallOrchestrator):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self.complete_calls = 0
+
+        async def _complete_job_sql(
+            self,
+            job: dict[str, Any],
+            attempt_number: int,
+            lease_token: uuid.UUID,
+            persisted: Any,
+        ) -> str:
+            self.complete_calls += 1
+            if self.complete_calls == 1:
+                raise RuntimeError("injected complete_job failure")
+            return await super()._complete_job_sql(job, attempt_number, lease_token, persisted)
+
+    user_id, org_id, account_id, transcript_id, _ = await _seed_job_ready_org(admin_pool)
+    await _upload_transcript_content(
+        backend, user_id, org_id, account_id, transcript_id, "Discovery call."
+    )
+
+    response = app_client.post(
+        f"/api/hosted/accounts/{account_id}/jobs",
+        json={"account_id": str(account_id), "transcript_id": str(transcript_id), "skill": "post-call"},
+        headers=_auth_header(user_id, "orch-test@airbyte.io"),
+    )
+    assert response.status_code == 201
+    job_id = response.json()["id"]
+
+    async with worker_pool.acquire() as conn:
+        claim = await conn.fetchrow(
+            "SELECT * FROM public.claim_next_job($1, $2)", "recover-test", 60
+        )
+    assert claim is not None
+    job = _job_from_claim(claim)
+
+    runtime = CountedRuntime(_valid_full_output(), _full_sidecar())
+    orchestrator = FailOnceComplete(runtime, db_pool=worker_pool, storage_backend=backend)
+
+    result1 = await orchestrator.execute(job, OrchestratorContext())
+    assert result1.error_category == "runtime_error"
+    assert result1.finalized is False
+    assert runtime.calls == 1
+
+    # The staged output row and object exist; the next attempt reconciles them.
+    async with admin_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT COUNT(*) AS cnt FROM public.outputs WHERE job_id = $1", job_id
+        )
+    assert row["cnt"] == 1
+
+    result2 = await orchestrator.execute(job, OrchestratorContext())
+    assert result2.error_category is None
+    assert result2.output_id is not None
+    assert result2.validation_status == "valid"
+    assert result2.finalized is True
+    assert runtime.calls == 1, "runtime must not be invoked on recovery"
+
+    detail = app_client.get(
+        f"/api/hosted/jobs/{job_id}",
+        headers=_auth_header(user_id, "orch-test@airbyte.io"),
+    ).json()
+    assert detail["job"]["status"] == "success"
+    assert detail["job"]["result_output_id"] == str(result2.output_id)

@@ -24,6 +24,7 @@ class ExecutorResult:
     error_category: str | None = None
     error: str | None = None
     validation_errors: list[str] | None = None
+    finalized: bool = False
 
 
 @runtime_checkable
