@@ -44,6 +44,16 @@ BETA_ALLOW_AIRBYTE_DOMAIN = (os.environ.get("BETA_ALLOW_AIRBYTE_DOMAIN") or "").
 
 SUPABASE_STORAGE_ENDPOINT = os.environ.get("SUPABASE_STORAGE_ENDPOINT", "")
 
+# Model proxy configuration. These values live only in the trusted worker process.
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+ANTHROPIC_API_URL = os.environ.get("ANTHROPIC_API_URL", "https://api.anthropic.com")
+ANTHROPIC_API_VERSION = os.environ.get("ANTHROPIC_API_VERSION", "2023-06-01")
+MODEL_PROXY_SECRET = os.environ.get("MODEL_PROXY_SECRET", "")
+
+# gVisor/runsc executor configuration.
+RUNSC_BINARY = os.environ.get("RUNSC_BINARY", "runsc")
+RUNSC_ROOTFS = os.environ.get("RUNSC_ROOTFS", "")
+
 # Worker tuning. The worker process uses short lease/heartbeat intervals to detect
 # crashed workers; values are configurable for tests and small deployments.
 _WORKER_POLL_INTERVAL_STR = os.environ.get("WORKER_POLL_INTERVAL", "1")

@@ -87,7 +87,8 @@ This is a logical view. Concrete technology choices (Supabase, worker framework,
 - The worker enforces an immutable wall-clock execution deadline around `executor.execute` (using `asyncio.wait_for`) that is independent of the heartbeat lease. If the deadline expires, the worker cancels the executor and records a terminal `timeout`. If a cancellation request is observed, the heartbeat monitor cancels the executor and the worker records `cancelled`.
 - Heartbeat failures are distinct from user cancellation. If `worker_heartbeat` fails, the worker stops the current attempt and leaves it for `recover_expired_leases`; it does not call `cancel_job` or mark the job as user-cancelled.
 - Slice 4 ships a deterministic `EchoExecutor` that returns synthetic metadata and a `null` `output_id`. It proves the queue lifecycle without invoking a skill, model, shell command, container, or sandbox.
-- Slice 5A defines the executable runtime contract in `webapp/hosted/runtime_contract.py` and keeps `EchoExecutor` working. Slice 5B1 adds `webapp/hosted/post_call_orchestrator.py` and `PostCallExecutor`, which materialize authorized inputs, invoke an injected `SkillRuntime`, validate the artifact with `output_schema.parse_output`, and persist valid outputs to private org-scoped Storage and Postgres. Slice 5B2 will replace the in-process fake runtime with a gVisor `runsc` sandbox and a worker-side Anthropic Messages API proxy.
+- Slice 5A defines the executable runtime contract in `webapp/hosted/runtime_contract.py` and keeps `EchoExecutor` working. Slice 5B1 adds `webapp/hosted/post_call_orchestrator.py` and `PostCallExecutor`, which materialize authorized inputs, invoke an injected `SkillRuntime`, validate the artifact with `output_schema.parse_output`, and persist valid outputs to private org-scoped Storage and Postgres.
+- Slice 5B2A adds `webapp/hosted/runsc_executor.py` and `webapp/hosted/model_proxy.py`, replacing the in-process fake runtime with a per-attempt gVisor `runsc` sandbox and a worker-side Anthropic Messages API proxy. `scripts/run_hosted_worker.py` supports `--runtime {echo,post-call-runsc}` and fails closed when `runsc`, the pinned image, model-proxy configuration, Anthropic key, or isolation prerequisites are missing.
 - Report completion, failure, or retry to the job ledger, including the actual executor `runtime_version` and `model` on each attempt.
 
 #### Post-call orchestrator (Slice 5B1)
@@ -100,7 +101,7 @@ This is a logical view. Concrete technology choices (Supabase, worker framework,
 
 ## Agent-runtime isolation model (resolved in ADR-005 for Slice 5B)
 
-The hosted runtime is not a single-shot `messages.create()` call. It is a manual multi-step Anthropic Messages API typed-tool loop that preserves the behavior the local skills rely on. Slice 5A resolved the runtime/sandbox decision in ADR-005 and encoded the contract in `webapp/hosted/runtime_contract.py`, `webapp/output_schema.py`, and `webapp/hosted/agent_loop_harness.py`. Slice 5B1 implements the trusted worker-side orchestration (`webapp/hosted/post_call_orchestrator.py`) and output persistence boundary; the gVisor `runsc` sandbox and live Anthropic proxy are deferred to Slice 5B2. The 5B1 orchestrator already enforces the contract a 5B2 sandbox must satisfy:
+The hosted runtime is not a single-shot `messages.create()` call. It is a manual multi-step Anthropic Messages API typed-tool loop that preserves the behavior the local skills rely on. Slice 5A resolved the runtime/sandbox decision in ADR-005 and encoded the contract in `webapp/hosted/runtime_contract.py`, `webapp/output_schema.py`, and `webapp/hosted/agent_loop_harness.py`. Slice 5B1 implements the trusted worker-side orchestration (`webapp/hosted/post_call_orchestrator.py`) and output persistence boundary. Slice 5B2A implements the sandbox executor (`webapp/hosted/runsc_executor.py`) and worker-side model proxy (`webapp/hosted/model_proxy.py`). The contract a 5B2A sandbox must satisfy is:
 
 - **Source/file discovery:** the runtime can list and read the files the job owns (transcripts, prior outputs, reference data).
 - **Full transcript reads:** transcripts are loaded entirely into context; no arbitrary truncation that would break source-coverage claims.
@@ -115,8 +116,8 @@ The runtime is executed inside an isolated gVisor-backed `runsc` container runni
 - No access to the host filesystem except explicitly mounted allowlisted paths (read-only transcript and prior context, writable temporary output workspace).
 - No environment variables from the host except a short allowlist.
 - No unrestricted shell; no `bypassPermissions`; no arbitrary Git; no browser/computer automation; no local repository access; no Live Transcribe; no arbitrary outbound network.
-- Network egress is deny-by-default and allowlisted per job type; model calls are proxied through the worker so the sandbox never sees the Anthropic API key.
-- The container image is rebuilt from a known base; ephemeral data is destroyed after the attempt completes.
+- Network egress is deny-by-default; the sandbox reaches only a per-job worker-side model proxy over a Unix domain socket (`runsc --network=none`). The proxy validates a short-lived, job-scoped capability token bound to the job ID, attempt number, lease token, authorized model, execution deadline, endpoint, and API version. The proxy adds the Anthropic API key and forwards the request; the sandbox never sees the key.
+- The container image is rebuilt from a pinned distroless base image with non-root UID/GID; ephemeral data and the container bundle are destroyed after the attempt completes.
 - The worker validates the Markdown and sidecar outside the sandbox before writing anything to Storage or the `outputs` row.
 
 ## Hosted vs local runtime distinction

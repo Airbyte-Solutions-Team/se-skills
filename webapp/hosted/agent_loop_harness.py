@@ -378,8 +378,8 @@ class TypedToolRuntime:
         except (RuntimeError, ValueError):
             return _failure("configuration_error")
 
-        client = self.model_client or _default_client(proxy_url)
-        if str(client.base_url) != proxy_url:
+        client = self.model_client or _default_client(proxy_url, job.proxy_token, job.proxy_uds_path, job)
+        if _base_url_mismatch(client, proxy_url):
             return _failure("configuration_error")
 
         allowed_tools = job.allowlist.tools
@@ -498,14 +498,43 @@ def _failure(category: FailureCategory) -> RuntimeResult:
     return RuntimeResult(failure=RedactedFailure(category=category))
 
 
-def _default_client(base_url: str) -> httpx.AsyncClient:
-    """Build a client that targets the single allowlisted model proxy destination."""
+def _default_client(
+    base_url: str,
+    proxy_token: str | None = None,
+    proxy_uds_path: str | None = None,
+    job: RuntimeJob | None = None,
+) -> httpx.AsyncClient:
+    """Build a client that targets the single allowlisted model proxy destination.
+
+    When `proxy_uds_path` is provided the client connects over a Unix domain
+    socket instead of TCP, which lets the gVisor sandbox run with `--network=none`
+    while still reaching the worker proxy.
+    """
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if proxy_token:
+        headers["Authorization"] = f"Bearer {proxy_token}"
+    if job is not None:
+        headers["x-job-id"] = str(job.job_id)
+        headers["x-attempt-number"] = str(job.attempt_number)
+        if job.lease_token:
+            headers["x-lease-token"] = job.lease_token
+    if proxy_uds_path:
+        return httpx.AsyncClient(
+            base_url=base_url,
+            transport=httpx.AsyncHTTPTransport(uds=proxy_uds_path),
+            headers=headers,
+            timeout=httpx.Timeout(60.0),
+        )
     return httpx.AsyncClient(
         base_url=base_url,
-        # No Anthropic API key is attached here; the worker proxy adds it.
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         timeout=httpx.Timeout(60.0),
     )
+
+
+def _base_url_mismatch(client: httpx.AsyncClient, proxy_url: str) -> bool:
+    """Return True when the client's configured base URL does not match the proxy."""
+    return str(client.base_url).rstrip("/") != proxy_url.rstrip("/")
 
 
 async def _cancellable_await(

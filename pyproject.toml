@@ -24,12 +24,15 @@ dev = [
     "testcontainers[postgres]>=4.0.0",
     "pytest-asyncio>=0.23",
     "python-multipart>=0.0.12",
+    "uvicorn>=0.30.0",
 ]
 hosted = [
     "asyncpg>=0.30.0",
     "pyjwt[crypto]>=2.10.0",
     "httpx>=0.25",
     "python-multipart>=0.0.12",
+    "fastapi>=0.100",
+    "uvicorn[standard]>=0.30.0",
 ]
 
 [tool.pytest.ini_options]

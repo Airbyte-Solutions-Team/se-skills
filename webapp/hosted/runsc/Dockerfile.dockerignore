@@ -1,0 +1,11 @@
+# Exclude everything except the files the sandbox image needs.
+# This is used by BuildKit when building from the repo root with
+#   docker build -f webapp/hosted/runsc/Dockerfile .
+**
+!webapp/
+!webapp/hosted/
+!webapp/hosted/runsc/
+!webapp/hosted/runsc/**
+!webapp/hosted/runtime_contract.py
+!webapp/hosted/agent_loop_harness.py
+!pyproject.toml
