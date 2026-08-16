@@ -13,6 +13,7 @@ import os
 import socket
 import uuid
 from contextlib import suppress
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import asyncpg
@@ -21,6 +22,8 @@ from . import config
 from .executor import EchoExecutor, Executor, ExecutorResult
 
 logger = logging.getLogger(__name__)
+
+CLEANUP_LEASE_SECONDS = 60
 
 
 def worker_id() -> str:
@@ -80,16 +83,39 @@ class Worker:
         """Signal the worker to stop after the current attempt completes."""
         self._stop.set()
 
+    async def cleanup_next_tombstone(self) -> bool:
+        """If the executor supports durable tombstone cleanup, clean one row.
+
+        Any failure is logged and suppressed so a tombstone cleanup problem
+        does not block the worker from processing jobs.
+        """
+        if not hasattr(self.executor, "cleanup_next_tombstone"):
+            return False
+        try:
+            return await self.executor.cleanup_next_tombstone(
+                self.worker_name, CLEANUP_LEASE_SECONDS
+            )
+        except Exception as exc:
+            logger.warning(
+                "Worker %s tombstone cleanup failed: %s",
+                self.worker_name,
+                type(exc).__name__,
+            )
+            return False
+
     async def run(self) -> None:
-        """Poll until stopped, recovering expired leases and claiming work."""
+        """Poll until stopped, recovering expired leases and cleaning tombstones."""
         logger.info("Worker %s started", self.worker_name)
         while not self._stop.is_set():
             try:
                 recovered = await self.recover_expired_leases()
                 if recovered:
                     logger.debug("Worker %s recovered %s expired lease(s)", self.worker_name, recovered)
+                cleaned = await self.cleanup_next_tombstone()
+                if cleaned:
+                    logger.debug("Worker %s cleaned one tombstone", self.worker_name)
                 processed = await self.process_one()
-                if not processed:
+                if not processed and not cleaned and not recovered:
                     await asyncio.wait_for(self._stop.wait(), timeout=self.poll_interval)
             except asyncio.TimeoutError:
                 continue
@@ -99,8 +125,9 @@ class Worker:
         logger.info("Worker %s stopped", self.worker_name)
 
     async def run_once(self) -> bool:
-        """Run a single poll/claim/execute cycle and return whether a job ran."""
+        """Run a single poll cycle: recover, clean tombstones, and claim work."""
         await self.recover_expired_leases()
+        await self.cleanup_next_tombstone()
         return await self.process_one()
 
     async def recover_expired_leases(self) -> int:
@@ -169,14 +196,15 @@ class Worker:
         lease_token: uuid.UUID,
         error_category: str,
         error: str,
+        validation_status: str = "unvalidated",
+        runtime_version: str | None = None,
+        model: str | None = None,
     ) -> None:
         """Record a failed attempt, with bounded retry or terminal state."""
-        runtime_version = getattr(self.executor, "runtime_version", None)
-        model = getattr(self.executor, "model", None)
         async with self.pool.acquire() as conn:
             await conn.execute(
                 """
-                SELECT public.fail_job($1, $2, $3, $4, $5, NULL, $6, $7)
+                SELECT public.fail_job($1, $2, $3, $4, $5, NULL, $6, $7, $8)
                 """,
                 job_id,
                 attempt_number,
@@ -185,6 +213,7 @@ class Worker:
                 error,
                 runtime_version,
                 model,
+                validation_status,
             )
 
     async def cancel(
@@ -251,22 +280,38 @@ class Worker:
 
         job = {
             "job_id": str(job_id),
+            "attempt_number": attempt_number,
+            "lease_token": str(lease_token),
+            "worker_id": self.worker_name,
             "org_id": str(claim["org_id"]),
             "account_id": str(claim["account_id"]),
             "transcript_id": str(claim["transcript_id"]),
             "opportunity_id": str(claim["opportunity_id"]) if claim["opportunity_id"] else None,
+            "requester_id": str(claim["requester_id"]),
+            "skill_version": claim.get("skill_version") or "1.0",
+            "model": claim.get("model"),
+            "runtime_version": claim.get("runtime_version"),
             "payload": claim["payload"],
             "input_refs": claim["input_refs"],
             "source_manifest": claim["source_manifest"],
+            "timeout_seconds": self.timeout_seconds,
         }
 
         loop = asyncio.get_event_loop()
         deadline = loop.time() + self.timeout_seconds
-        executor_task: asyncio.Task[ExecutorResult] = asyncio.create_task(self.executor.execute(job))
+        # The executor boundary receives a timezone-aware UTC wall-clock deadline,
+        # not the event-loop monotonic clock.
+        job["deadline_ts"] = datetime.now(tz=timezone.utc) + timedelta(seconds=self.timeout_seconds)
+
         heartbeat_stop = asyncio.Event()
         cancel_requested = asyncio.Event()
         heartbeat_lost = asyncio.Event()
         completed = asyncio.Event()
+
+        if hasattr(self.executor, "set_cancellation"):
+            self.executor.set_cancellation(cancel_requested)
+
+        executor_task: asyncio.Task[ExecutorResult] = asyncio.create_task(self.executor.execute(job))
         monitor_task = asyncio.create_task(
             self._heartbeat_monitor(
                 job_id,
@@ -350,20 +395,39 @@ class Worker:
                     "Job %s attempt %s executor raised: %s",
                     job_id,
                     attempt_number,
-                    exc,
+                    type(exc).__name__,
                 )
                 await self.fail(
                     job_id,
                     attempt_number,
                     lease_token,
                     "executor_error",
-                    str(exc)[:500],
+                    "Executor failure: executor raised an exception",
+                    runtime_version=getattr(self.executor, "runtime_version", None),
+                    model=getattr(self.executor, "model", None),
                 )
                 return True
 
             if cancel_requested.is_set():
+                if getattr(result, "finalized", False):
+                    return True
                 await self.cancel(job_id, attempt_number, lease_token)
+            elif getattr(result, "error_category", None):
+                if getattr(result, "finalized", False):
+                    return True
+                await self.fail(
+                    job_id,
+                    attempt_number,
+                    lease_token,
+                    result.error_category,
+                    result.error or "Execution failed",
+                    validation_status=getattr(result, "validation_status", "unvalidated") or "unvalidated",
+                    runtime_version=result.runtime_version,
+                    model=result.model,
+                )
             else:
+                if getattr(result, "finalized", False):
+                    return True
                 await self.complete(job_id, attempt_number, lease_token, result)
             return True
         finally:

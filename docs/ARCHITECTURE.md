@@ -58,7 +58,7 @@ This is a logical view. Concrete technology choices (Supabase, worker framework,
 
 - Authentication and session handling.
 - Organization resolution and authorization.
-- CRUD for accounts, opportunities, transcripts, outputs, reviews, and jobs.
+- CRUD for accounts, opportunities, transcripts, jobs, and generated outputs (list/detail/content).
 - Enqueueing skill jobs (`POST /api/hosted/accounts/{account_id}/jobs`) and returning a `job_id`.
 - Listing an account's jobs (`GET /api/hosted/accounts/{account_id}/jobs`) and fetching job detail (`GET /api/hosted/jobs/{job_id}`).
 - Requesting job cancellation (`POST /api/hosted/jobs/{job_id}/cancel`).
@@ -87,12 +87,20 @@ This is a logical view. Concrete technology choices (Supabase, worker framework,
 - The worker enforces an immutable wall-clock execution deadline around `executor.execute` (using `asyncio.wait_for`) that is independent of the heartbeat lease. If the deadline expires, the worker cancels the executor and records a terminal `timeout`. If a cancellation request is observed, the heartbeat monitor cancels the executor and the worker records `cancelled`.
 - Heartbeat failures are distinct from user cancellation. If `worker_heartbeat` fails, the worker stops the current attempt and leaves it for `recover_expired_leases`; it does not call `cancel_job` or mark the job as user-cancelled.
 - Slice 4 ships a deterministic `EchoExecutor` that returns synthetic metadata and a `null` `output_id`. It proves the queue lifecycle without invoking a skill, model, shell command, container, or sandbox.
-- Slice 5A defines the executable runtime contract in `webapp/hosted/runtime_contract.py` and keeps `EchoExecutor` working. Slice 5B will replace `EchoExecutor` with an isolated sandbox that mounts allowlisted transcript/output files and runs a `SkillRuntime` implementation with allowlisted tools, network destinations, and no platform credentials in the sandbox.
+- Slice 5A defines the executable runtime contract in `webapp/hosted/runtime_contract.py` and keeps `EchoExecutor` working. Slice 5B1 adds `webapp/hosted/post_call_orchestrator.py` and `PostCallExecutor`, which materialize authorized inputs, invoke an injected `SkillRuntime`, validate the artifact with `output_schema.parse_output`, and persist valid outputs to private org-scoped Storage and Postgres. Slice 5B2 will replace the in-process fake runtime with a gVisor `runsc` sandbox and a worker-side Anthropic Messages API proxy.
 - Report completion, failure, or retry to the job ledger, including the actual executor `runtime_version` and `model` on each attempt.
+
+#### Post-call orchestrator (Slice 5B1)
+
+- `PostCallOrchestrator` resolves the job's transcript and prior-context references from trusted DB state and the signed `source_manifest`, rejects missing/cross-org/cross-account/mismatched-opportunity/duplicated/aliased/unlisted inputs, and fetches transcript bytes through the Storage backend (`transcripts` bucket).
+- It creates host-generated temporary input and output directories under `/tmp`, materializes only manifest-listed inputs read-only, and invokes an injected `SkillRuntime`. No transcript bodies, credentials, signed URLs, JWTs, DB URLs, or browser-supplied paths enter the runtime.
+- It reads the candidate `output.md` and `sidecar.json` outside the runtime, validates them with `output_schema.parse_output`, and persists only valid artifacts: an `outputs` row with a deterministic `id` derived from `job_id:attempt_number` and a private Storage object at `org_id/account_id/transcript_id/output_id/output.md` in the `outputs` bucket.
+- On any failure, temporary directories are removed. Validation failures produce a fixed, redacted `output_error` category and create no Storage object or `outputs` row. If Storage upload succeeds but the `outputs` row cannot be created, the Storage object is deleted; if the row insert succeeds but Storage upload fails, the unvalidated row is rolled back by the transaction. Retries reuse the same deterministic `output_id` without duplicating evidence.
+- `complete_job` receives the authoritative `result_output_id` and `validation_status`; `fail_job` receives a redacted error category and `validation_status`.
 
 ## Agent-runtime isolation model (resolved in ADR-005 for Slice 5B)
 
-The hosted runtime is not a single-shot `messages.create()` call. It is a manual multi-step Anthropic Messages API typed-tool loop that preserves the behavior the local skills rely on. Slice 4 intentionally did not implement this runtime; ADR-005 in `docs/decisions/ADR-005-runtime-and-sandbox.md` resolves the technology choice. The implementation is deferred to Slice 5B, while `webapp/hosted/runtime_contract.py`, `webapp/output_schema.py`, and `webapp/hosted/agent_loop_harness.py` already encode the contract and a feasibility harness the runtime must satisfy:
+The hosted runtime is not a single-shot `messages.create()` call. It is a manual multi-step Anthropic Messages API typed-tool loop that preserves the behavior the local skills rely on. Slice 5A resolved the runtime/sandbox decision in ADR-005 and encoded the contract in `webapp/hosted/runtime_contract.py`, `webapp/output_schema.py`, and `webapp/hosted/agent_loop_harness.py`. Slice 5B1 implements the trusted worker-side orchestration (`webapp/hosted/post_call_orchestrator.py`) and output persistence boundary; the gVisor `runsc` sandbox and live Anthropic proxy are deferred to Slice 5B2. The 5B1 orchestrator already enforces the contract a 5B2 sandbox must satisfy:
 
 - **Source/file discovery:** the runtime can list and read the files the job owns (transcripts, prior outputs, reference data).
 - **Full transcript reads:** transcripts are loaded entirely into context; no arbitrary truncation that would break source-coverage claims.
@@ -147,4 +155,4 @@ These decisions are intentionally deferred to the implementation slices and must
 - **Credential storage:** whether to use Supabase Vault, AWS Secrets Manager, HashiCorp Vault, or another encrypted store for OAuth tokens and integration credentials.
 - **Salesforce/Gong/Google integrations:** whether the beta includes these integrations and, if so, how user-consented OAuth credentials are stored and scoped.
 - **Observability:** logging, metrics, and tracing backend for workers and sandbox.
-- **Output persistence boundary for Slice 5B:** worker resolves transcript and prior context, materializes read-only files into the sandbox, runs the runtime, validates `output.md` and `sidecar.json` outside the sandbox, writes valid artifacts to private org-scoped Storage, creates the `outputs` row, and calls `complete_job` with `result_output_id`. Invalid artifacts are distinguished from execution failures. Cleanup on partial failure must be specified before Slice 5B.
+- **Output persistence boundary for Slice 5B1:** implemented in `webapp/hosted/post_call_orchestrator.py`. The worker resolves transcript and prior context, materializes read-only files into a job-scoped workspace, invokes the runtime, validates `output.md` and `sidecar.json` outside the sandbox, writes valid artifacts to private org-scoped Storage, creates the `outputs` row, and calls `complete_job` with `result_output_id`. Invalid artifacts are distinguished from execution failures. Cancellation and Storage/metadata failure cleanup is implemented; the gVisor/runsc sandbox and live Anthropic proxy remain Slice 5B2.

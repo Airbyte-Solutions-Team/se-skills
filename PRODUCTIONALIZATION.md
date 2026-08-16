@@ -11,7 +11,7 @@ The SE Skills Suite today is a local-first Claude Code skill suite plus an optio
 - **Webapp:** FastAPI (`webapp/app.py`) serves a static SPA from `webapp/static/`, with routes in `webapp/routes/` and services in `webapp/services/`.
 - **Job execution:** in-process `asyncio.create_subprocess_exec` running `claude -p` with a 10-minute timeout; job snapshots stored in `<workspace>/.state/jobs.json` for restart recovery.
 - **Persistence:** customer outputs are Markdown files with optional `.md.json` sidecars; review feedback is `.md.feedback.jsonl`.
-- **Validation:** `eval/` deterministic manifest-based framework plus `webapp/output_schema.py` Pydantic sidecar validation. Slice 5A added a deterministic `post-call` validation contract derived from `skills/post-call/SKILL.md` and validated without an LLM.
+- **Validation:** `eval/` deterministic manifest-based framework plus `webapp/output_schema.py` Pydantic sidecar validation. Slice 5A added a deterministic `post-call` validation contract derived from `skills/post-call/SKILL.md` and validated without an LLM. Slice 5B1 added deterministic transcript-entity conditional triggers and wired validation into the worker-side post-call orchestrator.
 - **Source coverage and anti-hallucination guardrails** are enforced through prompt discipline and deterministic tests, not a separate runtime.
 
 ## Hosted-beta objective
@@ -30,7 +30,7 @@ First complete hosted workflow:
 | Data ownership | `.owner` files on local filesystem; account owned by member id | every tenant-scoped record has explicit `org_id` ownership plus `created_by`/`assigned_to` metadata |
 | Storage | local filesystem under `~/airbyte-work` | private organization-scoped object storage; no dependence on persistent local server filesystem |
 | Job durability | `jobs.json` snapshot in local workspace | durable Postgres job ledger (`public.jobs`/`public.job_attempts`) with `FOR UPDATE SKIP LOCKED` row claiming, expiring lease tokens, heartbeats, and a separate worker process; survives worker/API restart. Redis is not used. |
-| Agent runtime | `claude -p` with the user's local tools, MCPs, repos, and network | Manual Anthropic Messages API typed-tool loop with a worker-side model proxy, running inside a gVisor-backed `runsc` sandbox; the sandbox never holds the API key (Slice 5B) |
+| Agent runtime | `claude -p` with the user's local tools, MCPs, repos, and network | Manual Anthropic Messages API typed-tool loop with a worker-side model proxy, running inside a gVisor-backed `runsc` sandbox; the sandbox never holds the API key (Slice 5B1 proves the orchestration with injected fakes; Slice 5B2 adds the live sandbox and proxy) |
 | Permissions | `SkillRuntimeService` selects a permission profile per skill; default is `acceptEdits`, and reviewed shell skills in `SHELL_BYPASS_ALLOWLIST` can receive `bypassPermissions` | no unrestricted shell, `bypassPermissions`, arbitrary Git, browser/computer automation, local-repo access, Live Transcribe, or arbitrary outbound network in the hosted runtime |
 | Cross-org access | N/A | must be impossible at both DB/RLS and application layers; cross-organization access is a merge blocker |
 | Audit/provenance | minimal (job snapshots, output mtimes) | durable audit log of who uploaded, ran, reviewed, and exported what |
@@ -43,7 +43,7 @@ First complete hosted workflow:
 4. **No persistent local server filesystem state for production durability.** Customer transcripts, outputs, job state, and audit logs live in managed Postgres and object storage.
 5. **Durable job ledger, queue, and workers.** Long-running skill execution is decoupled from the web/API process. Slice 4 implements a Postgres-backed queue with `FOR UPDATE SKIP LOCKED` row claiming, expiring lease tokens, worker heartbeats, `recover_expired_leases`, bounded retries with backoff, cancellation, and a separate polling worker process. Redis is intentionally not used for the beta workload.
 6. **Hosted runtime is a multi-step agent, not a single LLM request.** It must preserve source/file discovery, full transcript reads, tool use, prior context, self-checks, source coverage, and artifact generation. ADR-005 (`docs/decisions/ADR-005-runtime-and-sandbox.md`) resolves the technology choice: a manual Anthropic Messages API typed-tool loop with a worker-side model proxy inside a per-job gVisor-backed `runsc` container, with Firecracker as a future higher-isolation alternative.
-7. **Agent isolation by default.** Hosted jobs run in isolated ephemeral workspaces. Files, tools, credentials, and network destinations are allowlisted. Slice 5A codifies the runtime contract in `webapp/hosted/runtime_contract.py`: no transcript bodies, bearer tokens, signed URLs, DB/Storage credentials, or browser-supplied paths pass through the durable job payload, and generic tools such as `Bash`, `Git`, `Browser`, `Http`, `McpDiscover`, and `BypassPermissions` are rejected at contract construction.
+7. **Agent isolation by default.** Hosted jobs run in isolated ephemeral workspaces. Files, tools, credentials, and network destinations are allowlisted. Slice 5A codifies the runtime contract in `webapp/hosted/runtime_contract.py`: no transcript bodies, bearer tokens, signed URLs, DB/Storage credentials, or browser-supplied paths pass through the durable job payload, and generic tools such as `Bash`, `Git`, `Browser`, `Http`, `McpDiscover`, and `BypassPermissions` are rejected at contract construction. Slice 5B1 implements the worker-side `PostCallOrchestrator` (`webapp/hosted/post_call_orchestrator.py`) that materializes only manifest-listed inputs into host-generated temporary directories, invokes an injected `SkillRuntime`, validates the artifact outside the runtime, and persists valid outputs to private org-scoped Storage and Postgres.
 8. **Local-only capabilities remain local.** Unrestricted shell, `bypassPermissions`, arbitrary Git, browser/computer automation, local repository access, Live Transcribe, and arbitrary outbound network access remain local-only until separately approved.
 9. **Defense in depth for organization isolation.** RLS policies plus application-layer authorization; private storage; merge-blocking invariants.
 
@@ -53,7 +53,7 @@ First complete hosted workflow:
 
 - Sign in / org membership
 - Organization-scoped accounts, opportunities, transcripts, outputs, jobs
-- Asynchronous post-call skill job enqueueing and durable status tracking via a Postgres queue and separate worker process (Slice 4 uses a deterministic `EchoExecutor`; Slice 5A defines the `SkillRuntime` contract and `post-call` validation contract; Slice 5B implements the gVisor sandbox and model proxy)
+- Asynchronous post-call skill job enqueueing and durable status tracking via a Postgres queue and separate worker process (Slice 4 uses a deterministic `EchoExecutor`; Slice 5A defines the `SkillRuntime` contract and `post-call` validation contract; Slice 5B1 implements the worker-side orchestration and output persistence with fakes; Slice 5B2 will swap in the gVisor sandbox and live Anthropic proxy)
 - Review, correction, approval, and export of generated outputs
 - Audit log and provenance
 
