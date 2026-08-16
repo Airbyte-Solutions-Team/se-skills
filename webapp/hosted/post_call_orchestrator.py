@@ -52,6 +52,7 @@ MAX_OUTPUT_MD_BYTES = 10 * 1024 * 1024
 MAX_SIDECAR_BYTES = 1024 * 1024
 INPUT_DIR_MODE = 0o555
 INPUT_FILE_MODE = 0o444
+CLEANUP_LEASE_SECONDS = 60
 
 
 class RuntimeOutputError(ValueError):
@@ -857,6 +858,109 @@ class PostCallOrchestrator:
             )
             raise CleanupError("tombstoned output row was not deleted")
 
+    async def cleanup_tombstone(
+        self,
+        output_id: uuid.UUID,
+        worker_id: str,
+        lease_seconds: int = CLEANUP_LEASE_SECONDS,
+    ) -> bool:
+        """Lease-bound retryable cleanup of a tombstoned output.
+
+        The worker claims the tombstone, receives its trusted Storage path, deletes
+        the object, and then finalizes deletion of the metadata row. The same
+        worker may re-claim an already-claimed tombstone to retry a failed
+        Storage delete; other workers must wait for the lease to expire before the
+        claim can move. This path does not require the original execution attempt
+        to still be running.
+        """
+        content_storage_path: str | None = None
+        requester_id: uuid.UUID | None = None
+        async with self.db_pool.acquire() as conn:
+            try:
+                row = await conn.fetchrow(
+                    "SELECT content_storage_path, org_id, requester_id "
+                    "FROM public.claim_tombstoned_output($1, $2, $3)",
+                    output_id,
+                    worker_id,
+                    lease_seconds,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "claim_tombstoned_output failed for output %s worker %s: %s",
+                    output_id,
+                    worker_id,
+                    type(exc).__name__,
+                )
+                raise CleanupError("failed to claim tombstoned output") from exc
+
+        if row is None or row["content_storage_path"] is None:
+            return False
+
+        content_storage_path = row["content_storage_path"]
+        requester_id = row["requester_id"]
+
+        try:
+            await self.storage.delete(
+                requester_id, content_storage_path, bucket=storage.OUTPUTS_BUCKET
+            )
+        except storage.ObjectNotFound:
+            pass
+        except storage.StorageError as exc:
+            logger.warning(
+                "Storage delete failed for tombstoned output %s: %s",
+                output_id,
+                type(exc).__name__,
+            )
+            raise CleanupError("failed to delete tombstoned storage object") from exc
+
+        async with self.db_pool.acquire() as conn:
+            try:
+                deleted = await conn.fetchval(
+                    "SELECT public.finalize_tombstone_delete($1, $2)",
+                    output_id,
+                    worker_id,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "finalize_tombstone_delete failed for output %s worker %s: %s",
+                    output_id,
+                    worker_id,
+                    type(exc).__name__,
+                )
+                raise CleanupError("failed to finalize tombstone delete") from exc
+
+        if not deleted:
+            logger.warning(
+                "finalize_tombstone_delete returned false for output %s worker %s",
+                output_id,
+                worker_id,
+            )
+            raise CleanupError("tombstone row was not finalized")
+
+        return True
+
+    async def _cleanup_tombstoned_output(
+        self,
+        job: dict[str, Any],
+        output_id: uuid.UUID,
+    ) -> None:
+        """Retryable cleanup of a tombstone created after the job/attempt finished."""
+        worker_id = job.get("worker_id")
+        if not worker_id:
+            worker_id = f"post-call-orchestrator-{uuid.uuid4().hex[:8]}"
+        try:
+            await self.cleanup_tombstone(output_id, worker_id)
+        except CleanupError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "cleanup_tombstone failed for job %s output %s: %s",
+                job.get("job_id", "unknown"),
+                output_id,
+                type(exc).__name__,
+            )
+            raise CleanupError("failed to cleanup tombstoned output") from exc
+
     async def _reconcile_existing_output(
         self,
         job: dict[str, Any],
@@ -1232,9 +1336,7 @@ class PostCallOrchestrator:
                 return self._redacted_failure("runtime_error", finalized=False)
 
             if completion_status == "cancelled":
-                await self._cleanup_staged_output(
-                    job, persisted.output_id, attempt_number, lease_token
-                )
+                await self._cleanup_tombstoned_output(job, persisted.output_id)
                 return self._redacted_failure("cancelled", finalized=True)
 
             return ExecutorResult(

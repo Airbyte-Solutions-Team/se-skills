@@ -256,6 +256,7 @@ class Worker:
             "job_id": str(job_id),
             "attempt_number": attempt_number,
             "lease_token": str(lease_token),
+            "worker_id": self.worker_name,
             "org_id": str(claim["org_id"]),
             "account_id": str(claim["account_id"]),
             "transcript_id": str(claim["transcript_id"]),

@@ -2,10 +2,16 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 11, 2026 — HEAD TBD on `devin/slice5b1-output-persistence`. PR #44 second review-blocker fixes: database-level output visibility, durable staged-output cleanup, and symlink-safe workspace removal._
+_Last updated: August 11, 2026 — HEAD TBD on `devin/slice5b1-output-persistence`. PR #44 third review blocker fix: independently retryable tombstone cleanup after job/attempt finalization._
 
 
 ## Built this session (newest first — see `git log`)
+
+- **PR #44 third review blocker fix: retryable tombstone cleanup after job/attempt finalization (August 11).**
+  1. **Lease-bound cleanup claim/finalize path.** Added `webapp/hosted/migrations/007_output_cleanup_retry.sql` with `cleanup_claimed_by`/`cleanup_claimed_at` columns on `public.outputs` and the `claim_tombstoned_output(...)` / `finalize_tombstone_delete(...)` worker security-definer pair. A worker claims a tombstoned output, receives the trusted Storage path, deletes the object, and only then deletes the row. The same worker may re-claim to retry a failed Storage delete; other workers are excluded until the lease expires.
+  2. **Orchestrator uses retryable cleanup after `complete_job` cancels.** `webapp/hosted/post_call_orchestrator.py` adds `cleanup_tombstone(...)` and `_cleanup_tombstoned_output(...)`. When `public.complete_job(...)` returns `'cancelled'` (cancellation won inside the final SQL call), the orchestrator uses the new claim/delete/finalize path instead of the attempt-scoped `tombstone_job_output`/`delete_job_output` path, so the Storage object is removed even after the attempt/job are finished.
+  3. **Worker passes its identity through the executor boundary.** `webapp/hosted/worker.py` `process_one` adds `worker_id` to the job dict so the post-call orchestrator can reuse the same worker identity for cleanup claims. `eval/tests/test_post_call_orchestrator.py` `_job_from_claim` defaults `worker_id` for direct orchestrator tests.
+  4. **Regressions.** Added tests proving cancellation inside `complete_job` deletes the object and tombstone (not just hides them), a failed Storage delete leaves a claimable tombstone that a later cleanup pass removes, and concurrent cleanup workers cannot claim the same tombstone while `app_user` sees nothing throughout. `pytest eval/` 870 passed, 1 skipped; `eval.runner` phase1 12/12 passed; `git diff --check`, `./scripts/check-sync.sh`, `node --check webapp/static/app.js`, and `python -m py_compile` on changed Python modules all clean.
 
 - **PR #44 second review blocker fixes: database-level output visibility, durable staged-output cleanup, and symlink-safe workspace removal (August 11).**
   1. **Database/RLS hides unvalidated, invalid, and tombstoned outputs.** `webapp/hosted/migrations/006_output_tombstones_and_rls.sql` adds `tombstoned_at` to `public.outputs`, tightens `org_tenant_outputs` and dependent `output_versions`/`reviews` policies to `validation_status = 'valid' AND tombstoned_at IS NULL`, and replaces direct `DELETE` in `complete_job`/`cancel_job`/`fail_job` cancellation branches with `UPDATE ... SET tombstoned_at = clock_timestamp()`. A direct-SQL `app_user` test proves only valid, non-tombstoned rows are readable.

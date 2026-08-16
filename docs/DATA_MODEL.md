@@ -189,6 +189,8 @@ A generated skill output. The original Markdown and sidecar are immutable once w
 | `sidecar` | JSON: validation status, validation errors, source coverage, reference freshness, etc. |
 | `validation_status` | `unvalidated`, `valid`, `invalid` |
 | `tombstoned_at` | Timestamp; set when a staged/cancelled output is hidden pending Storage-object deletion |
+| `cleanup_claimed_by` | Worker id that has claimed this tombstone for cleanup (nullable) |
+| `cleanup_claimed_at` | Timestamp of the cleanup claim (nullable) |
 | `generated_at` | Timestamp |
 
 RLS on `org_id` with the predicate `validation_status = 'valid' AND tombstoned_at IS NULL`. The generated Markdown and sidecar are immutable; any correction creates a new `output_versions` row.
@@ -202,7 +204,7 @@ RLS on `org_id` with the predicate `validation_status = 'valid' AND tombstoned_a
 6. `complete_job` receives the authoritative `result_output_id`.
 7. If validation fails, the attempt is finalized with a fixed, redacted `output_error` category; no Storage object or `outputs` row is created, so invalid output is distinguishable from execution failure.
 8. Compensating cleanup: if Storage write succeeds but the `outputs` row insert fails, the Storage object is deleted. If the `outputs` row insert succeeds but Storage fails, the unvalidated row is rolled back by the transaction. Retries of the same attempt reuse the deterministic `output_id` without duplicating evidence.
-9. Cancellation/timeout/heartbeat loss triggers a staged-output cleanup: the `outputs` row is tombstoned, the Storage object is deleted, and only then is the row deleted. A Storage-delete or DB-delete failure leaves a hidden tombstone record so the customer content remains tracked and can be retried, and the job is finalized as a redacted `cleanup_error`.
+9. Cancellation/timeout/heartbeat loss triggers a staged-output cleanup: the `outputs` row is tombstoned, the Storage object is deleted, and only then is the row deleted. A Storage-delete or DB-delete failure leaves a hidden tombstone record so the customer content remains tracked and can be retried, and the job is finalized as a redacted `cleanup_error`. Tombstone cleanup is independently retryable after the job/attempt finalizes: `claim_tombstoned_output(...)`/`finalize_tombstone_delete(...)` form a lease-bound claim/delete/finalize path that does not require the original attempt to still be running.
 
 ### `reviews`
 
