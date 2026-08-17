@@ -309,12 +309,14 @@ class RuntimeJob(BaseModel):
     requested_runtime_version: str | None = None
     mode: Mode = "full"
     attempt_number: int = 1
-    lease_token: str | None = None
     input_manifest: InputManifest
     allowlist: Allowlist = Field(default_factory=Allowlist)
     execution_deadline: datetime
     input_workspace: str = "/tmp/runtime-input"
     output_workspace: str = "/tmp/runtime-output"
+    # Opaque attempt identity issued by the trusted worker. Used to bind proxy
+    # requests to the session without exposing the database lease token.
+    attempt_id: str = ""
     # Short-lived, job-scoped proxy capability and optional UDS path. These are
     # issued by the trusted worker and never contain the Anthropic API key.
     proxy_token: str | None = None

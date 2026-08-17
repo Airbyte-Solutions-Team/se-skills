@@ -7,17 +7,24 @@ Anthropic endpoint. The proxy validates every inbound request, strips any
 sandbox-supplied provider or forwarding headers, adds the real API key and version,
 and forwards only a bounded JSON body to Anthropic.
 
-No prompts, transcript content, model responses, credentials, or raw upstream
-errors are logged.
+The proxy also maintains the authoritative per-attempt model/usage ledger.  The
+trusted worker retrieves that ledger after the sandbox exits and uses it to overwrite
+any sandbox-authored accounting in `RuntimeResult.execution_metadata`.
+
+No prompts, transcript content, model responses, credentials, lease tokens, or raw
+upstream errors are logged.
 """
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import hashlib
 import json
 import logging
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 import jwt
@@ -25,19 +32,55 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from webapp.hosted import config
 from webapp.hosted.runtime_contract import (
+    ExecutionMetadata,
     FailureCategory,
     RedactedFailure,
     RuntimeJob,
     RuntimeResult,
+    TokenUsage,
 )
 
 logger = logging.getLogger(__name__)
 
 MAX_BODY_BYTES = 10 * 1024 * 1024
+MAX_RESPONSE_BYTES = 10 * 1024 * 1024
 MAX_UPSTREAM_TIMEOUT = 120.0
 MIN_UPSTREAM_TIMEOUT = 1.0
-
 CAPABILITY_LEEWAY_SECONDS = 5
+
+
+class _ProxySession:
+    """Mutable, per-attempt proxy state kept in the trusted worker process."""
+
+    def __init__(
+        self,
+        jti: str,
+        attempt_id: str,
+        job_id: str,
+        attempt_number: int,
+        model: str,
+        deadline: str,
+        endpoint: str,
+        api_version: str,
+        allowed_tools: frozenset[str],
+    ) -> None:
+        self.jti = jti
+        self.attempt_id = attempt_id
+        self.job_id = job_id
+        self.attempt_number = attempt_number
+        self.model = model
+        self.deadline = deadline
+        self.endpoint = endpoint
+        self.api_version = api_version
+        self.allowed_tools = allowed_tools
+        self.next_seq = 1
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.cache_creation = 0
+        self.cache_read = 0
+        self.request_count = 0
+        self.lock = asyncio.Lock()
+        self.cancel_event = asyncio.Event()
 
 
 class ProxyCapability(BaseModel):
@@ -48,11 +91,12 @@ class ProxyCapability(BaseModel):
     jti: str
     job_id: str
     attempt_number: int
-    lease_token: str
+    attempt_id: str
     model: str
     deadline: str  # ISO-8601 UTC timestamp
     endpoint: str
     api_version: str
+    allowed_tools: tuple[str, ...] = ()
     iat: int | None = None
     exp: int | None = None
 
@@ -74,8 +118,13 @@ class ProxyConfig(BaseModel):
     anthropic_api_url: str = "https://api.anthropic.com"
     anthropic_api_version: str = "2023-06-01"
     max_body_bytes: int = MAX_BODY_BYTES
+    max_response_bytes: int = MAX_RESPONSE_BYTES
     max_upstream_timeout: float = MAX_UPSTREAM_TIMEOUT
     min_upstream_timeout: float = MIN_UPSTREAM_TIMEOUT
+    max_tokens: int = 8192
+    max_concurrent_requests: int = 100
+    cost_per_1k_input: float = 0.003
+    cost_per_1k_output: float = 0.015
 
     @field_validator("max_body_bytes")
     @classmethod
@@ -84,13 +133,99 @@ class ProxyConfig(BaseModel):
             raise ValueError("max_body_bytes must be positive")
         return value
 
+    @field_validator("max_response_bytes")
+    @classmethod
+    def _positive_max_response(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("max_response_bytes must be positive")
+        return value
+
+    @field_validator("max_tokens")
+    @classmethod
+    def _positive_max_tokens(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("max_tokens must be positive")
+        return value
+
+    @field_validator("max_concurrent_requests")
+    @classmethod
+    def _positive_concurrency(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("max_concurrent_requests must be positive")
+        return value
+
+
+# ---------------------------------------------------------------------------
+# Strict request DTOs
+# ---------------------------------------------------------------------------
+
+
+class ProxyContentBlock(BaseModel):
+    """One Anthropic Messages API content block."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    type: str
+    id: str | None = None
+    name: str | None = None
+    input: dict[str, Any] | None = None
+    text: str | None = None
+    tool_use_id: str | None = None
+    content: str | None = None
+
+
+class ProxyMessage(BaseModel):
+    """One message in the Anthropic Messages API conversation."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    role: Literal["user", "assistant"]
+    content: str | list[ProxyContentBlock]
+
+
+class ProxyTool(BaseModel):
+    """Anthropic tool definition with JSON schema input."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: str
+    description: str
+    input_schema: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProxyMessageRequest(BaseModel):
+    """Strict request payload for the Anthropic Messages API.
+
+    The proxy rejects unknown fields and invalid `max_tokens` / `stream` values
+    before forwarding.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    model: str | None = None
+    max_tokens: int = Field(default=4096, ge=1)
+    system: str | None = None
+    messages: list[ProxyMessage]
+    tools: list[ProxyTool] | None = None
+    tool_choice: Any | None = None
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    metadata: dict[str, str] | None = None
+    stream: Literal[False] | None = None
+
+
+# ---------------------------------------------------------------------------
+
 
 class ModelProxy:
     """Auditable worker-side proxy for the Anthropic Messages API.
 
     The proxy is intended to be instantiated once per attempt. It can be used as an
     ASGI request handler, as an `httpx` transport callback, or driven directly by
-    a test harness.
+    a test harness.  The authoritative per-attempt usage ledger is kept in memory
+    and exposed through `get_attempt_metadata` for the trusted worker to retrieve
+    after the sandbox exits.
     """
 
     def __init__(
@@ -100,10 +235,120 @@ class ModelProxy:
     ) -> None:
         self.cfg = proxy_config or _default_config()
         self.anthropic_client = anthropic_client or _default_anthropic_client(self.cfg)
+        self._sessions: dict[str, _ProxySession] = {}
+        self._sem: asyncio.Semaphore | None = None
 
-    def issue_capability(self, job: RuntimeJob, attempt_number: int, lease_token: str) -> str:
-        """Sign a short-lived capability token for one sandbox attempt."""
-        return _issue_token(self.cfg, job, attempt_number, lease_token)
+    def _get_sem(self) -> asyncio.Semaphore:
+        if self._sem is None:
+            self._sem = asyncio.Semaphore(self.cfg.max_concurrent_requests)
+        return self._sem
+
+    def issue_capability(
+        self,
+        job: RuntimeJob,
+        attempt_number: int,
+        jti: str | None = None,
+        attempt_id: str | None = None,
+    ) -> tuple[str, str, str]:
+        """Sign a short-lived capability token for one sandbox attempt.
+
+        Returns `(token, jti, attempt_id)`.  The token's lifetime is the immutable
+        attempt `execution_deadline`; no five-minute cap is imposed.
+        """
+        jti = jti or uuid.uuid4().hex
+        if attempt_id is None:
+            attempt_id = hashlib.sha256(jti.encode("utf-8")).hexdigest()[:32]
+        allowed_tools = tuple(sorted(job.allowlist.tools))
+        deadline_ts = int(job.execution_deadline.timestamp())
+        claims = {
+            "jti": jti,
+            "job_id": str(job.job_id),
+            "attempt_number": attempt_number,
+            "attempt_id": attempt_id,
+            "model": job.requested_model,
+            "deadline": job.execution_deadline.isoformat(),
+            "endpoint": f"{self.cfg.anthropic_api_url.rstrip('/')}/v1/messages",
+            "api_version": self.cfg.anthropic_api_version,
+            "allowed_tools": allowed_tools,
+            "iat": int(time.time()),
+            "exp": deadline_ts,
+        }
+        token = jwt.encode(claims, self.cfg.secret, algorithm="HS256")
+        self._ensure_session(
+            jti,
+            attempt_id,
+            str(job.job_id),
+            attempt_number,
+            job.requested_model,
+            job.execution_deadline.isoformat(),
+            claims["endpoint"],
+            self.cfg.anthropic_api_version,
+            frozenset(job.allowlist.tools),
+        )
+        return token, jti, attempt_id
+
+    def _ensure_session(
+        self,
+        jti: str,
+        attempt_id: str,
+        job_id: str,
+        attempt_number: int,
+        model: str,
+        deadline: str,
+        endpoint: str,
+        api_version: str,
+        allowed_tools: frozenset[str],
+    ) -> _ProxySession:
+        session = self._sessions.get(jti)
+        if session is None:
+            session = _ProxySession(
+                jti=jti,
+                attempt_id=attempt_id,
+                job_id=job_id,
+                attempt_number=attempt_number,
+                model=model,
+                deadline=deadline,
+                endpoint=endpoint,
+                api_version=api_version,
+                allowed_tools=allowed_tools,
+            )
+            self._sessions[jti] = session
+        return session
+
+    def cancel_session(self, jti: str | None) -> None:
+        """Signal that an in-flight attempt has been cancelled by the worker."""
+        if jti is None:
+            return
+        session = self._sessions.get(jti)
+        if session is not None:
+            session.cancel_event.set()
+
+    def get_attempt_metadata(self, jti: str | None) -> ExecutionMetadata:
+        """Return the authoritative, proxy-accumulated execution metadata.
+
+        If the attempt is unknown, returns an empty `ExecutionMetadata`.
+        """
+        if jti is None:
+            return ExecutionMetadata()
+        session = self._sessions.get(jti)
+        if session is None:
+            return ExecutionMetadata()
+        total_input = session.input_tokens + session.cache_creation + session.cache_read
+        cost = (
+            total_input * self.cfg.cost_per_1k_input / 1000.0
+            + session.output_tokens * self.cfg.cost_per_1k_output / 1000.0
+        )
+        return ExecutionMetadata(
+            runtime_version=None,
+            model=session.model,
+            token_usage=TokenUsage(
+                input_tokens=session.input_tokens,
+                output_tokens=session.output_tokens,
+                cache_creation_input_tokens=session.cache_creation or None,
+                cache_read_input_tokens=session.cache_read or None,
+            ),
+            cost=cost,
+        )
 
     async def handle(self, request: httpx.Request) -> httpx.Response:
         """Validate and forward a single sandbox model request.
@@ -142,91 +387,168 @@ class ModelProxy:
             logger.warning("Capability validation failed: %s", exc.category)
             return _error_response(exc.status, exc.category)
 
-        # Bind the capability to the request identity. The sandbox runtime must
-        # echo the job ID, attempt number, and lease token in every request.
-        if request.headers.get("x-job-id") != capability.job_id:
-            return _error_response(403, "job_mismatch")
-        try:
-            if int(request.headers.get("x-attempt-number") or 0) != capability.attempt_number:
+        session = self._ensure_session(
+            capability.jti,
+            capability.attempt_id,
+            capability.job_id,
+            capability.attempt_number,
+            capability.model,
+            capability.deadline,
+            capability.endpoint,
+            capability.api_version,
+            frozenset(capability.allowed_tools),
+        )
+
+        async with session.lock:
+            if session.cancel_event.is_set():
+                return _error_response(499, "session_cancelled")
+
+            # Bind the capability to the request identity.
+            if request.headers.get("x-job-id") != capability.job_id:
+                return _error_response(403, "job_mismatch")
+            try:
+                if int(request.headers.get("x-attempt-number") or 0) != capability.attempt_number:
+                    return _error_response(403, "attempt_mismatch")
+            except (TypeError, ValueError):
                 return _error_response(403, "attempt_mismatch")
-        except (TypeError, ValueError):
-            return _error_response(403, "attempt_mismatch")
-        if request.headers.get("x-lease-token") != capability.lease_token:
-            return _error_response(403, "lease_mismatch")
+            if request.headers.get("x-attempt-id") != capability.attempt_id:
+                return _error_response(403, "attempt_id_mismatch")
 
-        try:
-            payload_model = payload.get("model")
-            if payload_model is not None and payload_model != capability.model:
-                # Sandbox attempted to override the worker-authorized model.
-                return _error_response(403, "model_mismatch")
-            payload["model"] = capability.model
+            seq_str = request.headers.get("x-request-seq")
+            try:
+                seq = int(seq_str) if seq_str is not None else -1
+            except (TypeError, ValueError):
+                return _error_response(400, "invalid_request_sequence")
+            if seq != session.next_seq:
+                return _error_response(403, "sequence_mismatch")
+            session.next_seq += 1
 
-            if "max_tokens" not in payload:
-                # The Anthropic endpoint requires max_tokens. Provide a sane
-                # bounded default rather than allow an open-ended request.
-                payload["max_tokens"] = 4096
+            try:
+                req = ProxyMessageRequest.model_validate(payload)
+            except ValidationError:
+                return _error_response(400, "invalid_request_shape")
 
-            messages = payload.get("messages")
-            if not isinstance(messages, list) or len(messages) == 0:
+            if req.max_tokens > self.cfg.max_tokens:
+                return _error_response(400, "max_tokens_exceeded")
+
+            if req.stream is True:
+                return _error_response(400, "streaming_not_allowed")
+
+            if not req.messages:
                 return _error_response(400, "missing_messages")
 
-            # Enforce a compact shape; drop any keys that are not part of the
-            # documented Anthropic Messages API request surface.
-            allowed_keys = {
-                "model",
-                "messages",
-                "system",
-                "tools",
-                "tool_choice",
-                "max_tokens",
-                "temperature",
-                "top_p",
-                "top_k",
-                "metadata",
-                "stream",
-            }
-            for key in list(payload.keys()):
-                if key not in allowed_keys:
-                    del payload[key]
-        except Exception:
-            return _error_response(400, "invalid_request_shape")
+            if req.model is not None and req.model != capability.model:
+                return _error_response(403, "model_mismatch")
 
-        deadline = datetime.fromisoformat(capability.deadline)
-        now = datetime.now(tz=timezone.utc)
-        remaining = (deadline - now).total_seconds()
-        if remaining <= 0:
-            return _error_response(410, "deadline_expired")
+            if req.tools:
+                for tool in req.tools:
+                    if tool.name not in capability.allowed_tools:
+                        return _error_response(403, "forbidden_tool")
 
-        timeout = max(self.cfg.min_upstream_timeout, min(remaining, self.cfg.max_upstream_timeout))
+            deadline = datetime.fromisoformat(capability.deadline)
+            now = datetime.now(tz=timezone.utc)
+            remaining = (deadline - now).total_seconds()
+            if remaining <= 0:
+                return _error_response(410, "deadline_expired")
 
-        upstream_url = capability.endpoint
-        if not upstream_url.startswith(self.cfg.anthropic_api_url.rstrip("/")):
-            return _error_response(403, "endpoint_mismatch")
+            forwarded = req.model_dump(exclude_none=True)
+            forwarded["model"] = capability.model
 
-        upstream_headers = _build_upstream_headers(self.cfg)
-        try:
-            upstream = await self.anthropic_client.post(
-                upstream_url,
-                json=payload,
-                headers=upstream_headers,
+            upstream_url = capability.endpoint
+            if not upstream_url.startswith(self.cfg.anthropic_api_url.rstrip("/")):
+                return _error_response(403, "endpoint_mismatch")
+
+            upstream_headers = _build_upstream_headers(self.cfg)
+            timeout = max(self.cfg.min_upstream_timeout, min(remaining, self.cfg.max_upstream_timeout))
+
+            async with self._get_sem():
+                try:
+                    response_body = await self._upstream_with_cancel(
+                        upstream_url,
+                        json.dumps(forwarded).encode("utf-8"),
+                        upstream_headers,
+                        timeout,
+                        session,
+                    )
+                except _ProxyError as exc:
+                    logger.warning("Anthropic upstream error: %s", exc.category)
+                    return _error_response(exc.status, exc.category)
+
+            try:
+                response_data = json.loads(response_body)
+            except json.JSONDecodeError:
+                return _error_response(502, "upstream_error")
+
+            usage = response_data.get("usage") or {}
+            session.input_tokens += _int_or_zero(usage.get("input_tokens"))
+            session.output_tokens += _int_or_zero(usage.get("output_tokens"))
+            session.cache_creation += _int_or_zero(usage.get("cache_creation_input_tokens"))
+            session.cache_read += _int_or_zero(usage.get("cache_read_input_tokens"))
+            session.model = capability.model
+            session.request_count += 1
+
+            redacted = _redact_response(response_data)
+            return httpx.Response(200, json=redacted)
+
+    async def _upstream_with_cancel(
+        self,
+        url: str,
+        body: bytes,
+        headers: dict[str, str],
+        timeout: float,
+        session: _ProxySession,
+    ) -> bytes:
+        """Stream the upstream request to completion while respecting cancellation.
+
+        Response size is capped at `ProxyConfig.max_response_bytes`.
+        """
+
+        async def _stream() -> bytes:
+            async with self.anthropic_client.stream(
+                "POST",
+                url,
+                content=body,
+                headers=headers,
                 timeout=timeout,
-            )
-            upstream.raise_for_status()
-            response_body = upstream.json()
-        except httpx.HTTPStatusError as exc:
-            logger.warning(
-                "Anthropic upstream error: status=%s category=%s",
-                exc.response.status_code,
-                "upstream_error",
-            )
-            return _error_response(502, "upstream_error")
-        except httpx.TimeoutException:
-            return _error_response(504, "upstream_timeout")
-        except httpx.RequestError:
-            return _error_response(502, "upstream_error")
+            ) as response:
+                response.raise_for_status()
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in response.aiter_bytes():
+                    total += len(chunk)
+                    if total > self.cfg.max_response_bytes:
+                        raise _ProxyError("upstream_response_too_large", 502)
+                    chunks.append(chunk)
+                return b"".join(chunks)
 
-        redacted = _redact_response(response_body)
-        return httpx.Response(200, json=redacted)
+        upstream_task = asyncio.create_task(_stream())
+        cancel_task = asyncio.create_task(session.cancel_event.wait())
+        try:
+            done, pending = await asyncio.wait(
+                {upstream_task, cancel_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for p in pending:
+                p.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await p
+            if cancel_task in done:
+                upstream_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await upstream_task
+                raise _ProxyError("session_cancelled", 499)
+            try:
+                return upstream_task.result()
+            except httpx.HTTPStatusError as exc:
+                raise _ProxyError("upstream_error", 502) from exc
+            except httpx.TimeoutException as exc:
+                raise _ProxyError("upstream_timeout", 504) from exc
+            except httpx.RequestError as exc:
+                raise _ProxyError("upstream_error", 502) from exc
+        except asyncio.CancelledError:
+            upstream_task.cancel()
+            cancel_task.cancel()
+            raise
 
     def create_app(self) -> Any:
         """Return a minimal Starlette ASGI app bound to this proxy instance."""
@@ -236,7 +558,15 @@ class ModelProxy:
         from starlette.routing import Route
 
         async def _messages(request: Request) -> JSONResponse:
-            body = await request.body()
+            body = b""
+            async for chunk in request.stream():
+                body += chunk
+                if len(body) > self.cfg.max_body_bytes:
+                    return JSONResponse(
+                        {"error": {"type": "request_too_large", "message": "request rejected by proxy"}},
+                        status_code=413,
+                    )
+
             headers = dict(request.headers)
             httpx_request = httpx.Request(
                 method=request.method,
@@ -262,6 +592,13 @@ class _ProxyError(Exception):
         super().__init__(category)
 
 
+def _int_or_zero(value: Any) -> int:
+    try:
+        return int(value) if value is not None else 0
+    except (TypeError, ValueError):
+        return 0
+
+
 def _default_config() -> ProxyConfig:
     secret = config.MODEL_PROXY_SECRET
     if not secret:
@@ -283,26 +620,6 @@ def _default_anthropic_client(cfg: ProxyConfig) -> httpx.AsyncClient:
         base_url=cfg.anthropic_api_url,
         timeout=httpx.Timeout(MAX_UPSTREAM_TIMEOUT),
     )
-
-
-def _issue_token(cfg: ProxyConfig, job: RuntimeJob, attempt_number: int, lease_token: str) -> str:
-    now = int(time.time())
-    deadline_ts = int(job.execution_deadline.timestamp())
-    exp = min(deadline_ts, now + 300)  # never valid longer than 5 minutes or the job deadline
-    jti = str(uuid.uuid4())
-    claims = {
-        "jti": jti,
-        "job_id": str(job.job_id),
-        "attempt_number": attempt_number,
-        "lease_token": str(lease_token),
-        "model": job.requested_model,
-        "deadline": job.execution_deadline.isoformat(),
-        "endpoint": f"{cfg.anthropic_api_url.rstrip('/')}/v1/messages",
-        "api_version": cfg.anthropic_api_version,
-        "iat": now,
-        "exp": exp,
-    }
-    return jwt.encode(claims, cfg.secret, algorithm="HS256")
 
 
 def _decode_token(cfg: ProxyConfig, token: str) -> ProxyCapability:
@@ -345,8 +662,7 @@ def _redact_response(body: dict[str, Any]) -> dict[str, Any]:
     """Return only the fields the sandbox runtime consumes.
 
     The proxy does not forward arbitrary upstream fields such as citations,
-    thinking blocks, or streaming metadata. The `TypedToolRuntime` uses
-    `extra="allow"` response DTOs, so removing unknown keys is safe.
+    thinking blocks, or streaming metadata.
     """
     allowed = {
         "id",

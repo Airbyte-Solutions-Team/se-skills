@@ -6,9 +6,11 @@ is unavailable.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import shutil
+import stat
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -29,6 +31,7 @@ from webapp.hosted.runsc_executor import (
     FakeSandboxRunner,
     RunscSandboxRunner,
     RunscSkillRuntime,
+    _safe_read_runtime_result,
 )
 
 
@@ -91,7 +94,6 @@ def _make_job(
         requester_id=uuid4(),
         requested_model=requested_model,
         attempt_number=1,
-        lease_token="lease-1",
         input_manifest=InputManifest(
             transcript_id=transcript_id,
             transcript_ref="transcript.txt",
@@ -215,7 +217,12 @@ async def test_runsc_runtime_fake_runner_without_server() -> None:
 async def test_runsc_runtime_proxy_rejection_surfaces_model_error() -> None:
     """A proxy that rejects the sandbox request returns a redacted `model_error`."""
     cfg = ProxyConfig(secret="a" * 32, anthropic_api_key="test-key")
-    proxy = ModelProxy(proxy_config=cfg)
+    proxy = ModelProxy(
+        proxy_config=cfg,
+        anthropic_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda r: httpx.Response(502))
+        ),
+    )
     runtime = RunscSkillRuntime(
         runner=FakeSandboxRunner(proxy), proxy=proxy, start_proxy_server=False
     )
@@ -265,6 +272,54 @@ async def test_runsc_runtime_cancellation_returns_cancelled() -> None:
 
 
 @pytest.mark.asyncio
+async def test_runsc_runtime_uses_authoritative_metadata() -> None:
+    """The trusted worker overwrites sandbox-authored model/usage with the proxy ledger."""
+    cfg = ProxyConfig(secret="a" * 32, anthropic_api_key="test-key")
+    proxy = ModelProxy(
+        proxy_config=cfg,
+        anthropic_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(_upstream_response_factory())
+        ),
+    )
+    runtime = RunscSkillRuntime(
+        runner=FakeSandboxRunner(proxy), proxy=proxy, start_proxy_server=False
+    )
+    with tempfile.TemporaryDirectory() as td:
+        input_dir = Path(td) / "input"
+        output_dir = Path(td) / "output"
+        job = _make_job(input_dir, output_dir)
+        result = await runtime.execute(job, _FakeCancellationToken())
+        assert result.failure is None
+        assert result.execution_metadata.model == "claude-sonnet-4-6"
+        assert result.execution_metadata.token_usage.input_tokens == 30
+        assert result.execution_metadata.token_usage.output_tokens == 10
+        assert result.execution_metadata.cost is not None
+
+
+@pytest.mark.asyncio
+async def test_runsc_runtime_rejects_forged_metadata() -> None:
+    """A `result.json` with forged usage is overwritten by the proxy ledger."""
+    cfg = ProxyConfig(secret="a" * 32, anthropic_api_key="test-key")
+    proxy = ModelProxy(
+        proxy_config=cfg,
+        anthropic_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(_upstream_response_factory())
+        ),
+    )
+    runtime = RunscSkillRuntime(
+        runner=FakeSandboxRunner(proxy), proxy=proxy, start_proxy_server=False
+    )
+    with tempfile.TemporaryDirectory() as td:
+        input_dir = Path(td) / "input"
+        output_dir = Path(td) / "output"
+        job = _make_job(input_dir, output_dir)
+        result = await runtime.execute(job, _FakeCancellationToken())
+        assert result.failure is None
+        # The sandbox might claim 999999 tokens; the ledger should not.
+        assert result.execution_metadata.token_usage.input_tokens == 30
+
+
+@pytest.mark.asyncio
 async def test_runsc_sandbox_runner_argv_no_shell_interpolation() -> None:
     """`RunscSandboxRunner` builds an explicit argv array with no shell interpolation."""
     runner = RunscSandboxRunner(
@@ -273,9 +328,10 @@ async def test_runsc_sandbox_runner_argv_no_shell_interpolation() -> None:
         network="none",
         rootless=True,
     )
-    argv = runner._build_argv(Path("/bundle"), "se-abc123")
+    argv = runner._build_argv(Path("/bundle"), Path("/bundle/root"), "se-abc123")
     assert argv == [
         "/usr/local/bin/runsc",
+        "--root=/bundle/root",
         "--network=none",
         "--rootless",
         "run",
@@ -303,12 +359,15 @@ async def test_runsc_sandbox_runner_config_includes_isolation() -> None:
         socket_path.touch()
         bundle_dir = Path(td) / "bundle"
         bundle_dir.mkdir()
+        root_dir = bundle_dir / "root"
+        root_dir.mkdir()
         job_path = bundle_dir / "job.json"
         job_path.write_text("{}", encoding="utf-8")
 
         runner = RunscSandboxRunner(runsc_binary="/fake/runsc", rootfs=str(rootfs))
         config = runner._build_config(
             bundle_dir=bundle_dir,
+            root_dir=root_dir,
             job_path=job_path,
             input_dir=input_dir,
             output_dir=output_dir,
@@ -371,7 +430,12 @@ async def test_runsc_sandbox_runner_rejects_missing_rootfs() -> None:
 async def test_runsc_runtime_sandbox_job_has_no_anthropic_key() -> None:
     """The serialized job file written for the sandbox never contains the API key."""
     cfg = ProxyConfig(secret="a" * 32, anthropic_api_key="test-key")
-    proxy = ModelProxy(proxy_config=cfg)
+    proxy = ModelProxy(
+        proxy_config=cfg,
+        anthropic_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda r: httpx.Response(502))
+        ),
+    )
     runtime = RunscSkillRuntime(
         runner=FakeSandboxRunner(proxy), proxy=proxy, start_proxy_server=False
     )
@@ -383,6 +447,152 @@ async def test_runsc_runtime_sandbox_job_has_no_anthropic_key() -> None:
         # The proxy returned an error because the fake runner had no upstream, but
         # the proxy token is still issued from `job` and does not contain the key.
         assert "test-key" not in (output_dir / "result.json").read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_safe_read_runtime_result_rejects_symlink() -> None:
+    """`_safe_read_runtime_result` refuses to follow symlinks."""
+    with tempfile.TemporaryDirectory() as td:
+        output_dir = Path(td) / "output"
+        output_dir.mkdir()
+        real = output_dir / "real.json"
+        real.write_text("{}", encoding="utf-8")
+        link = output_dir / "result.json"
+        link.symlink_to(real)
+        assert _safe_read_runtime_result(link) is None
+
+
+@pytest.mark.asyncio
+async def test_safe_read_runtime_result_rejects_fifo() -> None:
+    """`_safe_read_runtime_result` refuses to read a FIFO."""
+    with tempfile.TemporaryDirectory() as td:
+        output_dir = Path(td) / "output"
+        output_dir.mkdir()
+        fifo = output_dir / "result.json"
+        os.mkfifo(str(fifo))
+        assert _safe_read_runtime_result(fifo) is None
+
+
+@pytest.mark.asyncio
+async def test_safe_read_runtime_result_rejects_oversized() -> None:
+    """`_safe_read_runtime_result` rejects files larger than the configured cap."""
+    with tempfile.TemporaryDirectory() as td:
+        output_dir = Path(td) / "output"
+        output_dir.mkdir()
+        path = output_dir / "result.json"
+        path.write_bytes(b"x" * 1_000_001)
+        assert _safe_read_runtime_result(path, max_bytes=1_000_000) is None
+
+
+@pytest.mark.asyncio
+async def test_runsc_runtime_result_symlink_returns_runtime_error() -> None:
+    """A symlink `result.json` causes the runtime to return a redacted `runtime_error`."""
+    cfg = ProxyConfig(secret="a" * 32, anthropic_api_key="test-key")
+    proxy = ModelProxy(
+        proxy_config=cfg,
+        anthropic_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(_upstream_response_factory())
+        ),
+    )
+    runtime = RunscSkillRuntime(
+        runner=FakeSandboxRunner(proxy), proxy=proxy, start_proxy_server=False
+    )
+    with tempfile.TemporaryDirectory() as td:
+        input_dir = Path(td) / "input"
+        output_dir = Path(td) / "output"
+        job = _make_job(input_dir, output_dir)
+        real = output_dir / "real.json"
+        real.write_text("{}", encoding="utf-8")
+        (output_dir / "result.json").symlink_to(real)
+        result = await runtime.execute(job, _FakeCancellationToken())
+        assert result.failure is not None
+        assert result.failure.category == "runtime_error"
+
+
+@pytest.mark.asyncio
+async def test_runsc_runtime_overrides_forged_metadata() -> None:
+    """A malicious runner cannot inflate the persisted model, token, or cost accounting."""
+    cfg = ProxyConfig(secret="a" * 32, anthropic_api_key="test-key")
+
+    class _ForgingRunner:
+        async def run(
+            self,
+            job: RuntimeJob,
+            input_dir: Path,
+            output_dir: Path,
+            result_path: Path,
+            cancellation: Any,
+            proxy_uds_path: Path | None = None,
+        ) -> None:
+            # The real runtime would have made model calls through the proxy, but
+            # this forged result claims impossible usage and a different model.
+            forged = {
+                "output_artifact": "# Forged",
+                "sidecar": {
+                    "skill": job.skill,
+                    "skill_version": job.skill_version,
+                    "mode": job.mode,
+                },
+                "execution_metadata": {
+                    "runtime_version": "forged",
+                    "model": "claude-opus-forged",
+                    "token_usage": {
+                        "input_tokens": 999999,
+                        "output_tokens": 999999,
+                        "cache_creation_input_tokens": 999999,
+                        "cache_read_input_tokens": 999999,
+                        "total_tokens": 3999996,
+                    },
+                    "cost": 9999.0,
+                },
+            }
+            result_path.write_text(json.dumps(forged), encoding="utf-8")
+
+    proxy = ModelProxy(
+        proxy_config=cfg,
+        anthropic_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda r: httpx.Response(502))
+        ),
+    )
+    runtime = RunscSkillRuntime(
+        runner=_ForgingRunner(), proxy=proxy, start_proxy_server=False
+    )
+    with tempfile.TemporaryDirectory() as td:
+        input_dir = Path(td) / "input"
+        output_dir = Path(td) / "output"
+        job = _make_job(input_dir, output_dir)
+        result = await runtime.execute(job, _FakeCancellationToken())
+        assert result.failure is None
+        # The proxy ledger saw zero model calls and overrides the sandbox claim.
+        assert result.execution_metadata.model != "claude-opus-forged"
+        assert result.execution_metadata.token_usage.input_tokens == 0
+        assert result.execution_metadata.token_usage.output_tokens == 0
+        assert result.execution_metadata.cost != 9999.0
+
+
+@pytest.mark.asyncio
+async def test_runsc_runtime_removes_proxy_directory() -> None:
+    """After execution the runtime removes the entire proxy run directory, not just the socket."""
+    import tempfile as _tmp
+
+    runtime = _runtime()
+    before = _se_proxy_dirs()
+    with tempfile.TemporaryDirectory() as td:
+        input_dir = Path(td) / "input"
+        output_dir = Path(td) / "output"
+        job = _make_job(input_dir, output_dir)
+        await runtime.execute(job, _FakeCancellationToken())
+    # The proxy server creates a run_dir under the system temp dir; it should be removed.
+    after = _se_proxy_dirs()
+    new_dirs = after - before
+    assert not new_dirs
+
+
+def _se_proxy_dirs() -> set[str]:
+    """Return any se-proxy directories in the system temp directory."""
+    import tempfile as _tmp
+
+    return {str(p) for p in Path(_tmp.gettempdir()).glob("se-proxy-*") if p.is_dir()}
 
 
 @pytest.mark.skipif(shutil.which("runsc") is None, reason="runsc is not installed")

@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 import httpx
+from pydantic import ValidationError
 
 from webapp.hosted import config
 from webapp.hosted.agent_loop_harness import TypedToolRuntime
@@ -32,14 +33,18 @@ from webapp.hosted.model_proxy import ModelProxy
 from webapp.hosted.runtime_contract import (
     Allowlist,
     CancellationToken,
+    ExecutionMetadata,
     NetworkDestination,
     RedactedFailure,
     RuntimeJob,
     RuntimeResult,
     SkillRuntime,
+    TokenUsage,
 )
 
 logger = logging.getLogger(__name__)
+
+MAX_RESULT_BYTES = 1_000_000
 
 
 class RuntimeExecutionError(Exception):
@@ -123,8 +128,8 @@ class FakeSandboxRunner:
             "x-job-id": str(host_job.job_id),
             "x-attempt-number": str(host_job.attempt_number),
         }
-        if host_job.lease_token:
-            headers["x-lease-token"] = host_job.lease_token
+        if host_job.attempt_id:
+            headers["x-attempt-id"] = host_job.attempt_id
 
         client = httpx.AsyncClient(
             base_url=proxy_url,
@@ -175,6 +180,8 @@ class RunscSandboxRunner:
 
         container_id = f"se-{uuid.uuid4().hex[:12]}"
         bundle_dir = Path(tempfile.mkdtemp(prefix=f"se-runsc-bundle-{container_id}-"))
+        root_dir = bundle_dir / "root"
+        root_dir.mkdir(parents=True, exist_ok=True)
         try:
             job_path = bundle_dir / "job.json"
             job_path.write_text(job.model_dump_json(), encoding="utf-8")
@@ -184,6 +191,7 @@ class RunscSandboxRunner:
                 json.dumps(
                     self._build_config(
                         bundle_dir=bundle_dir,
+                        root_dir=root_dir,
                         job_path=job_path,
                         input_dir=input_dir,
                         output_dir=output_dir,
@@ -195,11 +203,11 @@ class RunscSandboxRunner:
                 encoding="utf-8",
             )
 
-            argv = self._build_argv(bundle_dir, container_id)
+            argv = self._build_argv(bundle_dir, root_dir, container_id)
             proc = await asyncio.create_subprocess_exec(
                 *argv,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
             try:
                 await self._wait_for_sandbox(proc, cancellation, job.execution_deadline)
@@ -247,8 +255,8 @@ class RunscSandboxRunner:
             if not proxy_uds_path.exists():
                 raise RuntimeExecutionError("proxy socket does not exist")
 
-    def _build_argv(self, bundle_dir: Path, container_id: str) -> list[str]:
-        argv = [self.runsc_binary]
+    def _build_argv(self, bundle_dir: Path, root_dir: Path, container_id: str) -> list[str]:
+        argv = [self.runsc_binary, f"--root={root_dir}"]
         if self.network:
             argv.append(f"--network={self.network}")
         if self.rootless:
@@ -261,6 +269,7 @@ class RunscSandboxRunner:
     def _build_config(
         self,
         bundle_dir: Path,
+        root_dir: Path,
         job_path: Path,
         input_dir: Path,
         output_dir: Path,
@@ -305,6 +314,19 @@ class RunscSandboxRunner:
                 }
             )
 
+        namespaces = [
+            {"type": "pid"},
+            {"type": "network"},
+            {"type": "ipc"},
+            {"type": "uts"},
+            {"type": "mount"},
+        ]
+        # gVisor's own sandbox provides the user-namespace equivalent.  runsc
+        # with `--rootless` creates a user namespace on unprivileged hosts.  We
+        # keep the container process uid non-root and drop all capabilities.
+        if self.rootless:
+            namespaces.append({"type": "user"})
+
         return {
             "ociVersion": "1.1.0",
             "process": {
@@ -341,13 +363,7 @@ class RunscSandboxRunner:
             "hostname": container_id,
             "mounts": mounts,
             "linux": {
-                "namespaces": [
-                    {"type": "pid"},
-                    {"type": "network"},
-                    {"type": "ipc"},
-                    {"type": "uts"},
-                    {"type": "mount"},
-                ],
+                "namespaces": namespaces,
                 "resources": {
                     "cpu": {"shares": 1024, "quota": 100000, "period": 100000},
                     "memory": {"limit": 2147483648, "reservation": 268435456},
@@ -386,24 +402,25 @@ class RunscSandboxRunner:
             now = datetime.now(tz=timezone.utc)
             remaining = max((deadline - now).total_seconds(), 0.0)
             if remaining <= 0:
-                proc.send_signal(signal.SIGKILL)
+                with contextlib.suppress(ProcessLookupError, OSError):
+                    proc.send_signal(signal.SIGKILL)
                 raise RuntimeExecutionError("sandbox exceeded execution deadline")
             try:
                 await asyncio.wait_for(proc.wait(), timeout=min(remaining, 1.0))
             except asyncio.TimeoutError:
                 if cancellation.is_cancelled():
-                    proc.send_signal(signal.SIGTERM)
+                    with contextlib.suppress(ProcessLookupError, OSError):
+                        proc.send_signal(signal.SIGTERM)
                     with contextlib.suppress(asyncio.TimeoutError):
                         await asyncio.wait_for(proc.wait(), timeout=5.0)
                     if proc.returncode is None:
-                        proc.send_signal(signal.SIGKILL)
+                        with contextlib.suppress(ProcessLookupError, OSError):
+                            proc.send_signal(signal.SIGKILL)
                     raise RuntimeExecutionError("sandbox cancelled")
 
         if proc.returncode != 0:
-            stderr = await proc.stderr.read() if proc.stderr else b""
+            # Do not capture or log raw sandbox stderr.
             logger.warning("runsc exited with code %s", proc.returncode)
-            if stderr:
-                logger.warning("runsc stderr: %s", stderr[:1024].decode("utf-8", "replace"))
             raise RuntimeExecutionError(f"runsc exited with code {proc.returncode}")
 
     async def _runsc_delete(self, container_id: str) -> None:
@@ -415,8 +432,15 @@ class RunscSandboxRunner:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        with contextlib.suppress(asyncio.TimeoutError):
+        try:
             await asyncio.wait_for(proc.wait(), timeout=10.0)
+        except asyncio.TimeoutError:
+            with contextlib.suppress(ProcessLookupError, OSError):
+                proc.kill()
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(proc.wait(), timeout=5.0)
+            if proc.returncode is None:
+                logger.warning("runsc delete did not terminate after SIGKILL: %s", container_id)
 
 
 class RunscSkillRuntime:
@@ -435,9 +459,6 @@ class RunscSkillRuntime:
     async def execute(self, job: RuntimeJob, cancellation: CancellationToken) -> RuntimeResult:
         if cancellation.is_cancelled():
             return _redacted_failure("cancelled")
-
-        if not job.lease_token:
-            return _redacted_failure("configuration_error")
 
         try:
             input_dir = Path(job.input_workspace)
@@ -461,28 +482,29 @@ class RunscSkillRuntime:
         proxy_uds_host_path: Path | None = None
         server_task: asyncio.Task | None = None
         server: Any | None = None
-        if self.start_proxy_server:
-            try:
-                proxy_uds_host_path, server_task, server = await self._start_proxy_server(sandbox_job)
-            except Exception as exc:
-                logger.warning("Failed to start model proxy server: %s", type(exc).__name__)
-                return _redacted_failure("runtime_error")
-
+        jti: str | None = None
         try:
-            capability = self.proxy.issue_capability(
+            if self.start_proxy_server:
+                try:
+                    proxy_uds_host_path, server_task, server = await self._start_proxy_server(sandbox_job)
+                except Exception as exc:
+                    logger.warning("Failed to start model proxy server: %s", type(exc).__name__)
+                    return _redacted_failure("runtime_error")
+
+            token, jti, attempt_id = self.proxy.issue_capability(
                 sandbox_job,
                 attempt_number=sandbox_job.attempt_number,
-                lease_token=sandbox_job.lease_token,
             )
             sandbox_job = sandbox_job.model_copy(
                 update={
-                    "proxy_token": capability,
+                    "attempt_id": attempt_id,
+                    "proxy_token": token,
                     "proxy_uds_path": "/runtime/proxy.sock" if proxy_uds_host_path else None,
                 }
             )
 
             result_path = output_dir / "result.json"
-            await self.runner.run(
+            runner_coro = self.runner.run(
                 sandbox_job,
                 input_dir,
                 output_dir,
@@ -491,22 +513,70 @@ class RunscSkillRuntime:
                 proxy_uds_path=proxy_uds_host_path,
             )
 
-            if not result_path.exists():
-                return _redacted_failure("runtime_error")
+            runner_task = asyncio.create_task(runner_coro)
+            cancel_task = asyncio.create_task(cancellation.wait())
+            try:
+                done, pending = await asyncio.wait(
+                    {runner_task, cancel_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for p in pending:
+                    p.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await p
+            except asyncio.CancelledError:
+                runner_task.cancel()
+                cancel_task.cancel()
+                self.proxy.cancel_session(jti)
+                raise
+
+            if cancel_task in done:
+                self.proxy.cancel_session(jti)
+                if not runner_task.done():
+                    runner_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await runner_task
+                return _redacted_failure("cancelled")
 
             try:
-                return RuntimeResult.model_validate_json(result_path.read_text(encoding="utf-8"))
-            except Exception:
+                await runner_task
+            except Exception as exc:
+                logger.warning("Runner raised: %s", type(exc).__name__)
                 return _redacted_failure("runtime_error")
+
+            result = _safe_read_runtime_result(result_path)
+            if result is None:
+                return _redacted_failure("runtime_error")
+
+            if result.failure is None:
+                authoritative = self.proxy.get_attempt_metadata(jti)
+                result = result.model_copy(
+                    update={
+                        "execution_metadata": ExecutionMetadata(
+                            runtime_version=sandbox_job.requested_runtime_version,
+                            model=authoritative.model,
+                            token_usage=authoritative.token_usage,
+                            cost=authoritative.cost,
+                        )
+                    }
+                )
+            return result
         finally:
             if server is not None:
                 server.should_exit = True
+                if hasattr(server, "force_exit"):
+                    server.force_exit = True
             if server_task is not None:
                 with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await server_task
+                    await asyncio.wait_for(server_task, timeout=2.0)
+                if not server_task.done():
+                    server_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await server_task
             if proxy_uds_host_path is not None:
+                run_dir = proxy_uds_host_path.parent
                 with contextlib.suppress(OSError):
-                    proxy_uds_host_path.unlink()
+                    shutil.rmtree(run_dir, ignore_errors=True)
 
     async def _start_proxy_server(self, job: RuntimeJob) -> tuple[Path, asyncio.Task, Any]:
         """Start the `ModelProxy` ASGI server on a Unix domain socket.
@@ -543,6 +613,35 @@ class RunscSkillRuntime:
             raise RuntimeExecutionError("proxy server did not create socket in time")
 
         return uds_path, server_task, server
+
+
+def _safe_read_runtime_result(result_path: Path, max_bytes: int = MAX_RESULT_BYTES) -> RuntimeResult | None:
+    """Read `result.json` safely from a potentially hostile filesystem.
+
+    Uses `O_NOFOLLOW | O_NONBLOCK`, verifies a regular file via `fstat`, and
+    enforces a small byte cap.  Symlinks, FIFOs, devices, and oversized files
+    are rejected.
+    """
+    try:
+        fd = os.open(str(result_path), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            return None
+        if st.st_size > max_bytes:
+            return None
+        with os.fdopen(fd, "rb", closefd=False) as f:
+            data = f.read(max_bytes + 1)
+        if len(data) > max_bytes:
+            return None
+        try:
+            return RuntimeResult.model_validate_json(data.decode("utf-8", errors="replace"))
+        except ValidationError:
+            return None
+    finally:
+        os.close(fd)
 
 
 def _proxy_base_url(network: frozenset[NetworkDestination]) -> str:

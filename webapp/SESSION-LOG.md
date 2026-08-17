@@ -2,10 +2,18 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 11, 2026 — HEAD TBD on `devin/slice5b2a-runsc-proxy`. Slice 5B2A: gVisor `runsc` sandbox executor and worker-side Anthropic model proxy._
+_Last updated: August 11, 2026 — HEAD TBD on `devin/slice5b2a-runsc-proxy`. Slice 5B2A re-review: authoritative proxy ledger, replay-protected capability tokens, bounded strict proxy, safe `result.json` ingestion, and verified sandbox cleanup._
 
 
 ## Built this session (newest first — see `git log`)
+
+- **PR #45 re-review fixes: authoritative accounting, capability boundary, strict proxy, safe `result.json`, and verified cleanup (August 11).**
+  1. **Authoritative model/usage/cost ledger.** `webapp/hosted/model_proxy.py` now keeps the per-attempt accounting in the trusted worker process (`_ProxySession`). `RunscSkillRuntime.execute` overwrites any sandbox-authored `RuntimeResult.execution_metadata` with `ModelProxy.get_attempt_metadata(jti)`, so a compromised runtime cannot forge model, token usage, or cost.
+  2. **Replay-protected, lease-free capability tokens.** `ProxyCapability` no longer carries the raw database lease token. The sandbox identity is an opaque `attempt_id` derived from a host-side hash of the JWT `jti`. `ModelProxy.issue_capability` sets `exp` to the immutable attempt deadline, and `handle` requires a monotonic `x-request-seq` per `jti`, rejecting replayed or out-of-order requests.
+  3. **Strict bounded proxy boundary.** `ModelProxy.handle` validates method, route, content type, request size, and `ProxyMessageRequest` shape before forwarding. `max_tokens` is range-checked against `ProxyConfig.max_tokens`; `stream=true` is rejected; nested `messages`/`tools`/`content` blocks are validated; concurrent upstream calls are capped by `asyncio.Semaphore`; upstream requests and responses are streamed with size caps; and `ModelProxy.cancel_session` interrupts an in-flight upstream request.
+  4. **Safe `result.json` ingestion.** `webapp/hosted/runsc_executor.py` `_safe_read_runtime_result` opens `result.json` with `O_RDONLY | O_NOFOLLOW | O_NONBLOCK`, verifies `S_ISREG` and a `fstat` byte cap, and rejects symlinks, FIFOs, devices, and oversized files.
+  5. **Verified sandbox/process cleanup.** `RunscSandboxRunner` uses a unique `runsc --root` state directory per attempt; stdout/stderr are redirected to `DEVNULL` so raw sandbox stderr is never logged; timed-out `runsc delete` is killed and verified; `RunscSkillRuntime.execute` removes the entire proxy `mkdtemp` directory (not just the socket); and `FakeSandboxRunner`/`RunscSandboxRunner` are bound to the cancellation path.
+  6. **Regression tests.** `eval/tests/test_model_proxy.py` and `eval/tests/test_runsc_executor.py` cover forged usage, lease-token absence, replay/sequence rejection, long deadlines, oversized bodies, `max_tokens`/`stream` rejection, upstream cancellation, symlink/FIFO/device/oversized `result.json`, proxy-directory removal, and the real-`runsc` gated skip.
 
 - **Slice 5B2A: gVisor `runsc` sandbox executor and worker-side Anthropic model proxy (August 11).**
   1. **Sandbox runtime image and entry point.** Added `webapp/hosted/runsc/sandbox_entry.py`, `webapp/hosted/runsc/Dockerfile`, and `webapp/hosted/runsc/requirements.txt`. The image uses a pinned `python:3.11-slim-bookworm` builder and a `gcr.io/distroless/python3-debian12` runtime digest, runs as non-root UID/GID `65532:65532`, contains only the runtime and required dependencies, and has no shell, Git, browser, package manager, repo checkout, or cloud credentials. The entry point reads `SE_RUNTIME_JOB_PATH`, runs `TypedToolRuntime`, and writes `SE_RUNTIME_RESULT_PATH`, `output.md`, and `sidecar.json`.

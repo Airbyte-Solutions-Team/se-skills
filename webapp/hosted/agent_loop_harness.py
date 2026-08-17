@@ -384,6 +384,7 @@ class TypedToolRuntime:
 
         allowed_tools = job.allowlist.tools
         tools = _tool_definitions(allowed_tools)
+        request_seq = 0
         messages: list[Message] = [
             Message(
                 role="user",
@@ -410,13 +411,15 @@ class TypedToolRuntime:
 
             request = MessageRequest(
                 model=job.requested_model,
+                max_tokens=4096,
                 system=self._system_prompt(job),
                 messages=messages,
                 tools=tools,
             )
+            request_seq += 1
             try:
                 response = await _cancellable_await(
-                    _call_proxy(client, request),
+                    _call_proxy(client, request, request_seq),
                     cancellation,
                     timeout=remaining,
                 )
@@ -516,8 +519,8 @@ def _default_client(
     if job is not None:
         headers["x-job-id"] = str(job.job_id)
         headers["x-attempt-number"] = str(job.attempt_number)
-        if job.lease_token:
-            headers["x-lease-token"] = job.lease_token
+        if job.attempt_id:
+            headers["x-attempt-id"] = job.attempt_id
     if proxy_uds_path:
         return httpx.AsyncClient(
             base_url=base_url,
@@ -574,13 +577,17 @@ async def _cancellable_await(
     return request_task.result()
 
 
-async def _call_proxy(client: httpx.AsyncClient, request: MessageRequest) -> MessageResponse:
+async def _call_proxy(client: httpx.AsyncClient, request: MessageRequest, seq: int) -> MessageResponse:
     """POST a model turn to the worker proxy and parse the response.
 
     `exclude_none=True` keeps unknown/redacted/thinking fallback blocks from
     being reserialized with invented null fields that Anthropic rejects.
     """
-    response = await client.post("/v1/messages", json=request.model_dump(exclude_none=True))
+    response = await client.post(
+        "/v1/messages",
+        json=request.model_dump(exclude_none=True),
+        headers={"x-request-seq": str(seq)},
+    )
     response.raise_for_status()
     return MessageResponse(**response.json())
 
