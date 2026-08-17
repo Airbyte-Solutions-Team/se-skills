@@ -29,6 +29,7 @@ from webapp.hosted.runtime_contract import (
 )
 from webapp.hosted.runsc_executor import (
     FakeSandboxRunner,
+    RuntimeExecutionError,
     RunscSandboxRunner,
     RunscSkillRuntime,
     _safe_read_runtime_result,
@@ -860,6 +861,116 @@ async def test_runsc_sandbox_state_directory_removed() -> None:
         )
     after = _se_runsc_bundle_dirs()
     assert not (after - before)
+
+
+class _DeadlineRunner:
+    """Fake runner that raises a deadline-exceeded error."""
+
+    async def run(
+        self,
+        job: RuntimeJob,
+        input_dir: Path,
+        output_dir: Path,
+        result_path: Path,
+        cancellation: Any,
+        proxy_uds_path: Path | None = None,
+    ) -> None:
+        raise RuntimeExecutionError("sandbox exceeded execution deadline")
+
+
+class _MissingResultRunner:
+    """Fake runner that exits without writing result.json."""
+
+    async def run(
+        self,
+        job: RuntimeJob,
+        input_dir: Path,
+        output_dir: Path,
+        result_path: Path,
+        cancellation: Any,
+        proxy_uds_path: Path | None = None,
+    ) -> None:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return
+
+
+@pytest.mark.asyncio
+async def test_runsc_runtime_deadline_returns_timeout_and_consumes_session() -> None:
+    """`RunscSkillRuntime` preserves deadline expiry as `timeout` and cleans up the proxy session."""
+    cfg = ProxyConfig(secret="a" * 32, anthropic_api_key="test-key")
+    proxy = ModelProxy(proxy_config=cfg)
+    runtime = RunscSkillRuntime(
+        runner=_DeadlineRunner(), proxy=proxy, start_proxy_server=False
+    )
+    with tempfile.TemporaryDirectory() as td:
+        input_dir = Path(td) / "input"
+        output_dir = Path(td) / "output"
+        job = _make_job(input_dir, output_dir)
+        result = await runtime.execute(job, _FakeCancellationToken())
+        assert result.failure is not None
+        assert result.failure.category == "timeout"
+        assert not proxy._sessions
+
+
+@pytest.mark.asyncio
+async def test_runsc_runtime_missing_result_consumes_session() -> None:
+    """A runner that exits without result.json still finalizes the proxy session."""
+    cfg = ProxyConfig(secret="a" * 32, anthropic_api_key="test-key")
+    proxy = ModelProxy(proxy_config=cfg)
+    runtime = RunscSkillRuntime(
+        runner=_MissingResultRunner(), proxy=proxy, start_proxy_server=False
+    )
+    with tempfile.TemporaryDirectory() as td:
+        input_dir = Path(td) / "input"
+        output_dir = Path(td) / "output"
+        job = _make_job(input_dir, output_dir)
+        result = await runtime.execute(job, _FakeCancellationToken())
+        assert result.failure is not None
+        assert result.failure.category == "runtime_error"
+        assert not proxy._sessions
+
+
+@pytest.mark.asyncio
+async def test_runsc_runtime_proxy_rejection_consumes_session() -> None:
+    """A sandbox-reported failure path removes the proxy session after consumption."""
+    cfg = ProxyConfig(secret="a" * 32, anthropic_api_key="test-key")
+    proxy = ModelProxy(
+        proxy_config=cfg,
+        anthropic_client=httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(502))),
+    )
+    runtime = RunscSkillRuntime(
+        runner=FakeSandboxRunner(proxy), proxy=proxy, start_proxy_server=False
+    )
+    with tempfile.TemporaryDirectory() as td:
+        input_dir = Path(td) / "input"
+        output_dir = Path(td) / "output"
+        job = _make_job(input_dir, output_dir)
+        result = await runtime.execute(job, _FakeCancellationToken())
+        assert result.failure is not None
+        assert result.failure.category == "model_error"
+        assert not proxy._sessions
+
+
+@pytest.mark.asyncio
+async def test_runsc_runtime_success_consumes_session() -> None:
+    """A successful run consumes the proxy session and leaves no stale state."""
+    cfg = ProxyConfig(secret="a" * 32, anthropic_api_key="test-key")
+    proxy = ModelProxy(
+        proxy_config=cfg,
+        anthropic_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(_upstream_response_factory())
+        ),
+    )
+    runtime = RunscSkillRuntime(
+        runner=FakeSandboxRunner(proxy), proxy=proxy, start_proxy_server=False
+    )
+    with tempfile.TemporaryDirectory() as td:
+        input_dir = Path(td) / "input"
+        output_dir = Path(td) / "output"
+        job = _make_job(input_dir, output_dir)
+        result = await runtime.execute(job, _FakeCancellationToken())
+        assert result.failure is None
+        assert not proxy._sessions
 
 
 def _se_runsc_bundle_dirs() -> set[str]:

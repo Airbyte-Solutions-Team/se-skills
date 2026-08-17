@@ -58,6 +58,23 @@ def _redacted_failure(category: str) -> RuntimeResult:
     return RuntimeResult(failure=RedactedFailure(category=category))  # type: ignore[arg-type]
 
 
+def _map_runtime_execution_error(exc: Exception) -> RuntimeResult:
+    """Map a sandbox runner failure to a closed `FailureCategory`.
+
+    The messages are fixed strings emitted by the trusted worker, so this mapping
+    does not propagate model-controlled or sandbox-controlled text.
+    """
+    if isinstance(exc, RuntimeExecutionError):
+        msg = str(exc).lower()
+        if "deadline" in msg or "timed out" in msg:
+            return _redacted_failure("timeout")
+        if "cancelled" in msg:
+            return _redacted_failure("cancelled")
+        if "cleanup" in msg:
+            return _redacted_failure("cleanup_error")
+    return _redacted_failure("runtime_error")
+
+
 @runtime_checkable
 class SandboxRunner(Protocol):
     """Abstract runner that executes the sandboxed runtime for one attempt."""
@@ -534,6 +551,11 @@ class RunscSkillRuntime:
         self.proxy = proxy
         self.start_proxy_server = start_proxy_server
 
+    async def _finalize_proxy_session(self, jti: str | None) -> ExecutionMetadata:
+        """Signal cancellation and consume the authoritative metadata once."""
+        self.proxy.cancel_session(jti)
+        return await self.proxy.consume_attempt_metadata(jti)
+
     async def execute(self, job: RuntimeJob, cancellation: CancellationToken) -> RuntimeResult:
         if cancellation.is_cancelled():
             return _redacted_failure("cancelled")
@@ -605,29 +627,35 @@ class RunscSkillRuntime:
             except asyncio.CancelledError:
                 runner_task.cancel()
                 cancel_task.cancel()
-                self.proxy.cancel_session(jti)
+                await self._finalize_proxy_session(jti)
                 raise
 
             if cancel_task in done:
-                self.proxy.cancel_session(jti)
                 if not runner_task.done():
                     runner_task.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
                         await runner_task
+                await self._finalize_proxy_session(jti)
                 return _redacted_failure("cancelled")
 
             try:
                 await runner_task
+            except RuntimeExecutionError as exc:
+                logger.warning("Runner raised RuntimeExecutionError: %s", exc)
+                await self._finalize_proxy_session(jti)
+                return _map_runtime_execution_error(exc)
             except Exception as exc:
                 logger.warning("Runner raised: %s", type(exc).__name__)
+                await self._finalize_proxy_session(jti)
                 return _redacted_failure("runtime_error")
 
             result = _safe_read_runtime_result(result_path)
             if result is None:
+                await self._finalize_proxy_session(jti)
                 return _redacted_failure("runtime_error")
 
+            authoritative = await self._finalize_proxy_session(jti)
             if result.failure is None:
-                authoritative = self.proxy.get_attempt_metadata(jti)
                 result = result.model_copy(
                     update={
                         "execution_metadata": ExecutionMetadata(

@@ -326,11 +326,30 @@ class ModelProxy:
     def get_attempt_metadata(self, jti: str | None) -> ExecutionMetadata:
         """Return the authoritative, proxy-accumulated execution metadata.
 
-        If the attempt is unknown, returns an empty `ExecutionMetadata`.
+        If the attempt is unknown, returns an empty `ExecutionMetadata`.  This is a
+        non-consuming read; `consume_attempt_metadata` removes the session once.
+        """
+        return self._metadata_for_session(self._sessions.get(jti))
+
+    async def consume_attempt_metadata(self, jti: str | None) -> ExecutionMetadata:
+        """Return the authoritative metadata once and remove the session.
+
+        The session lock is acquired so this cannot race an in-flight `handle` call;
+        after returning, the same `jti` will yield an empty `ExecutionMetadata`.
         """
         if jti is None:
             return ExecutionMetadata()
         session = self._sessions.get(jti)
+        if session is None:
+            return ExecutionMetadata()
+        async with session.lock:
+            # Pop after acquiring the lock so we never drop a concurrent update.
+            session = self._sessions.pop(jti, None)
+            if session is None:
+                return ExecutionMetadata()
+            return self._metadata_for_session(session)
+
+    def _metadata_for_session(self, session: _ProxySession | None) -> ExecutionMetadata:
         if session is None:
             return ExecutionMetadata()
         total_input = session.input_tokens + session.cache_creation + session.cache_read
@@ -459,7 +478,10 @@ class ModelProxy:
                 return _error_response(403, "endpoint_mismatch")
 
             upstream_headers = _build_upstream_headers(self.cfg)
-            timeout = max(self.cfg.min_upstream_timeout, min(remaining, self.cfg.max_upstream_timeout))
+            per_read_timeout = max(
+                self.cfg.min_upstream_timeout,
+                min(remaining, self.cfg.max_upstream_timeout),
+            )
 
             async with self._get_sem():
                 try:
@@ -467,8 +489,9 @@ class ModelProxy:
                         upstream_url,
                         json.dumps(forwarded).encode("utf-8"),
                         upstream_headers,
-                        timeout,
+                        per_read_timeout,
                         session,
+                        deadline,
                     )
                 except _ProxyError as exc:
                     logger.warning("Anthropic upstream error: %s", exc.category)
@@ -495,13 +518,21 @@ class ModelProxy:
         url: str,
         body: bytes,
         headers: dict[str, str],
-        timeout: float,
+        per_read_timeout: float,
         session: _ProxySession,
+        deadline: datetime,
     ) -> bytes:
         """Stream the upstream request to completion while respecting cancellation.
 
-        Response size is capped at `ProxyConfig.max_response_bytes`.
+        An absolute wall-clock deadline is enforced independently of the per-read
+        `httpx` timeout so a slow-drip response cannot outlive the attempt.  Response
+        size is capped at `ProxyConfig.max_response_bytes`.
         """
+
+        now = datetime.now(tz=timezone.utc)
+        remaining = (deadline - now).total_seconds()
+        if remaining <= 0:
+            raise _ProxyError("timeout", 504)
 
         async def _stream() -> bytes:
             async with self.anthropic_client.stream(
@@ -509,7 +540,13 @@ class ModelProxy:
                 url,
                 content=body,
                 headers=headers,
-                timeout=timeout,
+                timeout=httpx.Timeout(
+                    None,
+                    connect=per_read_timeout,
+                    read=per_read_timeout,
+                    write=per_read_timeout,
+                    pool=per_read_timeout,
+                ),
             ) as response:
                 response.raise_for_status()
                 chunks: list[bytes] = []
@@ -523,9 +560,11 @@ class ModelProxy:
 
         upstream_task = asyncio.create_task(_stream())
         cancel_task = asyncio.create_task(session.cancel_event.wait())
+        deadline_task = asyncio.create_task(asyncio.sleep(remaining))
+        tasks: set[asyncio.Task] = {upstream_task, cancel_task, deadline_task}
         try:
             done, pending = await asyncio.wait(
-                {upstream_task, cancel_task},
+                tasks,
                 return_when=asyncio.FIRST_COMPLETED,
             )
             for p in pending:
@@ -534,9 +573,15 @@ class ModelProxy:
                     await p
             if cancel_task in done:
                 upstream_task.cancel()
+                deadline_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await upstream_task
                 raise _ProxyError("session_cancelled", 499)
+            if deadline_task in done:
+                upstream_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await upstream_task
+                raise _ProxyError("timeout", 504)
             try:
                 return upstream_task.result()
             except httpx.HTTPStatusError as exc:
@@ -546,8 +591,11 @@ class ModelProxy:
             except httpx.RequestError as exc:
                 raise _ProxyError("upstream_error", 502) from exc
         except asyncio.CancelledError:
-            upstream_task.cancel()
-            cancel_task.cancel()
+            for t in tasks:
+                t.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                for t in tasks:
+                    await t
             raise
 
     def create_app(self) -> Any:

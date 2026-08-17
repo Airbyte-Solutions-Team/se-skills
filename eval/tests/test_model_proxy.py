@@ -691,3 +691,96 @@ async def test_create_app_streams_bounded_body(valid_job: RuntimeJob) -> None:
             headers={"content-type": "application/json"},
         )
     assert response.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_consume_attempt_metadata_removes_session(valid_job: RuntimeJob) -> None:
+    """`consume_attempt_metadata` returns authoritative usage once and removes the session."""
+    proxy = _proxy()
+    token, jti, attempt_id = _issue(proxy, valid_job)
+    request = httpx.Request(
+        method="POST",
+        url="https://api.anthropic.com/v1/messages",
+        headers=_request_headers(valid_job, token, attempt_id),
+        content=b'{"messages": [{"role":"user","content":"hi"}]}',
+    )
+    response = await proxy.handle(request)
+    assert response.status_code == 200
+
+    meta_before = proxy.get_attempt_metadata(jti)
+    assert meta_before.token_usage.input_tokens == 10
+
+    consumed = await proxy.consume_attempt_metadata(jti)
+    assert consumed.token_usage.input_tokens == 10
+    assert consumed.token_usage.output_tokens == 5
+
+    assert jti not in proxy._sessions
+    assert proxy.get_attempt_metadata(jti).token_usage.input_tokens == 0
+
+    second = await proxy.consume_attempt_metadata(jti)
+    assert second.token_usage.input_tokens == 0
+
+
+class _SlowDripStream:
+    """Fake upstream stream that yields small chunks slowly."""
+
+    def __init__(self, chunk_count: int, interval: float) -> None:
+        self.chunk_count = chunk_count
+        self.interval = interval
+
+    async def __aenter__(self) -> "_SlowDripStream":
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        return None
+
+    def raise_for_status(self) -> None:
+        pass
+
+    async def aiter_bytes(self) -> Any:
+        for _ in range(self.chunk_count):
+            await asyncio.sleep(self.interval)
+            yield b'{"id":"msg-1","type":"message","role":"assistant","model":"claude-sonnet-4-6","content":[{"type":"tool_use","id":"tu1","name":"finish","input":{}}],"stop_reason":"tool_use","usage":{"input_tokens":1,"output_tokens":1}}'
+
+
+class _SlowDripClient:
+    """Fake httpx client whose stream yields a slow-drip response."""
+
+    def __init__(self, chunk_count: int, interval: float) -> None:
+        self.chunk_count = chunk_count
+        self.interval = interval
+
+    def stream(
+        self,
+        method: str,
+        url: str,
+        *,
+        content: bytes,
+        headers: dict[str, str],
+        timeout: Any,
+    ) -> _SlowDripStream:
+        return _SlowDripStream(self.chunk_count, self.interval)
+
+    async def aclose(self) -> None:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_upstream_slow_drip_exceeds_deadline(valid_job: RuntimeJob) -> None:
+    """A slow-drip response is cancelled by the absolute deadline, not the per-read timeout."""
+    proxy = _proxy()
+    # Deadline 0.2s from now; per_read_timeout from handle will be at least 1s.
+    near_deadline = datetime.now(tz=timezone.utc) + timedelta(seconds=0.2)
+    job = valid_job.model_copy(update={"execution_deadline": near_deadline})
+    token, _jti, attempt_id = _issue(proxy, job)
+    proxy.anthropic_client = _SlowDripClient(chunk_count=20, interval=0.05)
+
+    request = httpx.Request(
+        method="POST",
+        url="https://api.anthropic.com/v1/messages",
+        headers=_request_headers(job, token, attempt_id),
+        content=b'{"messages": [{"role":"user","content":"hi"}]}',
+    )
+    response = await proxy.handle(request)
+    assert response.status_code == 504
+    assert response.json()["error"]["type"] == "timeout"
