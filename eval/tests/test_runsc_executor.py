@@ -588,6 +588,218 @@ async def test_runsc_runtime_removes_proxy_directory() -> None:
     assert not new_dirs
 
 
+class _FakeSubprocess:
+    """Minimal asyncio.Process stand-in for unit tests."""
+
+    def __init__(
+        self,
+        returncode: int | None = 0,
+        wait_delay: float | None = None,
+        list_stdout: bytes = b"",
+    ) -> None:
+        self.returncode = returncode
+        self._wait_delay = wait_delay
+        self._list_stdout = list_stdout
+        self.killed = False
+
+    async def wait(self) -> int | None:
+        if self._wait_delay:
+            await asyncio.sleep(self._wait_delay)
+        if self.killed and self.returncode is None:
+            self.returncode = -9
+        return self.returncode
+
+    def kill(self) -> None:
+        self.killed = True
+        self._wait_delay = 0
+
+    async def communicate(self, _input: bytes | None = None) -> tuple[bytes, bytes]:
+        if self._wait_delay:
+            await asyncio.sleep(self._wait_delay)
+        return (self._list_stdout, b"")
+
+
+@pytest.mark.asyncio
+async def test_runsc_sandbox_delete_argv_structure() -> None:
+    """`_build_delete_argv` includes the per-attempt `--root` and no shell interpolation."""
+    runner = RunscSandboxRunner(
+        runsc_binary="/usr/local/bin/runsc",
+        rootfs="/var/lib/runsc/rootfs",
+        network="none",
+        rootless=False,
+    )
+    argv = runner._build_delete_argv(Path("/bundle/root"), "se-abc123")
+    assert argv == [
+        "/usr/local/bin/runsc",
+        "--root=/bundle/root",
+        "delete",
+        "--force",
+        "se-abc123",
+    ]
+    for arg in argv:
+        assert ";" not in arg
+        assert "|" not in arg
+        assert "&" not in arg
+        assert "`" not in arg
+        assert "$" not in arg
+
+
+@pytest.mark.asyncio
+async def test_runsc_sandbox_delete_rootless_argv_structure() -> None:
+    """`_build_delete_argv` passes `--rootless` before the subcommand when enabled."""
+    runner = RunscSandboxRunner(
+        runsc_binary="/usr/local/bin/runsc",
+        rootfs="/var/lib/runsc/rootfs",
+        network="none",
+        rootless=True,
+    )
+    argv = runner._build_delete_argv(Path("/bundle/root"), "se-abc123")
+    assert argv == [
+        "/usr/local/bin/runsc",
+        "--root=/bundle/root",
+        "--rootless",
+        "delete",
+        "--force",
+        "se-abc123",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runsc_sandbox_delete_uses_root_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`_runsc_delete` invokes `runsc --root=<root_dir> delete --force <id>`."""
+    runner = RunscSandboxRunner(
+        runsc_binary="/usr/local/bin/runsc", rootfs="/var/lib/runsc/rootfs"
+    )
+    root_dir = Path(tempfile.mkdtemp()) / "root"
+    root_dir.mkdir()
+    container_id = "se-test"
+
+    calls: list[list[str]] = []
+
+    async def fake_exec(*args: str, **kwargs: Any) -> _FakeSubprocess:
+        calls.append(list(args))
+        if args[2] == "delete":
+            return _FakeSubprocess(returncode=0)
+        return _FakeSubprocess(returncode=0, list_stdout=b"ID\tPID\tSTATUS\n")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    await runner._runsc_delete(root_dir, container_id)
+    assert any(
+        c[0] == "/usr/local/bin/runsc"
+        and c[1] == f"--root={root_dir}"
+        and c[2] == "delete"
+        and c[3] == "--force"
+        and c[4] == container_id
+        for c in calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_runsc_sandbox_delete_nonzero_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`_runsc_delete` raises if `runsc delete` exits non-zero."""
+    runner = RunscSandboxRunner(
+        runsc_binary="/usr/local/bin/runsc", rootfs="/var/lib/runsc/rootfs"
+    )
+    root_dir = Path(tempfile.mkdtemp()) / "root"
+    root_dir.mkdir()
+
+    async def fake_exec(*args: str, **kwargs: Any) -> _FakeSubprocess:
+        if args[2] == "delete":
+            return _FakeSubprocess(returncode=1)
+        return _FakeSubprocess(returncode=0, list_stdout=b"ID\tPID\tSTATUS\n")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    with pytest.raises(Exception):
+        await runner._runsc_delete(root_dir, "se-test")
+
+
+@pytest.mark.asyncio
+async def test_runsc_sandbox_delete_timeout_kills(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`_runsc_delete` kills and reports a timeout if `runsc delete` hangs."""
+    runner = RunscSandboxRunner(
+        runsc_binary="/usr/local/bin/runsc", rootfs="/var/lib/runsc/rootfs"
+    )
+    root_dir = Path(tempfile.mkdtemp()) / "root"
+    root_dir.mkdir()
+
+    proc = _FakeSubprocess(returncode=None, wait_delay=60.0)
+
+    async def fake_exec(*args: str, **kwargs: Any) -> _FakeSubprocess:
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    with pytest.raises(Exception) as exc:
+        await runner._runsc_delete(root_dir, "se-test")
+    assert proc.killed is True
+    assert "timed out" in str(exc.value).lower() or "terminate" in str(exc.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_runsc_sandbox_delete_state_dir_present_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`_runsc_delete` raises if the container is still present after delete."""
+    runner = RunscSandboxRunner(
+        runsc_binary="/usr/local/bin/runsc", rootfs="/var/lib/runsc/rootfs"
+    )
+    root_dir = Path(tempfile.mkdtemp()) / "root"
+    root_dir.mkdir()
+    container_id = "se-test"
+    (root_dir / container_id).mkdir()
+
+    async def fake_exec(*args: str, **kwargs: Any) -> _FakeSubprocess:
+        if args[2] == "delete":
+            return _FakeSubprocess(returncode=0)
+        return _FakeSubprocess(
+            returncode=0,
+            list_stdout=f"ID\tPID\tSTATUS\n{container_id}\t1\trunning\n".encode(),
+        )
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    with pytest.raises(Exception) as exc:
+        await runner._runsc_delete(root_dir, container_id)
+    assert "still present" in str(exc.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_runsc_sandbox_state_directory_removed() -> None:
+    """`RunscSandboxRunner.run` removes the bundle/state directory on exit."""
+    before = _se_runsc_bundle_dirs()
+    with tempfile.TemporaryDirectory() as td:
+        rootfs = Path(td) / "rootfs"
+        rootfs.mkdir()
+        input_dir = Path(td) / "input"
+        input_dir.mkdir()
+        output_dir = Path(td) / "output"
+        output_dir.mkdir()
+
+        runner = RunscSandboxRunner(
+            runsc_binary="/bin/true",
+            rootfs=str(rootfs),
+            network="none",
+            rootless=False,
+        )
+
+        # `_runsc_delete` calls `/bin/true --root=... list`. `/bin/true` exits 0 with no
+        # output, so the container is treated as gone and the state dir check passes.
+        job = _make_job(input_dir, output_dir)
+        await runner.run(
+            job,
+            input_dir,
+            output_dir,
+            output_dir / "result.json",
+            _FakeCancellationToken(),
+            proxy_uds_path=None,
+        )
+    after = _se_runsc_bundle_dirs()
+    assert not (after - before)
+
+
+def _se_runsc_bundle_dirs() -> set[str]:
+    """Return any runsc bundle directories in the system temp directory."""
+    import tempfile as _tmp
+
+    return {str(p) for p in Path(_tmp.gettempdir()).glob("se-runsc-bundle-*") if p.is_dir()}
+
+
 def _se_proxy_dirs() -> set[str]:
     """Return any se-proxy directories in the system temp directory."""
     import tempfile as _tmp

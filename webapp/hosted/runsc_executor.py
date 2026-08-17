@@ -216,7 +216,7 @@ class RunscSandboxRunner:
                     proc.send_signal(signal.SIGKILL)
                 with contextlib.suppress(asyncio.TimeoutError):
                     await asyncio.wait_for(proc.wait(), timeout=10.0)
-                await self._runsc_delete(container_id)
+                await self._runsc_delete(root_dir, container_id)
         finally:
             shutil.rmtree(bundle_dir, ignore_errors=True)
 
@@ -423,12 +423,61 @@ class RunscSandboxRunner:
             logger.warning("runsc exited with code %s", proc.returncode)
             raise RuntimeExecutionError(f"runsc exited with code {proc.returncode}")
 
-    async def _runsc_delete(self, container_id: str) -> None:
+    def _build_delete_argv(
+        self, root_dir: Path, container_id: str
+    ) -> list[str]:
+        """Build the `runsc delete` argv for the per-attempt root directory."""
+        argv = [self.runsc_binary, f"--root={root_dir}"]
+        if self.rootless:
+            argv.append("--rootless")
+        argv.extend(["delete", "--force", container_id])
+        return argv
+
+    async def _is_container_gone(
+        self, root_dir: Path, container_id: str
+    ) -> bool:
+        """Return True if gVisor reports the container no longer exists.
+
+        `runsc list` is used rather than relying on the filesystem, because the
+        sandbox process can outlive its state directory if delete fails.
+        """
+        argv = [self.runsc_binary, f"--root={root_dir}", "list"]
+        if self.rootless:
+            argv.append("--rootless")
         proc = await asyncio.create_subprocess_exec(
-            self.runsc_binary,
-            "delete",
-            "--force",
-            container_id,
+            *argv,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            stdout, _ = await asyncio.wait_for(
+                proc.communicate(), timeout=10.0
+            )
+        except asyncio.TimeoutError:
+            with contextlib.suppress(ProcessLookupError, OSError):
+                proc.kill()
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(proc.wait(), timeout=5.0)
+            raise RuntimeExecutionError("runsc list timed out during cleanup")
+
+        # Header line is "ID ..."; data lines start with the container id.
+        for line in stdout.decode("utf-8", errors="replace").splitlines()[1:]:
+            parts = line.split()
+            if parts and parts[0] == container_id:
+                return False
+        return True
+
+    async def _runsc_delete(
+        self, root_dir: Path, container_id: str
+    ) -> None:
+        """Delete the gVisor container and verify it is gone.
+
+        Uses the same `--root` that was passed to `runsc run`, requires a clean
+        exit, and confirms the container no longer appears in `runsc list`.
+        """
+        argv = self._build_delete_argv(root_dir, container_id)
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -440,7 +489,20 @@ class RunscSandboxRunner:
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(proc.wait(), timeout=5.0)
             if proc.returncode is None:
-                logger.warning("runsc delete did not terminate after SIGKILL: %s", container_id)
+                raise RuntimeExecutionError(
+                    "runsc delete did not terminate after SIGKILL"
+                )
+            raise RuntimeExecutionError("runsc delete timed out")
+
+        if proc.returncode != 0:
+            raise RuntimeExecutionError(
+                f"runsc delete exited with code {proc.returncode}"
+            )
+
+        if not await self._is_container_gone(root_dir, container_id):
+            raise RuntimeExecutionError(
+                f"container {container_id} still present after runsc delete"
+            )
 
 
 class RunscSkillRuntime:
