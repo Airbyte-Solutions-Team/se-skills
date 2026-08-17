@@ -665,6 +665,69 @@ async def test_runsc_sandbox_delete_rootless_argv_structure() -> None:
 
 
 @pytest.mark.asyncio
+async def test_runsc_sandbox_list_argv_structure() -> None:
+    """`_build_list_argv` puts global flags before the `list` subcommand."""
+    runner = RunscSandboxRunner(
+        runsc_binary="/usr/local/bin/runsc",
+        rootfs="/var/lib/runsc/rootfs",
+        network="none",
+        rootless=False,
+    )
+    argv = runner._build_list_argv(Path("/bundle/root"))
+    assert argv == ["/usr/local/bin/runsc", "--root=/bundle/root", "list"]
+
+    runner_rootless = RunscSandboxRunner(
+        runsc_binary="/usr/local/bin/runsc",
+        rootfs="/var/lib/runsc/rootfs",
+        network="none",
+        rootless=True,
+    )
+    argv_rootless = runner_rootless._build_list_argv(Path("/bundle/root"))
+    assert argv_rootless == [
+        "/usr/local/bin/runsc",
+        "--root=/bundle/root",
+        "--rootless",
+        "list",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runsc_sandbox_list_nonzero_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`_is_container_gone` raises if `runsc list` exits non-zero."""
+    runner = RunscSandboxRunner(
+        runsc_binary="/usr/local/bin/runsc", rootfs="/var/lib/runsc/rootfs"
+    )
+    root_dir = Path(tempfile.mkdtemp()) / "root"
+    root_dir.mkdir()
+
+    async def fake_exec(*args: str, **kwargs: Any) -> _FakeSubprocess:
+        return _FakeSubprocess(returncode=1)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    with pytest.raises(Exception) as exc:
+        await runner._is_container_gone(root_dir, "se-test")
+    assert "runsc list exited" in str(exc.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_runsc_sandbox_list_unparseable_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`_is_container_gone` raises if `runsc list` returns exit 0 but no parseable header."""
+    runner = RunscSandboxRunner(
+        runsc_binary="/usr/local/bin/runsc", rootfs="/var/lib/runsc/rootfs"
+    )
+    root_dir = Path(tempfile.mkdtemp()) / "root"
+    root_dir.mkdir()
+
+    async def fake_exec(*args: str, **kwargs: Any) -> _FakeSubprocess:
+        return _FakeSubprocess(returncode=0, list_stdout=b"\n")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    with pytest.raises(Exception) as exc:
+        await runner._is_container_gone(root_dir, "se-test")
+    assert "unparseable" in str(exc.value).lower()
+
+
+@pytest.mark.asyncio
 async def test_runsc_sandbox_delete_uses_root_dir(monkeypatch: pytest.MonkeyPatch) -> None:
     """`_runsc_delete` invokes `runsc --root=<root_dir> delete --force <id>`."""
     runner = RunscSandboxRunner(
@@ -771,15 +834,21 @@ async def test_runsc_sandbox_state_directory_removed() -> None:
         output_dir = Path(td) / "output"
         output_dir.mkdir()
 
+        # Fake `runsc` exits 0 and prints a valid `runsc list` header when asked to list.
+        fake_runsc = Path(td) / "fake-runsc"
+        fake_runsc.write_text(
+            '#!/bin/sh\nfor arg in "$@"; do\n  case "$arg" in\n    list) printf "ID\\tPID\\tSTATUS\\n"; exit 0 ;;\n  esac\ndone\nexit 0\n',
+            encoding="utf-8",
+        )
+        fake_runsc.chmod(0o755)
+
         runner = RunscSandboxRunner(
-            runsc_binary="/bin/true",
+            runsc_binary=str(fake_runsc),
             rootfs=str(rootfs),
             network="none",
             rootless=False,
         )
 
-        # `_runsc_delete` calls `/bin/true --root=... list`. `/bin/true` exits 0 with no
-        # output, so the container is treated as gone and the state dir check passes.
         job = _make_job(input_dir, output_dir)
         await runner.run(
             job,

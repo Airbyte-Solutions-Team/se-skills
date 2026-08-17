@@ -433,17 +433,25 @@ class RunscSandboxRunner:
         argv.extend(["delete", "--force", container_id])
         return argv
 
+    def _build_list_argv(self, root_dir: Path) -> list[str]:
+        """Build the `runsc list` argv for verifying container cleanup."""
+        argv = [self.runsc_binary, f"--root={root_dir}"]
+        if self.rootless:
+            argv.append("--rootless")
+        argv.append("list")
+        return argv
+
     async def _is_container_gone(
         self, root_dir: Path, container_id: str
     ) -> bool:
         """Return True if gVisor reports the container no longer exists.
 
         `runsc list` is used rather than relying on the filesystem, because the
-        sandbox process can outlive its state directory if delete fails.
+        sandbox process can outlive its state directory if delete fails.  The
+        command must exit 0; any non-zero exit or unparseable output is treated
+        as "not gone" and fails closed.
         """
-        argv = [self.runsc_binary, f"--root={root_dir}", "list"]
-        if self.rootless:
-            argv.append("--rootless")
+        argv = self._build_list_argv(root_dir)
         proc = await asyncio.create_subprocess_exec(
             *argv,
             stdout=asyncio.subprocess.PIPE,
@@ -460,8 +468,16 @@ class RunscSandboxRunner:
                 await asyncio.wait_for(proc.wait(), timeout=5.0)
             raise RuntimeExecutionError("runsc list timed out during cleanup")
 
-        # Header line is "ID ..."; data lines start with the container id.
-        for line in stdout.decode("utf-8", errors="replace").splitlines()[1:]:
+        if proc.returncode != 0:
+            raise RuntimeExecutionError(
+                f"runsc list exited with code {proc.returncode}"
+            )
+
+        lines = stdout.decode("utf-8", errors="replace").splitlines()
+        if not lines or not lines[0].startswith("ID"):
+            raise RuntimeExecutionError("runsc list produced unparseable output")
+
+        for line in lines[1:]:
             parts = line.split()
             if parts and parts[0] == container_id:
                 return False
