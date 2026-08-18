@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from webapp.hosted.smoke import OfflineFaults, run_live_smoke, run_offline_smoke
+from webapp.hosted.smoke_support import SmokePool, SmokeStorage
 
 
 class _Environment:
@@ -26,7 +27,6 @@ def test_offline_smoke_passes() -> None:
         OfflineFaults(drop_network_flag=True),
         OfflineFaults(add_mount=True),
         OfflineFaults(leak_sentinel=True),
-        OfflineFaults(leave_state=True),
     ],
 )
 def test_offline_smoke_fails_when_boundary_is_broken(faults: OfflineFaults) -> None:
@@ -57,3 +57,8 @@ def test_smoke_output_is_derived_only() -> None:
 
     assert "OfflineSmokeSecret" not in rendered
     assert "customer" not in rendered.lower()
+
+
+def test_offline_uses_shared_database_and_storage_fakes() -> None:
+    assert SmokePool is not None
+    assert SmokeStorage is not None

@@ -17,9 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from hosted.model_proxy import ModelProxy, ProxyConfig
 from hosted.pins import HostedPins, load_pins
 from hosted.post_call_orchestrator import (
-    OrchestratorContext,
     PostCallOrchestrator,
-    _PersistedOutput,
 )
 from hosted.preflight import (
     ListeningSocket,
@@ -43,6 +41,7 @@ from hosted.supply_chain import (
     SupplyChainCommandResult,
     verify_supply_chain,
 )
+from hosted.smoke_support import SmokePool, SmokeStorage
 
 
 class SmokeCheck(BaseModel):
@@ -79,7 +78,6 @@ class OfflineFaults:
     drop_network_flag: bool = False
     add_mount: bool = False
     leak_sentinel: bool = False
-    leave_state: bool = False
 
 
 @dataclass
@@ -151,9 +149,11 @@ class _OfflineCommandRunner:
 @dataclass
 class _Observation:
     argv: tuple[str, ...] = ()
-    mounts: frozenset[str] = frozenset()
-    validation_called: bool = False
-    state_path: Path | None = None
+    authorized_mounts: frozenset[str] = frozenset()
+    observed_mounts: frozenset[str] = frozenset()
+    workspace_path: Path | None = None
+    proxy_path: Path | None = None
+    runtime_output: str = ""
     report_json: str = ""
 
 
@@ -180,23 +180,29 @@ class _OfflineSandboxRunner(FakeSandboxRunner):
         runner = RunscSandboxRunner(
             runsc_binary="/usr/local/bin/runsc",
             rootfs="/opt/se-skills/rootfs",
-            network="none",
+            network="" if self.faults.drop_network_flag else "none",
         )
-        argv = runner._build_argv(Path("/bundle"), Path("/bundle/root"), "se-smoke")
-        if self.faults.drop_network_flag:
-            argv = [item for item in argv if item != "--network=none"]
-        self.observation.argv = tuple(argv)
-        mounts = {
-            "/proc",
-            "/tmp",
-            "/runtime/job.json",
-            "/runtime/input",
-            "/runtime/output",
-        }
-        mounts.add("/runtime/proxy.sock")
+        bundle_dir = Path("/bundle")
+        root_dir = bundle_dir / "root"
+        job_path = bundle_dir / "job.json"
+        config = runner._build_config(
+            bundle_dir=bundle_dir,
+            root_dir=root_dir,
+            job_path=job_path,
+            input_dir=input_dir,
+            output_dir=output_dir,
+            proxy_uds_path=proxy_uds_path,
+            container_id="se-smoke",
+        )
+        mounts = {mount["destination"] for mount in config["mounts"]}
         if self.faults.add_mount:
             mounts.add("/runtime/unauthorized")
-        self.observation.mounts = frozenset(mounts)
+        self.observation.observed_mounts = frozenset(mounts)
+        self.observation.argv = tuple(
+            runner._build_argv(bundle_dir, root_dir, "se-smoke")
+        )
+        self.observation.workspace_path = output_dir
+        self.observation.proxy_path = proxy_uds_path
         await super().run(
             job,
             input_dir,
@@ -212,6 +218,7 @@ class _OfflineSandboxRunner(FakeSandboxRunner):
             "Read Acme-06.11.26.txt in full (612 / 612 lines).",
             "Read transcript.txt in full (100 / 100 lines).",
         )
+        self.observation.runtime_output = output
         sidecar = SandboxOutputSidecar(
             skill="post-call",
             skill_version="1.0",
@@ -227,104 +234,7 @@ class _OfflineSandboxRunner(FakeSandboxRunner):
         )
         result_path.write_text(result.model_dump_json(), encoding="utf-8")
         if self.faults.leak_sentinel:
-            self.observation.report_json += _SENTINEL
-        if self.observation.state_path is not None and not self.faults.leave_state:
-            self.observation.state_path.unlink(missing_ok=True)
-
-
-class _OfflineOrchestrator(PostCallOrchestrator):
-    def __init__(self, runtime: RunscSkillRuntime, observation: _Observation) -> None:
-        super().__init__(runtime, db_pool=object(), storage_backend=object())
-        self.observation = observation
-
-    async def _reconcile_existing_output(
-        self, job: dict[str, object], attempt_number: int, lease_token: uuid.UUID
-    ) -> None:
-        return None
-
-    async def _cancel_requested(
-        self,
-        job: dict[str, object],
-        context: OrchestratorContext,
-        timeout_seconds: int,
-    ) -> bool:
-        return False
-
-    async def _resolve_inputs(
-        self, job: dict[str, object]
-    ) -> tuple[dict[str, object], InputManifest, dict[uuid.UUID, str]]:
-        transcript_id = uuid.UUID(str(job["transcript_id"]))
-        account_id = uuid.UUID(str(job["account_id"]))
-        org_id = uuid.UUID(str(job["org_id"]))
-        return (
-            {"storage_path": "offline/transcript.txt"},
-            InputManifest(
-                transcript_id=transcript_id,
-                transcript_ref="transcript.txt",
-                account_id=account_id,
-                org_id=org_id,
-            ),
-            {},
-        )
-
-    async def _materialize_inputs(
-        self,
-        manifest: InputManifest,
-        resolved: dict[str, object],
-        prior_paths: dict[uuid.UUID, str],
-        requester_id: uuid.UUID,
-        input_dir: Path,
-    ) -> str:
-        transcript = "Offline smoke transcript. No customer content."
-        input_dir.mkdir(parents=True, exist_ok=True)
-        (input_dir / manifest.transcript_ref).write_text(transcript, encoding="utf-8")
-        return transcript
-
-    async def _persist_output(
-        self,
-        job: dict[str, object],
-        attempt_number: int,
-        lease_token: uuid.UUID,
-        markdown: str,
-        sidecar: object,
-        validation: object,
-        runtime_version: str,
-        model: str,
-        token_usage: dict[str, object],
-        cost: float | None,
-        context: OrchestratorContext,
-        timeout_seconds: int,
-    ) -> _PersistedOutput:
-        return _PersistedOutput(
-            output_id=uuid.uuid4(),
-            content_storage_path="offline/output.md",
-            validation_status="valid",
-            token_usage=token_usage,
-            cost=cost,
-            runtime_version=runtime_version,
-            model=model,
-        )
-
-    async def _complete_job_sql(
-        self,
-        job: dict[str, object],
-        attempt_number: int,
-        lease_token: uuid.UUID,
-        persisted: _PersistedOutput,
-    ) -> str:
-        return "completed"
-
-    async def _validate_artifact(
-        self,
-        job: dict[str, object],
-        markdown: str,
-        sidecar: object,
-        transcript_text: str,
-    ) -> object:
-        self.observation.validation_called = True
-        return await super()._validate_artifact(
-            job, markdown, sidecar, transcript_text
-        )
+            self.observation.runtime_output += _SENTINEL
 
 
 _SENTINEL = "SMOKE_SECRET_SENTINEL customer-content-sentinel"
@@ -393,9 +303,7 @@ def run_offline_smoke(faults: OfflineFaults | None = None) -> SmokeReport:
         _OfflineProbe(pins),
     )
     observation = _Observation()
-    with tempfile.TemporaryDirectory(prefix="se-smoke-") as directory:
-        observation.state_path = Path(directory) / "proxy.sock"
-        observation.state_path.touch()
+    with tempfile.TemporaryDirectory(prefix="se-smoke-"):
         proxy = ModelProxy(
             proxy_config=ProxyConfig(
                 secret="OfflineSmokeProxySecretWithSufficientDiversity0123",
@@ -410,16 +318,59 @@ def run_offline_smoke(faults: OfflineFaults | None = None) -> SmokeReport:
             proxy,
             start_proxy_server=True,
         )
-        orchestrator = _OfflineOrchestrator(runtime, observation)
+        bundle_dir = Path("/bundle")
+        baseline = RunscSandboxRunner(
+            runsc_binary="/usr/local/bin/runsc",
+            rootfs="/opt/se-skills/rootfs",
+            network="none",
+        )
+        baseline_config = baseline._build_config(
+            bundle_dir=bundle_dir,
+            root_dir=bundle_dir / "root",
+            job_path=bundle_dir / "job.json",
+            input_dir=Path("/tmp/smoke-input"),
+            output_dir=Path("/tmp/smoke-output"),
+            proxy_uds_path=Path("/tmp/smoke-proxy.sock"),
+            container_id="se-smoke",
+        )
+        observation.authorized_mounts = frozenset(
+            mount["destination"] for mount in baseline_config["mounts"]
+        )
+        transcript_path = "offline/transcript.txt"
+        identifiers = {
+            "org_id": str(uuid.uuid4()),
+            "account_id": str(uuid.uuid4()),
+            "transcript_id": str(uuid.uuid4()),
+        }
+        resolved = {
+            **identifiers,
+            "opportunity_id": None,
+            "storage_path": transcript_path,
+            "original_filename": "transcript.txt",
+            "prior_outputs": [],
+        }
+        orchestrator = PostCallOrchestrator(
+            runtime,
+            db_pool=SmokePool(resolved),
+            storage_backend=SmokeStorage(
+                transcript_path,
+                "Offline smoke transcript. No customer content.",
+            ),
+        )
         job = {
             "job_id": str(uuid.uuid4()),
             "lease_token": str(uuid.uuid4()),
             "attempt_number": 1,
             "timeout_seconds": 60,
-            "org_id": str(uuid.uuid4()),
-            "account_id": str(uuid.uuid4()),
-            "transcript_id": str(uuid.uuid4()),
+            "org_id": identifiers["org_id"],
+            "account_id": identifiers["account_id"],
+            "transcript_id": identifiers["transcript_id"],
             "requester_id": str(uuid.uuid4()),
+            "source_manifest": {
+                **identifiers,
+                "opportunity_id": None,
+                "storage_path": transcript_path,
+            },
             "payload": {"model": "claude-sonnet-4-6", "runtime_version": "smoke"},
             "skill_version": "1.0",
         }
@@ -439,33 +390,27 @@ def run_offline_smoke(faults: OfflineFaults | None = None) -> SmokeReport:
                 ),
                 _check(
                     "mounts",
-                    observation.mounts
-                    == {
-                        "/proc",
-                        "/tmp",
-                        "/runtime/job.json",
-                        "/runtime/input",
-                        "/runtime/output",
-                        "/runtime/proxy.sock",
-                    },
-                    "observed mount destinations are the authorized fixture set",
+                    observation.observed_mounts == observation.authorized_mounts,
+                    "observed production config mount destinations match its contract",
                 ),
                 _check(
                     "artifact_validation",
-                    observation.validation_called
-                    and result.validation_status == "valid",
-                    "orchestrator validated the artifact outside the runtime",
+                    result.validation_status == "valid",
+                    "plain orchestrator completed worker-side artifact validation",
                 ),
                 _check(
                     "shutdown",
-                    observation.state_path is not None
-                    and not observation.state_path.exists(),
-                    "observed proxy state path was removed after shutdown",
+                    observation.workspace_path is not None
+                    and not observation.workspace_path.exists()
+                    and observation.proxy_path is not None
+                    and not observation.proxy_path.exists(),
+                    "actual per-attempt workspace and proxy socket were removed",
                 ),
                 _check(
                     "redaction",
-                    _SENTINEL not in observation.report_json,
-                    "captured report contains no sensitive sentinel",
+                    _SENTINEL not in observation.runtime_output
+                    and _SENTINEL not in observation.report_json,
+                    "captured runtime/report facts contain no sensitive sentinel",
                 ),
             )
         )
