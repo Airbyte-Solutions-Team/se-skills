@@ -115,19 +115,23 @@ PY
     cosign attest --yes --type slsaprovenance --predicate "$provenance" "${IMAGE}@${registry_digest}" >/dev/null
   fi
 else
+  registry_digest="unpublished"
   provenance="${work_dir}/provenance.json"
   printf '{}\n' >"$provenance"
 fi
 
-manifest="${OUTPUT_DIR}/${registry_digest#sha256:}.manifest.json"
-[[ "$registry_digest" == "unpublished" ]] && manifest="${OUTPUT_DIR}/${image_config_id#sha256:}.manifest.json"
-cp "${work_dir}/sbom.json" "${OUTPUT_DIR}/${image_config_id#sha256:}.sbom.json"
-cp "$provenance" "${OUTPUT_DIR}/${image_config_id#sha256:}.provenance.json"
+evidence_stem="${registry_digest#sha256:}"
+[[ "$registry_digest" == "unpublished" ]] && evidence_stem="${image_config_id#sha256:}"
+manifest="${OUTPUT_DIR}/${evidence_stem}.manifest.json"
+sbom_path="${OUTPUT_DIR}/${evidence_stem}.sbom.json"
+provenance_path="${OUTPUT_DIR}/${evidence_stem}.provenance.json"
+cp "${work_dir}/sbom.json" "$sbom_path"
+cp "$provenance" "$provenance_path"
 tar --create --sort=name --mtime='UTC 1970-01-01' \
   --owner=0 --group=0 --numeric-owner --directory "$rootfs_dir" . |
-  gzip -n >"${OUTPUT_DIR}/${image_config_id#sha256:}.rootfs.tar.gz"
-python3 - "$manifest" "$registry_digest" "$image_config_id" "$rootfs_digest" \
-  "${image_config_id#sha256:}.sbom.json" "${image_config_id#sha256:}.provenance.json" <<'PY'
+  gzip -n >"${OUTPUT_DIR}/${evidence_stem}.rootfs.tar.gz"
+python3 - "$manifest" "$registry_digest" "$rootfs_digest" "$sbom_path" \
+  "$provenance_path" "$IMAGE" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -135,12 +139,17 @@ from pathlib import Path
 Path(sys.argv[1]).write_text(
     json.dumps(
         {
-            "registry_manifest_digest": sys.argv[2] if sys.argv[2] != "unpublished" else None,
-            "approved_digest_candidate": sys.argv[2] if sys.argv[2] != "unpublished" else None,
-            "image_config_id": sys.argv[3],
-            "rootfs_digest": sys.argv[4],
-            "sbom": sys.argv[5],
-            "provenance": sys.argv[6],
+            "image_digest": sys.argv[2],
+            "rootfs_digest": sys.argv[3],
+            "sbom_path": sys.argv[4],
+            "provenance_path": sys.argv[5],
+            "signature": {
+                "image_reference": (
+                    f"{sys.argv[6]}@{sys.argv[2]}"
+                    if sys.argv[2] != "unpublished"
+                    else f"{sys.argv[6]}:unpublished"
+                )
+            },
         },
         sort_keys=True,
         separators=(",", ":"),

@@ -28,6 +28,7 @@ class ManifestPathFacts(Protocol):
     owner: str | None
     mode: int | None
     is_file: bool
+    is_directory: bool
 
 
 class SignatureManifest(BaseModel):
@@ -67,11 +68,12 @@ class ManifestLoadResult(BaseModel):
 def load_artifact_manifest(
     manifest_path: Path,
     probe: ManifestProbe,
-    worker_user: str,
 ) -> ManifestLoadResult:
     """Validate manifest ownership and return fully populated verifier facts."""
     manifest_facts = probe.path_info(str(manifest_path))
-    if not _trusted_file(manifest_facts, worker_user):
+    if not _trusted_file(
+        manifest_facts, probe.path_info(str(manifest_path.parent))
+    ):
         return ManifestLoadResult(detail="approved manifest is missing or unsafe")
     manifest_text = probe.file_text(str(manifest_path))
     if manifest_text is None:
@@ -90,7 +92,7 @@ def load_artifact_manifest(
         if not Path(path).is_absolute():
             return ManifestLoadResult(detail=f"{label} evidence path is not absolute")
         facts = probe.path_info(path)
-        if not _trusted_file(facts, worker_user):
+        if not _trusted_file(facts, probe.path_info(str(Path(path).parent))):
             return ManifestLoadResult(detail=f"{label} evidence is missing or unsafe")
         text = probe.file_text(path)
         if text is None:
@@ -101,12 +103,14 @@ def load_artifact_manifest(
     for path in (signature.public_key_path, signature.certificate_path):
         if path is not None and (
             not Path(path).is_absolute()
-            or not _trusted_file(probe.path_info(path), worker_user)
+            or not _trusted_file(
+                probe.path_info(path), probe.path_info(str(Path(path).parent))
+            )
         ):
             return ManifestLoadResult(detail="signature evidence is missing or unsafe")
 
     artifacts = SupplyChainArtifacts(
-        image_digest=manifest.image_digest,
+        image_digest=None,
         approved_image_digest=manifest.image_digest,
         sbom_text=evidence_text["SBOM"],
         sbom_image_digest=_find_digest(evidence_text["SBOM"], manifest.image_digest),
@@ -124,14 +128,21 @@ def load_artifact_manifest(
     )
 
 
-def _trusted_file(facts: ManifestPathFacts, worker_user: str) -> bool:
-    del worker_user
+def _trusted_file(
+    facts: ManifestPathFacts,
+    parent_facts: ManifestPathFacts,
+) -> bool:
     return (
         facts.exists
         and facts.is_file
         and facts.owner == "root"
         and facts.mode is not None
         and facts.mode & 0o022 == 0
+        and parent_facts.exists
+        and parent_facts.is_directory
+        and parent_facts.owner == "root"
+        and parent_facts.mode is not None
+        and parent_facts.mode & 0o022 == 0
     )
 
 

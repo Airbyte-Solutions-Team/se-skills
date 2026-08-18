@@ -13,6 +13,7 @@
     - { name: storage, value: "{{ hosted_storage_host }}" }
     - { name: registry, value: "{{ hosted_registry_host }}" }
     - { name: observability, value: "{{ hosted_observability_host }}" }
+    - { name: anthropic, value: "{{ hosted_anthropic_host }}" }
 
 - name: Require address literals for DNS and NTP destinations
   ansible.builtin.assert:

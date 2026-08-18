@@ -116,8 +116,15 @@ def _run_production_preflight() -> bool:
         "ANTHROPIC_API_KEY",
         "MODEL_PROXY_SECRET",
         "RUNSC_ROOTFS",
+        "SANDBOX_IMAGE_DIGEST",
+        "SANDBOX_MANIFEST_PATH",
     )
-    present = frozenset(name for name in names if os.environ.get(name))
+    present = frozenset(
+        name
+        for name in names
+        if os.environ.get(name)
+        or name == "SANDBOX_MANIFEST_PATH"
+    )
     report = run_production_preflight(
         ProductionPreflightSettings(
             runsc_path=hosted_config.RUNSC_BINARY,
@@ -127,12 +134,15 @@ def _run_production_preflight() -> bool:
             runtime="post-call-runsc",
             worker_user="se-worker",
             worker_group="se-worker",
-            worker_uid=995,
+            worker_uid=hosted_config.HOSTED_WORKER_UID,
+            non_worker_uid=hosted_config.HOSTED_NON_WORKER_UID,
             present_config_names=present,
             model_proxy_secret=hosted_config.MODEL_PROXY_SECRET,
             anthropic_api_url=hosted_config.ANTHROPIC_API_URL,
             database_url=hosted_config.DATABASE_WORKER_URL,
             storage_url=hosted_config.SUPABASE_STORAGE_ENDPOINT,
+            sandbox_image_digest=hosted_config.SANDBOX_IMAGE_DIGEST,
+            approved_https_destinations=hosted_config.APPROVED_HTTPS_DESTINATIONS,
         ),
         LocalHostProbe(),
     )

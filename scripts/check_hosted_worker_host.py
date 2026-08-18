@@ -25,12 +25,18 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _config(offline: bool) -> ProductionPreflightSettings:
-    present = frozenset(name for name in (
-        "DATABASE_WORKER_URL",
-        "ANTHROPIC_API_KEY",
-        "MODEL_PROXY_SECRET",
-        "RUNSC_ROOTFS",
-    ) if os.environ.get(name))
+    present = frozenset(
+        name
+        for name in (
+            "DATABASE_WORKER_URL",
+            "ANTHROPIC_API_KEY",
+            "MODEL_PROXY_SECRET",
+            "RUNSC_ROOTFS",
+            "SANDBOX_IMAGE_DIGEST",
+            "SANDBOX_MANIFEST_PATH",
+        )
+        if os.environ.get(name) or name == "SANDBOX_MANIFEST_PATH"
+    )
     return ProductionPreflightSettings(
         runsc_path=os.environ.get("RUNSC_BINARY", "/usr/local/bin/runsc"),
         present_config_names=present,
@@ -47,11 +53,13 @@ def _config(offline: bool) -> ProductionPreflightSettings:
         worker_user=os.environ.get("HOSTED_WORKER_USER", "se-worker"),
         worker_group=os.environ.get("HOSTED_WORKER_GROUP", "se-worker"),
         worker_uid=int(os.environ.get("HOSTED_WORKER_UID", "995")),
+        non_worker_uid=int(os.environ.get("HOSTED_NON_WORKER_UID", "994")),
         approved_https_destinations=frozenset(
             value
             for value in os.environ.get("HOSTED_APPROVED_HTTPS_DESTINATIONS", "").split(",")
             if value
         ),
+        sandbox_image_digest=os.environ.get("SANDBOX_IMAGE_DIGEST", ""),
         offline=offline,
     )
 

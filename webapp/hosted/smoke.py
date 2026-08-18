@@ -298,7 +298,7 @@ def run_offline_smoke(faults: OfflineFaults | None = None) -> SmokeReport:
             "MODEL_PROXY_SECRET",
             "RUNSC_ROOTFS",
             "SANDBOX_IMAGE_DIGEST",
-            "RUNSC_ROOTFS_DIGEST",
+            "SANDBOX_MANIFEST_PATH",
         }
     )
     preflight = run_preflight(

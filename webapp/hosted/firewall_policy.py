@@ -15,49 +15,96 @@ class FirewallRule:
     port: int | None = None
 
 
+@dataclass(frozen=True)
+class ParsedFirewallPolicy:
+    rules: tuple[FirewallRule, ...]
+    input_policy: str | None
+    output_policy: str | None
+    valid: bool
+
+
 _RULE = re.compile(
     r"^\s*(?:(?:meta skuid (?P<uid>\d+)\s+)?"
     r"(?:(?P<family>ip6?) daddr (?P<destination>\S+)\s+)?"
     r"(?:(?P<protocol>tcp|udp) dport (?P<port>\d+)\s+)?"
     r"(?P<action>accept|drop)\s*)$"
 )
+_CHAIN = re.compile(r"^\s*chain (?P<name>input|output) \{$")
+_POLICY = re.compile(r"policy (?P<policy>accept|drop);")
+_KNOWN_BASE = re.compile(
+    r'^\s*(?:iifname "lo"|oifname "lo"|ct state established,related)'
+    r'(?:\s+accept)?$|^\s*ip saddr \S+ tcp dport \d+ accept$'
+)
 
 
-def parse_output_policy(text: str) -> tuple[FirewallRule, ...]:
-    """Parse ordered address, identity, protocol, and action rules."""
+def parse_output_policy(text: str) -> ParsedFirewallPolicy:
+    """Parse the live table and reject unknown rules or chain policies."""
     rules: list[FirewallRule] = []
-    in_output = False
+    chain: str | None = None
+    input_policy: str | None = None
+    output_policy: str | None = None
+    valid = True
     for line in text.splitlines():
         stripped = line.strip()
-        if stripped.startswith("chain output"):
-            in_output = True
+        chain_match = _CHAIN.match(line)
+        if chain_match:
+            chain = chain_match.group("name")
             continue
-        if in_output and stripped == "}":
-            break
-        if not in_output:
+        if chain is not None and stripped == "}":
+            chain = None
+            continue
+        if chain is None:
+            continue
+        if stripped.startswith("type "):
+            policy_match = _POLICY.search(stripped)
+            if policy_match:
+                if chain == "input":
+                    input_policy = policy_match.group("policy")
+                else:
+                    output_policy = policy_match.group("policy")
+            continue
+        if not stripped or stripped.startswith("comment "):
+            continue
+        if _KNOWN_BASE.fullmatch(stripped):
+            continue
+        if chain != "output":
+            valid = False
             continue
         match = _RULE.match(line)
         if match is None:
+            valid = False
             continue
         destination = match.group("destination")
+        try:
+            parsed_destination = (
+                ipaddress.ip_network(destination, strict=False)
+                if destination
+                else None
+            )
+        except ValueError:
+            valid = False
+            continue
         rules.append(
             FirewallRule(
                 action=match.group("action"),
-                destination=(
-                    ipaddress.ip_network(destination, strict=False)
-                    if destination
-                    else None
-                ),
+                destination=parsed_destination,
                 uid=int(match.group("uid")) if match.group("uid") else None,
                 protocol=match.group("protocol"),
                 port=int(match.group("port")) if match.group("port") else None,
             )
         )
-    return tuple(rules)
+    if (
+        input_policy is None
+        or output_policy is None
+        or input_policy != "drop"
+        or output_policy != "drop"
+    ):
+        valid = False
+    return ParsedFirewallPolicy(tuple(rules), input_policy, output_policy, valid)
 
 
 def evaluate_output_policy(
-    rules: tuple[FirewallRule, ...],
+    rules: ParsedFirewallPolicy | tuple[FirewallRule, ...],
     uid: int,
     destination: str,
     protocol: str,
@@ -65,7 +112,8 @@ def evaluate_output_policy(
 ) -> str:
     """Evaluate one egress tuple in nft rule order, defaulting to drop."""
     address = ipaddress.ip_address(destination)
-    for rule in rules:
+    ordered = rules.rules if isinstance(rules, ParsedFirewallPolicy) else rules
+    for rule in ordered:
         if rule.uid is not None and rule.uid != uid:
             continue
         if rule.destination is not None and address not in rule.destination:

@@ -68,7 +68,7 @@ def test_ansible_package_has_check_mode_safe_pinned_runsc_and_hardening() -> Non
     ).read_text()
     assert "policy drop" in firewall
     assert "169.254.169.254" in firewall
-    assert "fd00:ec2::254" in firewall
+    assert "fd00::/8" in firewall
     assert "flush ruleset" not in firewall
     assert "meta skuid" in firewall
     assert "\n    tcp dport 443 accept" not in firewall
@@ -162,3 +162,79 @@ def test_release_workflow_is_manual_and_confirmed() -> None:
     assert "docker push" in (
         ROOT / "deploy/images/build_sandbox_image.sh"
     ).read_text()
+
+
+def test_release_workflow_derives_verified_tools_and_retains_evidence() -> None:
+    text = (ROOT / ".github/workflows/sandbox-image-release.yml").read_text()
+    pins = (ROOT / "deploy/pins.json").read_text()
+
+    assert "mapfile -t pin_values" in text
+    assert "sha256sum --check" in text
+    assert text.index("sha256sum --check") < text.index("chmod 0755")
+    assert "$syft_filename" in text
+    assert "$grype_filename" in text
+    assert "$cosign_filename" in text
+    assert "tools/cosign-linux-amd64" not in text
+    build = (ROOT / "deploy/images/build_sandbox_image.sh").read_text()
+    assert '"image_digest": sys.argv[2]' in build
+    assert "cosign attest" in build
+    assert "registry_digest" in build
+    assert 'cosign attest --yes --type cyclonedx --predicate' in build
+    assert 'cosign attest --yes --type slsaprovenance --predicate' in build
+    assert '"${IMAGE}@${registry_digest}"' in build
+    assert '"image_digest": sys.argv[2]' in build
+    assert '"sbom_path": sys.argv[4]' in build
+    assert '"provenance_path": sys.argv[5]' in build
+    assert "rootfs.tar.gz" in build
+    assert "path: deploy/images/out/*" in text
+    assert '"build_tools"' in pins
+
+
+def test_firewall_is_applied_before_worker_start_and_as_one_transaction() -> None:
+    main = yaml.safe_load(
+        (ANSIBLE / "roles/hosted_worker/tasks/main.yml").read_text()
+    )
+    names = [
+        task["ansible.builtin.include_tasks"]
+        for task in main
+        if "ansible.builtin.include_tasks" in task
+    ]
+    assert names.index("firewall.yml") < names.index("systemd.yml")
+
+    firewall = yaml.safe_load(
+        (ANSIBLE / "roles/hosted_worker/tasks/firewall.yml").read_text()
+    )
+    commands = [
+        task["ansible.builtin.command"]["argv"]
+        for task in firewall
+        if "ansible.builtin.command" in task
+    ]
+    assert ["nft", "--check", "-f", "{{ hosted_firewall_path }}"] in commands
+    assert ["nft", "-f", "{{ hosted_firewall_path }}"] in commands
+    apply_task = next(
+        task
+        for task in firewall
+        if task.get("name") == "Apply rendered firewall policy atomically"
+    )
+    assert "failed_when" not in apply_task
+    policy = (
+        ANSIBLE / "roles/hosted_worker/templates/firewall.nft.j2"
+    ).read_text()
+    assert policy.index("delete table inet se_skills") < policy.index(
+        "table inet se_skills {"
+    )
+
+
+def test_cleanup_unit_runs_as_worker_and_state_modes_match_preflight() -> None:
+    unit = (
+        ANSIBLE
+        / "roles/hosted_worker/templates/se-skills-cleanup.service.j2"
+    ).read_text()
+    assert "User={{ hosted_worker_user }}" in unit
+    assert "Group={{ hosted_worker_group }}" in unit
+    directories = (
+        ANSIBLE / "roles/hosted_worker/tasks/directories.yml"
+    ).read_text()
+    assert 'mode: "{{ item.mode }}"' in directories
+    assert 'mode: "0750"' in directories
+    assert 'mode: "0700"' in directories

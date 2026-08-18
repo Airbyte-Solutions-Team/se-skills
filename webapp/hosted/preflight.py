@@ -88,6 +88,8 @@ class PreflightConfig(BaseModel):
         "ANTHROPIC_API_KEY",
         "MODEL_PROXY_SECRET",
         "RUNSC_ROOTFS",
+        "SANDBOX_IMAGE_DIGEST",
+        "SANDBOX_MANIFEST_PATH",
     )
     present_config_names: frozenset[str] = frozenset()
     model_proxy_secret: str = ""
@@ -104,6 +106,7 @@ class PreflightConfig(BaseModel):
     bundle_path: str = "/var/lib/se-skills/bundles"
     bundle_mode: int = 0o700
     worker_uid: int = 995
+    non_worker_uid: int = 994
     rootfs_path: str = ""
     clock_tolerance_seconds: float = 1.0
     supply_chain: SupplyChainVerification | None = None
@@ -350,9 +353,14 @@ def _firewall_ok(config: PreflightConfig, probe: HostProbe) -> bool:
     result = probe.command(("nft", "list", "table", "inet", "se_skills"))
     if result.returncode != 0:
         return False
-    rules = parse_output_policy(result.stdout)
-    if not rules:
+    parsed = parse_output_policy(result.stdout)
+    if (
+        not parsed.valid
+        or parsed.input_policy != "drop"
+        or parsed.output_policy != "drop"
+    ):
         return False
+    rules = parsed.rules
     checks = (
         ("169.254.169.254", "tcp", 443, "drop"),
         ("10.0.0.1", "tcp", 443, "drop"),
@@ -365,10 +373,12 @@ def _firewall_ok(config: PreflightConfig, probe: HostProbe) -> bool:
         for destination, protocol, port, expected in checks
     ):
         return False
+    if not config.approved_https_destinations:
+        return False
     return all(
         evaluate_output_policy(rules, config.worker_uid, destination, "tcp", 443)
         == "accept"
-        and evaluate_output_policy(rules, config.worker_uid + 1, destination, "tcp", 443)
+        and evaluate_output_policy(rules, config.non_worker_uid, destination, "tcp", 443)
         == "drop"
         for destination in config.approved_https_destinations
     )

@@ -25,7 +25,6 @@ class HostPins(BaseModel):
     arch: str
     min_kernel: str
     cgroup_version: int
-    firewall_policy_path: str = "/etc/se-skills/firewall.nft"
 
 
 class SandboxImagePins(BaseModel):

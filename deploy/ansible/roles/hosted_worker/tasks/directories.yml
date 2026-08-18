@@ -12,14 +12,14 @@
 
 - name: Create worker state directories
   ansible.builtin.file:
-    path: "{{ item }}"
+    path: "{{ item.path }}"
     state: directory
     owner: "{{ hosted_worker_user }}"
     group: "{{ hosted_worker_group }}"
-    mode: "0700"
+    mode: "{{ item.mode }}"
   loop:
-    - "{{ hosted_state_dir }}"
-    - "{{ hosted_bundle_dir }}"
+    - { path: "{{ hosted_state_dir }}", mode: "0750" }
+    - { path: "{{ hosted_bundle_dir }}", mode: "0700" }
 
 - name: Create runsc state directory
   ansible.builtin.file:

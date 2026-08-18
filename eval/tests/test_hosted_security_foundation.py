@@ -58,19 +58,67 @@ def test_firewall_policy_evaluates_ordered_boundary() -> None:
     assert evaluate_output_policy(rules, 995, "192.0.2.10", "tcp", 443) == "drop"
 
 
+def test_firewall_policy_scopes_dns_and_ntp_to_worker_and_destinations() -> None:
+    rules = parse_output_policy(
+        """table inet se_skills {
+  chain input {
+    type filter hook input priority 0; policy drop;
+  }
+  chain output {
+    type filter hook output priority 0; policy drop;
+    meta skuid 995 ip daddr 192.0.2.53 udp dport 53 accept
+    meta skuid 995 ip daddr 192.0.2.123 udp dport 123 accept
+  }
+}"""
+    )
+
+    assert evaluate_output_policy(rules, 995, "192.0.2.53", "udp", 53) == "accept"
+    assert evaluate_output_policy(rules, 994, "192.0.2.53", "udp", 53) == "drop"
+    assert evaluate_output_policy(rules, 995, "192.0.2.54", "udp", 53) == "drop"
+    assert evaluate_output_policy(rules, 995, "192.0.2.123", "udp", 123) == "accept"
+
+
+def test_firewall_policy_rejects_unknown_rules_and_accept_chain_policy() -> None:
+    unknown = parse_output_policy(
+        """table inet se_skills {
+  chain input {
+    type filter hook input priority 0; policy drop;
+  }
+  chain output {
+    type filter hook output priority 0; policy drop;
+    return
+  }
+}"""
+    )
+    accepted_input = parse_output_policy(
+        """table inet se_skills {
+  chain input {
+    type filter hook input priority 0; policy accept;
+  }
+  chain output {
+    type filter hook output priority 0; policy drop;
+  }
+}"""
+    )
+
+    assert not unknown.valid
+    assert not accepted_input.valid
+
+
 class _ManifestProbe:
     def __init__(self, files: dict[str, str], unsafe: set[str] | None = None) -> None:
         self.files = files
         self.unsafe = unsafe or set()
 
     def path_info(self, path: str) -> PathFacts:
+        is_parent = any(Path(item).parent.as_posix() == path for item in self.files)
         return PathFacts(
-            exists=path in self.files,
+            exists=path in self.files or is_parent,
             owner="se-worker" if path in self.unsafe else "root",
             group="root",
             mode=0o644,
             is_file=path in self.files,
-            is_directory=False,
+            is_directory=is_parent,
         )
 
     def file_text(self, path: str) -> str | None:
@@ -101,7 +149,7 @@ def test_manifest_loader_populates_evidence_and_rejects_worker_writable_manifest
         provenance_path: json.dumps({"subject": [{"digest": digest}]}),
     }
     loaded = load_artifact_manifest(
-        Path(manifest_path), _ManifestProbe(files), "se-worker"
+        Path(manifest_path), _ManifestProbe(files)
     )
 
     assert loaded.trusted
@@ -110,7 +158,6 @@ def test_manifest_loader_populates_evidence_and_rejects_worker_writable_manifest
     rejected = load_artifact_manifest(
         Path(manifest_path),
         _ManifestProbe(files, unsafe={manifest_path}),
-        "se-worker",
     )
     assert not rejected.trusted
     assert "unsafe" in rejected.detail
@@ -125,6 +172,8 @@ def test_cleanup_script_removes_only_verified_dead_state(tmp_path: Path) -> None
     (root / "live").mkdir()
     (bundles / "dead").mkdir()
     (bundles / "dead" / "job.json").write_text("{}", encoding="utf-8")
+    (bundles / "live").mkdir()
+    (bundles / "live" / "job.json").write_text("{}", encoding="utf-8")
     (bundles / "orphan").mkdir()
     shim = tmp_path / "runsc-shim"
     shim.write_text(
@@ -154,4 +203,5 @@ def test_cleanup_script_removes_only_verified_dead_state(tmp_path: Path) -> None
     assert not (root / "dead").exists()
     assert (root / "live").exists()
     assert (bundles / "dead").exists()
+    assert (bundles / "live").exists()
     assert not (bundles / "orphan").exists()

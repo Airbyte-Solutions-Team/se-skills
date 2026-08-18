@@ -12,7 +12,7 @@ hosted_bundle_dir: /var/lib/se-skills/bundles
 hosted_env_file: /etc/se-skills/worker.env
 hosted_firewall_path: /etc/se-skills/firewall.nft
 hosted_operator_ssh_cidr: ""
-hosted_anthropic_host: api.anthropic.com
+hosted_anthropic_host: ""
 hosted_database_host: ""
 hosted_storage_host: ""
 hosted_registry_host: ""

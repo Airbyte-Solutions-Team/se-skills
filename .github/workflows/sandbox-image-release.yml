@@ -40,13 +40,46 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/tools" "$RUNNER_TEMP/bin"
+          mapfile -t pin_values < <(python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          pins = json.loads(Path("deploy/pins.json").read_text())["build_tools"]
+          for tool in ("syft", "grype", "cosign"):
+              print(pins[tool]["version"])
+              print(pins[tool]["filename"])
+              print(pins[tool]["sha256"])
+          PY
+          )
+          syft_version="${pin_values[0]}"
+          syft_filename="${pin_values[1]}"
+          syft_checksum="${pin_values[2]}"
+          grype_version="${pin_values[3]}"
+          grype_filename="${pin_values[4]}"
+          grype_checksum="${pin_values[5]}"
+          cosign_version="${pin_values[6]}"
+          cosign_filename="${pin_values[7]}"
+          cosign_checksum="${pin_values[8]}"
           for tool in syft grype cosign; do
-            version="$(python3 -c 'import json,sys; print(json.load(open("deploy/pins.json"))["build_tools"][sys.argv[1]]["version"])' "$tool")"
-            filename="$(python3 -c 'import json,sys; print(json.load(open("deploy/pins.json"))["build_tools"][sys.argv[1]]["filename"])' "$tool")"
-            checksum="$(python3 -c 'import json,sys; print(json.load(open("deploy/pins.json"))["build_tools"][sys.argv[1]]["sha256"])' "$tool")"
             case "$tool" in
-              syft|grype) owner=anchore ;;
-              cosign) owner=sigstore ;;
+              syft)
+                owner=anchore
+                version="$syft_version"
+                filename="$syft_filename"
+                checksum="$syft_checksum"
+                ;;
+              grype)
+                owner=anchore
+                version="$grype_version"
+                filename="$grype_filename"
+                checksum="$grype_checksum"
+                ;;
+              cosign)
+                owner=sigstore
+                version="$cosign_version"
+                filename="$cosign_filename"
+                checksum="$cosign_checksum"
+                ;;
             esac
             archive="$RUNNER_TEMP/$filename"
             curl --fail --location --silent --show-error \
@@ -54,10 +87,9 @@ jobs:
               --output "$archive"
             printf '%s  %s\n' "$checksum" "$archive" | sha256sum --check
           done
-          tar -xzf "$RUNNER_TEMP/syft_1.20.0_linux_amd64.tar.gz" -C "$RUNNER_TEMP/tools" syft
-          tar -xzf "$RUNNER_TEMP/grype_0.84.0_linux_amd64.tar.gz" -C "$RUNNER_TEMP/tools" grype
-          cp "$RUNNER_TEMP/cosign-linux-amd64" "$RUNNER_TEMP/tools/cosign"
-          mv "$RUNNER_TEMP/tools/cosign-linux-amd64" "$RUNNER_TEMP/tools/cosign"
+          tar -xzf "$RUNNER_TEMP/$syft_filename" -C "$RUNNER_TEMP/tools" syft
+          tar -xzf "$RUNNER_TEMP/$grype_filename" -C "$RUNNER_TEMP/tools" grype
+          cp "$RUNNER_TEMP/$cosign_filename" "$RUNNER_TEMP/tools/cosign"
           chmod 0755 "$RUNNER_TEMP/tools/"*
           ln -s "$RUNNER_TEMP/tools/syft" "$RUNNER_TEMP/bin/syft"
           ln -s "$RUNNER_TEMP/tools/grype" "$RUNNER_TEMP/bin/grype"

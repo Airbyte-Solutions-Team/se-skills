@@ -198,10 +198,10 @@ class RunscSandboxRunner:
         container_id = f"se-{uuid.uuid4().hex[:12]}"
         bundle_dir = Path(config.RUNSC_BUNDLE_DIR) / container_id
         root_dir = Path(config.RUNSC_STATE_DIR) / container_id
-        bundle_dir.mkdir(parents=True, exist_ok=False)
-        root_dir.mkdir(parents=True, exist_ok=False)
-        bundle_dir.chmod(0o700)
-        root_dir.chmod(0o700)
+        bundle_dir.parent.mkdir(parents=True, exist_ok=True)
+        root_dir.parent.mkdir(parents=True, exist_ok=True)
+        bundle_dir.mkdir(mode=0o700, exist_ok=False)
+        root_dir.mkdir(mode=0o700, exist_ok=False)
         try:
             job_path = bundle_dir / "job.json"
             job_path.write_text(job.model_dump_json(), encoding="utf-8")

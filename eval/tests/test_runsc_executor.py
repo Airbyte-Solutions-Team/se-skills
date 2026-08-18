@@ -971,6 +971,48 @@ async def test_runsc_sandbox_state_directory_removed(
         assert not list(durable_bundles.iterdir())
 
 
+@pytest.mark.asyncio
+async def test_runsc_delete_failure_preserves_state_directory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed verified cleanup leaves state for operator investigation."""
+    with tempfile.TemporaryDirectory() as td:
+        durable_root = Path(td) / "runsc"
+        durable_bundles = Path(td) / "bundles"
+        monkeypatch.setattr(hosted_config, "RUNSC_STATE_DIR", str(durable_root))
+        monkeypatch.setattr(hosted_config, "RUNSC_BUNDLE_DIR", str(durable_bundles))
+        rootfs = Path(td) / "rootfs"
+        rootfs.mkdir()
+        input_dir = Path(td) / "input"
+        output_dir = Path(td) / "output"
+        input_dir.mkdir()
+        output_dir.mkdir()
+        fake_runsc = Path(td) / "fake-runsc"
+        fake_runsc.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        fake_runsc.chmod(0o755)
+        runner = RunscSandboxRunner(
+            runsc_binary=str(fake_runsc),
+            rootfs=str(rootfs),
+            network="none",
+            rootless=False,
+        )
+
+        async def fail_delete(root_dir: Path, container_id: str) -> None:
+            raise RuntimeExecutionError("cleanup verification failed")
+
+        monkeypatch.setattr(runner, "_runsc_delete", fail_delete)
+        with pytest.raises(RuntimeExecutionError):
+            await runner.run(
+                _make_job(input_dir, output_dir),
+                input_dir,
+                output_dir,
+                output_dir / "result.json",
+                _FakeCancellationToken(),
+            )
+
+        assert list(durable_root.iterdir())
+
+
 class _DeadlineRunner:
     """Fake runner that raises a deadline-exceeded error."""
 

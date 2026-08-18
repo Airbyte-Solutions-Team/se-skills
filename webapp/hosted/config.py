@@ -55,16 +55,17 @@ RUNSC_BINARY = os.environ.get("RUNSC_BINARY", "/usr/local/bin/runsc")
 RUNSC_ROOTFS = os.environ.get("RUNSC_ROOTFS", "")
 HOSTED_ENV = os.environ.get("HOSTED_ENV", "development").lower()
 SANDBOX_IMAGE_DIGEST = os.environ.get("SANDBOX_IMAGE_DIGEST", "")
-RUNSC_ROOTFS_DIGEST = os.environ.get("RUNSC_ROOTFS_DIGEST", "")
 SANDBOX_MANIFEST_PATH = os.environ.get(
     "SANDBOX_MANIFEST_PATH", "/etc/se-skills/sandbox-manifest.json"
 )
-SANDBOX_SBOM_PATH = os.environ.get("SANDBOX_SBOM_PATH", "")
-SANDBOX_PROVENANCE_PATH = os.environ.get("SANDBOX_PROVENANCE_PATH", "")
 RUNSC_BUNDLE_DIR = os.environ.get("RUNSC_BUNDLE_DIR", "/var/lib/se-skills/bundles")
 RUNSC_STATE_DIR = os.environ.get("RUNSC_STATE_DIR", "/var/lib/se-skills/runsc")
-HOSTED_FIREWALL_POLICY_PATH = os.environ.get(
-    "HOSTED_FIREWALL_POLICY_PATH", "/etc/se-skills/firewall.nft"
+HOSTED_WORKER_UID = int(os.environ.get("HOSTED_WORKER_UID", "995"))
+HOSTED_NON_WORKER_UID = int(os.environ.get("HOSTED_NON_WORKER_UID", "994"))
+APPROVED_HTTPS_DESTINATIONS = frozenset(
+    value
+    for value in os.environ.get("HOSTED_APPROVED_HTTPS_DESTINATIONS", "").split(",")
+    if value
 )
 OBSERVABILITY_ENDPOINT = os.environ.get("OBSERVABILITY_ENDPOINT", "")
 ALLOW_LIVE_HOSTED_SMOKE = os.environ.get("ALLOW_LIVE_HOSTED_SMOKE", "")

@@ -53,14 +53,25 @@ class _Probe:
         self.free = 20_000_000_000
         self.firewall = "policy drop\n169.254.169.254\nfd00:ec2::254"
         self.firewall_rules = """table inet se_skills {
+  chain input {
+    type filter hook input priority 0; policy drop;
+    iifname "lo" accept
+    ct state established,related accept
+  }
   chain output {
     type filter hook output priority 0; policy drop;
+    oifname "lo" accept
+    ct state established,related accept
     ip daddr 169.254.169.254 drop
+    ip daddr 169.254.0.0/16 drop
+    ip6 daddr fe80::/10 drop
+    ip6 daddr fd00::/8 drop
     ip6 daddr fd00:ec2::254 drop
     ip daddr 10.0.0.0/8 drop
     ip daddr 172.16.0.0/12 drop
     ip daddr 192.168.0.0/16 drop
     ip6 daddr fc00::/7 drop
+    meta skuid 995 ip daddr 203.0.113.10 tcp dport 443 accept
   }
 }"""
 
@@ -137,7 +148,7 @@ def _config(**updates: object) -> PreflightConfig:
                 "MODEL_PROXY_SECRET",
                 "RUNSC_ROOTFS",
                 "SANDBOX_IMAGE_DIGEST",
-                "RUNSC_ROOTFS_DIGEST",
+                "SANDBOX_MANIFEST_PATH",
             }
         ),
         model_proxy_secret="Abcdefghijklmnopqrstuvwxyz012345",
@@ -147,6 +158,7 @@ def _config(**updates: object) -> PreflightConfig:
         supply_chain=_supply_chain(),
     )
     base.update(updates)
+    base.setdefault("approved_https_destinations", frozenset({"203.0.113.10"}))
     return PreflightConfig(**base)
 
 
@@ -304,21 +316,70 @@ def test_shipped_firewall_template_matches_preflight_contract() -> None:
         "deploy/ansible/roles/hosted_worker/templates/firewall.nft.j2"
     ).read_text()
     probe = _Probe()
-    probe.firewall_rules = _render_empty_destination_firewall(template)
+    probe.firewall_rules = _render_firewall_template(template)
 
     report = run_preflight(_config(), probe)
 
     assert not _failed(report, "firewall_policy")
 
 
-def _render_empty_destination_firewall(template: str) -> str:
-    rendered: list[str] = []
-    skip = False
-    for line in template.splitlines():
-        if line.lstrip().startswith("{%"):
-            skip = not line.lstrip().startswith("{% end")
-            continue
-        if skip:
-            continue
-        rendered.append(re.sub(r"\{\{\s*hosted_worker_uid\s*\}\}", "995", line))
-    return "\n".join(rendered)
+def _render_firewall_template(template: str) -> str:
+    values = {
+        "hosted_operator_ssh_cidr": "",
+        "hosted_worker_uid": 995,
+        "hosted_dns_servers": ["192.0.2.53", "2001:db8::53"],
+        "hosted_ntp_servers": ["192.0.2.123", "2001:db8::123"],
+        "hosted_database_host": "198.51.100.10",
+        "hosted_storage_host": "203.0.113.10",
+        "hosted_registry_host": "198.51.100.12",
+        "hosted_observability_host": "198.51.100.13",
+        "hosted_anthropic_host": "198.51.100.14",
+        "hosted_postgres_port": 5432,
+        "hosted_storage_port": 443,
+        "hosted_registry_port": 443,
+        "hosted_observability_port": 443,
+    }
+    try:
+        from jinja2 import Template
+    except ImportError:
+        return _render_firewall_without_jinja(template, values)
+    return Template(template).render(**values)
+
+
+def _render_firewall_without_jinja(template: str, values: dict[str, object]) -> str:
+    rendered = template
+    for name in ("hosted_dns_servers", "hosted_ntp_servers"):
+        pattern = re.compile(
+            rf"\{{% for server in {name} %\}}(.*?)\{{% endfor %\}}",
+            re.DOTALL,
+        )
+        body_match = pattern.search(rendered)
+        assert body_match is not None
+        body = body_match.group(1)
+        replacement = "".join(
+            body.replace("{{ server }}", str(server))
+            for server in values[name]  # type: ignore[union-attr]
+        )
+        rendered = pattern.sub(replacement, rendered, count=1)
+    for name in (
+        "hosted_operator_ssh_cidr",
+        "hosted_database_host",
+        "hosted_storage_host",
+        "hosted_registry_host",
+        "hosted_observability_host",
+        "hosted_anthropic_host",
+    ):
+        pattern = re.compile(
+            rf"\{{% if {name} \| length > 0 %\}}(.*?)\{{% endif %\}}",
+            re.DOTALL,
+        )
+        rendered = pattern.sub(
+            lambda match: match.group(1) if values[name] else "",
+            rendered,
+            count=1,
+        )
+    for name, value in values.items():
+        rendered = re.sub(
+            rf"\{{\{{\s*{name}\s*\}}\}}", str(value), rendered
+        )
+    return re.sub(r"\{{%.*?%\}}", "", rendered, flags=re.DOTALL)
