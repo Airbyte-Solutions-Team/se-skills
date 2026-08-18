@@ -52,6 +52,9 @@ class _Probe:
             "/var/lib/se-skills/bundles": PathFacts(
                 True, "root", "root", 0o700, False, True
             ),
+            "/var/lib/se-skills/workspaces": PathFacts(
+                True, "root", "se-worker", 0o730, False, True
+            ),
             "/etc/se-skills/runsc-broker.json": PathFacts(
                 True, "root", "root", 0o644, True, False
             ),
@@ -140,7 +143,8 @@ class _Probe:
             return (
                 '{"runsc": "/usr/local/bin/runsc", '
                 '"state_root": "/var/lib/se-skills/runsc", '
-                '"bundle_root": "/var/lib/se-skills/bundles"}'
+                '"bundle_root": "/var/lib/se-skills/bundles", '
+                '"workspace_root": "/var/lib/se-skills/workspaces"}'
             )
         return self.firewall
 

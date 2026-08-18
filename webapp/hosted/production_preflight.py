@@ -125,6 +125,7 @@ def run_production_preflight(
             rootfs_path=settings.rootfs_path,
             runsc_state_path=hosted_config.RUNSC_STATE_DIR,
             bundle_path=hosted_config.RUNSC_BUNDLE_DIR,
+            workspace_path=hosted_config.RUNSC_WORKSPACE_ROOT,
             worker_user=settings.worker_user,
             worker_group=settings.worker_group,
             worker_uid=settings.worker_uid,

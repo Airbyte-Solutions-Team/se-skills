@@ -9,6 +9,7 @@ hosted_rootfs_dir: /opt/se-skills/rootfs
 hosted_state_dir: /var/lib/se-skills
 hosted_runsc_state_dir: /var/lib/se-skills/runsc
 hosted_runsc_staging_dir: /var/lib/se-skills/runsc-staging
+hosted_runsc_workspace_dir: /var/lib/se-skills/workspaces
 hosted_bundle_dir: /var/lib/se-skills/bundles
 hosted_env_file: /etc/se-skills/worker.env
 hosted_firewall_path: /etc/se-skills/firewall.nft

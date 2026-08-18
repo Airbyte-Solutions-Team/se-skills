@@ -70,7 +70,13 @@ authors the OCI config. It seals input/output/proxy workspaces before binding
 them, and list/delete/stale cleanup all use the same sudo boundary. The
 supported list contract is `runsc list --format=text`; an unparseable `ID`
 header is a fail-closed cleanup error. Broker failures expose only fixed
-redacted error classes.
+redacted error classes. Worker workspaces are created beneath
+`/var/lib/se-skills/workspaces` (root-owned, group-owned by `se-worker`, mode
+0730), then atomically moved into root-owned staging. Input and job metadata
+are sandbox-readable but read-only; output is mode 0770/0660 for the worker
+and sandbox group only. The broker computes the CPU rlimit from the job's
+validated execution deadline. Broker exit 65 and 66 become explicit,
+redacted cleanup failures rather than undocumented generic errors.
 
 Image promotion is manual and protected. Build the pinned image, run SBOM and
 vulnerability scans, push it, record the registry manifest digest, generate

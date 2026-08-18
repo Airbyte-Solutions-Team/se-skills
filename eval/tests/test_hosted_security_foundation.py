@@ -256,8 +256,8 @@ def test_cleanup_script_removes_only_verified_dead_state(tmp_path: Path) -> None
     shim.write_text(
         "#!/bin/sh\n"
         "case \"$*\" in\n"
-        "  *'--root=" + str(root / "dead") + " list --format=json'*) if [ -e '" + str(root / "dead") + "/.deleted' ]; then printf '{\"containers\":[]}\\n'; else printf '{\"containers\":[{\"id\":\"dead\",\"status\":\"stopped\"}]}\\n'; fi;;\n"
-        "  *'--root=" + str(root / "live") + " list --format=json'*) printf '{\"containers\":[{\"id\":\"live\",\"status\":\"running\"}]}\\n';;\n"
+        "  *'--root=" + str(root / "dead") + " list --format=text'*) if [ -e '" + str(root / "dead") + "/.deleted' ]; then printf 'ID\\tPID\\tSTATUS\\n'; else printf 'ID\\tPID\\tSTATUS\\ndead\\t1\\tstopped\\n'; fi;;\n"
+        "  *'--root=" + str(root / "live") + " list --format=text'*) printf 'ID\\tPID\\tSTATUS\\nlive\\t1\\trunning\\n';;\n"
         "  *'--root=" + str(root / "dead") + " delete'*) touch '" + str(root / "dead") + "/.deleted'; exit 0;;\n"
         "  *) exit 1;;\n"
         "esac\n",
@@ -312,18 +312,19 @@ def _render_cleanup_script(
                     continue
                 identifier = state.name
                 listed = subprocess.run(
-                    [runsc, "--root=" + str(state), "list", "--format=json"],
+                    [runsc, "--root=" + str(state), "list", "--format=text"],
                     capture_output=True, text=True, check=False,
                 )
-                try:
-                    items = json.loads(listed.stdout).get("containers", [])
-                    status = next(
-                        (item.get("status", "").lower() for item in items
-                         if item.get("id") == identifier), "absent"
-                    )
-                except (ValueError, AttributeError, TypeError):
+                lines = listed.stdout.splitlines()
+                if not lines or not lines[0].startswith("ID"):
                     unverifiable.add(identifier)
                     continue
+                status = "absent"
+                for line in lines[1:]:
+                    parts = line.split()
+                    if parts and parts[0] == identifier:
+                        status = parts[2].lower() if len(parts) > 2 else ""
+                        break
                 if status not in {{"dead", "stopped", "exited", "failed", "terminated", "absent"}}:
                     continue
                 subprocess.run(
@@ -331,14 +332,16 @@ def _render_cleanup_script(
                     capture_output=True, check=False,
                 )
                 fresh = subprocess.run(
-                    [runsc, "--root=" + str(state), "list", "--format=json"],
+                    [runsc, "--root=" + str(state), "list", "--format=text"],
                     capture_output=True, text=True, check=False,
                 )
-                try:
-                    if not json.loads(fresh.stdout).get("containers", []):
-                        shutil.rmtree(state)
-                        shutil.rmtree(bundles / identifier, ignore_errors=True)
-                except (ValueError, AttributeError, TypeError):
+                fresh_lines = fresh.stdout.splitlines()
+                if fresh_lines and fresh_lines[0].startswith("ID") and not any(
+                    line.split()[:1] == [identifier] for line in fresh_lines[1:]
+                ):
+                    shutil.rmtree(state)
+                    shutil.rmtree(bundles / identifier, ignore_errors=True)
+                else:
                     unverifiable.add(identifier)
             for bundle in bundles.iterdir():
                 if bundle.is_dir() and not (root / bundle.name).exists() and bundle.name not in unverifiable:
@@ -378,7 +381,7 @@ def test_cleanup_script_preserves_unverifiable_and_fresh_state(tmp_path: Path) -
     shim = tmp_path / "runsc-shim"
     shim.write_text(
         "#!/bin/sh\n"
-        "printf 'not-json\\n'\n",
+        "printf 'not-a-table\\n'\n",
         encoding="utf-8",
     )
     shim.chmod(shim.stat().st_mode | stat.S_IXUSR)
@@ -407,7 +410,7 @@ def test_cleanup_script_reclaims_absent_state_after_verified_absence(
     shim.write_text(
         "#!/bin/sh\n"
         "case \"$*\" in\n"
-        "  *list\\ --format=json*) printf '{\"containers\":[]}\\n';;\n"
+        "  *list\\ --format=text*) printf 'ID\\tPID\\tSTATUS\\n';;\n"
         "  *delete*) exit 1;;\n"
         "  *) exit 1;;\n"
         "esac\n",

@@ -45,6 +45,10 @@ from webapp.hosted.runtime_contract import (
 logger = logging.getLogger(__name__)
 
 MAX_RESULT_BYTES = 1_000_000
+BROKER_EXIT_FAILURE_MESSAGES = {
+    65: "sandbox state verification failed",
+    66: "sandbox remained after delete",
+}
 
 
 class RuntimeExecutionError(Exception):
@@ -70,9 +74,20 @@ def _map_runtime_execution_error(exc: Exception) -> RuntimeResult:
             return _redacted_failure("timeout")
         if "cancelled" in msg:
             return _redacted_failure("cancelled")
+        if "state verification" in msg or "remained after delete" in msg:
+            return _redacted_failure("cleanup_error")
         if "cleanup" in msg:
             return _redacted_failure("cleanup_error")
     return _redacted_failure("runtime_error")
+
+
+def _raise_for_broker_exit(returncode: int, operation: str) -> None:
+    """Map broker sentinels to fixed, closed runtime diagnostics."""
+    if returncode == 65:
+        raise RuntimeExecutionError(BROKER_EXIT_FAILURE_MESSAGES[65])
+    if returncode == 66:
+        raise RuntimeExecutionError(BROKER_EXIT_FAILURE_MESSAGES[66])
+    raise RuntimeExecutionError(f"runsc {operation} exited with code {returncode}")
 
 
 @runtime_checkable
@@ -206,7 +221,6 @@ class RunscSandboxRunner:
                 "input_dir": str(input_dir),
                 "output_dir": str(output_dir),
                 "proxy_uds_path": str(proxy_uds_path) if proxy_uds_path else None,
-                "minimum_age_seconds": None,
                 "job": json.loads(job.model_dump_json()),
             }
             argv = self._build_argv(container_id)
@@ -483,11 +497,7 @@ class RunscSandboxRunner:
             {
                 "operation": "list",
                 "container_id": container_id,
-                "input_dir": "",
-                "output_dir": str(root_dir),
-                "proxy_uds_path": None,
-                "minimum_age_seconds": None,
-                "job": None,
+                "state_dir": str(root_dir),
             },
         )
         try:
@@ -502,9 +512,7 @@ class RunscSandboxRunner:
             raise RuntimeExecutionError("runsc list timed out during cleanup")
 
         if proc.returncode != 0:
-            raise RuntimeExecutionError(
-                f"runsc list exited with code {proc.returncode}"
-            )
+            _raise_for_broker_exit(proc.returncode, "list")
 
         lines = stdout.decode("utf-8", errors="replace").splitlines()
         if not lines or not lines[0].startswith("ID"):
@@ -536,11 +544,7 @@ class RunscSandboxRunner:
             {
                 "operation": "delete",
                 "container_id": container_id,
-                "input_dir": "",
-                "output_dir": str(root_dir),
-                "proxy_uds_path": None,
-                "minimum_age_seconds": None,
-                "job": None,
+                "state_dir": str(root_dir),
             },
         )
         try:
@@ -557,9 +561,7 @@ class RunscSandboxRunner:
             raise RuntimeExecutionError("runsc delete timed out")
 
         if proc.returncode != 0:
-            raise RuntimeExecutionError(
-                f"runsc delete exited with code {proc.returncode}"
-            )
+            _raise_for_broker_exit(proc.returncode, "delete")
 
 
 
@@ -571,10 +573,12 @@ class RunscSkillRuntime:
         runner: SandboxRunner,
         proxy: ModelProxy,
         start_proxy_server: bool = True,
+        workspace_root: Path | None = None,
     ) -> None:
         self.runner = runner
         self.proxy = proxy
         self.start_proxy_server = start_proxy_server
+        self.workspace_root = workspace_root
 
     async def _finalize_proxy_session(self, jti: str | None) -> ProxyFinalization:
         """Signal cancellation and consume trusted proxy state once."""
@@ -736,7 +740,8 @@ class RunscSkillRuntime:
         import uvicorn
         from uvicorn.config import Config
 
-        run_dir = Path(tempfile.mkdtemp(prefix="se-proxy-"))
+        workspace_root = self.workspace_root or Path(config.RUNSC_WORKSPACE_ROOT)
+        run_dir = Path(tempfile.mkdtemp(prefix="se-proxy-", dir=workspace_root))
         uds_path = run_dir / "proxy.sock"
         app = self.proxy.create_app()
         uvicorn_config = Config(

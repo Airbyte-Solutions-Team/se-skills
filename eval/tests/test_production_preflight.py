@@ -72,6 +72,8 @@ class _Probe:
             return PathFacts(True, "root", "root", 0o750, False, True)
         if path in {"/var/lib/se-skills/runsc", "/var/lib/se-skills/bundles"}:
             return PathFacts(True, "root", "root", 0o700, False, True)
+        if path == "/var/lib/se-skills/workspaces":
+            return PathFacts(True, "root", "se-worker", 0o730, False, True)
         if path == str(self.root):
             return PathFacts(True, "root", "root", 0o755, False, True)
         if candidate.is_file():
@@ -173,7 +175,8 @@ class _Probe:
             return (
                 '{"runsc": "/usr/local/bin/runsc", '
                 '"state_root": "/var/lib/se-skills/runsc", '
-                '"bundle_root": "/var/lib/se-skills/bundles"}'
+                '"bundle_root": "/var/lib/se-skills/bundles", '
+                '"workspace_root": "/var/lib/se-skills/workspaces"}'
             )
         candidate = Path(path)
         return candidate.read_text(encoding="utf-8") if candidate.is_file() else None

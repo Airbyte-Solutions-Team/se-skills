@@ -35,6 +35,12 @@ loaded from `deploy/pins.json`; role defaults and paths are in
   atomically sealed into the root-owned staging parent; input is read-only and
   output remains worker-readable. List, delete, and stale cleanup use the same
   broker and `list --format=text` contract with its required `ID` header.
+  Run requests contain only typed operation-specific fields: `run` carries
+  `container_id`, sealed workspace paths, and `job`; list/delete carry
+  `container_id` and `state_dir`; cleanup carries only
+  `minimum_age_seconds`. Unknown fields and wrong types fail closed with one
+  fixed diagnostic. The broker derives `RLIMIT_CPU` from the validated job
+  deadline. Worker exit sentinels 65 and 66 become closed cleanup failures.
 - The sandbox image uses the pinned Python and distroless base digests in
   `deploy/pins.json`. An approved image digest and rootfs digest must be
   populated before production preflight passes. `SANDBOX_IMAGE_DIGEST` is
@@ -69,6 +75,7 @@ The role creates the non-login system user `se-worker` (UID `995`) and group
 | `/var/lib/se-skills/bundles` | root/root | 0700 | broker-owned bundle parent |
 | `/var/lib/se-skills/runsc` | root/root | 0700 | broker-owned runsc state |
 | `/var/lib/se-skills/runsc-staging` | root/root | 0700 | sealed workspace staging |
+| `/var/lib/se-skills/workspaces` | root/se-worker | 0730 | worker-created input/output/proxy workspaces |
 | `/usr/local/sbin/se-skills-runsc` | root/root | 0755 | Python broker |
 | `/etc/se-skills/runsc-broker.json` | root/root | 0644 | broker-owned fixed paths |
 | `/etc/se-skills` | root/se-worker | 0750 | policy and operator configuration |
@@ -86,7 +93,9 @@ explicit writable paths. The role installs `nftables`, `chrony`, and
 ## Resource and time limits
 
 The worker limits are CPU quota 100%, memory 2 GiB, PID/task count 64,
-`NOFILE` 1,024, and file size 100,000,000 bytes. Preflight also requires at
+`NOFILE` 1,024, and file size 100,000,000 bytes. The broker sets the CPU
+rlimit to the positive remaining duration until the validated job deadline.
+Preflight also requires at
 least 10 GiB free on the root filesystem and 2 GiB free in the temporary
 filesystem. Time synchronization must be known and healthy; unknown sync state
 fails closed.

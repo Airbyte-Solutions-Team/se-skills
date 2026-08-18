@@ -116,6 +116,8 @@ class PreflightConfig(BaseModel):
     runsc_state_mode: int = 0o700
     bundle_path: str = "/var/lib/se-skills/bundles"
     bundle_mode: int = 0o700
+    workspace_path: str = "/var/lib/se-skills/workspaces"
+    workspace_mode: int = 0o730
     worker_uid: int = 995
     non_worker_uid: int = 994
     rootfs_path: str = ""
@@ -205,6 +207,7 @@ def run_preflight(config: PreflightConfig, probe: HostProbe) -> PreflightReport:
         and f'"runsc": "{config.runsc_path}"' in broker_text
         and f'"state_root": "{config.runsc_state_path}"' in broker_text
         and f'"bundle_root": "{config.bundle_path}"' in broker_text
+        and f'"workspace_root": "{config.workspace_path}"' in broker_text
     )
     helper_ok = (
         helper.exists
@@ -256,8 +259,7 @@ def run_preflight(config: PreflightConfig, probe: HostProbe) -> PreflightReport:
         runtime_helper_argv,
         stdin=(
             '{"operation":"list","container_id":"se-000000000000",'
-            f'"input_dir":"","output_dir":"{config.runsc_state_path}/preflight",'
-            '"proxy_uds_path":null,"minimum_age_seconds":null,"job":null}\n'
+            f'"state_dir":"{config.runsc_state_path}/se-000000000000"}}\n'
         ),
     )
     checks.append(
@@ -449,6 +451,7 @@ def _worker_dirs_ok(config: PreflightConfig, probe: HostProbe) -> bool:
     state = probe.path_info(config.worker_state_path)
     runsc = probe.path_info(config.runsc_state_path)
     bundles = probe.path_info(config.bundle_path)
+    workspace = probe.path_info(config.workspace_path)
     return (
         state.exists
         and state.is_directory
@@ -465,6 +468,11 @@ def _worker_dirs_ok(config: PreflightConfig, probe: HostProbe) -> bool:
         and bundles.owner == "root"
         and bundles.group == "root"
         and bundles.mode == config.bundle_mode
+        and workspace.exists
+        and workspace.is_directory
+        and workspace.owner == "root"
+        and workspace.group == config.worker_group
+        and workspace.mode == config.workspace_mode
     )
 
 

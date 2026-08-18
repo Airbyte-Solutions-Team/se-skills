@@ -66,6 +66,14 @@ helper/config/sudoers pair. It seals worker workspaces by no-follow validation
 and atomic rename into a root-owned staging parent before binding them. It
 accepts and forwards the worker's text-format list request without injecting
 worker flags; list/delete verification and stale cleanup use this same boundary.
+Requests are frozen operation-specific Pydantic models with `extra="forbid"`:
+`run` carries the job and sealed workspace paths, `list`/`delete` carry a
+state path, and `cleanup` carries only its minimum age. The broker owns the
+complete OCI document, including the fixed image entrypoint/environment,
+UID/GID, mounts, namespaces, capabilities, devices, read-only rootfs, and
+deadline-derived CPU limit. The worker maps broker sentinels 65 (unverifiable
+list output) and 66 (container still present after delete verification) to
+closed cleanup failures.
 
 **Vendor references (2026-08-11):**
 - Anthropic Messages API reference: `https://docs.anthropic.com/en/api/messages`

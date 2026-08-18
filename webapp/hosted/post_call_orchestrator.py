@@ -1145,7 +1145,12 @@ class PostCallOrchestrator:
 
         try:
             source_manifest, manifest, prior_paths = await self._resolve_inputs(job)
-            input_dir = Path(tempfile.mkdtemp(prefix="se-runtime-input-", dir="/tmp"))
+            input_dir = Path(
+                tempfile.mkdtemp(
+                    prefix="se-runtime-input-",
+                    dir=config.RUNSC_WORKSPACE_ROOT,
+                )
+            )
             try:
                 transcript_text = await self._materialize_inputs(
                     manifest, source_manifest, prior_paths, requester_id, input_dir
@@ -1269,8 +1274,18 @@ class PostCallOrchestrator:
 
             source_manifest, manifest, prior_paths = await self._resolve_inputs(job)
 
-            input_dir = Path(tempfile.mkdtemp(prefix="se-runtime-input-", dir="/tmp"))
-            output_dir = Path(tempfile.mkdtemp(prefix="se-runtime-output-", dir="/tmp"))
+            input_dir = Path(
+                tempfile.mkdtemp(
+                    prefix="se-runtime-input-",
+                    dir=config.RUNSC_WORKSPACE_ROOT,
+                )
+            )
+            output_dir = Path(
+                tempfile.mkdtemp(
+                    prefix="se-runtime-output-",
+                    dir=config.RUNSC_WORKSPACE_ROOT,
+                )
+            )
 
             requester_id = uuid.UUID(str(job["requester_id"]))
             transcript_text = await self._materialize_inputs(

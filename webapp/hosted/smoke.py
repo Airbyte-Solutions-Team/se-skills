@@ -5,6 +5,7 @@ import asyncio
 import base64
 import json
 import os
+import tempfile
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -118,6 +119,8 @@ class _OfflineProbe:
             return PathFacts(True, "root", "root", 0o700, False, True)
         if path == "/var/lib/se-skills/bundles":
             return PathFacts(True, "root", "root", 0o700, False, True)
+        if path == "/var/lib/se-skills/workspaces":
+            return PathFacts(True, "root", "se-worker", 0o730, False, True)
         return PathFacts(False, None, None, None, False, False)
 
     def command(
@@ -185,7 +188,8 @@ class _OfflineProbe:
             return (
                 '{"runsc": "/usr/local/bin/runsc", '
                 '"state_root": "/var/lib/se-skills/runsc", '
-                '"bundle_root": "/var/lib/se-skills/bundles"}'
+                '"bundle_root": "/var/lib/se-skills/bundles", '
+                '"workspace_root": "/var/lib/se-skills/workspaces"}'
             )
         return "policy drop\n169.254.169.254\nfd00:ec2::254"
 
@@ -440,10 +444,15 @@ def run_offline_smoke(faults: OfflineFaults | None = None) -> SmokeReport:
             transport=httpx.MockTransport(_upstream_handler)
         ),
     )
+    original_workspace_root = hosted_config.RUNSC_WORKSPACE_ROOT
+    hosted_config.RUNSC_WORKSPACE_ROOT = tempfile.mkdtemp(
+        prefix="se-skills-smoke-workspace-"
+    )
     runtime = RunscSkillRuntime(
         _OfflineSandboxRunner(proxy, observation, faults),
         proxy,
         start_proxy_server=True,
+        workspace_root=Path(hosted_config.RUNSC_WORKSPACE_ROOT),
     )
     bundle_dir = Path("/bundle")
     baseline = RunscSandboxRunner(
@@ -502,6 +511,7 @@ def run_offline_smoke(faults: OfflineFaults | None = None) -> SmokeReport:
         "skill_version": "1.0",
     }
     result = asyncio.run(orchestrator.execute(job))
+    hosted_config.RUNSC_WORKSPACE_ROOT = original_workspace_root
     report = SmokeReport(
         checks=(
             _check("preflight", preflight.ok, "fixture probe contract result"),

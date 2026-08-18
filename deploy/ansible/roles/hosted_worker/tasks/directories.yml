@@ -32,6 +32,14 @@
     - { path: "{{ hosted_runsc_state_dir }}" }
     - { path: "{{ hosted_runsc_staging_dir }}" }
 
+- name: Create worker workspace root
+  ansible.builtin.file:
+    path: "{{ hosted_runsc_workspace_dir }}"
+    state: directory
+    owner: root
+    group: "{{ hosted_worker_group }}"
+    mode: "0730"
+
 - name: Create configuration directory
   ansible.builtin.file:
     path: /etc/se-skills

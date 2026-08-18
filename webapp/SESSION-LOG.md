@@ -2,10 +2,20 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 18, 2026 — HEAD (this change) on `devin/slice5b2b1-deployment-foundation`. Added the root-owned OCI broker boundary._
+_Last updated: August 18, 2026 — working tree on `devin/slice5b2b1-deployment-foundation`. Hardened the root-owned OCI broker boundary._
 
 
 ## Built this session (newest first — see `git log`)
+
+- **Broker boundary follow-ups (August 18).**
+  1. Replaced the dead flat request parser with frozen, operation-specific
+     strict Pydantic models and real-entrypoint coverage for run/list/delete/
+     cleanup, including fail-closed adversarial requests.
+  2. Made job metadata readable by UID 65532, derived CPU limits from validated
+     deadlines, confined worker/proxy paths to the durable workspace root,
+     preserved output on partial sealing failures, and tightened output modes.
+  3. Added explicit worker mapping for broker exit sentinels 65/66 and aligned
+     preflight, cleanup, proxy workspace creation, and documentation.
 
 - **Privileged OCI broker boundary (August 18).**
   1. Replaced worker-authored bundles/config with a root-owned Python broker

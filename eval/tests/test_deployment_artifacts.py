@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -271,12 +272,10 @@ def test_pinned_actionlint_rejects_old_input_context_fixture_when_available() ->
 def test_runsc_helper_rejects_flags_not_emitted_by_worker(tmp_path: Path) -> None:
     helper = ROOT / "scripts/runsc_broker.py"
     result = subprocess.run(
-        [str(helper)],
+        [sys.executable, str(helper)],
         input=(
             '{"operation":"list","container_id":"se-aaaaaaaaaaaa",'
-            '"input_dir":"","output_dir":"/tmp/runsc",'
-            '"proxy_uds_path":null,"minimum_age_seconds":null,'
-            '"job":null,"unknown":"field"}'
+            '"state_dir":"/tmp/runsc","unknown":"field"}'
         ),
         capture_output=True,
         text=True,

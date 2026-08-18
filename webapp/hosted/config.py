@@ -68,6 +68,9 @@ SANDBOX_MANIFEST_PATH = os.environ.get(
 )
 RUNSC_BUNDLE_DIR = os.environ.get("RUNSC_BUNDLE_DIR", "/var/lib/se-skills/bundles")
 RUNSC_STATE_DIR = os.environ.get("RUNSC_STATE_DIR", "/var/lib/se-skills/runsc")
+RUNSC_WORKSPACE_ROOT = os.environ.get(
+    "RUNSC_WORKSPACE_ROOT", "/var/lib/se-skills/workspaces"
+)
 HOSTED_WORKER_UID = int(os.environ.get("HOSTED_WORKER_UID", "995"))
 HOSTED_NON_WORKER_UID = int(os.environ.get("HOSTED_NON_WORKER_UID", "994"))
 APPROVED_HTTPS_DESTINATIONS = frozenset(

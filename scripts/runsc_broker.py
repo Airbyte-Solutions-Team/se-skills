@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/opt/se-skills/venv/bin/python
 """Root-owned broker for the hosted worker's gVisor OCI contract.
 
 The worker supplies only a typed request on stdin. This broker owns the OCI
@@ -8,19 +8,26 @@ cannot author a privileged runsc document.
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import stat
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError
 
 CONFIG_PATH = Path("/etc/se-skills/runsc-broker.json")
 CONTAINER_ID_PREFIX = "se-"
 CONTAINER_ID_LENGTH = 15
 REQUEST_OPERATIONS = frozenset({"run", "list", "delete", "cleanup"})
+SANDBOX_UID = 65532
+SANDBOX_GID = 65532
 
 
 class BrokerError(Exception):
@@ -36,12 +43,14 @@ class BrokerConfig:
     state_root: Path
     bundle_root: Path
     staging_root: Path
+    workspace_root: Path
     worker_uid: int
     worker_gid: int
 
     @classmethod
-    def load(cls, path: Path = CONFIG_PATH) -> "BrokerConfig":
+    def load(cls, path: Path | None = None) -> "BrokerConfig":
         """Load and strictly validate the root-owned configuration."""
+        path = path or CONFIG_PATH
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
@@ -52,6 +61,7 @@ class BrokerConfig:
             "state_root",
             "bundle_root",
             "staging_root",
+            "workspace_root",
             "worker_uid",
             "worker_gid",
         }
@@ -67,20 +77,89 @@ class BrokerConfig:
             state_root=Path(raw["state_root"]),
             bundle_root=Path(raw["bundle_root"]),
             staging_root=Path(raw["staging_root"]),
+            workspace_root=Path(raw["workspace_root"]),
             worker_uid=raw["worker_uid"],
             worker_gid=raw["worker_gid"],
         )
 
 
-@dataclass(frozen=True)
-class RunRequest:
-    """Frozen, typed request accepted from the worker."""
+class BrokerModel(BaseModel):
+    """Strict immutable model for the root-owned broker boundary."""
 
-    container_id: str
-    input_dir: Path
-    output_dir: Path
-    proxy_uds_path: Path | None
-    job: dict[str, Any]
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+
+class BrokerManifest(BrokerModel):
+    transcript_id: StrictStr
+    transcript_ref: StrictStr
+    account_id: StrictStr
+    org_id: StrictStr
+    opportunity_id: StrictStr | None
+    prior_context_refs: list[StrictStr]
+
+
+class BrokerNetworkDestination(BrokerModel):
+    host: StrictStr
+    port: StrictInt | None
+    scheme: Literal["http", "https"]
+    path_prefix: StrictStr
+
+
+class BrokerAllowlist(BrokerModel):
+    tools: list[StrictStr]
+    network: list[BrokerNetworkDestination]
+
+
+class BrokerJob(BrokerModel):
+    job_id: StrictStr
+    org_id: StrictStr
+    account_id: StrictStr
+    transcript_id: StrictStr
+    requester_id: StrictStr
+    opportunity_id: StrictStr | None
+    skill: StrictStr
+    skill_version: StrictStr
+    requested_model: StrictStr
+    requested_runtime_version: StrictStr | None
+    mode: Literal["full", "brief"]
+    attempt_number: StrictInt
+    input_manifest: BrokerManifest
+    allowlist: BrokerAllowlist
+    execution_deadline: StrictStr
+    input_workspace: StrictStr
+    output_workspace: StrictStr
+    attempt_id: StrictStr
+    proxy_token: StrictStr | None
+    proxy_uds_path: StrictStr | None
+
+
+class RunRequest(BrokerModel):
+    operation: Literal["run"]
+    container_id: StrictStr
+    input_dir: StrictStr
+    output_dir: StrictStr
+    proxy_uds_path: StrictStr | None
+    job: BrokerJob
+
+
+class ListRequest(BrokerModel):
+    operation: Literal["list"]
+    container_id: StrictStr
+    state_dir: StrictStr
+
+
+class DeleteRequest(BrokerModel):
+    operation: Literal["delete"]
+    container_id: StrictStr
+    state_dir: StrictStr
+
+
+class CleanupRequest(BrokerModel):
+    operation: Literal["cleanup"]
+    minimum_age_seconds: StrictInt = Field(ge=0)
+
+
+BrokerRequest = RunRequest | ListRequest | DeleteRequest | CleanupRequest
 
 
 def _fail() -> None:
@@ -138,42 +217,38 @@ def _validate_job(value: Any) -> dict[str, Any]:
     return dict(value)
 
 
-def _load_request(stream: Any) -> tuple[str, RunRequest | tuple[Path, str, int] | None]:
+def _load_request(stream: Any) -> BrokerRequest:
     try:
         request = json.load(stream)
     except (ValueError, TypeError):
         raise BrokerError("request is not JSON") from None
-    if not isinstance(request, dict) or set(request) != {
-        "operation", "container_id", "input_dir", "output_dir",
-        "proxy_uds_path", "job",
-    }:
-        raise BrokerError("request has unexpected fields")
-    operation = _require_string(request["operation"])
-    if operation not in REQUEST_OPERATIONS:
+    if not isinstance(request, dict):
+        raise BrokerError("request is not an object")
+    operation = request.get("operation")
+    model_types: dict[str, type[BrokerRequest]] = {
+        "run": RunRequest,
+        "list": ListRequest,
+        "delete": DeleteRequest,
+        "cleanup": CleanupRequest,
+    }
+    if not isinstance(operation, str) or operation not in model_types:
         raise BrokerError("unsupported operation")
-    container_id = _validate_container_id(request["container_id"])
-    root_dir = Path(_require_string(request["output_dir"]))
-    minimum_age_seconds = request["minimum_age_seconds"]
-    if minimum_age_seconds is not None and (
-        not isinstance(minimum_age_seconds, int) or minimum_age_seconds < 0
-    ):
-        raise BrokerError("invalid cleanup age")
-    if operation in {"list", "delete", "cleanup"}:
-        return operation, (root_dir, container_id, minimum_age_seconds or 0)
-    proxy = request["proxy_uds_path"]
-    if proxy is not None and not isinstance(proxy, str):
-        raise BrokerError("invalid proxy path")
-    return operation, RunRequest(
-        container_id=container_id,
-        input_dir=Path(_require_string(request["input_dir"])),
-        output_dir=root_dir,
-        proxy_uds_path=Path(proxy) if proxy else None,
-        job=_validate_job(request["job"]),
-    )
+    try:
+        parsed = model_types[operation].model_validate(request)
+    except ValidationError as exc:
+        raise BrokerError("request failed typed validation") from exc
+    if isinstance(parsed, (RunRequest, ListRequest, DeleteRequest)):
+        _validate_container_id(parsed.container_id)
+    return parsed
 
 
-def _safe_worker_path(path: Path, prefix: str, worker_uid: int | None = None) -> None:
-    if path.parent != Path("/tmp") or not path.name.startswith(prefix):
+def _safe_worker_path(
+    path: Path,
+    prefix: str,
+    workspace_root: Path,
+    worker_uid: int | None = None,
+) -> None:
+    if path.parent != workspace_root or not path.name.startswith(prefix):
         raise BrokerError("worker path is outside the approved workspace")
     try:
         facts = path.lstat()
@@ -187,8 +262,12 @@ def _safe_worker_path(path: Path, prefix: str, worker_uid: int | None = None) ->
         raise BrokerError("worker workspace is not a directory")
 
 
-def _safe_socket_path(path: Path, worker_uid: int | None = None) -> None:
-    if path.parent.parent != Path("/tmp") or not path.parent.name.startswith("se-proxy-"):
+def _safe_socket_path(
+    path: Path,
+    workspace_root: Path,
+    worker_uid: int | None = None,
+) -> None:
+    if path.parent.parent != workspace_root or not path.parent.name.startswith("se-proxy-"):
         raise BrokerError("proxy path is outside the approved workspace")
     try:
         facts = path.lstat()
@@ -236,15 +315,14 @@ def _make_tree_read_only(path: Path) -> None:
         if child.is_symlink():
             raise BrokerError("worker workspace contains a symlink")
         facts = child.lstat()
-        if facts.st_uid != 0:
-            os.chown(child, 0, 0)
+        os.chown(child, SANDBOX_UID, SANDBOX_GID)
         if child.is_dir():
             os.chmod(child, 0o555)
         elif child.is_file():
             os.chmod(child, 0o444)
         else:
             raise BrokerError("worker workspace contains a special file")
-    os.chown(path, 0, 0)
+    os.chown(path, SANDBOX_UID, SANDBOX_GID)
     os.chmod(path, 0o555)
 
 
@@ -254,15 +332,15 @@ def _make_output_writable(path: Path, config: BrokerConfig) -> None:
             raise BrokerError("worker output contains a symlink")
         facts = child.lstat()
         if child.is_dir():
-            os.chown(child, config.worker_uid, config.worker_gid)
-            os.chmod(child, 0o777)
+            os.chown(child, config.worker_uid, SANDBOX_GID)
+            os.chmod(child, 0o770)
         elif child.is_file():
-            os.chown(child, config.worker_uid, config.worker_gid)
-            os.chmod(child, 0o666)
+            os.chown(child, config.worker_uid, SANDBOX_GID)
+            os.chmod(child, 0o660)
         else:
             raise BrokerError("worker output contains a special file")
-    os.chown(path, 0, 0)
-    os.chmod(path, 0o777)
+    os.chown(path, config.worker_uid, SANDBOX_GID)
+    os.chmod(path, 0o770)
 
 
 def _fixed_config(
@@ -274,6 +352,7 @@ def _fixed_config(
     output_dir: Path,
     proxy_path: Path | None,
     container_id: str,
+    cpu_limit_seconds: int = 120,
 ) -> dict[str, Any]:
     mounts: list[dict[str, Any]] = [
         {"destination": "/proc", "source": "proc", "type": "proc"},
@@ -323,7 +402,11 @@ def _fixed_config(
             ],
             "cwd": "/tmp",
             "rlimits": [
-                {"type": "RLIMIT_CPU", "hard": 120, "soft": 120},
+                {
+                    "type": "RLIMIT_CPU",
+                    "hard": cpu_limit_seconds,
+                    "soft": cpu_limit_seconds,
+                },
                 {"type": "RLIMIT_AS", "hard": 2_000_000_000, "soft": 2_000_000_000},
                 {"type": "RLIMIT_NOFILE", "hard": 1024, "soft": 1024},
                 {"type": "RLIMIT_FSIZE", "hard": 100_000_000, "soft": 100_000_000},
@@ -363,14 +446,22 @@ def _fixed_config(
 
 
 def _run(config: BrokerConfig, request: RunRequest) -> int:
-    for root in (config.state_root, config.bundle_root, config.staging_root):
+    for root in (
+        config.state_root,
+        config.bundle_root,
+        config.staging_root,
+        config.workspace_root,
+    ):
         _root_directory(root)
     _root_directory(config.rootfs)
     _root_executable(config.runsc)
-    _safe_worker_path(request.input_dir, "se-runtime-input-", config.worker_uid)
-    _safe_worker_path(request.output_dir, "se-runtime-output-", config.worker_uid)
-    if request.proxy_uds_path is not None:
-        _safe_socket_path(request.proxy_uds_path, config.worker_uid)
+    input_dir = Path(request.input_dir)
+    output_dir = Path(request.output_dir)
+    proxy_uds_path = Path(request.proxy_uds_path) if request.proxy_uds_path else None
+    _safe_worker_path(input_dir, "se-runtime-input-", config.workspace_root, config.worker_uid)
+    _safe_worker_path(output_dir, "se-runtime-output-", config.workspace_root, config.worker_uid)
+    if proxy_uds_path is not None:
+        _safe_socket_path(proxy_uds_path, config.workspace_root, config.worker_uid)
     container_dir = config.staging_root / request.container_id
     bundle_dir = config.bundle_root / request.container_id
     state_dir = config.state_root / request.container_id
@@ -384,31 +475,58 @@ def _run(config: BrokerConfig, request: RunRequest) -> int:
     staged_proxy = container_dir / "proxy.sock"
     job_path = bundle_dir / "job.json"
     config_path = bundle_dir / "config.json"
+    input_sealed = False
+    output_sealed = False
     try:
-        os.rename(request.input_dir, staged_input)
-        os.rename(request.output_dir, staged_output)
+        os.rename(input_dir, staged_input)
+        input_sealed = True
+        os.rename(output_dir, staged_output)
+        output_sealed = True
         for staged_path in (staged_input, staged_output):
             facts = staged_path.lstat()
             if stat.S_ISLNK(facts.st_mode) or not stat.S_ISDIR(facts.st_mode):
                 raise BrokerError("worker workspace sealing failed")
-        os.mkdir(request.output_dir, 0o700)
-        os.chown(request.output_dir, 0, 0)
+        os.mkdir(output_dir, 0o770)
+        os.chown(output_dir, config.worker_uid, SANDBOX_GID)
         _make_tree_read_only(staged_input)
         _make_output_writable(staged_output, config)
-        if request.proxy_uds_path is not None:
-            os.rename(request.proxy_uds_path, staged_proxy)
+        if proxy_uds_path is not None:
+            os.rename(proxy_uds_path, staged_proxy)
             facts = staged_proxy.lstat()
-            if stat.S_ISLNK(facts.st_mode) or not stat.S_ISSOCK(facts.st_mode):
+            if (
+                stat.S_ISLNK(facts.st_mode)
+                or not stat.S_ISSOCK(facts.st_mode)
+                or facts.st_uid != config.worker_uid
+            ):
                 raise BrokerError("proxy sealing failed")
-        job_path.write_text(json.dumps(request.job, sort_keys=True, separators=(",", ":")), encoding="utf-8")
-        os.chown(job_path, 0, 0)
-        os.chmod(job_path, 0o400)
+        job_path.write_text(
+            json.dumps(
+                request.job.model_dump(mode="json"),
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            encoding="utf-8",
+        )
+        os.chown(job_path, SANDBOX_UID, SANDBOX_GID)
+        os.chmod(job_path, 0o444)
+        try:
+            deadline = datetime.fromisoformat(request.job.execution_deadline)
+        except ValueError as exc:
+            raise BrokerError("invalid execution deadline") from exc
+        if deadline.tzinfo is None:
+            raise BrokerError("invalid execution deadline")
+        remaining = max(
+            (deadline - datetime.now(timezone.utc)).total_seconds(),
+            1.0,
+        )
+        cpu_limit_seconds = max(1, math.ceil(remaining))
         config_path.write_text(
             json.dumps(
                 _fixed_config(
                     config, state_dir, bundle_dir, job_path, staged_input,
-                    staged_output, staged_proxy if request.proxy_uds_path else None,
+                    staged_output, staged_proxy if proxy_uds_path else None,
                     request.container_id,
+                    cpu_limit_seconds,
                 ),
                 sort_keys=True,
                 separators=(",", ":"),
@@ -429,17 +547,27 @@ def _run(config: BrokerConfig, request: RunRequest) -> int:
         )
         return process.returncode
     finally:
-        if request.output_dir.exists() and request.output_dir.is_dir():
-            shutil.rmtree(request.output_dir, ignore_errors=True)
-        if staged_output.exists():
-            os.rename(staged_output, request.output_dir)
-            _make_output_writable(request.output_dir, config)
+        if output_sealed and output_dir.exists() and output_dir.is_dir():
+            shutil.rmtree(output_dir, ignore_errors=True)
+        if output_sealed and staged_output.exists():
+            os.rename(staged_output, output_dir)
+            _make_output_writable(output_dir, config)
+        if not output_sealed and output_dir.exists() and not output_dir.is_dir():
+            raise BrokerError("worker output compensation failed")
+        if input_sealed and staged_input.exists():
+            shutil.rmtree(staged_input, ignore_errors=True)
         shutil.rmtree(container_dir, ignore_errors=True)
         shutil.rmtree(bundle_dir, ignore_errors=True)
 
 
-def _run_simple(config: BrokerConfig, operation: str, root_dir: Path, container_id: str) -> int:
+def _run_simple(
+    config: BrokerConfig,
+    operation: Literal["list", "delete"],
+    root_dir: Path,
+    container_id: str,
+) -> int:
     _root_directory(config.state_root)
+    _root_executable(config.runsc)
     expected = config.state_root / container_id
     if root_dir != expected:
         raise BrokerError("state path is outside the approved root")
@@ -480,7 +608,8 @@ def _run_cleanup(config: BrokerConfig, minimum_age_seconds: int) -> int:
     """Reclaim only old terminal or verified-absent broker-owned state."""
     _root_directory(config.state_root)
     _root_directory(config.bundle_root)
-    now = int(__import__("time").time())
+    _root_executable(config.runsc)
+    now = int(time.time())
     for state in sorted(config.state_root.iterdir(), key=lambda path: path.name):
         if not state.is_dir() or state.is_symlink() or now - int(state.stat().st_mtime) < minimum_age_seconds:
             continue
@@ -532,15 +661,32 @@ def _run_cleanup(config: BrokerConfig, minimum_age_seconds: int) -> int:
 def main() -> int:
     try:
         config = BrokerConfig.load()
-        operation, request = _load_request(sys.stdin)
-        if operation == "run":
-            assert isinstance(request, RunRequest)
+        request = _load_request(sys.stdin)
+        if isinstance(request, RunRequest):
             return _run(config, request)
-        assert isinstance(request, tuple)
-        if operation == "cleanup":
-            return _run_cleanup(config, request[2])
-        return _run_simple(config, operation, request[0], request[1])
-    except (BrokerError, OSError, AssertionError):
+        if isinstance(request, CleanupRequest):
+            return _run_cleanup(config, request.minimum_age_seconds)
+        if isinstance(request, ListRequest):
+            return _run_simple(
+                config,
+                request.operation,
+                Path(request.state_dir),
+                request.container_id,
+            )
+        return _run_simple(
+            config,
+            request.operation,
+            Path(request.state_dir),
+            request.container_id,
+        )
+    except (
+        BrokerError,
+        OSError,
+        AssertionError,
+        TypeError,
+        ValueError,
+        UnicodeError,
+    ):
         _fail()
     return 64
 

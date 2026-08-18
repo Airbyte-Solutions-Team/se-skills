@@ -5,5 +5,5 @@ helper="{{ hosted_runsc_helper }}"
 minimum_age_seconds=$(({{ hosted_cleanup_min_age_minutes }} * 60))
 
 exec sudo --non-interactive "$helper" <<EOF
-{"operation":"cleanup","container_id":"se-000000000000","input_dir":"","output_dir":"{{ hosted_runsc_state_dir }}","proxy_uds_path":null,"minimum_age_seconds":$minimum_age_seconds,"job":null}
+{"operation":"cleanup","minimum_age_seconds":$minimum_age_seconds}
 EOF

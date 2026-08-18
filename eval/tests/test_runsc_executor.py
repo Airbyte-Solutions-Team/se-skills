@@ -34,6 +34,8 @@ from webapp.hosted.runsc_executor import (
     RuntimeExecutionError,
     RunscSandboxRunner,
     RunscSkillRuntime,
+    _map_runtime_execution_error,
+    _raise_for_broker_exit,
     _safe_read_runtime_result,
 )
 
@@ -235,7 +237,9 @@ def _upstream_response_factory() -> Any:
     return handler
 
 
-def _runtime() -> RunscSkillRuntime:
+def _runtime(workspace_root: Path | None = None) -> RunscSkillRuntime:
+    if workspace_root is None:
+        workspace_root = Path(tempfile.mkdtemp(prefix="runsc-test-workspace-"))
     cfg = ProxyConfig(secret="a" * 32, anthropic_api_key="test-key")
     proxy = ModelProxy(
         proxy_config=cfg,
@@ -244,7 +248,10 @@ def _runtime() -> RunscSkillRuntime:
         ),
     )
     return RunscSkillRuntime(
-        runner=FakeSandboxRunner(proxy), proxy=proxy, start_proxy_server=True
+        runner=FakeSandboxRunner(proxy),
+        proxy=proxy,
+        start_proxy_server=True,
+        workspace_root=workspace_root,
     )
 
 
@@ -255,7 +262,9 @@ async def test_runsc_runtime_fake_runner_success() -> None:
         input_dir = Path(td) / "input"
         output_dir = Path(td) / "output"
         job = _make_job(input_dir, output_dir)
-        runtime = _runtime()
+        workspace_root = Path(td) / "workspace"
+        workspace_root.mkdir()
+        runtime = _runtime(workspace_root)
         result = await runtime.execute(job, _FakeCancellationToken())
         assert result.failure is None
         assert (output_dir / "output.md").exists()
@@ -786,6 +795,23 @@ async def test_runsc_sandbox_list_nonzero_raises(monkeypatch: pytest.MonkeyPatch
     with pytest.raises(Exception) as exc:
         await runner._is_container_gone(root_dir, "se-test")
     assert "runsc list exited" in str(exc.value).lower()
+
+
+@pytest.mark.parametrize(
+    ("returncode", "message"),
+    [(65, "state verification"), (66, "remained after delete")],
+)
+def test_broker_exit_sentinels_map_to_closed_cleanup_failures(
+    returncode: int, message: str
+) -> None:
+    """Broker sentinels never escape as undocumented generic failures."""
+    with pytest.raises(RuntimeExecutionError, match=message):
+        _raise_for_broker_exit(returncode, "delete")
+    result = _map_runtime_execution_error(
+        RuntimeExecutionError(message)
+    )
+    assert result.failure is not None
+    assert result.failure.category == "cleanup_error"
 
 
 @pytest.mark.asyncio
