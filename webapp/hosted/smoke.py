@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import io
 import os
 import tempfile
 import uuid
@@ -406,7 +408,7 @@ def run_offline_smoke(faults: OfflineFaults | None = None) -> SmokeReport:
         runtime = RunscSkillRuntime(
             _OfflineSandboxRunner(proxy, observation, faults),
             proxy,
-            start_proxy_server=False,
+            start_proxy_server=True,
         )
         orchestrator = _OfflineOrchestrator(runtime, observation)
         job = {
@@ -421,7 +423,8 @@ def run_offline_smoke(faults: OfflineFaults | None = None) -> SmokeReport:
             "payload": {"model": "claude-sonnet-4-6", "runtime_version": "smoke"},
             "skill_version": "1.0",
         }
-        result = asyncio.run(orchestrator.execute(job))
+        with contextlib.redirect_stderr(io.StringIO()):
+            result = asyncio.run(orchestrator.execute(job))
         report = SmokeReport(
             checks=(
                 _check("preflight", preflight.ok, "fixture probe contract result"),
