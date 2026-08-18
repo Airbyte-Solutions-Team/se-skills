@@ -61,6 +61,30 @@ class _Probe:
             "/opt/rootfs": PathFacts(
                 True, "root", "root", 0o755, False, True
             ),
+            "/usr/local/sbin": PathFacts(
+                True, "root", "root", 0o755, False, True
+            ),
+            "/opt/se-skills": PathFacts(
+                True, "root", "root", 0o755, False, True
+            ),
+            "/opt/se-skills/venv": PathFacts(
+                True, "root", "root", 0o755, False, True
+            ),
+            "/opt/se-skills/venv/bin/python": PathFacts(
+                True, "root", "root", 0o755, True, False
+            ),
+            "/opt/se-skills/venv/lib": PathFacts(
+                True, "root", "root", 0o755, False, True
+            ),
+            "/opt/se-skills/venv/lib/python3.11": PathFacts(
+                True, "root", "root", 0o755, False, True
+            ),
+            "/opt/se-skills/venv/lib/python3.11/site-packages": PathFacts(
+                True, "root", "root", 0o755, False, True
+            ),
+            "/usr/lib/python3.11": PathFacts(
+                True, "root", "root", 0o755, False, True
+            ),
         }
         self.public = False
         self.namespace = frozenset({"pid", "net", "user"})
@@ -305,6 +329,17 @@ def test_preflight_rejects_unsafe_runsc_path() -> None:
     report = run_preflight(_config(), probe)
 
     assert _failed(report, "runsc_binary")
+
+
+def test_preflight_rejects_worker_writable_broker_import_path() -> None:
+    probe = _Probe()
+    probe.paths["/opt/se-skills/venv/lib/python3.11/site-packages"] = PathFacts(
+        True, "root", "root", 0o775, False, True
+    )
+
+    report = run_preflight(_config(), probe)
+
+    assert _failed(report, "broker_interpreter")
 
 
 def test_preflight_rejects_missing_namespaces_and_public_listener() -> None:

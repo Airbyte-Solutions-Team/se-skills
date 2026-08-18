@@ -24,6 +24,18 @@ class ProductionPreflightSettings(BaseModel):
     runsc_helper_path: str = "/usr/local/sbin/se-skills-runsc"
     runsc_sudoers_path: str = "/etc/sudoers.d/se-skills-runsc"
     runsc_broker_config_path: str = "/etc/se-skills/runsc-broker.json"
+    broker_interpreter_path: str = "/opt/se-skills/venv/bin/python"
+    broker_script_path: str = "/usr/local/sbin/se-skills-runsc"
+    broker_venv_path: str = "/opt/se-skills/venv"
+    broker_import_paths: tuple[str, ...] = (
+        "/usr/local/sbin",
+        "/opt/se-skills",
+        "/opt/se-skills/venv",
+        "/opt/se-skills/venv/lib",
+        "/opt/se-skills/venv/lib/python3.11",
+        "/opt/se-skills/venv/lib/python3.11/site-packages",
+        "/usr/lib/python3.11",
+    )
     rootfs_path: str
     manifest_path: str
     hosted_env: str
@@ -114,6 +126,10 @@ def run_production_preflight(
             runsc_helper_path=settings.runsc_helper_path,
             runsc_sudoers_path=settings.runsc_sudoers_path,
             runsc_broker_config_path=settings.runsc_broker_config_path,
+            broker_interpreter_path=settings.broker_interpreter_path,
+            broker_script_path=settings.broker_script_path,
+            broker_venv_path=settings.broker_venv_path,
+            broker_import_paths=settings.broker_import_paths,
             present_config_names=settings.present_config_names,
             model_proxy_secret=settings.model_proxy_secret,
             anthropic_api_url=settings.anthropic_api_url,

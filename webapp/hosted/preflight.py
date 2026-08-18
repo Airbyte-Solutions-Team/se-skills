@@ -88,6 +88,18 @@ class PreflightConfig(BaseModel):
     runsc_helper_path: str = "/usr/local/sbin/se-skills-runsc"
     runsc_sudoers_path: str = "/etc/sudoers.d/se-skills-runsc"
     runsc_broker_config_path: str = "/etc/se-skills/runsc-broker.json"
+    broker_interpreter_path: str = "/opt/se-skills/venv/bin/python"
+    broker_script_path: str = "/usr/local/sbin/se-skills-runsc"
+    broker_venv_path: str = "/opt/se-skills/venv"
+    broker_import_paths: tuple[str, ...] = (
+        "/usr/local/sbin",
+        "/opt/se-skills",
+        "/opt/se-skills/venv",
+        "/opt/se-skills/venv/lib",
+        "/opt/se-skills/venv/lib/python3.11",
+        "/opt/se-skills/venv/lib/python3.11/site-packages",
+        "/usr/lib/python3.11",
+    )
     runsc_rootless: bool = False
     pins: HostedPins = Field(default_factory=load_pins)
     required_names: tuple[str, ...] = (
@@ -195,6 +207,29 @@ def run_preflight(config: PreflightConfig, probe: HostProbe) -> PreflightReport:
     )
     checks.append(
         _required("runsc_binary", runsc_mode_ok, "runsc is root-owned executable" if runsc_mode_ok else "runsc missing or ownership/mode is unsafe")
+    )
+    broker_interpreter = probe.path_info(config.broker_interpreter_path)
+    broker_script = probe.path_info(config.broker_script_path)
+    broker_venv = probe.path_info(config.broker_venv_path)
+    broker_import_paths_ok = all(
+        _safe_import_directory(probe.path_info(path))
+        for path in config.broker_import_paths
+    )
+    broker_runtime_ok = (
+        config.broker_script_path == config.runsc_helper_path
+        and _safe_import_file(broker_interpreter)
+        and _safe_import_file(broker_script)
+        and _safe_import_directory(broker_venv)
+        and broker_import_paths_ok
+    )
+    checks.append(
+        _required(
+            "broker_interpreter",
+            broker_runtime_ok,
+            "broker interpreter and import paths are root-owned and non-writable"
+            if broker_runtime_ok
+            else "broker interpreter or import paths are missing or unsafe",
+        )
     )
     helper = probe.path_info(config.runsc_helper_path)
     broker_config = probe.path_info(config.runsc_broker_config_path)
@@ -375,6 +410,28 @@ def run_preflight(config: PreflightConfig, probe: HostProbe) -> PreflightReport:
 
 def _required(check_id: str, ok: bool, detail: str) -> PreflightCheck:
     return PreflightCheck(check_id=check_id, status="ok" if ok else "fail", severity="required", detail=detail)
+
+
+def _safe_import_file(facts: PathFacts) -> bool:
+    return (
+        facts.exists
+        and facts.is_file
+        and facts.owner == "root"
+        and facts.group == "root"
+        and facts.mode is not None
+        and facts.mode & 0o022 == 0
+    )
+
+
+def _safe_import_directory(facts: PathFacts) -> bool:
+    return (
+        facts.exists
+        and facts.is_directory
+        and facts.owner == "root"
+        and facts.group == "root"
+        and facts.mode is not None
+        and facts.mode & 0o022 == 0
+    )
 
 
 def _version_at_least(actual: str, minimum: str) -> bool:

@@ -75,6 +75,13 @@ deadline-derived CPU limit. The worker maps broker sentinels 65 (unverifiable
 list output) and 66 (container still present after delete verification) to
 closed cleanup failures.
 
+The broker executes with `/opt/se-skills/venv/bin/python -I`. Isolated Python
+mode prevents `PYTHONPATH` and user-site packages from changing root imports;
+the venv's own packages remain available. Ansible owns the venv and broker
+import-path directories as `root:root` and removes group/other write bits.
+Preflight checks the interpreter, broker script, venv, and each configured
+import-path directory before allowing the worker service to start.
+
 **Vendor references (2026-08-11):**
 - Anthropic Messages API reference: `https://docs.anthropic.com/en/api/messages`
 - Anthropic Agent SDK overview (rejected as the runtime, but informative): `https://code.claude.com/docs/en/agent-sdk/overview`

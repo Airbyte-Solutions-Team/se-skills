@@ -64,6 +64,20 @@ class _Probe:
             )
         if path == "/usr/local/sbin/se-skills-runsc":
             return PathFacts(True, "root", "root", 0o755, True, False)
+        if path == "/usr/local/sbin":
+            return PathFacts(True, "root", "root", 0o755, False, True)
+        if path == "/opt/se-skills":
+            return PathFacts(True, "root", "root", 0o755, False, True)
+        if path == "/opt/se-skills/venv/bin/python":
+            return PathFacts(True, "root", "root", 0o755, True, False)
+        if path in {
+            "/opt/se-skills/venv",
+            "/opt/se-skills/venv/lib",
+            "/opt/se-skills/venv/lib/python3.11",
+            "/opt/se-skills/venv/lib/python3.11/site-packages",
+            "/usr/lib/python3.11",
+        }:
+            return PathFacts(True, "root", "root", 0o755, False, True)
         if path == "/etc/sudoers.d/se-skills-runsc":
             return PathFacts(True, "root", "root", 0o440, True, False)
         if path == "/etc/se-skills/runsc-broker.json":

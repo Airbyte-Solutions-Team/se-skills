@@ -115,6 +115,24 @@ def test_worker_requirements_match_standalone_metadata() -> None:
     assert "hosted_registry_host: \"\"" in defaults
 
 
+def test_broker_uses_isolated_interpreter_mode_and_resolves_pydantic() -> None:
+    broker = (ROOT / "scripts/runsc_broker.py").read_text()
+    assert broker.splitlines()[0] == "#!/opt/se-skills/venv/bin/python -I"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            "import pydantic; assert pydantic.__version__",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_uninstall_does_not_touch_durable_services_or_data() -> None:
     text = (ANSIBLE / "uninstall.yml").read_text()
 

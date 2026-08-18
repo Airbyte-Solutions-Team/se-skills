@@ -41,6 +41,11 @@ loaded from `deploy/pins.json`; role defaults and paths are in
   `minimum_age_seconds`. Unknown fields and wrong types fail closed with one
   fixed diagnostic. The broker derives `RLIMIT_CPU` from the validated job
   deadline. Worker exit sentinels 65 and 66 become closed cleanup failures.
+- The broker runs as `/opt/se-skills/venv/bin/python -I`. Isolated mode ignores
+  `PYTHONPATH` and user-site packages while retaining the interpreter's own
+  environment and installed dependencies. The role owns the venv, interpreter,
+  broker script, and managed import-path directories as `root:root`; their
+  directory and file modes must not grant group or other write access.
 - The sandbox image uses the pinned Python and distroless base digests in
   `deploy/pins.json`. An approved image digest and rootfs digest must be
   populated before production preflight passes. `SANDBOX_IMAGE_DIGEST` is
@@ -70,7 +75,9 @@ The role creates the non-login system user `se-worker` (UID `995`) and group
 |---|---|---:|---|
 | `/opt/se-skills` | root/root | 0755 | operator-delivered application payload |
 | `/opt/se-skills/rootfs` | root/root | 0755 | approved sandbox rootfs |
-| `/opt/se-skills/venv` | operator-delivered | role-created | pinned worker dependencies |
+| `/opt/se-skills/venv` | root/root | 0755 and recursively non-group/world-writable | pinned worker dependencies and broker interpreter |
+| `/opt/se-skills/venv/bin/python` | root/root | 0755 | isolated broker/worker interpreter |
+| `/usr/local/sbin`, `/opt/se-skills`, venv library/site-package directories, and `/usr/lib/python3.11` | root/root | non-group/world-writable | broker interpreter import path |
 | `/var/lib/se-skills` | root/root | 0750 | worker state parent |
 | `/var/lib/se-skills/bundles` | root/root | 0700 | broker-owned bundle parent |
 | `/var/lib/se-skills/runsc` | root/root | 0700 | broker-owned runsc state |

@@ -1,4 +1,4 @@
-#!/opt/se-skills/venv/bin/python
+#!/opt/se-skills/venv/bin/python -I
 """Root-owned broker for the hosted worker's gVisor OCI contract.
 
 The worker supplies only a typed request on stdin. This broker owns the OCI
@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import TextIO, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError
 
@@ -168,14 +168,7 @@ def _fail() -> None:
     raise SystemExit(64)
 
 
-def _require_string(value: Any) -> str:
-    if not isinstance(value, str) or not value:
-        raise BrokerError("invalid string")
-    return value
-
-
-def _validate_container_id(value: Any) -> str:
-    container_id = _require_string(value)
+def _validate_container_id(container_id: str) -> str:
     if (
         len(container_id) != CONTAINER_ID_LENGTH
         or not container_id.startswith(CONTAINER_ID_PREFIX)
@@ -185,39 +178,7 @@ def _validate_container_id(value: Any) -> str:
     return container_id
 
 
-def _validate_job(value: Any) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise BrokerError("invalid job")
-    allowed = {
-        "job_id", "org_id", "account_id", "transcript_id", "requester_id",
-        "opportunity_id", "skill", "skill_version", "requested_model",
-        "requested_runtime_version", "mode", "attempt_number",
-        "input_manifest", "allowlist", "execution_deadline",
-        "input_workspace", "output_workspace", "attempt_id", "proxy_token",
-        "proxy_uds_path",
-    }
-    if set(value) != allowed:
-        raise BrokerError("job has unexpected fields")
-    manifest = value["input_manifest"]
-    if not isinstance(manifest, dict) or set(manifest) != {
-        "transcript_id", "transcript_ref", "account_id", "org_id",
-        "opportunity_id", "prior_context_refs",
-    }:
-        raise BrokerError("job manifest has unexpected fields")
-    allowlist = value["allowlist"]
-    if not isinstance(allowlist, dict) or set(allowlist) != {"tools", "network"}:
-        raise BrokerError("job allowlist has unexpected fields")
-    if not isinstance(allowlist["tools"], list) or not isinstance(allowlist["network"], list):
-        raise BrokerError("job allowlist has invalid fields")
-    for destination in allowlist["network"]:
-        if not isinstance(destination, dict) or set(destination) != {
-            "host", "port", "scheme", "path_prefix"
-        }:
-            raise BrokerError("job network has unexpected fields")
-    return dict(value)
-
-
-def _load_request(stream: Any) -> BrokerRequest:
+def _load_request(stream: TextIO) -> BrokerRequest:
     try:
         request = json.load(stream)
     except (ValueError, TypeError):
@@ -225,16 +186,19 @@ def _load_request(stream: Any) -> BrokerRequest:
     if not isinstance(request, dict):
         raise BrokerError("request is not an object")
     operation = request.get("operation")
-    model_types: dict[str, type[BrokerRequest]] = {
-        "run": RunRequest,
-        "list": ListRequest,
-        "delete": DeleteRequest,
-        "cleanup": CleanupRequest,
-    }
-    if not isinstance(operation, str) or operation not in model_types:
+    model_type: type[RunRequest | ListRequest | DeleteRequest | CleanupRequest]
+    if operation == "run":
+        model_type = RunRequest
+    elif operation == "list":
+        model_type = ListRequest
+    elif operation == "delete":
+        model_type = DeleteRequest
+    elif operation == "cleanup":
+        model_type = CleanupRequest
+    else:
         raise BrokerError("unsupported operation")
     try:
-        parsed = model_types[operation].model_validate(request)
+        parsed = model_type.model_validate(request)
     except ValidationError as exc:
         raise BrokerError("request failed typed validation") from exc
     if isinstance(parsed, (RunRequest, ListRequest, DeleteRequest)):
@@ -353,8 +317,8 @@ def _fixed_config(
     proxy_path: Path | None,
     container_id: str,
     cpu_limit_seconds: int = 120,
-) -> dict[str, Any]:
-    mounts: list[dict[str, Any]] = [
+) -> dict[str, object]:
+    mounts: list[dict[str, object]] = [
         {"destination": "/proc", "source": "proc", "type": "proc"},
         {
             "destination": "/tmp",

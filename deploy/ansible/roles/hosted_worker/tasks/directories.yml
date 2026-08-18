@@ -77,6 +77,24 @@
   changed_when: false
   when: not ansible_check_mode
 
+- name: Lock broker interpreter and import paths
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "u=rwX,go-w"
+    recurse: true
+  loop: "{{ hosted_broker_import_paths | select('search', '^' ~ hosted_venv_dir) | list }}"
+
+- name: Lock broker interpreter executable
+  ansible.builtin.file:
+    path: "{{ hosted_venv_dir }}/bin/python"
+    state: file
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Require operator-provisioned environment file
   ansible.builtin.stat:
     path: "{{ hosted_env_file }}"
