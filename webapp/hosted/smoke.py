@@ -2,10 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
-import io
 import os
-import tempfile
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -154,7 +151,6 @@ class _Observation:
     workspace_path: Path | None = None
     proxy_path: Path | None = None
     runtime_output: str = ""
-    report_json: str = ""
 
 
 class _OfflineSandboxRunner(FakeSandboxRunner):
@@ -303,118 +299,115 @@ def run_offline_smoke(faults: OfflineFaults | None = None) -> SmokeReport:
         _OfflineProbe(pins),
     )
     observation = _Observation()
-    with tempfile.TemporaryDirectory(prefix="se-smoke-"):
-        proxy = ModelProxy(
-            proxy_config=ProxyConfig(
-                secret="OfflineSmokeProxySecretWithSufficientDiversity0123",
-                anthropic_api_key="offline-only",
-            ),
-            anthropic_client=httpx.AsyncClient(
-                transport=httpx.MockTransport(_upstream_handler)
-            ),
-        )
-        runtime = RunscSkillRuntime(
-            _OfflineSandboxRunner(proxy, observation, faults),
-            proxy,
-            start_proxy_server=True,
-        )
-        bundle_dir = Path("/bundle")
-        baseline = RunscSandboxRunner(
-            runsc_binary="/usr/local/bin/runsc",
-            rootfs="/opt/se-skills/rootfs",
-            network="none",
-        )
-        baseline_config = baseline._build_config(
-            bundle_dir=bundle_dir,
-            root_dir=bundle_dir / "root",
-            job_path=bundle_dir / "job.json",
-            input_dir=Path("/tmp/smoke-input"),
-            output_dir=Path("/tmp/smoke-output"),
-            proxy_uds_path=Path("/tmp/smoke-proxy.sock"),
-            container_id="se-smoke",
-        )
-        observation.authorized_mounts = frozenset(
-            mount["destination"] for mount in baseline_config["mounts"]
-        )
-        transcript_path = "offline/transcript.txt"
-        identifiers = {
-            "org_id": str(uuid.uuid4()),
-            "account_id": str(uuid.uuid4()),
-            "transcript_id": str(uuid.uuid4()),
-        }
-        resolved = {
+    proxy = ModelProxy(
+        proxy_config=ProxyConfig(
+            secret="OfflineSmokeProxySecretWithSufficientDiversity0123",
+            anthropic_api_key="offline-only",
+        ),
+        anthropic_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(_upstream_handler)
+        ),
+    )
+    runtime = RunscSkillRuntime(
+        _OfflineSandboxRunner(proxy, observation, faults),
+        proxy,
+        start_proxy_server=True,
+    )
+    bundle_dir = Path("/bundle")
+    baseline = RunscSandboxRunner(
+        runsc_binary="/usr/local/bin/runsc",
+        rootfs="/opt/se-skills/rootfs",
+        network="none",
+    )
+    baseline_config = baseline._build_config(
+        bundle_dir=bundle_dir,
+        root_dir=bundle_dir / "root",
+        job_path=bundle_dir / "job.json",
+        input_dir=Path("/tmp/smoke-input"),
+        output_dir=Path("/tmp/smoke-output"),
+        proxy_uds_path=Path("/tmp/smoke-proxy.sock"),
+        container_id="se-smoke",
+    )
+    observation.authorized_mounts = frozenset(
+        mount["destination"] for mount in baseline_config["mounts"]
+    )
+    transcript_path = "offline/transcript.txt"
+    identifiers = {
+        "org_id": str(uuid.uuid4()),
+        "account_id": str(uuid.uuid4()),
+        "transcript_id": str(uuid.uuid4()),
+    }
+    resolved = {
+        **identifiers,
+        "opportunity_id": None,
+        "storage_path": transcript_path,
+        "original_filename": "transcript.txt",
+        "prior_outputs": [],
+    }
+    orchestrator = PostCallOrchestrator(
+        runtime,
+        db_pool=SmokePool(resolved),
+        storage_backend=SmokeStorage(
+            transcript_path,
+            "Offline smoke transcript. No customer content.",
+        ),
+    )
+    job = {
+        "job_id": str(uuid.uuid4()),
+        "lease_token": str(uuid.uuid4()),
+        "attempt_number": 1,
+        "timeout_seconds": 60,
+        "org_id": identifiers["org_id"],
+        "account_id": identifiers["account_id"],
+        "transcript_id": identifiers["transcript_id"],
+        "requester_id": str(uuid.uuid4()),
+        "source_manifest": {
             **identifiers,
             "opportunity_id": None,
             "storage_path": transcript_path,
-            "original_filename": "transcript.txt",
-            "prior_outputs": [],
-        }
-        orchestrator = PostCallOrchestrator(
-            runtime,
-            db_pool=SmokePool(resolved),
-            storage_backend=SmokeStorage(
-                transcript_path,
-                "Offline smoke transcript. No customer content.",
+        },
+        "payload": {"model": "claude-sonnet-4-6", "runtime_version": "smoke"},
+        "skill_version": "1.0",
+    }
+    result = asyncio.run(orchestrator.execute(job))
+    report = SmokeReport(
+        checks=(
+            _check("preflight", preflight.ok, "fixture probe contract result"),
+            _check(
+                "runtime",
+                "--network=none" in observation.argv
+                and not any(
+                    item.startswith("--network=") and item != "--network=none"
+                    for item in observation.argv
+                ),
+                "observed runsc argv contains only --network=none",
+            ),
+            _check(
+                "mounts",
+                observation.observed_mounts == observation.authorized_mounts,
+                "observed production config mount destinations match its contract",
+            ),
+            _check(
+                "artifact_validation",
+                result.validation_status == "valid",
+                "plain orchestrator completed worker-side artifact validation",
+            ),
+            _check(
+                "shutdown",
+                observation.workspace_path is not None
+                and not observation.workspace_path.exists()
+                and observation.proxy_path is not None
+                and not observation.proxy_path.exists(),
+                "actual per-attempt workspace and proxy socket were removed",
+            ),
+            _check(
+                "redaction",
+                _SENTINEL not in observation.runtime_output,
+                "captured runtime facts contain no sensitive sentinel",
             ),
         )
-        job = {
-            "job_id": str(uuid.uuid4()),
-            "lease_token": str(uuid.uuid4()),
-            "attempt_number": 1,
-            "timeout_seconds": 60,
-            "org_id": identifiers["org_id"],
-            "account_id": identifiers["account_id"],
-            "transcript_id": identifiers["transcript_id"],
-            "requester_id": str(uuid.uuid4()),
-            "source_manifest": {
-                **identifiers,
-                "opportunity_id": None,
-                "storage_path": transcript_path,
-            },
-            "payload": {"model": "claude-sonnet-4-6", "runtime_version": "smoke"},
-            "skill_version": "1.0",
-        }
-        with contextlib.redirect_stderr(io.StringIO()):
-            result = asyncio.run(orchestrator.execute(job))
-        report = SmokeReport(
-            checks=(
-                _check("preflight", preflight.ok, "fixture probe contract result"),
-                _check(
-                    "runtime",
-                    "--network=none" in observation.argv
-                    and not any(
-                        item.startswith("--network=") and item != "--network=none"
-                        for item in observation.argv
-                    ),
-                    "observed runsc argv contains only --network=none",
-                ),
-                _check(
-                    "mounts",
-                    observation.observed_mounts == observation.authorized_mounts,
-                    "observed production config mount destinations match its contract",
-                ),
-                _check(
-                    "artifact_validation",
-                    result.validation_status == "valid",
-                    "plain orchestrator completed worker-side artifact validation",
-                ),
-                _check(
-                    "shutdown",
-                    observation.workspace_path is not None
-                    and not observation.workspace_path.exists()
-                    and observation.proxy_path is not None
-                    and not observation.proxy_path.exists(),
-                    "actual per-attempt workspace and proxy socket were removed",
-                ),
-                _check(
-                    "redaction",
-                    _SENTINEL not in observation.runtime_output
-                    and _SENTINEL not in observation.report_json,
-                    "captured runtime/report facts contain no sensitive sentinel",
-                ),
-            )
-        )
-        asyncio.run(proxy.anthropic_client.aclose())
+    )
+    asyncio.run(proxy.anthropic_client.aclose())
     return report
 
 

@@ -35,7 +35,9 @@
                                   └──────────────────┘
 ```
 
-This is a logical view. Concrete technology choices (Supabase, worker framework, sandbox implementation) are working hypotheses and will be decided per roadmap slice.
+This is a logical view. Supabase remains the beta operational hypothesis; the
+worker and runsc implementation are now present in the repository. Provider
+selection and real host provisioning remain 5B2B2.
 
 ## FastAPI/SPA boundary
 
@@ -43,6 +45,10 @@ This is a logical view. Concrete technology choices (Supabase, worker framework,
 - FastAPI validates the session, resolves the user's organization from an active membership, and applies organization-scoped authorization on every route. The beta supports a single Airbyte organization; there is no org switcher.
 - Hosted persistence and auth are opt-in via an explicit `HOSTED_MODE=1` environment variable. When `HOSTED_MODE` is unset, the app continues to run the existing local filesystem workflows and does not require `asyncpg`/`pyjwt`.
 - No server-side rendering; the SPA calls JSON/REST endpoints.
+
+The worker deployment foundation is a separate hardened Ubuntu 24.04 x86_64
+host contract. It does not expose a public application port and is configured
+by the Ansible package under `deploy/ansible/`.
 
 ## Auth, database, and storage boundaries
 

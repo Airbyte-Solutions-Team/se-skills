@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted — core runtime decision operative for Slices 5B1 and 5B2A; production host provisioning, registry signing, and live Anthropic smoke testing remain Slice 5B2B decisions |
+| **Status** | Accepted — core runtime decision operative for Slices 5B1, 5B2A, and the 5B2B1 deployment foundation; real host provisioning and live Anthropic smoke testing remain Slice 5B2B2 |
 | **Date** | 2026-08-11 |
 | **Deciders** | Devin (implementation), requester (review) |
 | **Applies to** | Slice 5B1 (trusted worker-side orchestration) and Slice 5B2 (gVisor sandbox + production model proxy) |
@@ -200,7 +200,10 @@ A managed service without a gVisor or microVM layer does not provide the job-lev
 
 For the post-call runtime we will use **Option 1: a manual Anthropic Messages API typed-tool loop with a worker-side model proxy, running inside a per-job gVisor-backed `runsc` container.**
 
-The core elements of this decision are now operative for Slice 5B1: the worker builds a `RuntimeJob`, the sandbox only receives a read-only input manifest and temporary output workspace, model calls are mediated through a worker-side proxy, and the worker validates and persists the final artifact outside the sandbox. gVisor/runsc image build, network namespace provisioning, deployment host selection, and the live Anthropic model proxy are explicitly deferred to Slice 5B2.
+The core elements of this decision are operative for Slice 5B1 and Slice 5B2A.
+Slice 5B2B1 now contains the pinned image/release tooling, Ubuntu host
+contract, Ansible role, and deterministic/gated smoke entry points. Applying the
+role to a real host and running the live Anthropic smoke remain Slice 5B2B2.
 
 This gives the highest agent fidelity with the smallest trusted surface area. The design is provider-neutral where possible and can be moved to Firecracker or a managed gVisor service without changing the worker contract.
 

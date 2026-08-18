@@ -268,26 +268,25 @@ This is the source of truth for productionalization slices and progress. Each sl
 
 ---
 
-## Slice 5B2B: Deployment-host provisioning and production operations
+## Slice 5B2B1: Deployment foundation
 
-**Status:** `Proposed`
+**Status:** `In Progress`
 
-**Product outcome:** The 5B2A sandbox and proxy are deployed on production hosts with the required network namespace, firewall, image registry, signing, observability, and operational runbook.
+**Product outcome:** The repository contains a fail-closed foundation for a dedicated worker host, pinned sandbox artifacts, deterministic image release tooling, and offline/gated smoke validation.
 
 **Scope:**
-- Dedicated VM vs managed Kubernetes/gVisor service vs managed container service selection.
-- Production namespace/firewall provisioning, registry, signing/SBOM, rollout/rollback, and fleet scaling.
-- Live Anthropic smoke tests and cost controls.
-- Firecracker evaluation, if desired later.
+- Hardened Ubuntu 24.04 x86_64 host contract and Ansible package.
+- Pinned `runsc`, image, rootfs, dependency, SBOM, scan, and signing inputs.
+- Offline deterministic smoke checks and gated live smoke entry point.
+- ADR, host contract, network policy, runbook, and observability documentation.
 
 **Dependencies:** Slice 5B2A.
 
 **Acceptance criteria:**
-- `post-call` runs from an uploaded transcript inside the sandbox on production infrastructure and produces a valid Markdown + sidecar.
-- Sandbox has no host filesystem access except the mounted transcript and read-only reference data.
-- Sandbox network egress is allowlisted and deny-by-default; model calls are mediated through the worker-side proxy.
-- No unrestricted shell, `bypassPermissions`, Git, browser automation, or local repo access.
-- Output includes required sections and passes the deterministic validation contract; the worker's validation result remains authoritative.
+- Repository checks pass without cloud credentials, root, `runsc`, or live model calls.
+- Host provisioning and image release fail closed when required host/tools/artifacts are absent.
+- The offline harness exercises the real orchestrator integration; construction-contract
+  checks for runsc argv/mounts are enforced by gated real-runsc and live smoke tests.
 
 **Non-goals:**
 - Not all skills.
@@ -298,19 +297,36 @@ This is the source of truth for productionalization slices and progress. Each sl
 
 ---
 
-## Slice 6: Review, export, and beta readiness
+## Slice 5B2B2: Real environment provisioning and live smoke validation
+
+**Status:** `Proposed`
+
+**Scope:** Select and provision the cloud host, network, registry, secrets,
+observability, and approved image/rootfs; apply the role; run the live smoke;
+and establish operational rollback and cost controls.
+
+**Deferred Product Owner inputs:** cloud provider/account/project; region and
+network/VPC; DNS and certificate ownership; secret-manager choice; registry
+coordinates; observability backend; budget and token/cost alert thresholds;
+named operational owner and escalation path; approved beta users and test
+transcript; maintenance and rollback window.
+
+## Slice 6A: Review, correction, approval, versioning, and audit
+
+**Status:** `Proposed`
+
+**Scope:** Review/correction UI and API, output versions, approval state,
+organization-preserving audit events, and deterministic export provenance.
+
+## Slice 6B: Exports, admin/onboarding, observability, and beta launch readiness
 
 **Status:** `Proposed`
 
 **Product outcome:** SEs can review, correct, approve, and export the hosted `post-call` output, completing the first end-to-end beta workflow.
 
 **Scope:**
-- Review/correction UI and API (`reviews` table).
-- Output validation status and reference-freshness surfacing.
-- PDF and MD export; optional internal HTML export.
-- Audit logging (`audit_events` table).
-- Basic admin/org settings (members, roles, data retention view).
-- Onboarding and beta runbook.
+- PDF/Markdown exports, admin and onboarding flows, production metrics/logging,
+  launch checklist, retention, and beta operations.
 
 **Dependencies:** Slice 3, Slice 5B.
 
