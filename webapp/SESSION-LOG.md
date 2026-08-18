@@ -2,10 +2,18 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 18, 2026 — working tree on `devin/slice5b2b1-deployment-foundation`. Added configurable sandbox identity and real signal lifecycle coverage._
+_Last updated: August 18, 2026 — working tree on `devin/slice5b2b1-deployment-foundation`. Removed broker argv config overrides and forbade sudo arguments._
 
 
 ## Built this session (newest first — see `git log`)
+
+- **Close broker argv and sudoers override (August 18).**
+  1. Removed the test-only broker `--config` argv path; the broker now loads
+     only the canonical root-owned configuration.
+  2. Mounted namespace-local test configuration at `/etc/se-skills` and
+     tightened sudoers with an explicit empty argument specification.
+  3. Added preflight and rendered-policy regressions, plus production rejection
+     of non-zero journal phase pauses.
 
 - **Configurable sandbox identity and real signal custody tests (August 18).**
   1. Moved sandbox UID/GID into root-owned broker configuration, with deployed

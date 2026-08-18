@@ -190,7 +190,7 @@ class _Probe:
 
     def file_text(self, path: str) -> str | None:
         if path == "/etc/sudoers.d/se-skills-runsc":
-            return "se-worker ALL=(root) NOPASSWD: /usr/local/sbin/se-skills-runsc\n"
+            return 'se-worker ALL=(root) NOPASSWD: /usr/local/sbin/se-skills-runsc ""\n'
         if path == "/usr/local/sbin/se-skills-runsc":
             return 'CONFIG_PATH = Path("/etc/se-skills/runsc-broker.json")\n'
         if path == "/etc/se-skills/runsc-broker.json":
@@ -199,7 +199,8 @@ class _Probe:
                 '"state_root": "/var/lib/se-skills/runsc", '
                 '"bundle_root": "/var/lib/se-skills/bundles", '
                 '"workspace_root": "/var/lib/se-skills/workspaces", '
-                '"sandbox_uid": 65532, "sandbox_gid": 65532}'
+                '"sandbox_uid": 65532, "sandbox_gid": 65532, '
+                '"journal_phase_pause_seconds": 0}'
             )
         candidate = Path(path)
         return candidate.read_text(encoding="utf-8") if candidate.is_file() else None

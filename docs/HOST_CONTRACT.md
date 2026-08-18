@@ -17,7 +17,8 @@ loaded from `deploy/pins.json`; role defaults and paths are in
   `/var/lib/se-skills/runsc`.
 - The worker invokes the root-owned Python broker at
   `/usr/local/sbin/se-skills-runsc` using the exact
-  `/etc/sudoers.d/se-skills-runsc` rule. It accepts only a strict typed request
+  `/etc/sudoers.d/se-skills-runsc` rule, whose `""` command-argument token
+  forbids all broker arguments. It accepts only a strict typed request
   on stdin; no secret or job value is placed in argv. The broker creates all
   bundles/state and writes the fixed OCI config from
   `/etc/se-skills/runsc-broker.json`; the worker cannot select rootfs,
@@ -66,6 +67,9 @@ loaded from `deploy/pins.json`; role defaults and paths are in
   verifies these deployed values against the image contract. Test-only
   user-namespace lifecycle fixtures may set both values to zero because all
   namespace ids map to the invoking test user.
+- `journal_phase_pause_seconds` is a bounded, root-configured diagnostic aid
+  for deterministic lifecycle testing. It is rendered as zero in production,
+  and preflight rejects a non-zero value.
 - The sandbox image uses the pinned Python and distroless base digests in
   `deploy/pins.json`. An approved image digest and rootfs digest must be
   populated before production preflight passes. `SANDBOX_IMAGE_DIGEST` is

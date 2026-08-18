@@ -1145,12 +1145,9 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
     try:
-        if len(sys.argv) == 1:
-            config = BrokerConfig.load()
-        elif len(sys.argv) == 3 and sys.argv[1] == "--config":
-            config = BrokerConfig.load(Path(sys.argv[2]))
-        else:
+        if len(sys.argv) != 1:
             raise BrokerError("invalid broker invocation")
+        config = BrokerConfig.load()
         lock = _operation_lock(config)
         try:
             request = _load_request(sys.stdin, config)

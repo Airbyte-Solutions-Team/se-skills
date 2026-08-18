@@ -42,6 +42,7 @@ hosted_broker_max_nesting_depth: 16
 hosted_broker_max_concurrent_operations: 4
 hosted_broker_max_attempt_duration_seconds: 900
 hosted_broker_operation_timeout_seconds: 30
+hosted_broker_journal_phase_pause_seconds: 0
 hosted_worker_requirements: /opt/se-skills/deploy/requirements-worker.txt
 hosted_worker_uid: 995
 hosted_worker_gid: 995

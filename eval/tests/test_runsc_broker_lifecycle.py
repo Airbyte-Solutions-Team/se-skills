@@ -141,6 +141,12 @@ config_path.write_text(json.dumps({{
     "journal_root": str(journal),
     "journal_phase_pause_seconds": 0.05,
 }}), encoding="utf-8")
+etc_root = root / "etc"
+etc_root.mkdir()
+etc_dir = etc_root / "se-skills"
+etc_dir.mkdir()
+(etc_dir / "runsc-broker.json").write_text(config_path.read_text(), encoding="utf-8")
+subprocess.run(["mount", "--bind", str(etc_root), "/etc"], check=True)
 job = {{
     "job_id": "job-1",
     "org_id": "org-1",
@@ -180,7 +186,7 @@ request = {{
     "proxy_uds_path": str(proxy_path),
     "job": job,
 }}
-broker = [{str(sys.executable)!r}, "-I", {str(broker)!r}, "--config", str(config_path)]
+broker = [{str(sys.executable)!r}, "-I", {str(broker)!r}]
 proc = subprocess.Popen(
     broker,
     stdin=subprocess.PIPE,

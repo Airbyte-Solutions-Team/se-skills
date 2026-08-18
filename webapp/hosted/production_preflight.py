@@ -38,6 +38,7 @@ class ProductionPreflightSettings(BaseModel):
     non_worker_uid: int
     sandbox_uid: int = 65532
     sandbox_gid: int = 65532
+    journal_phase_pause_seconds: float = 0.0
     database_url: str
     storage_url: str
     anthropic_api_url: str
@@ -142,6 +143,7 @@ def run_production_preflight(
             non_worker_uid=settings.non_worker_uid,
             sandbox_uid=settings.sandbox_uid,
             sandbox_gid=settings.sandbox_gid,
+            journal_phase_pause_seconds=settings.journal_phase_pause_seconds,
             pins=settings.pins,
             supply_chain=supply_chain,
             supply_chain_manifest_status=(

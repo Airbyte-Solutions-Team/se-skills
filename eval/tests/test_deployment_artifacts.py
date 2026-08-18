@@ -153,6 +153,20 @@ def test_broker_sandbox_identity_matches_image_contract() -> None:
     assert "USER 65532:65532" in image
 
 
+def test_sudoers_forbids_broker_arguments() -> None:
+    sudoers = (
+        ANSIBLE
+        / "roles"
+        / "hosted_worker"
+        / "templates"
+        / "se-skills-runsc.sudoers.j2"
+    ).read_text()
+    assert (
+        '{{ hosted_worker_user }} ALL=(root) NOPASSWD: '
+        '{{ hosted_runsc_helper }} ""'
+    ) in sudoers
+
+
 def test_uninstall_does_not_touch_durable_services_or_data() -> None:
     text = (ANSIBLE / "uninstall.yml").read_text()
 

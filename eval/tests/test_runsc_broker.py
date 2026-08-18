@@ -124,6 +124,17 @@ def _run_request(input_dir: Path, output_dir: Path) -> dict[str, object]:
     }
 
 
+def test_entrypoint_rejects_all_arguments(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path)
+    monkeypatch.setattr(broker, "CONFIG_PATH", config_path := tmp_path / "unused.json")
+    monkeypatch.setattr(sys, "argv", ["se-skills-runsc", "--config", str(config_path)])
+    with pytest.raises(SystemExit) as error:
+        broker.main()
+    assert error.value.code == 64
+
+
 def test_run_entrypoint_authors_fixed_config_and_permissions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

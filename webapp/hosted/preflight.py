@@ -4,6 +4,7 @@ from __future__ import annotations
 import grp
 import hashlib
 import ipaddress
+import json
 import os
 import platform
 import pwd
@@ -126,6 +127,7 @@ class PreflightConfig(BaseModel):
     non_worker_uid: int = 994
     sandbox_uid: int = 65532
     sandbox_gid: int = 65532
+    journal_phase_pause_seconds: float = 0.0
     rootfs_path: str = ""
     clock_tolerance_seconds: float = 1.0
     supply_chain: SupplyChainVerification | None = None
@@ -228,6 +230,16 @@ def run_preflight(config: PreflightConfig, probe: HostProbe) -> PreflightReport:
     helper = probe.path_info(config.runsc_helper_path)
     broker_config = probe.path_info(config.runsc_broker_config_path)
     broker_text = probe.file_text(config.runsc_broker_config_path) or ""
+    try:
+        broker_document = json.loads(broker_text)
+    except (TypeError, ValueError):
+        broker_document = {}
+    pause_value = broker_document.get("journal_phase_pause_seconds", 0.0)
+    pause_ok = (
+        isinstance(pause_value, (int, float))
+        and not isinstance(pause_value, bool)
+        and pause_value == config.journal_phase_pause_seconds
+    )
     helper_roots_ok = (
         broker_config.exists
         and broker_config.is_file
@@ -239,6 +251,7 @@ def run_preflight(config: PreflightConfig, probe: HostProbe) -> PreflightReport:
         and f'"workspace_root": "{config.workspace_path}"' in broker_text
         and f'"sandbox_uid": {config.sandbox_uid}' in broker_text
         and f'"sandbox_gid": {config.sandbox_gid}' in broker_text
+        and pause_ok
     )
     helper_ok = (
         helper.exists
@@ -266,7 +279,7 @@ def run_preflight(config: PreflightConfig, probe: HostProbe) -> PreflightReport:
         and sudoers.owner == "root"
         and sudoers.group == "root"
         and sudoers_text.strip()
-        == f"{config.worker_user} ALL=(root) NOPASSWD: {config.runsc_helper_path}"
+        == f'{config.worker_user} ALL=(root) NOPASSWD: {config.runsc_helper_path} ""'
     )
     checks.append(
         _required(

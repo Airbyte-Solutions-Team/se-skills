@@ -48,7 +48,8 @@ The managed container option is treated as a deployment variant of option 1 rath
 
 The deployed worker uses a narrowly privileged root-owned Python broker rather
 than gVisor rootless mode. The worker may sudo only to
-`/usr/local/sbin/se-skills-runsc`; the broker accepts a strict frozen request on
+`/usr/local/sbin/se-skills-runsc` with an explicit sudoers empty-argument
+specification; the broker accepts a strict frozen request on
 stdin and authors the complete OCI bundle and config itself. Rootfs, process
 argv/environment, UID/GID, capabilities, devices, namespaces, resource
 limits, and mounts are broker-controlled; worker input is limited to the
