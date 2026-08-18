@@ -6,7 +6,24 @@
     owner: root
     group: root
     mode: "0644"
-  notify: Reload nftables
+
+- name: Validate rendered firewall policy
+  ansible.builtin.command:
+    argv:
+      - nft
+      - --check
+      - -f
+      - "{{ hosted_firewall_path }}"
+  changed_when: false
+
+- name: Apply rendered firewall policy atomically
+  ansible.builtin.command:
+    argv:
+      - nft
+      - -f
+      - "{{ hosted_firewall_path }}"
+  when: not ansible_check_mode
+  changed_when: true
 
 - name: Require nftables service
   ansible.builtin.service:

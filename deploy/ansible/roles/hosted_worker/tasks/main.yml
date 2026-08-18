@@ -17,11 +17,11 @@
   ansible.builtin.include_tasks: directories.yml
 - name: Install pinned runsc
   ansible.builtin.include_tasks: runsc.yml
-- name: Configure systemd
-  ansible.builtin.include_tasks: systemd.yml
 - name: Configure firewall
   ansible.builtin.include_tasks: firewall.yml
 - name: Configure logging
   ansible.builtin.include_tasks: logging.yml
 - name: Configure stale sandbox cleanup
   ansible.builtin.include_tasks: cleanup.yml
+- name: Configure systemd
+  ansible.builtin.include_tasks: systemd.yml

@@ -1,4 +1,5 @@
 #!/usr/sbin/nft -f
+delete table inet se_skills
 table inet se_skills {
   chain input {
     type filter hook input priority 0; policy drop;
@@ -20,22 +21,24 @@ table inet se_skills {
 {% for server in hosted_dns_servers %}
     ip daddr {{ server }} udp dport 53 accept
 {% endfor %}
-    meta skuid {{ hosted_worker_uid }} tcp dport 443 accept
+{% for server in hosted_ntp_servers %}
+    meta skuid {{ hosted_worker_uid }} ip daddr {{ server }} udp dport 123 accept
+{% endfor %}
+{% for server in hosted_dns_servers %}
+    meta skuid {{ hosted_worker_uid }} ip daddr {{ server }} udp dport 53 accept
+{% endfor %}
 {% if hosted_database_host | length > 0 %}
-    ip daddr {{ hosted_database_host }} tcp dport {{ hosted_postgres_port }} accept
+    meta skuid {{ hosted_worker_uid }} ip daddr {{ hosted_database_host }} tcp dport {{ hosted_postgres_port }} accept
 {% endif %}
 {% if hosted_storage_host | length > 0 %}
-    ip daddr {{ hosted_storage_host }} tcp dport {{ hosted_storage_port }} accept
+    meta skuid {{ hosted_worker_uid }} ip daddr {{ hosted_storage_host }} tcp dport {{ hosted_storage_port }} accept
 {% endif %}
 {% if hosted_registry_host | length > 0 %}
-    ip daddr {{ hosted_registry_host }} tcp dport {{ hosted_registry_port }} accept
+    meta skuid {{ hosted_worker_uid }} ip daddr {{ hosted_registry_host }} tcp dport {{ hosted_registry_port }} accept
 {% endif %}
 {% if hosted_observability_host | length > 0 %}
-    ip daddr {{ hosted_observability_host }} tcp dport {{ hosted_observability_port }} accept
+    meta skuid {{ hosted_worker_uid }} ip daddr {{ hosted_observability_host }} tcp dport {{ hosted_observability_port }} accept
 {% endif %}
-{% for server in hosted_ntp_servers %}
-    ip daddr {{ server }} udp dport 123 accept
-{% endfor %}
     ip daddr 10.0.0.0/8 drop
     ip daddr 172.16.0.0/12 drop
     ip daddr 192.168.0.0/16 drop

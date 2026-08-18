@@ -18,5 +18,5 @@ done
 
 for bundle in "$bundles"/*; do
   [ -d "$bundle" ] || continue
-  [ -e "$bundle/runtime/job.json" ] || rm -rf -- "$bundle"
+  [ -e "$bundle/job.json" ] || rm -rf -- "$bundle"
 done

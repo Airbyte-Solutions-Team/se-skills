@@ -16,7 +16,7 @@
     state: directory
     owner: "{{ hosted_worker_user }}"
     group: "{{ hosted_worker_group }}"
-    mode: "0750"
+    mode: "0700"
   loop:
     - "{{ hosted_state_dir }}"
     - "{{ hosted_bundle_dir }}"
