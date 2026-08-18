@@ -18,6 +18,7 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
+import jwt
 import pytest
 
 from webapp.hosted.model_proxy import ModelProxy, ProxyConfig
@@ -65,6 +66,74 @@ class _FakeCancellationToken:
         import asyncio
 
         await asyncio.sleep(100000)
+
+
+class _SlowDripStream:
+    def __init__(self, closed: list[bool]) -> None:
+        self.closed = closed
+
+    async def __aenter__(self) -> "_SlowDripStream":
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        self.closed[0] = True
+
+    def raise_for_status(self) -> None:
+        pass
+
+    async def aiter_bytes(self) -> Any:
+        while True:
+            await asyncio.sleep(0.05)
+            yield b'{"id":"msg","type":"message","role":"assistant","content":[]}'
+
+
+class _SlowDripClient:
+    def __init__(self, closed: list[bool]) -> None:
+        self.closed = closed
+
+    def stream(
+        self,
+        method: str,
+        url: str,
+        *,
+        content: bytes,
+        headers: dict[str, str],
+        timeout: Any,
+    ) -> _SlowDripStream:
+        return _SlowDripStream(self.closed)
+
+    async def aclose(self) -> None:
+        pass
+
+
+class _RecordingFakeSandboxRunner(FakeSandboxRunner):
+    def __init__(self, proxy: ModelProxy) -> None:
+        super().__init__(proxy)
+        self.last_jti: str | None = None
+
+    async def run(
+        self,
+        job: RuntimeJob,
+        input_dir: Path,
+        output_dir: Path,
+        result_path: Path,
+        cancellation: Any,
+        proxy_uds_path: Path | None = None,
+    ) -> None:
+        self.last_jti = jwt.decode(
+            job.proxy_token or "",
+            self.proxy.cfg.secret,
+            algorithms=["HS256"],
+            options={"verify_exp": False},
+        )["jti"]
+        await super().run(
+            job,
+            input_dir,
+            output_dir,
+            result_path,
+            cancellation,
+            proxy_uds_path,
+        )
 
 
 def _make_job(
@@ -234,6 +303,39 @@ async def test_runsc_runtime_proxy_rejection_surfaces_model_error() -> None:
         result = await runtime.execute(job, _FakeCancellationToken())
         assert result.failure is not None
         assert result.failure.category == "model_error"
+
+
+@pytest.mark.asyncio
+async def test_runsc_runtime_proxy_deadline_overrides_sandbox_model_error() -> None:
+    """A proxy-owned deadline wins over the typed runner's model error."""
+    cfg = ProxyConfig(secret="a" * 32, anthropic_api_key="test-key")
+    closed = [False]
+    proxy = ModelProxy(
+        proxy_config=cfg,
+        anthropic_client=_SlowDripClient(closed),
+    )
+    runner = _RecordingFakeSandboxRunner(proxy)
+    runtime = RunscSkillRuntime(runner=runner, proxy=proxy, start_proxy_server=False)
+    with tempfile.TemporaryDirectory() as td:
+        input_dir = Path(td) / "input"
+        output_dir = Path(td) / "output"
+        job = _make_job(
+            input_dir,
+            output_dir,
+            deadline=datetime.now(tz=timezone.utc) + timedelta(seconds=0.3),
+        )
+        result = await runtime.execute(job, _FakeCancellationToken())
+
+    assert result.failure is not None
+    assert result.failure.category == "timeout"
+    assert "model_error" not in result.model_dump_json()
+    assert "sandbox" not in result.model_dump_json().lower()
+    assert closed[0]
+    assert proxy._sessions == {}
+    assert runner.last_jti is not None
+    second = await proxy.consume_attempt_finalization(runner.last_jti)
+    assert second.metadata.token_usage.input_tokens == 0
+    assert second.terminal_category is None
 
 
 @pytest.mark.asyncio

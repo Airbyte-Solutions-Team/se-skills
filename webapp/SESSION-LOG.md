@@ -2,10 +2,16 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 11, 2026 — HEAD 93d5053 on `devin/slice5b2a-runsc-proxy`. Slice 5B2A re-review: authoritative proxy ledger with atomic finalization, absolute deadline enforcement, replay-protected capability tokens, bounded strict proxy, safe `result.json` ingestion, and fail-closed runsc cleanup._
+_Last updated: August 18, 2026 — HEAD 37804fc on `devin/slice5b2a-runsc-proxy`. Slice 5B2A trusted proxy terminal-category finalization and runsc timeout override._
 
 
 ## Built this session (newest first — see `git log`)
+
+- **PR #45 remaining blocker fix: trusted proxy terminal-category finalization (August 18).**
+  1. **Proxy-owned deadline classification.** `ModelProxy` records a trusted `timeout` terminal category when its immutable deadline wins, including early and already-expired deadline paths.
+  2. **Atomic finalization channel.** `consume_attempt_finalization(jti)` now atomically returns both authoritative usage metadata and the trusted terminal category, failing closed on repeat consumption.
+  3. **Runsc result precedence.** `RunscSkillRuntime` consumes the finalization object on every terminal path and preserves a trusted proxy timeout over sandbox-authored `model_error`, malformed results, and runner failures.
+  4. **Regression coverage.** Added an in-process typed-tool/runsc regression with a slow-drip upstream, asserting timeout redaction, upstream cancellation, and one-time proxy-session consumption.
 
 - **PR #45 re-review fixes: authoritative accounting, capability boundary, strict proxy, safe `result.json`, and verified cleanup (August 11).**
   1. **Authoritative model/usage/cost ledger with atomic finalization.** `webapp/hosted/model_proxy.py` now keeps the per-attempt accounting in `_ProxySession` and exposes `consume_attempt_metadata(jti)`, which returns the authoritative `ExecutionMetadata` once and removes the session. `RunscSkillRuntime.execute` overwrites any sandbox-authored `RuntimeResult.execution_metadata` with the consumed ledger and removes the session on every terminal path.

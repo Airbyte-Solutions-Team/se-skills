@@ -79,8 +79,18 @@ class _ProxySession:
         self.cache_creation = 0
         self.cache_read = 0
         self.request_count = 0
+        self.terminal_category: FailureCategory | None = None
         self.lock = asyncio.Lock()
         self.cancel_event = asyncio.Event()
+
+
+class ProxyFinalization(BaseModel):
+    """Trusted, one-time finalization state for a proxy attempt."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    metadata: ExecutionMetadata
+    terminal_category: FailureCategory | None = None
 
 
 class ProxyCapability(BaseModel):
@@ -327,27 +337,30 @@ class ModelProxy:
         """Return the authoritative, proxy-accumulated execution metadata.
 
         If the attempt is unknown, returns an empty `ExecutionMetadata`.  This is a
-        non-consuming read; `consume_attempt_metadata` removes the session once.
+        non-consuming read; `consume_attempt_finalization` removes the session once.
         """
         return self._metadata_for_session(self._sessions.get(jti))
 
-    async def consume_attempt_metadata(self, jti: str | None) -> ExecutionMetadata:
-        """Return the authoritative metadata once and remove the session.
+    async def consume_attempt_finalization(self, jti: str | None) -> ProxyFinalization:
+        """Return trusted finalization state once and remove the session.
 
         The session lock is acquired so this cannot race an in-flight `handle` call;
-        after returning, the same `jti` will yield an empty `ExecutionMetadata`.
+        after returning, the same `jti` will yield empty finalization state.
         """
         if jti is None:
-            return ExecutionMetadata()
+            return ProxyFinalization(metadata=ExecutionMetadata())
         session = self._sessions.get(jti)
         if session is None:
-            return ExecutionMetadata()
+            return ProxyFinalization(metadata=ExecutionMetadata())
         async with session.lock:
             # Pop after acquiring the lock so we never drop a concurrent update.
             session = self._sessions.pop(jti, None)
             if session is None:
-                return ExecutionMetadata()
-            return self._metadata_for_session(session)
+                return ProxyFinalization(metadata=ExecutionMetadata())
+            return ProxyFinalization(
+                metadata=self._metadata_for_session(session),
+                terminal_category=session.terminal_category,
+            )
 
     def _metadata_for_session(self, session: _ProxySession | None) -> ExecutionMetadata:
         if session is None:
@@ -468,6 +481,7 @@ class ModelProxy:
             now = datetime.now(tz=timezone.utc)
             remaining = (deadline - now).total_seconds()
             if remaining <= 0:
+                session.terminal_category = "timeout"
                 return _error_response(410, "deadline_expired")
 
             forwarded = req.model_dump(exclude_none=True)
@@ -532,6 +546,7 @@ class ModelProxy:
         now = datetime.now(tz=timezone.utc)
         remaining = (deadline - now).total_seconds()
         if remaining <= 0:
+            session.terminal_category = "timeout"
             raise _ProxyError("timeout", 504)
 
         async def _stream() -> bytes:
@@ -578,6 +593,7 @@ class ModelProxy:
                     await upstream_task
                 raise _ProxyError("session_cancelled", 499)
             if deadline_task in done:
+                session.terminal_category = "timeout"
                 upstream_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await upstream_task

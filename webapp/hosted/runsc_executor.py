@@ -29,7 +29,7 @@ from pydantic import ValidationError
 
 from webapp.hosted import config
 from webapp.hosted.agent_loop_harness import TypedToolRuntime
-from webapp.hosted.model_proxy import ModelProxy
+from webapp.hosted.model_proxy import ModelProxy, ProxyFinalization
 from webapp.hosted.runtime_contract import (
     Allowlist,
     CancellationToken,
@@ -551,10 +551,16 @@ class RunscSkillRuntime:
         self.proxy = proxy
         self.start_proxy_server = start_proxy_server
 
-    async def _finalize_proxy_session(self, jti: str | None) -> ExecutionMetadata:
-        """Signal cancellation and consume the authoritative metadata once."""
+    async def _finalize_proxy_session(self, jti: str | None) -> ProxyFinalization:
+        """Signal cancellation and consume trusted proxy state once."""
         self.proxy.cancel_session(jti)
-        return await self.proxy.consume_attempt_metadata(jti)
+        return await self.proxy.consume_attempt_finalization(jti)
+
+    @staticmethod
+    def _terminal_failure(finalization: ProxyFinalization) -> RuntimeResult | None:
+        if finalization.terminal_category is None:
+            return None
+        return _redacted_failure(finalization.terminal_category)
 
     async def execute(self, job: RuntimeJob, cancellation: CancellationToken) -> RuntimeResult:
         if cancellation.is_cancelled():
@@ -642,19 +648,32 @@ class RunscSkillRuntime:
                 await runner_task
             except RuntimeExecutionError as exc:
                 logger.warning("Runner raised RuntimeExecutionError: %s", exc)
-                await self._finalize_proxy_session(jti)
+                finalization = await self._finalize_proxy_session(jti)
+                terminal_failure = self._terminal_failure(finalization)
+                if terminal_failure is not None:
+                    return terminal_failure
                 return _map_runtime_execution_error(exc)
             except Exception as exc:
                 logger.warning("Runner raised: %s", type(exc).__name__)
-                await self._finalize_proxy_session(jti)
+                finalization = await self._finalize_proxy_session(jti)
+                terminal_failure = self._terminal_failure(finalization)
+                if terminal_failure is not None:
+                    return terminal_failure
                 return _redacted_failure("runtime_error")
 
             result = _safe_read_runtime_result(result_path)
             if result is None:
-                await self._finalize_proxy_session(jti)
+                finalization = await self._finalize_proxy_session(jti)
+                terminal_failure = self._terminal_failure(finalization)
+                if terminal_failure is not None:
+                    return terminal_failure
                 return _redacted_failure("runtime_error")
 
-            authoritative = await self._finalize_proxy_session(jti)
+            finalization = await self._finalize_proxy_session(jti)
+            terminal_failure = self._terminal_failure(finalization)
+            if terminal_failure is not None:
+                return terminal_failure
+            authoritative = finalization.metadata
             if result.failure is None:
                 result = result.model_copy(
                     update={
