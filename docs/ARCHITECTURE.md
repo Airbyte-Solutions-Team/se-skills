@@ -36,8 +36,11 @@
 ```
 
 This is a logical view. Supabase remains the beta operational hypothesis; the
-worker and runsc implementation are now present in the repository. Provider
-selection and real host provisioning remain 5B2B2.
+worker and runsc implementation are now present in the repository. The
+deployment foundation now also loads root-owned image evidence, hashes the
+materialized rootfs, uses durable worker-owned state paths, and verifies the
+live ordered firewall table. Provider selection and real host provisioning
+remain 5B2B2.
 
 ## FastAPI/SPA boundary
 

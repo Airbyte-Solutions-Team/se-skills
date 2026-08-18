@@ -22,8 +22,9 @@ check correctly fails closed when the OS contract is not Ubuntu 24.04.
 
 ## Validation and lifecycle
 
-Validate pins, required environment names, image/rootfs digests, firewall
-addresses, and the worker runtime before starting. The systemd unit runs the
+Validate pins, required environment names, the root-owned sandbox manifest and
+all referenced evidence, the deployed rootfs digest, live firewall addresses,
+and the worker runtime before starting. The systemd unit runs the
 virtualenv interpreter with `HOSTED_MODE=1`, `HOSTED_ENV=production`, and
 `--runtime post-call-runsc`. Start, stop, and restart through systemd; do not
 run a second worker manually against the same queue.
@@ -61,7 +62,15 @@ mutable tag.
 
 If the worker crashes, do not manually mutate the job ledger. Postgres lease
 expiry and `recover_expired_leases` requeue or dead-letter attempts. If a
-sandbox remains, the cleanup timer removes only verified-dead state.
+sandbox remains, the cleanup timer runs as `se-worker` and removes only
+verified-dead state.
+
+Image promotion is manual and protected. Build the pinned image, run SBOM and
+vulnerability scans, push it, record the registry manifest digest, generate
+and attest digest-bound SBOM/provenance, and sign that digest. Install the
+resulting root-owned manifest and evidence files before starting the worker.
+The Ansible role validates and applies the firewall transaction before the
+systemd task enables or starts the worker.
 
 For containment, stop the worker, remove it from queue intake, preserve
 redacted logs and derived timestamps, rotate affected credentials, and

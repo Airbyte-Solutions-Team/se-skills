@@ -20,10 +20,10 @@ model request.
 
 The worker resolves inputs and persists outputs. Its outbound network is
 controlled by the host's `inet se_skills` nftables table and by application
-protocol checks. The shipped policy is deny-by-default, scopes generic HTTPS
-egress to `meta skuid 995`, permits explicitly configured dependency IP/CIDR
-rules, and drops cloud metadata, link-local, RFC1918, and IPv6 private ranges
-after the explicit dependency rules.
+protocol checks. The shipped policy is deny-by-default, drops cloud metadata,
+link-local, RFC1918, and IPv6 private ranges before any accept, and permits
+only explicitly configured dependency IP/CIDR rules combined with
+`meta skuid 995`.
 
 The firewall does not use `flush ruleset`; it replaces only the `se_skills`
 table so it does not destroy provider or container-manager tables. DNS and NTP
@@ -42,6 +42,11 @@ enforces organization authorization, signs short-lived Storage requests, and
 enqueues jobs. The worker receives queue-function access rather than broad
 tenant-table access. The API does not expose a public application port on the
 worker host.
+
+Production preflight obtains `nft list table inet se_skills` through its host
+probe and evaluates ordered rules for identity, destination, protocol, and
+port. Missing `nft` or a missing live table fails closed; rendering the
+template alone is not evidence that the live policy is loaded.
 
 ## Failure expectations
 

@@ -2,10 +2,22 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 18, 2026 — HEAD d237aea on `devin/slice5b2b1-deployment-foundation`. Slice 5B2B1 deployment foundation and smoke integration._
+_Last updated: August 18, 2026 — HEAD f0ea19e on `devin/slice5b2b1-deployment-foundation`. Slice 5B2B1 deployment hardening and supply-chain evidence._
 
 
 ## Built this session (newest first — see `git log`)
+
+- **Slice 5B2B1 deployment hardening and supply-chain evidence (August 18).**
+  1. Added root-owned approved-artifact manifest loading, evidence ownership
+     checks, digest-bound provenance/signature verification, and canonical
+     materialized-rootfs hashing.
+  2. Moved runsc bundles and state into worker-owned durable directories,
+     applied the firewall atomically before worker startup, and made cleanup
+     run as `se-worker` while preserving verified-dead deletion.
+  3. Added ordered live firewall policy evaluation and checksum-verified
+     release-tool installation with digest-bound SBOM/provenance attestations.
+     Real runsc/nft/supply-chain tooling and registry validation remain deferred
+     to 5B2B2.
 
 - **Slice 5B2B1 deployment foundation and offline smoke integration (August 18).**
   1. Added the fail-closed Ubuntu worker host contract, pinned runsc/image inputs,

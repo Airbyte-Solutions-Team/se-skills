@@ -201,9 +201,11 @@ A managed service without a gVisor or microVM layer does not provide the job-lev
 For the post-call runtime we will use **Option 1: a manual Anthropic Messages API typed-tool loop with a worker-side model proxy, running inside a per-job gVisor-backed `runsc` container.**
 
 The core elements of this decision are operative for Slice 5B1 and Slice 5B2A.
-Slice 5B2B1 now contains the pinned image/release tooling, Ubuntu host
-contract, Ansible role, and deterministic/gated smoke entry points. Applying the
-role to a real host and running the live Anthropic smoke remain Slice 5B2B2.
+Slice 5B2B1 now contains the pinned image/release tooling, root-owned evidence
+manifest loading, canonical rootfs verification, durable state paths, Ubuntu
+host contract, Ansible role, and deterministic/gated smoke entry points.
+Applying the role to a real host and running the live Anthropic smoke remain
+Slice 5B2B2.
 
 This gives the highest agent fidelity with the smallest trusted surface area. The design is provider-neutral where possible and can be moved to Firecracker or a managed gVisor service without changing the worker contract.
 

@@ -12,8 +12,9 @@ loaded from `deploy/pins.json`; role defaults and paths are in
   and SHA-512 pins are in `deploy/pins.json`; provenance is the upstream gVisor
   release object at that URL. The role verifies the checksum during download
   and checks `runsc --version`.
-- The worker uses `/usr/local/bin/runsc`; its root/state directories are under
-  `/var/lib/se-skills`.
+- The worker uses `/usr/local/bin/runsc`; its durable per-attempt bundle and
+  runsc state directories are `/var/lib/se-skills/bundles` and
+  `/var/lib/se-skills/runsc`.
 - The sandbox image uses the pinned Python and distroless base digests in
   `deploy/pins.json`. An approved image digest and rootfs digest must be
   populated before production preflight passes.
@@ -30,11 +31,12 @@ The role creates the non-login system user `se-worker` (UID `995`) and group
 | `/opt/se-skills/rootfs` | root/root | 0755 | approved sandbox rootfs |
 | `/opt/se-skills/venv` | operator-delivered | role-created | pinned worker dependencies |
 | `/var/lib/se-skills` | se-worker/se-worker | 0750 | worker state |
-| `/var/lib/se-skills/bundles` | se-worker/se-worker | 0750 | ephemeral bundle parent |
+| `/var/lib/se-skills/bundles` | se-worker/se-worker | 0700 | ephemeral bundle parent |
 | `/var/lib/se-skills/runsc` | se-worker/se-worker | 0700 | runsc state |
 | `/etc/se-skills` | root/se-worker | 0750 | policy and operator configuration |
 | `/etc/se-skills/worker.env` | root/se-worker | 0640 | operator-provisioned secrets/config |
 | `/etc/se-skills/firewall.nft` | root/root | 0644 | worker nftables table |
+| `/etc/se-skills/sandbox-manifest.json` | root/root | non-worker-writable | approved image evidence manifest |
 | `/run/se-skills` | systemd runtime | 0700 | runtime sockets |
 
 The service uses `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`,
@@ -82,8 +84,13 @@ logs contain only redacted categories and derived identifiers.
 ## Verification, rollback, and recovery
 
 The image release script produces an SBOM, vulnerability-scan results, a
-registry manifest digest, and a rootfs digest manifest. Production preflight
-requires the configured approved digests. Promotion and rollback are operator
+registry manifest digest, digest-bound provenance, and a canonical rootfs
+digest manifest. The operator installs the root-owned sandbox manifest with
+the approved image/rootfs digests, SBOM/provenance paths, image reference, and
+cosign identity/key/certificate expectations. Production preflight verifies
+ownership and modes for every evidence file, hashes the materialized rootfs,
+and runs the manifest-built signature command. A worker-writable manifest or
+evidence file fails closed. Promotion and rollback are operator
 gates; rollback means selecting a previously approved digest and restarting
 the worker, not rebuilding from an unpinned tag.
 

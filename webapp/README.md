@@ -178,6 +178,11 @@ Set `HOSTED_MODE=1` to use Supabase Auth + Postgres instead of the local filesys
 - `MODEL_PROXY_SECRET` — a strong secret used to sign per-job model-proxy capability tokens.
 - `RUNSC_BINARY` — path to the `runsc` executable when selecting `post-call-runsc` runtime.
 - `RUNSC_ROOTFS` — path to the pinned sandbox rootfs when selecting `post-call-runsc` runtime.
+- `SANDBOX_MANIFEST_PATH` — root-owned approved image/evidence manifest,
+  defaulting to `/etc/se-skills/sandbox-manifest.json`.
+- `RUNSC_BUNDLE_DIR` and `RUNSC_STATE_DIR` — durable bundle and runsc state
+  directories, defaulting to `/var/lib/se-skills/bundles` and
+  `/var/lib/se-skills/runsc`.
 
 Run migrations before starting the app:
 
