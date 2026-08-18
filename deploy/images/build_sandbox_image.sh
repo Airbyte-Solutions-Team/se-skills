@@ -79,9 +79,7 @@ mkdir -p "$rootfs_dir"
 [[ "$(id -u)" == "0" ]] || fail "rootfs export requires root to preserve image file ownership"
 docker export "$container_id" | tar --extract --directory "$rootfs_dir" --same-owner
 rootfs_digest="$(
-  tar --create --sort=name --mtime='UTC 1970-01-01' \
-    --owner=0 --group=0 --numeric-owner --directory "$rootfs_dir" . |
-    sha256sum | awk '{print $1}'
+  PYTHONPATH="$REPO_ROOT" python3 -m webapp.hosted.rootfs_digest "$rootfs_dir"
 )"
 registry_digest=""
 if [[ "$PUBLISH" == "1" ]]; then
@@ -91,18 +89,8 @@ if [[ "$PUBLISH" == "1" ]]; then
       grep -F "${IMAGE}@" | head -n 1 | cut -d@ -f2
   )"
   [[ "$registry_digest" == sha256:* ]] || fail "published image has no registry manifest digest"
-  if [[ "${COSIGN_SIGN:-0}" == "1" ]]; then
-    require_tool cosign
-    cosign sign --yes "${IMAGE}@${registry_digest}" >/dev/null
-  fi
-fi
-
-manifest="${OUTPUT_DIR}/${image_config_id#sha256:}.manifest.json"
-cp "${work_dir}/sbom.json" "${OUTPUT_DIR}/${image_config_id#sha256:}.sbom.json"
-tar --create --sort=name --mtime='UTC 1970-01-01' \
-  --owner=0 --group=0 --numeric-owner --directory "$rootfs_dir" . |
-  gzip -n >"${OUTPUT_DIR}/${image_config_id#sha256:}.rootfs.tar.gz"
-python3 - "$manifest" "$registry_digest" "$image_config_id" "$rootfs_digest" <<'PY'
+  provenance="${work_dir}/provenance.json"
+  python3 - "$provenance" "$IMAGE" "$registry_digest" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -110,10 +98,49 @@ from pathlib import Path
 Path(sys.argv[1]).write_text(
     json.dumps(
         {
-            "approved_digest_candidate": sys.argv[2] or None,
+            "_type": "https://in-toto.io/Statement/v1",
+            "predicateType": "https://slsa.dev/provenance/v1",
+            "subject": [{"name": sys.argv[2], "digest": {"sha256": sys.argv[3].split(":", 1)[1]}}],
+            "predicate": {"buildType": "https://se-skills.dev/sandbox-image"},
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ) + "\n"
+)
+PY
+  if [[ "${COSIGN_SIGN:-0}" == "1" ]]; then
+    require_tool cosign
+    cosign sign --yes "${IMAGE}@${registry_digest}" >/dev/null
+    cosign attest --yes --type cyclonedx --predicate "${work_dir}/sbom.json" "${IMAGE}@${registry_digest}" >/dev/null
+    cosign attest --yes --type slsaprovenance --predicate "$provenance" "${IMAGE}@${registry_digest}" >/dev/null
+  fi
+else
+  provenance="${work_dir}/provenance.json"
+  printf '{}\n' >"$provenance"
+fi
+
+manifest="${OUTPUT_DIR}/${registry_digest#sha256:}.manifest.json"
+[[ "$registry_digest" == "unpublished" ]] && manifest="${OUTPUT_DIR}/${image_config_id#sha256:}.manifest.json"
+cp "${work_dir}/sbom.json" "${OUTPUT_DIR}/${image_config_id#sha256:}.sbom.json"
+cp "$provenance" "${OUTPUT_DIR}/${image_config_id#sha256:}.provenance.json"
+tar --create --sort=name --mtime='UTC 1970-01-01' \
+  --owner=0 --group=0 --numeric-owner --directory "$rootfs_dir" . |
+  gzip -n >"${OUTPUT_DIR}/${image_config_id#sha256:}.rootfs.tar.gz"
+python3 - "$manifest" "$registry_digest" "$image_config_id" "$rootfs_digest" \
+  "${image_config_id#sha256:}.sbom.json" "${image_config_id#sha256:}.provenance.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+Path(sys.argv[1]).write_text(
+    json.dumps(
+        {
+            "registry_manifest_digest": sys.argv[2] if sys.argv[2] != "unpublished" else None,
+            "approved_digest_candidate": sys.argv[2] if sys.argv[2] != "unpublished" else None,
             "image_config_id": sys.argv[3],
-            "rootfs_digest": f"sha256:{sys.argv[4]}",
-            "sbom": f"{sys.argv[3]}.sbom.json",
+            "rootfs_digest": sys.argv[4],
+            "sbom": sys.argv[5],
+            "provenance": sys.argv[6],
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -121,5 +148,5 @@ Path(sys.argv[1]).write_text(
     + "\n"
 )
 PY
-printf 'image config ID: %s\nregistry manifest digest: %s\nrootfs digest: sha256:%s\nmanifest: %s\n' \
+printf 'image config ID: %s\nregistry manifest digest: %s\nrootfs digest: %s\nmanifest: %s\n' \
   "$image_config_id" "${registry_digest:-unpublished}" "$rootfs_digest" "$manifest"
