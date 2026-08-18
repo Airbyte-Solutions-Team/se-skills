@@ -305,6 +305,11 @@ This is the source of truth for productionalization slices and progress. Each sl
 observability, and approved image/rootfs; apply the role; run the live smoke;
 and establish operational rollback and cost controls.
 
+The 5B2B1 foundation now includes the root-owned argv-validating runsc
+launcher, the explicit restricted management-SSH listener contract, and
+deterministic PR actionlint validation. Live runsc, nftables, registry,
+Cosign, cloud, proxy handshake, and mTLS operations remain gated 5B2B2 work.
+
 **Deferred Product Owner inputs:** cloud provider/account/project; region and
 network/VPC; DNS and certificate ownership; secret-manager choice; registry
 coordinates; observability backend; budget and token/cost alert thresholds;

@@ -44,6 +44,19 @@ The managed container option is treated as a deployment variant of option 1 rath
 
 ## Option 1: Manual Anthropic Messages API typed-tool loop + gVisor-backed `runsc` container (recommended)
 
+### 5B2B1 host privilege decision
+
+The deployed worker uses a narrowly privileged root-owned launcher rather than
+gVisor rootless mode. The worker may sudo only to
+`/usr/local/sbin/se-skills-runsc`; that helper validates subcommands, paths, and
+IDs before executing the pinned rootful `/usr/local/bin/runsc`. This preserves
+the OCI process UID 65532 without provisioning subuid/subgid ranges or
+`newuidmap`/`newgidmap` setuid helpers. gVisor's rootless guide states that
+`--rootless` maps only the caller UID and cannot map another user; the explicit
+mapping path is therefore rejected for this host contract. `NoNewPrivileges`
+is disabled only for this service-to-helper transition; the remaining systemd
+hardening and `RestrictSUIDSGID=yes` remain in force.
+
 **Vendor references (2026-08-11):**
 - Anthropic Messages API reference: `https://docs.anthropic.com/en/api/messages`
 - Anthropic Agent SDK overview (rejected as the runtime, but informative): `https://code.claude.com/docs/en/agent-sdk/overview`

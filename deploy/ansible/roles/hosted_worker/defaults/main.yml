@@ -12,6 +12,7 @@ hosted_bundle_dir: /var/lib/se-skills/bundles
 hosted_env_file: /etc/se-skills/worker.env
 hosted_firewall_path: /etc/se-skills/firewall.nft
 hosted_operator_ssh_cidr: ""
+hosted_operator_ssh_port: 22
 hosted_anthropic_proxy_host: ""
 hosted_anthropic_proxy_port: 3128
 hosted_database_host: ""
@@ -25,6 +26,8 @@ hosted_storage_port: 443
 hosted_registry_port: 443
 hosted_observability_port: 443
 hosted_runsc_binary: /usr/local/bin/runsc
+hosted_runsc_helper: /usr/local/sbin/se-skills-runsc
+hosted_runsc_sudoers: /etc/sudoers.d/se-skills-runsc
 hosted_venv_dir: /opt/se-skills/venv
 hosted_worker_requirements: /opt/se-skills/deploy/requirements-worker.txt
 hosted_worker_uid: 995

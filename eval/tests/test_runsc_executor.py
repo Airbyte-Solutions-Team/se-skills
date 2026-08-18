@@ -424,29 +424,16 @@ async def test_runsc_runtime_rejects_forged_metadata() -> None:
 
 
 @pytest.mark.asyncio
-async def test_runsc_sandbox_runner_argv_no_shell_interpolation() -> None:
-    """`RunscSandboxRunner` builds an explicit argv array with no shell interpolation."""
+async def test_runsc_sandbox_runner_rejects_rootless_mode() -> None:
+    """The hosted runtime uses the constrained root launcher, not rootless mode."""
     runner = RunscSandboxRunner(
         runsc_binary="/usr/local/bin/runsc",
         rootfs="/var/lib/runsc/rootfs",
         network="none",
         rootless=True,
     )
-    argv = runner._build_argv(Path("/bundle"), Path("/bundle/root"), "se-abc123")
-    assert argv == [
-        "/usr/local/bin/runsc",
-        "--root=/bundle/root",
-        "--network=none",
-        "--rootless",
-        "run",
-        "--bundle",
-        "/bundle",
-        "se-abc123",
-    ]
-    for arg in argv:
-        assert ";" not in arg
-        assert "|" not in arg
-        assert " " not in arg or arg == " "  # spaces are not used as separators
+    with pytest.raises(RuntimeExecutionError, match="rootless"):
+        runner._build_argv(Path("/bundle"), Path("/bundle/root"), "se-abc123")
 
 
 @pytest.mark.asyncio
@@ -734,6 +721,8 @@ async def test_runsc_sandbox_delete_argv_structure() -> None:
     )
     argv = runner._build_delete_argv(Path("/bundle/root"), "se-abc123")
     assert argv == [
+        "sudo",
+        "--non-interactive",
         "/usr/local/bin/runsc",
         "--root=/bundle/root",
         "delete",
@@ -749,23 +738,16 @@ async def test_runsc_sandbox_delete_argv_structure() -> None:
 
 
 @pytest.mark.asyncio
-async def test_runsc_sandbox_delete_rootless_argv_structure() -> None:
-    """`_build_delete_argv` passes `--rootless` before the subcommand when enabled."""
+async def test_runsc_sandbox_delete_rejects_rootless_mode() -> None:
+    """Delete also rejects the unsupported rootless mode."""
     runner = RunscSandboxRunner(
         runsc_binary="/usr/local/bin/runsc",
         rootfs="/var/lib/runsc/rootfs",
         network="none",
         rootless=True,
     )
-    argv = runner._build_delete_argv(Path("/bundle/root"), "se-abc123")
-    assert argv == [
-        "/usr/local/bin/runsc",
-        "--root=/bundle/root",
-        "--rootless",
-        "delete",
-        "--force",
-        "se-abc123",
-    ]
+    with pytest.raises(RuntimeExecutionError, match="rootless"):
+        runner._build_delete_argv(Path("/bundle/root"), "se-abc123")
 
 
 @pytest.mark.asyncio
@@ -778,21 +760,14 @@ async def test_runsc_sandbox_list_argv_structure() -> None:
         rootless=False,
     )
     argv = runner._build_list_argv(Path("/bundle/root"))
-    assert argv == ["/usr/local/bin/runsc", "--root=/bundle/root", "list"]
-
-    runner_rootless = RunscSandboxRunner(
-        runsc_binary="/usr/local/bin/runsc",
-        rootfs="/var/lib/runsc/rootfs",
-        network="none",
-        rootless=True,
-    )
-    argv_rootless = runner_rootless._build_list_argv(Path("/bundle/root"))
-    assert argv_rootless == [
+    assert argv == [
+        "sudo",
+        "--non-interactive",
         "/usr/local/bin/runsc",
         "--root=/bundle/root",
-        "--rootless",
         "list",
     ]
+
 
 
 @pytest.mark.asyncio
@@ -845,18 +820,20 @@ async def test_runsc_sandbox_delete_uses_root_dir(monkeypatch: pytest.MonkeyPatc
 
     async def fake_exec(*args: str, **kwargs: Any) -> _FakeSubprocess:
         calls.append(list(args))
-        if args[2] == "delete":
+        if "delete" in args:
             return _FakeSubprocess(returncode=0)
         return _FakeSubprocess(returncode=0, list_stdout=b"ID\tPID\tSTATUS\n")
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     await runner._runsc_delete(root_dir, container_id)
     assert any(
-        c[0] == "/usr/local/bin/runsc"
-        and c[1] == f"--root={root_dir}"
-        and c[2] == "delete"
-        and c[3] == "--force"
-        and c[4] == container_id
+        c[0] == "sudo"
+        and c[1] == "--non-interactive"
+            and c[2] == "/usr/local/bin/runsc"
+        and c[3] == f"--root={root_dir}"
+        and c[4] == "delete"
+        and c[5] == "--force"
+        and c[6] == container_id
         for c in calls
     )
 
@@ -871,7 +848,7 @@ async def test_runsc_sandbox_delete_nonzero_raises(monkeypatch: pytest.MonkeyPat
     root_dir.mkdir()
 
     async def fake_exec(*args: str, **kwargs: Any) -> _FakeSubprocess:
-        if args[2] == "delete":
+        if "delete" in args:
             return _FakeSubprocess(returncode=1)
         return _FakeSubprocess(returncode=0, list_stdout=b"ID\tPID\tSTATUS\n")
 
@@ -913,7 +890,7 @@ async def test_runsc_sandbox_delete_state_dir_present_raises(monkeypatch: pytest
     (root_dir / container_id).mkdir()
 
     async def fake_exec(*args: str, **kwargs: Any) -> _FakeSubprocess:
-        if args[2] == "delete":
+        if "delete" in args:
             return _FakeSubprocess(returncode=0)
         return _FakeSubprocess(
             returncode=0,
@@ -1137,7 +1114,10 @@ def _se_proxy_dirs() -> set[str]:
     return {str(p) for p in Path(_tmp.gettempdir()).glob("se-proxy-*") if p.is_dir()}
 
 
-@pytest.mark.skipif(shutil.which("runsc") is None, reason="runsc is not installed")
+@pytest.mark.skipif(
+    shutil.which("runsc") is None or shutil.which("sudo") is None,
+    reason="runsc or sudo is not installed",
+)
 @pytest.mark.asyncio
 async def test_real_runsc_integration() -> None:
     """Gated integration test for a real gVisor `runsc` sandbox.
@@ -1147,6 +1127,11 @@ async def test_real_runsc_integration() -> None:
     rootfs = os.environ.get("RUNSC_ROOTFS")
     if not rootfs or not Path(rootfs).exists():
         pytest.skip("RUNSC_ROOTFS is not set or does not exist")
+    helper = os.environ.get(
+        "RUNSC_HELPER_BINARY", "/usr/local/sbin/se-skills-runsc"
+    )
+    if not Path(helper).is_file():
+        pytest.skip("constrained runsc helper is not installed")
 
     cfg = ProxyConfig(
         secret="a" * 32,
@@ -1161,6 +1146,7 @@ async def test_real_runsc_integration() -> None:
     )
     runner = RunscSandboxRunner(
         runsc_binary=shutil.which("runsc") or "runsc",
+        runsc_helper=helper,
         rootfs=rootfs,
         network="none",
     )

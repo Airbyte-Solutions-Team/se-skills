@@ -4,10 +4,13 @@ import json
 import os
 import stat
 import subprocess
+import tarfile
 from pathlib import Path
 
+import pytest
+
 from webapp.hosted.firewall_policy import evaluate_output_policy, parse_output_policy
-from webapp.hosted.rootfs_digest import digest_rootfs
+from webapp.hosted.rootfs_digest import digest_rootfs, digest_rootfs_tar
 from webapp.hosted.supply_chain_manifest import load_artifact_manifest
 from webapp.hosted.preflight import PathFacts
 from webapp.hosted.supply_chain import SupplyChainCommandResult
@@ -23,6 +26,31 @@ def test_rootfs_digest_changes_for_materialized_tree_tampering(tmp_path: Path) -
 
     (rootfs / "bin" / "app").write_text("tampered", encoding="utf-8")
     assert digest_rootfs(rootfs) != original
+
+
+def test_rootfs_tar_digest_matches_tree_digest_with_metadata(tmp_path: Path) -> None:
+    rootfs = tmp_path / "rootfs"
+    rootfs.mkdir()
+    (rootfs / "bin").mkdir()
+    executable = rootfs / "bin" / "app"
+    executable.write_text("safe", encoding="utf-8")
+    executable.chmod(0o751)
+    try:
+        os.chown(executable, 994, 993)
+    except PermissionError:
+        pytest.skip("test environment cannot create non-root-owned fixtures")
+    (rootfs / "link").symlink_to("bin/app")
+    archive = tmp_path / "rootfs.tar"
+    with tarfile.open(archive, "w") as output:
+        for path in sorted(rootfs.rglob("*")):
+            info = output.gettarinfo(str(path), arcname=path.relative_to(rootfs).as_posix())
+            if path.is_file():
+                with path.open("rb") as source:
+                    output.addfile(info, source)
+            else:
+                output.addfile(info)
+    with archive.open("rb") as source:
+        assert digest_rootfs_tar(source) == digest_rootfs(rootfs)
     (rootfs / "bin" / "app").write_text("safe", encoding="utf-8")
     (rootfs / "bin" / "app").chmod(0o700)
     assert digest_rootfs(rootfs) != original

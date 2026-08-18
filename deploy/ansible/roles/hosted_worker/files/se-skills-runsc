@@ -1,0 +1,101 @@
+#!/bin/sh
+set -eu
+
+runsc=/usr/local/bin/runsc
+state_root=/var/lib/se-skills/runsc
+bundle_root=/var/lib/se-skills/bundles
+
+die() {
+  printf '%s\n' "invalid runsc invocation" >&2
+  exit 64
+}
+
+case "$#" in
+  0) die ;;
+esac
+
+root=
+network=
+subcommand=
+bundle=
+container_id=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --root=*)
+      [ -z "$root" ] || die
+      root=${1#--root=}
+      ;;
+    --network=none)
+      [ -z "$network" ] || die
+      network=none
+      ;;
+    --network=*)
+      die
+      ;;
+    run|delete|list)
+      [ -z "$subcommand" ] || die
+      subcommand=$1
+      ;;
+    --bundle)
+      [ "$subcommand" = run ] || die
+      [ -z "$bundle" ] || die
+      shift
+      [ "$#" -gt 0 ] || die
+      bundle=$1
+      ;;
+    --force)
+      [ "$subcommand" = delete ] || die
+      ;;
+    --format=json)
+      [ "$subcommand" = list ] || die
+      ;;
+    *)
+      case "$subcommand" in
+        run|delete)
+          [ -z "$container_id" ] || die
+          container_id=$1
+          ;;
+        *) die ;;
+      esac
+      ;;
+  esac
+  shift
+done
+
+[ -n "$root" ] || die
+[ -n "$subcommand" ] || die
+resolved_root=$(realpath -m -- "$root") || die
+case "$resolved_root" in "$state_root"/*) ;; *) die ;; esac
+case "$subcommand" in
+  run)
+    [ "$network" = none ] || die
+    [ -n "$bundle" ] || die
+    resolved_bundle=$(realpath -m -- "$bundle") || die
+    case "$resolved_bundle" in "$bundle_root"/*) ;; *) die ;; esac
+    [ -n "$container_id" ] || die
+    ;;
+  delete)
+    [ -n "$container_id" ] || die
+    ;;
+  list)
+    [ -z "$container_id" ] || die
+    ;;
+esac
+case "${container_id:-}" in
+  "") ;;
+  se-[a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9]) ;;
+  *) die ;;
+esac
+
+case "$subcommand" in
+  run)
+    exec "$runsc" "--root=$resolved_root" "--network=none" run \
+      --bundle "$resolved_bundle" "$container_id"
+    ;;
+  delete)
+    exec "$runsc" "--root=$resolved_root" delete --force "$container_id"
+    ;;
+  list)
+    exec "$runsc" "--root=$resolved_root" list --format=json
+    ;;
+esac

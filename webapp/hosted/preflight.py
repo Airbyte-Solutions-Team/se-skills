@@ -83,6 +83,9 @@ class PreflightConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     runsc_path: str = "/usr/local/bin/runsc"
+    runsc_helper_path: str = "/usr/local/sbin/se-skills-runsc"
+    runsc_sudoers_path: str = "/etc/sudoers.d/se-skills-runsc"
+    runsc_rootless: bool = False
     pins: HostedPins = Field(default_factory=load_pins)
     required_names: tuple[str, ...] = (
         "DATABASE_WORKER_URL",
@@ -119,6 +122,8 @@ class PreflightConfig(BaseModel):
     hosted_env: str = "development"
     runtime: str = "echo"
     approved_https_destinations: frozenset[str] = frozenset()
+    approved_management_ssh_cidr: str = ""
+    approved_management_ssh_port: int = 22
     supply_chain_manifest_status: str | None = None
     supply_chain_manifest_detail: str = ""
 
@@ -186,6 +191,73 @@ def run_preflight(config: PreflightConfig, probe: HostProbe) -> PreflightReport:
     checks.append(
         _required("runsc_binary", runsc_mode_ok, "runsc is root-owned executable" if runsc_mode_ok else "runsc missing or ownership/mode is unsafe")
     )
+    helper = probe.path_info(config.runsc_helper_path)
+    helper_ok = (
+        helper.exists
+        and helper.is_file
+        and helper.mode == 0o755
+        and helper.owner == "root"
+        and helper.group == "root"
+    )
+    checks.append(
+        _required(
+            "runsc_helper",
+            helper_ok,
+            "runsc helper is root-owned and executable"
+            if helper_ok
+            else "runsc helper is missing or ownership/mode is unsafe",
+        )
+    )
+    sudoers = probe.path_info(config.runsc_sudoers_path)
+    sudoers_text = probe.file_text(config.runsc_sudoers_path) or ""
+    sudoers_ok = (
+        sudoers.exists
+        and sudoers.is_file
+        and sudoers.mode == 0o440
+        and sudoers.owner == "root"
+        and sudoers.group == "root"
+        and sudoers_text.strip()
+        == f"{config.worker_user} ALL=(root) NOPASSWD: {config.runsc_helper_path} *"
+    )
+    checks.append(
+        _required(
+            "runsc_sudoers",
+            sudoers_ok,
+            "runsc sudoers policy is constrained"
+            if sudoers_ok
+            else "runsc sudoers policy is missing or unconstrained",
+        )
+    )
+    helper_invocation = probe.command(
+        (
+            "sudo",
+            "-n",
+            "-u",
+            config.worker_user,
+            config.runsc_helper_path,
+            f"--root={config.runsc_state_path}/preflight",
+            "list",
+            "--format=json",
+        )
+    )
+    checks.append(
+        _required(
+            "runsc_helper_invocation",
+            helper_invocation.returncode == 0,
+            "worker can invoke the constrained runsc helper"
+            if helper_invocation.returncode == 0
+            else "worker cannot invoke the constrained runsc helper",
+        )
+    )
+    checks.append(
+        _required(
+            "runsc_privilege_model",
+            config.runsc_rootless is False,
+            "runsc uses the privileged launcher model"
+            if config.runsc_rootless is False
+            else "rootless runsc is not supported by the host contract",
+        )
+    )
     version_result = probe.command((config.runsc_path, "--version"))
     version_ok = version_result.returncode == 0 and pins.runsc.version in version_result.stdout
     checks.append(
@@ -243,7 +315,7 @@ def run_preflight(config: PreflightConfig, probe: HostProbe) -> PreflightReport:
     firewall_ok = _firewall_ok(config, probe)
     checks.append(_required("firewall_policy", firewall_ok, "firewall is deny-by-default and blocks metadata" if firewall_ok else "firewall policy is missing or unsafe"))
     listeners = probe.listening_sockets()
-    listener_ok = listeners is not None and not any(item.address not in {"127.0.0.1", "::1", "localhost"} for item in listeners)
+    listener_ok = listeners is not None and _listeners_ok(config, probe, listeners)
     checks.append(_required("public_listener", listener_ok, "no unexpected public listener" if listener_ok else "listener enumeration failed or found an unexpected public listener"))
     production_runtime_ok = config.hosted_env != "production" or config.runtime == "post-call-runsc"
     checks.append(_required("production_runtime_policy", production_runtime_ok, "selected runtime is fail-closed" if production_runtime_ok else "production runtime is not fail-closed"))
@@ -470,6 +542,33 @@ def _firewall_ok(config: PreflightConfig, probe: HostProbe) -> bool:
         )
     }
     return rendered_destinations == normalized_destinations
+
+
+def _listeners_ok(
+    config: PreflightConfig,
+    probe: HostProbe,
+    listeners: tuple[ListeningSocket, ...],
+) -> bool:
+    public = tuple(
+        item
+        for item in listeners
+        if item.address not in {"127.0.0.1", "::1", "localhost"}
+    )
+    if not public:
+        return True
+    if not config.approved_management_ssh_cidr:
+        return False
+    if any(item.port != config.approved_management_ssh_port for item in public):
+        return False
+    result = probe.command(("nft", "list", "table", "inet", "se_skills"))
+    if result.returncode != 0:
+        return False
+    family = "ip6" if ":" in config.approved_management_ssh_cidr else "ip"
+    rule = (
+        f"{family} saddr {config.approved_management_ssh_cidr} "
+        f"tcp dport {config.approved_management_ssh_port} accept"
+    )
+    return rule in result.stdout
 
 
 def _is_ipv4_address(value: str) -> bool:

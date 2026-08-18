@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -45,7 +47,7 @@ def test_ansible_package_has_check_mode_safe_pinned_runsc_and_hardening() -> Non
     assert 'checksum: "sha512:' in runsc
     assert "when: not ansible_check_mode" in runsc
     for directive in (
-        "NoNewPrivileges=yes",
+            "NoNewPrivileges=no",
         "PrivateTmp=yes",
         "ProtectSystem=strict",
         "ProtectHome=yes",
@@ -145,8 +147,10 @@ def test_image_build_script_has_fail_closed_supply_chain_guardrails() -> None:
     assert "image_config_id" in script
     assert "RepoDigests" in script
     assert script.index("docker push") < script.index("cosign sign")
-    assert "--same-owner" in script
-    assert "--numeric-owner" in script
+    assert "--same-owner" not in script
+    assert "--numeric-owner" not in script
+    assert "--same-owner" in (ROOT / "docs/HOST_CONTRACT.md").read_text()
+    assert "--numeric-owner" in (ROOT / "docs/HOST_CONTRACT.md").read_text()
     assert "--owner=0" not in script
     assert "--group=0" not in script
     assert "curl | sh" not in script
@@ -231,6 +235,36 @@ def test_release_workflow_derives_verified_tools_and_retains_evidence() -> None:
     assert "rootfs.tar.gz" in build
     assert "path: deploy/images/out/*" in text
     assert '"build_tools"' in pins
+
+
+def test_actionlint_pin_and_local_workflow_command_are_present() -> None:
+    pins = yaml.safe_load((ROOT / "deploy/pins.json").read_text())
+    actionlint = pins["build_tools"]["actionlint"]
+    assert actionlint["version"] == "1.7.7"
+    assert actionlint["sha256"] == "023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757"
+    command = (ROOT / "scripts/check-workflows.sh").read_text()
+    assert "find" in command and "actionlint" in command
+
+
+def test_pinned_actionlint_rejects_old_input_context_fixture_when_available() -> None:
+    binary = Path(os.environ.get("ACTIONLINT_BIN", ROOT / ".tools/actionlint"))
+    if not binary.is_file():
+        pytest.skip("pinned actionlint binary is unavailable")
+    invalid = subprocess.run(
+        [str(binary), str(ROOT / "eval/fixtures/invalid-workflow-input-default.yml")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert invalid.returncode != 0
+    assert 'context "github" is not allowed here' in invalid.stdout
+    corrected = subprocess.run(
+        [str(binary), *map(str, sorted((ROOT / ".github/workflows").glob("*.yml")))],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert corrected.returncode == 0, corrected.stderr
 
 
 def test_firewall_is_applied_before_worker_start_and_as_one_transaction() -> None:

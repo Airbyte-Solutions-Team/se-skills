@@ -15,6 +15,15 @@ loaded from `deploy/pins.json`; role defaults and paths are in
 - The worker uses `/usr/local/bin/runsc`; its durable per-attempt bundle and
   runsc state directories are `/var/lib/se-skills/bundles` and
   `/var/lib/se-skills/runsc`.
+- The worker invokes runsc through the root-owned
+  `/usr/local/sbin/se-skills-runsc` helper using the narrowly scoped
+  `/etc/sudoers.d/se-skills-runsc` rule. The helper accepts only `run`, `delete`,
+  and `list`, confines state and bundle paths, and validates container IDs.
+  `runsc` is deliberately rootful (`rootless=false`); gVisor documents that
+  built-in `--rootless` maps only the caller UID and cannot represent the
+  image's UID 65532 without additional userns mapping helpers. The rejected
+  rootless alternative would add setuid mapping infrastructure and host attack
+  surface.
 - The sandbox image uses the pinned Python and distroless base digests in
   `deploy/pins.json`. An approved image digest and rootfs digest must be
   populated before production preflight passes. `SANDBOX_IMAGE_DIGEST` is
@@ -54,7 +63,8 @@ The role creates the non-login system user `se-worker` (UID `995`) and group
 | `/etc/se-skills/sandbox-manifest.json` | root/root | non-worker-writable | approved image evidence manifest |
 | `/run/se-skills` | systemd runtime | 0700 | runtime sockets |
 
-The service uses `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`,
+The service uses the narrowly scoped sudo launcher transition plus
+`ProtectSystem=strict`, `ProtectHome`,
 private temporary storage, restricted address families, cgroup limits, and
 explicit writable paths. The role installs `nftables`, `chrony`, and
 `python3-venv`.
@@ -127,7 +137,9 @@ evidence file fails closed. Promotion and rollback are operator
 gates; rollback means selecting a previously approved digest and restarting
 the worker, not rebuilding from an unpinned tag. Extract retained rootfs
 archives as root with `--same-owner --numeric-owner` so uid/gid inputs remain
-consistent with the canonical digest.
+consistent with the canonical digest. Release builds do not extract the image
+as root: they hash and retain the Docker-export tar stream directly. Root-only
+extraction is a host deployment operation only.
 The verified CycloneDX attestation must match the installed SBOM byte-for-byte
 after canonical JSON serialization. Verified SLSA provenance carries the
 canonical rootfs digest plus source repository/commit and is checked against
@@ -136,6 +148,15 @@ Release signing remains `workflow_dispatch`-only, requires the literal
 `BUILD_SANDBOX_IMAGE` confirmation token and protected `sandbox-release`
 environment, and is accepted only from `refs/heads/main` or an approved
 immutable `v*` tag.
+The deterministic pull-request workflow downloads and checksum-verifies
+actionlint 1.7.7 (released 2025-01-19) before linting every workflow file.
+The Linux-amd64 archive SHA-256 is
+`023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757`,
+read from the upstream
+`actionlint_1.7.7_checksums.txt` release file.
+Evidence installation must be run from the repository root as
+`python -m scripts.install_sandbox_evidence ...` under root; its manifest is
+read through the same bounded no-follow descriptor path as its evidence files.
 
 Postgres is the source of truth for jobs, leases, attempts, and tombstones;
 private object storage is the source of truth for transcripts and outputs.

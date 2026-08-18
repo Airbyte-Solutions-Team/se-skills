@@ -57,6 +57,9 @@ MODEL_PROXY_SECRET = os.environ.get("MODEL_PROXY_SECRET", "")
 
 # gVisor/runsc executor configuration.
 RUNSC_BINARY = os.environ.get("RUNSC_BINARY", "/usr/local/bin/runsc")
+RUNSC_HELPER_BINARY = os.environ.get(
+    "RUNSC_HELPER_BINARY", "/usr/local/sbin/se-skills-runsc"
+)
 RUNSC_ROOTFS = os.environ.get("RUNSC_ROOTFS", "")
 HOSTED_ENV = os.environ.get("HOSTED_ENV", "development").lower()
 SANDBOX_IMAGE_DIGEST = os.environ.get("SANDBOX_IMAGE_DIGEST", "")

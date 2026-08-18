@@ -31,6 +31,23 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
 
+      - name: Install pinned actionlint
+        env:
+          ACTIONLINT_VERSION: "1.7.7"
+          ACTIONLINT_SHA256: "023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757"
+        run: |
+          set -euo pipefail
+          mkdir -p .tools
+          curl --fail --location --silent --show-error \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+            -o /tmp/actionlint.tar.gz
+          printf '%s  %s\n' "$ACTIONLINT_SHA256" /tmp/actionlint.tar.gz | sha256sum --check --status
+          tar --extract --file /tmp/actionlint.tar.gz --directory .tools actionlint
+          chmod 0755 .tools/actionlint
+
+      - name: Lint all workflow files
+        run: ACTIONLINT_BIN="$PWD/.tools/actionlint" ./scripts/check-workflows.sh
+
       - name: Run pytest
         run: uv run --extra dev pytest eval/ -v
 

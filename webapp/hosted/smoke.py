@@ -103,6 +103,10 @@ class _OfflineProbe:
                 False,
                 self.pins.runsc_checksum(self.pins.host.arch),
             )
+        if path == "/usr/local/sbin/se-skills-runsc":
+            return PathFacts(True, "root", "root", 0o755, True, False)
+        if path == "/etc/sudoers.d/se-skills-runsc":
+            return PathFacts(True, "root", "root", 0o440, True, False)
         if path == "/opt/se-skills/rootfs":
             return PathFacts(True, "root", "root", 0o755, False, True)
         if path == "/var/lib/se-skills":
@@ -163,6 +167,8 @@ class _OfflineProbe:
         return None
 
     def file_text(self, path: str) -> str | None:
+        if path == "/etc/sudoers.d/se-skills-runsc":
+            return "se-worker ALL=(root) NOPASSWD: /usr/local/sbin/se-skills-runsc *\n"
         return "policy drop\n169.254.169.254\nfd00:ec2::254"
 
 

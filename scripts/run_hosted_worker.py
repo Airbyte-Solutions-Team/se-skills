@@ -129,6 +129,7 @@ def _run_production_preflight() -> bool:
     report = run_production_preflight(
         ProductionPreflightSettings(
             runsc_path=hosted_config.RUNSC_BINARY,
+            runsc_helper_path=hosted_config.RUNSC_HELPER_BINARY,
             rootfs_path=hosted_config.RUNSC_ROOTFS,
             manifest_path=hosted_config.SANDBOX_MANIFEST_PATH,
             hosted_env=hosted_config.HOSTED_ENV,
@@ -147,6 +148,12 @@ def _run_production_preflight() -> bool:
             storage_url=hosted_config.SUPABASE_STORAGE_ENDPOINT,
             sandbox_image_digest=hosted_config.SANDBOX_IMAGE_DIGEST,
             approved_https_destinations=hosted_config.APPROVED_HTTPS_DESTINATIONS,
+            approved_management_ssh_cidr=os.environ.get(
+                "HOSTED_OPERATOR_SSH_CIDR", ""
+            ),
+            approved_management_ssh_port=int(
+                os.environ.get("HOSTED_OPERATOR_SSH_PORT", "22")
+            ),
         ),
         LocalHostProbe(),
     )

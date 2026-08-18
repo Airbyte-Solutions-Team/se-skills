@@ -7,7 +7,11 @@ table inet se_skills {
     iifname "lo" accept
     ct state established,related accept
 {% if hosted_operator_ssh_cidr | length > 0 %}
+{% if ':' in hosted_operator_ssh_cidr %}
+    ip6 saddr {{ hosted_operator_ssh_cidr }} tcp dport 22 accept
+{% else %}
     ip saddr {{ hosted_operator_ssh_cidr }} tcp dport 22 accept
+{% endif %}
 {% endif %}
   }
 

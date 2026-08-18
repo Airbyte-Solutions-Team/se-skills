@@ -28,6 +28,12 @@
       - hosted_anthropic_proxy_host == "" or hosted_anthropic_proxy_host is match("^[0-9.]+$")
     fail_msg: "The hosted Anthropic proxy endpoint must be an IPv4 literal."
 
+- name: Require a valid management SSH CIDR when SSH is enabled
+  ansible.builtin.assert:
+    that:
+      - hosted_operator_ssh_cidr == "" or hosted_operator_ssh_cidr is match("^[0-9A-Fa-f:.]+/[0-9]{1,3}$")
+    fail_msg: "The management SSH listener contract must use an IP CIDR."
+
 - name: Require supported operating system
   ansible.builtin.assert:
     that:

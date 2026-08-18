@@ -67,6 +67,12 @@ enqueues jobs. The worker receives queue-function access rather than broad
 tenant-table access. The API does not expose a public application port on the
 worker host.
 
+If operator SSH is enabled, preflight accepts a non-loopback listener only on
+the configured management port and only when the live nftables table contains
+the matching source-restricted management CIDR rule. Any other listener, or a
+management listener without that live rule, fails closed. IPv4 and IPv6
+listeners are checked from `ss -lntuH` output.
+
 Production preflight obtains `nft list table inet se_skills` through its host
 probe and evaluates ordered rules for identity, destination, protocol, and
 port. It also requires `policy drop` on both input and output chains and

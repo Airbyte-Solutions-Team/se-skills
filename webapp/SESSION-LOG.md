@@ -2,10 +2,19 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 18, 2026 — HEAD 06d8970 on `devin/slice5b2b1-deployment-foundation`. Hardened release-ref ancestry checks and finalized trusted evidence installation._
+_Last updated: August 18, 2026 — HEAD (this change) on `devin/slice5b2b1-deployment-foundation`. Closed deployment and actionlint review blockers._
 
 
 ## Built this session (newest first — see `git log`)
+
+- **Deployment and workflow hardening (August 18).**
+  1. Removed root requirements from release image hashing by normalizing and
+     retaining the Docker-export tar stream.
+  2. Added the narrowly privileged runsc launcher, constrained sudoers rule,
+     explicit management-SSH preflight contract, and manifest hardening.
+  3. Pinned actionlint 1.7.7 and run it over every workflow in deterministic PR
+     validation; live runsc, nftables, registry, Cosign, cloud, and mTLS checks
+     remain deferred to 5B2B2.
 
 - **Release workflow input validation (August 18).**
   1. Removed the unsupported repository expression from the manual image

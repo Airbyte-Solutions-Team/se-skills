@@ -37,6 +37,12 @@ class _Probe:
                 False,
                 load_pins().runsc_checksum("x86_64"),
             ),
+            "/usr/local/sbin/se-skills-runsc": PathFacts(
+                True, "root", "root", 0o755, True, False
+            ),
+            "/etc/sudoers.d/se-skills-runsc": PathFacts(
+                True, "root", "root", 0o440, True, False
+            ),
             "/var/lib/se-skills": PathFacts(
                 True, "se-worker", "se-worker", 0o750, False, True
             ),
@@ -104,7 +110,7 @@ class _Probe:
 
     def listening_sockets(self) -> tuple[ListeningSocket, ...] | None:
         return (
-            (ListeningSocket("0.0.0.0", 0),)
+            (ListeningSocket("0.0.0.0", 22),)
             if self.public
             else (ListeningSocket("127.0.0.1", 0),)
         )
@@ -116,6 +122,8 @@ class _Probe:
         return self.free
 
     def file_text(self, path: str) -> str | None:
+        if path == "/etc/sudoers.d/se-skills-runsc":
+            return "se-worker ALL=(root) NOPASSWD: /usr/local/sbin/se-skills-runsc *\n"
         return self.firewall
 
 
@@ -332,6 +340,66 @@ def test_listener_enumeration_failure_fails_closed() -> None:
     assert _failed(report, "public_listener")
 
 
+@pytest.mark.parametrize(
+    ("address", "cidr", "rule"),
+    [
+        (
+            "0.0.0.0",
+            "198.51.100.0/24",
+            "ip saddr 198.51.100.0/24 tcp dport 22 accept",
+        ),
+        (
+            "::",
+            "2001:db8:1::/64",
+            "ip6 saddr 2001:db8:1::/64 tcp dport 22 accept",
+        ),
+    ],
+)
+def test_management_ssh_listener_requires_restricted_live_firewall_rule(
+    address: str, cidr: str, rule: str
+) -> None:
+    probe = _Probe()
+    probe.public = True
+    probe.listening_sockets = lambda: (ListeningSocket(address, 22),)
+    probe.firewall_rules = f"{probe.firewall_rules}\n    {rule}\n"
+    report = run_preflight(
+        _config(
+            approved_management_ssh_cidr=cidr,
+            approved_management_ssh_port=22,
+        ),
+        probe,
+    )
+    assert not _failed(report, "public_listener")
+
+
+def test_management_ssh_listener_without_restricted_rule_fails_closed() -> None:
+    probe = _Probe()
+    probe.public = True
+    report = run_preflight(
+        _config(approved_management_ssh_cidr="198.51.100.0/24"),
+        probe,
+    )
+    assert _failed(report, "public_listener")
+
+
+def test_unapproved_public_listener_fails_closed() -> None:
+    probe = _Probe()
+    probe.public = True
+    probe.listening_sockets = lambda: (
+        ListeningSocket("0.0.0.0", 22),
+        ListeningSocket("0.0.0.0", 8080),
+    )
+    probe.firewall_rules = (
+        f"{probe.firewall_rules}\n"
+        "    ip saddr 198.51.100.0/24 tcp dport 22 accept\n"
+    )
+    report = run_preflight(
+        _config(approved_management_ssh_cidr="198.51.100.0/24"),
+        probe,
+    )
+    assert _failed(report, "public_listener")
+
+
 def test_production_runtime_policy_rejects_echo() -> None:
     report = run_preflight(
         _config(hosted_env="production", runtime="echo"),
@@ -460,6 +528,9 @@ def _render_firewall_without_jinja(template: str, values: dict[str, object]) -> 
             rendered,
             count=1,
         )
+    rendered = re.sub(r"\{% if ':' in hosted_operator_ssh_cidr %\}.*?\{% endif %\}", "", rendered, flags=re.DOTALL)
+    rendered = re.sub(r"\{% else %\}", "", rendered)
+    rendered = rendered.replace("{% endif %}", "")
     for name, value in values.items():
         rendered = re.sub(
             rf"\{{\{{\s*{name}\s*\}}\}}", str(value), rendered

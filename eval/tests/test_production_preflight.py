@@ -62,6 +62,10 @@ class _Probe:
                 True, "root", "root", 0o755, True, False,
                 "4463ce276e207f5a516a08ec627a768a19cf7bed0094d522b0810bee3424585caa8d344e093204012b974f5c508ab2362dcb0d7236f0c1992fccc426beeb7ffc",
             )
+        if path == "/usr/local/sbin/se-skills-runsc":
+            return PathFacts(True, "root", "root", 0o755, True, False)
+        if path == "/etc/sudoers.d/se-skills-runsc":
+            return PathFacts(True, "root", "root", 0o440, True, False)
         if path == "/var/lib/se-skills":
             return PathFacts(True, "se-worker", "se-worker", 0o750, False, True)
         if path in {"/var/lib/se-skills/runsc", "/var/lib/se-skills/bundles"}:
@@ -152,6 +156,8 @@ class _Probe:
         return 20_000_000_000
 
     def file_text(self, path: str) -> str | None:
+        if path == "/etc/sudoers.d/se-skills-runsc":
+            return "se-worker ALL=(root) NOPASSWD: /usr/local/sbin/se-skills-runsc *\n"
         candidate = Path(path)
         return candidate.read_text(encoding="utf-8") if candidate.is_file() else None
 

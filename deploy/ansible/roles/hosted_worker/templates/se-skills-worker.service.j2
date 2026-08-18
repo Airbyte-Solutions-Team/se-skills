@@ -17,7 +17,8 @@ Environment=HOSTED_ENV=production
 ExecStart={{ hosted_venv_dir }}/bin/python {{ hosted_app_entrypoint }} --runtime post-call-runsc
 Restart=on-failure
 RestartSec=10
-NoNewPrivileges=yes
+# sudo is limited to the root-owned, argv-validating runsc launcher.
+NoNewPrivileges=no
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes

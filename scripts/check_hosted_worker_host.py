@@ -40,6 +40,9 @@ def _config(offline: bool) -> ProductionPreflightSettings:
     )
     return ProductionPreflightSettings(
         runsc_path=os.environ.get("RUNSC_BINARY", "/usr/local/bin/runsc"),
+        runsc_helper_path=os.environ.get(
+            "RUNSC_HELPER_BINARY", "/usr/local/sbin/se-skills-runsc"
+        ),
         present_config_names=present,
         model_proxy_secret=os.environ.get("MODEL_PROXY_SECRET", ""),
         anthropic_api_url=os.environ.get("ANTHROPIC_API_URL", "https://api.anthropic.com"),
@@ -66,6 +69,12 @@ def _config(offline: bool) -> ProductionPreflightSettings:
             if value
         ),
         sandbox_image_digest=os.environ.get("SANDBOX_IMAGE_DIGEST", ""),
+        approved_management_ssh_cidr=os.environ.get(
+            "HOSTED_OPERATOR_SSH_CIDR", ""
+        ),
+        approved_management_ssh_port=int(
+            os.environ.get("HOSTED_OPERATOR_SSH_PORT", "22")
+        ),
         offline=offline,
     )
 

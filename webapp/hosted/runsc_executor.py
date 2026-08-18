@@ -172,12 +172,18 @@ class RunscSandboxRunner:
     def __init__(
         self,
         runsc_binary: str | None = None,
+        runsc_helper: str | None = None,
         rootfs: str | None = None,
         network: str = "none",
         rootless: bool = False,
         extra_runsc_args: list[str] | None = None,
     ) -> None:
         self.runsc_binary = runsc_binary or config.RUNSC_BINARY
+        self.runsc_helper = runsc_helper or (
+            config.RUNSC_HELPER_BINARY
+            if runsc_binary is None
+            else self.runsc_binary
+        )
         self.rootfs = rootfs or config.RUNSC_ROOTFS
         self.network = network
         self.rootless = rootless
@@ -242,7 +248,7 @@ class RunscSandboxRunner:
             shutil.rmtree(bundle_dir, ignore_errors=True)
 
     def _validate_prerequisites(self) -> None:
-        if not self.runsc_binary:
+        if not self.runsc_binary or not self.runsc_helper:
             raise RuntimeExecutionError("runsc binary is not configured")
         if not shutil.which(self.runsc_binary):
             raise RuntimeExecutionError(f"runsc binary not found: {self.runsc_binary}")
@@ -253,6 +259,12 @@ class RunscSandboxRunner:
             raise RuntimeExecutionError(f"runsc rootfs does not exist: {self.rootfs}")
         if not rootfs_path.is_dir():
             raise RuntimeExecutionError(f"runsc rootfs is not a directory: {self.rootfs}")
+        if self.runsc_binary == config.RUNSC_BINARY and not shutil.which(
+            self.runsc_helper
+        ):
+            raise RuntimeExecutionError(
+                f"runsc helper not found: {self.runsc_helper}"
+            )
 
     def _validate_mount_paths(
         self,
@@ -277,13 +289,13 @@ class RunscSandboxRunner:
                 raise RuntimeExecutionError("proxy socket does not exist")
 
     def _build_argv(self, bundle_dir: Path, root_dir: Path, container_id: str) -> list[str]:
-        argv = [self.runsc_binary, f"--root={root_dir}"]
+        argv = ["sudo", "--non-interactive", self.runsc_helper, f"--root={root_dir}"]
         if self.network:
             argv.append(f"--network={self.network}")
         if self.rootless:
-            argv.append("--rootless")
-        for extra in self.extra_runsc_args:
-            argv.append(extra)
+            raise RuntimeExecutionError("rootless runsc is not supported")
+        if self.extra_runsc_args:
+            raise RuntimeExecutionError("extra runsc arguments are not permitted")
         argv.extend(["run", "--bundle", str(bundle_dir), container_id])
         return argv
 
@@ -448,17 +460,17 @@ class RunscSandboxRunner:
         self, root_dir: Path, container_id: str
     ) -> list[str]:
         """Build the `runsc delete` argv for the per-attempt root directory."""
-        argv = [self.runsc_binary, f"--root={root_dir}"]
         if self.rootless:
-            argv.append("--rootless")
+            raise RuntimeExecutionError("rootless runsc is not supported")
+        argv = ["sudo", "--non-interactive", self.runsc_helper, f"--root={root_dir}"]
         argv.extend(["delete", "--force", container_id])
         return argv
 
     def _build_list_argv(self, root_dir: Path) -> list[str]:
         """Build the `runsc list` argv for verifying container cleanup."""
-        argv = [self.runsc_binary, f"--root={root_dir}"]
         if self.rootless:
-            argv.append("--rootless")
+            raise RuntimeExecutionError("rootless runsc is not supported")
+        argv = ["sudo", "--non-interactive", self.runsc_helper, f"--root={root_dir}"]
         argv.append("list")
         return argv
 

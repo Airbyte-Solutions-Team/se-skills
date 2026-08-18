@@ -1,0 +1,18 @@
+- name: Install root-owned runsc launcher
+  ansible.builtin.copy:
+    src: se-skills-runsc
+    dest: "{{ hosted_runsc_helper }}"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart hosted worker
+
+- name: Install runsc sudoers policy
+  ansible.builtin.template:
+    src: se-skills-runsc.sudoers.j2
+    dest: "{{ hosted_runsc_sudoers }}"
+    owner: root
+    group: root
+    mode: "0440"
+    validate: "/usr/sbin/visudo -cf %s"
+  notify: Restart hosted worker

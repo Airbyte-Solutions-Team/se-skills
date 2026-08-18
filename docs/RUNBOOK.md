@@ -77,6 +77,12 @@ bundle; it copies the named SBOM and provenance into
 `/etc/se-skills/evidence/<digest-hex>/` and writes the host manifest with
 absolute paths. Extract the rootfs archive as root with
 `--same-owner --numeric-owner`.
+The release builder itself runs as the normal workflow user and hashes the
+Docker-export tar stream without extracting it. For local workflow validation,
+install the pinned actionlint binary and run
+`ACTIONLINT_BIN=/path/to/actionlint ./scripts/check-workflows.sh`; the
+pull-request workflow performs the checksum verification and runs this command
+over every `.github/workflows/*.yml`.
 The release workflow is `workflow_dispatch`-only, requires
 `BUILD_SANDBOX_IMAGE`, uses the protected `sandbox-release` environment, and
 rejects signing from refs other than `main` or an approved immutable `v*` tag

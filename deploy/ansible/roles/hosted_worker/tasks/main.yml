@@ -17,6 +17,8 @@
   ansible.builtin.include_tasks: directories.yml
 - name: Install pinned runsc
   ansible.builtin.include_tasks: runsc.yml
+- name: Install constrained runsc launcher
+  ansible.builtin.include_tasks: runsc-helper.yml
 - name: Configure firewall
   ansible.builtin.include_tasks: firewall.yml
 - name: Configure logging

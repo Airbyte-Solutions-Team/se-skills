@@ -134,7 +134,11 @@ def install_evidence(
     """Copy named release evidence into a digest-specific trusted directory."""
     if geteuid_fn() != 0:
         raise PermissionError("sandbox evidence installation must run as root")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    try:
+        manifest_bytes = _read_source(manifest_path)
+        manifest = json.loads(manifest_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("evidence manifest is not valid UTF-8 JSON") from exc
     digest = manifest.get("image_digest")
     if not isinstance(digest, str) or not CANONICAL_IMAGE_DIGEST.fullmatch(digest):
         raise ValueError("published manifest must contain a sha256 image digest")

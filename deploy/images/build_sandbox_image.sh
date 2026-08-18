@@ -73,12 +73,14 @@ if git -C "$REPO_ROOT" grep -nEI \
 fi
 
 container_id="$(docker create "$image_ref")"
-rootfs_dir="${work_dir}/rootfs"
-mkdir -p "$rootfs_dir"
-[[ "$(id -u)" == "0" ]] || fail "rootfs export requires root to preserve image file ownership"
-docker export "$container_id" | tar --extract --directory "$rootfs_dir" --same-owner
+rootfs_archive_raw="${work_dir}/rootfs.raw.tar"
+rootfs_archive="${work_dir}/rootfs.tar"
+docker export "$container_id" >"$rootfs_archive_raw"
+PYTHONPATH="$REPO_ROOT" python3 -m webapp.hosted.rootfs_digest \
+  --normalize-tar "$rootfs_archive_raw" "$rootfs_archive"
 rootfs_digest="$(
-  PYTHONPATH="$REPO_ROOT" python3 -m webapp.hosted.rootfs_digest "$rootfs_dir"
+  PYTHONPATH="$REPO_ROOT" python3 -m webapp.hosted.rootfs_digest --tar - \
+    <"$rootfs_archive"
 )"
 registry_digest=""
 if [[ "$PUBLISH" == "1" ]]; then
@@ -186,9 +188,7 @@ sbom_path="${OUTPUT_DIR}/${evidence_stem}.sbom.json"
 provenance_path="${OUTPUT_DIR}/${evidence_stem}.provenance.json"
 cp "${work_dir}/sbom.json" "$sbom_path"
 cp "$provenance" "$provenance_path"
-tar --create --sort=name --mtime='UTC 1970-01-01' \
-  --numeric-owner --directory "$rootfs_dir" . |
-  gzip -n >"${OUTPUT_DIR}/${evidence_stem}.rootfs.tar.gz"
+gzip -n <"$rootfs_archive" >"${OUTPUT_DIR}/${evidence_stem}.rootfs.tar.gz"
 python3 - "$manifest" "$registry_digest" "$rootfs_digest" "$IMAGE" \
   "${CERTIFICATE_IDENTITY:-}" "${CERTIFICATE_OIDC_ISSUER:-}" "$evidence_stem" \
   "${GITHUB_REPOSITORY:-}" "${GITHUB_SHA:-}" <<'PY'

@@ -21,6 +21,8 @@ class ProductionPreflightSettings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     runsc_path: str
+    runsc_helper_path: str = "/usr/local/sbin/se-skills-runsc"
+    runsc_sudoers_path: str = "/etc/sudoers.d/se-skills-runsc"
     rootfs_path: str
     manifest_path: str
     hosted_env: str
@@ -41,6 +43,8 @@ class ProductionPreflightSettings(BaseModel):
     anthropic_proxy_url: str = ""
     anthropic_proxy_host: str = ""
     anthropic_proxy_port: int = 3128
+    approved_management_ssh_cidr: str = ""
+    approved_management_ssh_port: int = 22
 
 
 class _ProbeCommandRunner:
@@ -106,6 +110,8 @@ def run_production_preflight(
     report = run_preflight(
         PreflightConfig(
             runsc_path=settings.runsc_path,
+            runsc_helper_path=settings.runsc_helper_path,
+            runsc_sudoers_path=settings.runsc_sudoers_path,
             present_config_names=settings.present_config_names,
             model_proxy_secret=settings.model_proxy_secret,
             anthropic_api_url=settings.anthropic_api_url,
@@ -133,6 +139,8 @@ def run_production_preflight(
             hosted_env=settings.hosted_env,
             runtime=settings.runtime,
             approved_https_destinations=settings.approved_https_destinations,
+            approved_management_ssh_cidr=settings.approved_management_ssh_cidr,
+            approved_management_ssh_port=settings.approved_management_ssh_port,
         ),
         probe,
     )
