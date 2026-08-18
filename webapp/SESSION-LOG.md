@@ -2,10 +2,19 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 18, 2026 — working tree on `devin/slice5b2b1-deployment-foundation`. Added bounded stdlib broker custody and dynamic host interpreter checks._
+_Last updated: August 18, 2026 — working tree on `devin/slice5b2b1-deployment-foundation`. Added configurable sandbox identity and real signal lifecycle coverage._
 
 
 ## Built this session (newest first — see `git log`)
+
+- **Configurable sandbox identity and real signal custody tests (August 18).**
+  1. Moved sandbox UID/GID into root-owned broker configuration, with deployed
+     `65532:65532` values checked against the sandbox image contract.
+  2. Added user-namespace subprocess tests covering SIGTERM and SIGKILL after
+     every sealing phase, plus running and hung fake `runsc` processes.
+  3. Cleanup assertions verify process death, journal removal, staging/state/
+     bundle reconciliation, and removal of transcript, capability, output,
+     and proxy material.
 
 - **Crash recovery and bounded broker admission (August 18).**
   1. Added a root-owned, fsynced lifecycle journal and reconciliation of

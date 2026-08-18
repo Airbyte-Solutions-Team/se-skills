@@ -81,6 +81,9 @@ Preflight runs that isolated interpreter to obtain its actual `sys.path`, then
 checks every resolved component, the broker script, and config for root
 ownership and non-writability. The host Python 3.12 contract is separate from
 the sandbox image's Python 3.11 contract.
+The root-owned broker configuration carries the sandbox process UID/GID, and
+preflight verifies the deployed `65532:65532` values against the image
+contract.
 
 Custody is journaled under the root-owned runsc journal before the first
 workspace rename and fsynced after each sealing phase. The journal, rather

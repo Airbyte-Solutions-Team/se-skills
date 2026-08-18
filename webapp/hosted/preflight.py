@@ -124,6 +124,8 @@ class PreflightConfig(BaseModel):
     workspace_mode: int = 0o730
     worker_uid: int = 995
     non_worker_uid: int = 994
+    sandbox_uid: int = 65532
+    sandbox_gid: int = 65532
     rootfs_path: str = ""
     clock_tolerance_seconds: float = 1.0
     supply_chain: SupplyChainVerification | None = None
@@ -235,6 +237,8 @@ def run_preflight(config: PreflightConfig, probe: HostProbe) -> PreflightReport:
         and f'"state_root": "{config.runsc_state_path}"' in broker_text
         and f'"bundle_root": "{config.bundle_path}"' in broker_text
         and f'"workspace_root": "{config.workspace_path}"' in broker_text
+        and f'"sandbox_uid": {config.sandbox_uid}' in broker_text
+        and f'"sandbox_gid": {config.sandbox_gid}' in broker_text
     )
     helper_ok = (
         helper.exists

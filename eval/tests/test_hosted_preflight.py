@@ -176,7 +176,8 @@ class _Probe:
                 '{"runsc": "/usr/local/bin/runsc", '
                 '"state_root": "/var/lib/se-skills/runsc", '
                 '"bundle_root": "/var/lib/se-skills/bundles", '
-                '"workspace_root": "/var/lib/se-skills/workspaces"}'
+                '"workspace_root": "/var/lib/se-skills/workspaces", '
+                '"sandbox_uid": 65532, "sandbox_gid": 65532}'
             )
         return self.firewall
 

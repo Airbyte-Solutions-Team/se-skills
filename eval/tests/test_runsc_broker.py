@@ -93,11 +93,14 @@ def _invoke(
                 "workspace_root": str(config.workspace_root),
                 "worker_uid": config.worker_uid,
                 "worker_gid": config.worker_gid,
+                "sandbox_uid": config.sandbox_uid,
+                "sandbox_gid": config.sandbox_gid,
             }
         ),
         encoding="utf-8",
     )
     monkeypatch.setattr(broker, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(sys, "argv", ["se-skills-runsc"])
     monkeypatch.setattr(broker, "_root_directory", lambda path: None)
     monkeypatch.setattr(broker, "_worker_workspace_root", lambda path, gid: None)
     monkeypatch.setattr(broker, "_root_executable", lambda path: None)
@@ -175,7 +178,7 @@ exit 0
     assert job_snapshot.read_text(encoding="utf-8").strip().endswith(":444")
     assert any(
         Path(str(call[0])) == config.bundle_root / CONTAINER_ID / "job.json"
-        and call[1:] == (broker.SANDBOX_UID, broker.SANDBOX_GID)
+        and call[1:] == (config.sandbox_uid, config.sandbox_gid)
         for call in chown_calls
     )
     assert (output_dir.stat().st_mode & 0o777) == 0o770

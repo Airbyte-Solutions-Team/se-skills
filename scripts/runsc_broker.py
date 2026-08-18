@@ -27,8 +27,6 @@ CONFIG_PATH = Path("/etc/se-skills/runsc-broker.json")
 CONTAINER_ID_PREFIX = "se-"
 CONTAINER_ID_LENGTH = 15
 REQUEST_OPERATIONS = frozenset({"run", "list", "delete", "cleanup"})
-SANDBOX_UID = 65532
-SANDBOX_GID = 65532
 _ACTIVE_PGID: int | None = None
 
 
@@ -48,6 +46,8 @@ class BrokerConfig:
     workspace_root: Path
     worker_uid: int
     worker_gid: int
+    sandbox_uid: int = 65532
+    sandbox_gid: int = 65532
     max_request_bytes: int = 1_000_000
     request_read_timeout_seconds: float = 5.0
     max_string_length: int = 8_192
@@ -57,6 +57,7 @@ class BrokerConfig:
     max_attempt_duration_seconds: int = 900
     operation_timeout_seconds: float = 30.0
     journal_root: Path = Path("/var/lib/se-skills/journal")
+    journal_phase_pause_seconds: float = 0.0
 
     @classmethod
     def load(cls, path: Path | None = None) -> "BrokerConfig":
@@ -88,6 +89,9 @@ class BrokerConfig:
                 "max_attempt_duration_seconds",
                 "operation_timeout_seconds",
                 "journal_root",
+                "sandbox_uid",
+                "sandbox_gid",
+                "journal_phase_pause_seconds",
             }
         ):
             raise BrokerError("broker configuration has unexpected fields")
@@ -113,6 +117,8 @@ class BrokerConfig:
                 "max_nesting_depth",
                 "max_concurrent_operations",
                 "max_attempt_duration_seconds",
+                "sandbox_uid",
+                "sandbox_gid",
             )
         ) or not isinstance(
             raw.get("request_read_timeout_seconds", 5.0),
@@ -128,6 +134,10 @@ class BrokerConfig:
             bool,
         ):
             raise BrokerError("broker configuration has invalid ownership")
+        if not isinstance(
+            raw.get("journal_phase_pause_seconds", 0.0), (int, float)
+        ) or isinstance(raw.get("journal_phase_pause_seconds", 0.0), bool):
+            raise BrokerError("broker configuration has invalid journal timing")
         if any(
             raw.get(key, defaults.get(key, 1)) <= 0
             for key in (
@@ -142,6 +152,8 @@ class BrokerConfig:
             )
         ):
             raise BrokerError("broker configuration has invalid limits")
+        if not 0 <= float(raw.get("journal_phase_pause_seconds", 0.0)) <= 1:
+            raise BrokerError("broker configuration has invalid journal timing")
         return cls(
             runsc=Path(raw["runsc"]),
             rootfs=Path(raw["rootfs"]),
@@ -151,6 +163,8 @@ class BrokerConfig:
             workspace_root=Path(raw["workspace_root"]),
             worker_uid=raw["worker_uid"],
             worker_gid=raw["worker_gid"],
+            sandbox_uid=raw.get("sandbox_uid", 65532),
+            sandbox_gid=raw.get("sandbox_gid", 65532),
             max_request_bytes=raw.get("max_request_bytes", 1_000_000),
             request_read_timeout_seconds=float(
                 raw.get("request_read_timeout_seconds", 5.0)
@@ -170,6 +184,9 @@ class BrokerConfig:
                 raw.get("operation_timeout_seconds", 30.0)
             ),
             journal_root=Path(raw.get("journal_root", str(path.parent / "runsc-journal"))),
+            journal_phase_pause_seconds=float(
+                raw.get("journal_phase_pause_seconds", 0.0)
+            ),
         )
 
 
@@ -530,6 +547,8 @@ def _write_journal(config: BrokerConfig, container_id: str, record: dict[str, ob
         os.fsync(directory_fd)
     finally:
         os.close(directory_fd)
+    if config.journal_phase_pause_seconds:
+        time.sleep(config.journal_phase_pause_seconds)
 
 
 def _remove_journal(config: BrokerConfig, container_id: str) -> None:
@@ -545,6 +564,50 @@ def _process_exists(pid: int) -> bool:
     except (OSError, IndexError):
         return False
     return state != "Z"
+
+
+def _wait_process_exit(pid: int, timeout: float = 1.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while _process_exists(pid) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    return not _process_exists(pid)
+
+
+def _discard_worker_directory(
+    path: Path,
+    config: BrokerConfig,
+    *,
+    prefix: str,
+    recreate: bool = True,
+) -> None:
+    if path.parent != config.workspace_root or not path.name.startswith(prefix):
+        return
+    if path.is_symlink():
+        path.unlink(missing_ok=True)
+        return
+    if path.exists():
+        shutil.rmtree(path, ignore_errors=True)
+    if not recreate:
+        return
+    path.mkdir(mode=0o770)
+    os.chown(path, config.worker_uid, config.sandbox_gid)
+
+
+def _discard_worker_socket(
+    path: Path,
+    config: BrokerConfig,
+) -> None:
+    if (
+        path.parent.parent != config.workspace_root
+        or not path.parent.name.startswith("se-proxy-")
+    ):
+        return
+    if path.is_socket() or path.is_symlink():
+        path.unlink(missing_ok=True)
+    try:
+        path.parent.rmdir()
+    except OSError:
+        pass
 
 
 def _operation_lock(config: BrokerConfig) -> object:
@@ -602,19 +665,19 @@ def _run_command(
     return process.returncode, stdout or b""
 
 
-def _make_tree_read_only(path: Path) -> None:
+def _make_tree_read_only(path: Path, config: BrokerConfig) -> None:
     for child in path.rglob("*"):
         if child.is_symlink():
             raise BrokerError("worker workspace contains a symlink")
         facts = child.lstat()
-        os.chown(child, SANDBOX_UID, SANDBOX_GID)
+        os.chown(child, config.sandbox_uid, config.sandbox_gid)
         if child.is_dir():
             os.chmod(child, 0o555)
         elif child.is_file():
             os.chmod(child, 0o444)
         else:
             raise BrokerError("worker workspace contains a special file")
-    os.chown(path, SANDBOX_UID, SANDBOX_GID)
+    os.chown(path, config.sandbox_uid, config.sandbox_gid)
     os.chmod(path, 0o555)
 
 
@@ -624,14 +687,14 @@ def _make_output_writable(path: Path, config: BrokerConfig) -> None:
             raise BrokerError("worker output contains a symlink")
         facts = child.lstat()
         if child.is_dir():
-            os.chown(child, config.worker_uid, SANDBOX_GID)
+            os.chown(child, config.worker_uid, config.sandbox_gid)
             os.chmod(child, 0o770)
         elif child.is_file():
-            os.chown(child, config.worker_uid, SANDBOX_GID)
+            os.chown(child, config.worker_uid, config.sandbox_gid)
             os.chmod(child, 0o660)
         else:
             raise BrokerError("worker output contains a special file")
-    os.chown(path, config.worker_uid, SANDBOX_GID)
+    os.chown(path, config.worker_uid, config.sandbox_gid)
     os.chmod(path, 0o770)
 
 
@@ -800,8 +863,8 @@ def _run(config: BrokerConfig, request: RunRequest) -> int:
             if stat.S_ISLNK(facts.st_mode) or not stat.S_ISDIR(facts.st_mode):
                 raise BrokerError("worker workspace sealing failed")
         os.mkdir(output_dir, 0o770)
-        os.chown(output_dir, config.worker_uid, SANDBOX_GID)
-        _make_tree_read_only(staged_input)
+        os.chown(output_dir, config.worker_uid, config.sandbox_gid)
+        _make_tree_read_only(staged_input, config)
         _make_output_writable(staged_output, config)
         if proxy_uds_path is not None:
             os.rename(proxy_uds_path, staged_proxy)
@@ -818,7 +881,7 @@ def _run(config: BrokerConfig, request: RunRequest) -> int:
             json.dumps(request.job.values, sort_keys=True, separators=(",", ":")),
             encoding="utf-8",
         )
-        os.chown(job_path, SANDBOX_UID, SANDBOX_GID)
+        os.chown(job_path, config.sandbox_uid, config.sandbox_gid)
         os.chmod(job_path, 0o444)
         deadline = _parse_deadline(str(request.job["execution_deadline"]), config)
         remaining = max((deadline - datetime.now(timezone.utc)).total_seconds(), 1.0)
@@ -865,7 +928,7 @@ def _run(config: BrokerConfig, request: RunRequest) -> int:
         elif output_sealed and staged_output.exists():
             shutil.rmtree(staged_output, ignore_errors=True)
             output_dir.mkdir(mode=0o770, exist_ok=True)
-            os.chown(output_dir, config.worker_uid, SANDBOX_GID)
+            os.chown(output_dir, config.worker_uid, config.sandbox_gid)
         if not output_sealed and output_dir.exists() and not output_dir.is_dir():
             raise BrokerError("worker output compensation failed")
         if input_sealed and staged_input.exists():
@@ -951,7 +1014,7 @@ def _run_cleanup(config: BrokerConfig, minimum_age_seconds: int) -> int:
                     os.killpg(runsc_pid, signal.SIGKILL)
                 except OSError:
                     pass
-                if _process_exists(runsc_pid):
+                if not _wait_process_exit(runsc_pid):
                     continue
             state = config.state_root / container_id
             if state.is_dir() and not state.is_symlink():
@@ -982,7 +1045,34 @@ def _run_cleanup(config: BrokerConfig, minimum_age_seconds: int) -> int:
                     shutil.rmtree(state, ignore_errors=True)
             staging = Path(str(record.get("staging_dir", "")))
             bundle = Path(str(record.get("bundle_dir", "")))
+            input_path = Path(str(record.get("input_dir", "")))
             output = Path(str(record.get("output_dir", "")))
+            proxy = record.get("proxy_uds_path")
+            proxy_path = Path(proxy) if isinstance(proxy, str) and proxy else None
+            phase = record.get("phase")
+            if phase not in {
+                "input-sealed",
+                "output-sealed",
+                "proxy-sealed",
+                "configured",
+                "running",
+                "run-finished",
+                "run-failed",
+            }:
+                _discard_worker_directory(
+                    input_path,
+                    config,
+                    prefix="se-runtime-input-",
+                    recreate=False,
+                )
+            if phase not in {
+                "proxy-sealed",
+                "configured",
+                "running",
+                "run-finished",
+                "run-failed",
+            } and proxy_path is not None:
+                _discard_worker_socket(proxy_path, config)
             if staging.is_dir() and not staging.is_symlink():
                 shutil.rmtree(staging, ignore_errors=True)
             if (
@@ -991,7 +1081,11 @@ def _run_cleanup(config: BrokerConfig, minimum_age_seconds: int) -> int:
                 and not output.exists()
             ):
                 output.mkdir(mode=0o770)
-                os.chown(output, config.worker_uid, SANDBOX_GID)
+                os.chown(output, config.worker_uid, config.sandbox_gid)
+            elif record.get("output_terminal") != "restore":
+                _discard_worker_directory(
+                    output, config, prefix="se-runtime-output-"
+                )
             if bundle.is_dir() and not bundle.is_symlink():
                 shutil.rmtree(bundle, ignore_errors=True)
             if not state.exists() and not staging.exists() and not bundle.exists():
@@ -1051,7 +1145,12 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
     try:
-        config = BrokerConfig.load()
+        if len(sys.argv) == 1:
+            config = BrokerConfig.load()
+        elif len(sys.argv) == 3 and sys.argv[1] == "--config":
+            config = BrokerConfig.load(Path(sys.argv[2]))
+        else:
+            raise BrokerError("invalid broker invocation")
         lock = _operation_lock(config)
         try:
             request = _load_request(sys.stdin, config)

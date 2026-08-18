@@ -61,6 +61,11 @@ loaded from `deploy/pins.json`; role defaults and paths are in
   process absence. Input, proxy, and job material is always discarded;
   output is restored only for a journaled successful run, and otherwise
   discarded to avoid restoring untrusted partial output.
+- The broker configuration pins `sandbox_uid: 65532` and `sandbox_gid: 65532`,
+  matching the sandbox image's `USER 65532:65532` declaration. Preflight
+  verifies these deployed values against the image contract. Test-only
+  user-namespace lifecycle fixtures may set both values to zero because all
+  namespace ids map to the invoking test user.
 - The sandbox image uses the pinned Python and distroless base digests in
   `deploy/pins.json`. An approved image digest and rootfs digest must be
   populated before production preflight passes. `SANDBOX_IMAGE_DIGEST` is

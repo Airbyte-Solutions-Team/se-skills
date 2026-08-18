@@ -36,6 +36,8 @@ class ProductionPreflightSettings(BaseModel):
     worker_group: str
     worker_uid: int
     non_worker_uid: int
+    sandbox_uid: int = 65532
+    sandbox_gid: int = 65532
     database_url: str
     storage_url: str
     anthropic_api_url: str
@@ -138,6 +140,8 @@ def run_production_preflight(
             worker_group=settings.worker_group,
             worker_uid=settings.worker_uid,
             non_worker_uid=settings.non_worker_uid,
+            sandbox_uid=settings.sandbox_uid,
+            sandbox_gid=settings.sandbox_gid,
             pins=settings.pins,
             supply_chain=supply_chain,
             supply_chain_manifest_status=(

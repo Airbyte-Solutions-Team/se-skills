@@ -134,6 +134,25 @@ def test_broker_uses_isolated_standard_library_interpreter() -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_broker_sandbox_identity_matches_image_contract() -> None:
+    defaults = (
+        ANSIBLE / "roles" / "hosted_worker" / "defaults" / "main.yml"
+    ).read_text()
+    template = (
+        ANSIBLE
+        / "roles"
+        / "hosted_worker"
+        / "templates"
+        / "runsc-broker.json.j2"
+    ).read_text()
+    image = (ROOT / "webapp/hosted/runsc/Dockerfile").read_text()
+    assert "hosted_sandbox_uid: 65532" in defaults
+    assert "hosted_sandbox_gid: 65532" in defaults
+    assert '"sandbox_uid": {{ hosted_sandbox_uid }}' in template
+    assert '"sandbox_gid": {{ hosted_sandbox_gid }}' in template
+    assert "USER 65532:65532" in image
+
+
 def test_uninstall_does_not_touch_durable_services_or_data() -> None:
     text = (ANSIBLE / "uninstall.yml").read_text()
 
