@@ -14,7 +14,10 @@ The SE Skills Suite today is a local-first Claude Code skill suite plus an optio
 - **Validation:** `eval/` deterministic manifest-based framework plus `webapp/output_schema.py` Pydantic sidecar validation. Slice 5A added a deterministic `post-call` validation contract derived from `skills/post-call/SKILL.md` and validated without an LLM. Slice 5B1 added deterministic transcript-entity conditional triggers and wired validation into the worker-side post-call orchestrator. Slice 5B2A implemented a per-attempt gVisor `runsc` sandbox executor and a worker-side Anthropic Messages API proxy that routes model calls from the sandbox over a Unix domain socket.
 - **Worker egress:** direct Anthropic egress is disabled. The Product Owner
   accepted a controlled forward proxy with a stable operator-owned address;
-  proxy provisioning and operation remain 5B2B2 work.
+  credentials stay out of the URL and operator-owned mTLS/workload identity
+  is the decided authentication direction. It is not yet implemented in the
+  worker: client-certificate/trust-bundle wiring, provisioning, rotation, and
+  live handshake validation remain 5B2B2 work.
 - **Source coverage and anti-hallucination guardrails** are enforced through prompt discipline and deterministic tests, not a separate runtime.
 
 ## Hosted-beta objective

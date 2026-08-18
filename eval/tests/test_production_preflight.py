@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import base64
+import os
 from pathlib import Path
 from typing import Sequence
 
@@ -76,7 +78,62 @@ class _Probe:
         if argv[:2] == ("nft", "list"):
             return SupplyChainCommandResult(returncode=0, stdout=self.firewall)
         if argv and argv[0] == "cosign":
-            return SupplyChainCommandResult(returncode=self.signature_returncode)
+            sbom = "cyclonedx" in argv
+            predicate = (
+                {
+                    "metadata": {
+                        "component": {
+                            "hashes": [
+                                {"alg": "SHA-256", "content": "a" * 64}
+                            ]
+                        }
+                    }
+                }
+                if sbom
+                else {
+                    "buildDefinition": {
+                        "buildType": "https://se-skills.dev/sandbox-image",
+                        "externalParameters": {
+                            "source": {
+                                "uri": "https://github.com/example/repo",
+                                "digest": {"sha1": "c" * 40},
+                            }
+                        },
+                        "resolvedDependencies": [
+                            {
+                                "uri": "urn:se-skills:sandbox-rootfs",
+                                "digest": {"sha256": "b" * 64},
+                            }
+                        ]
+                    },
+                    "runDetails": {
+                        "builder": {
+                            "id": "https://github.com/example/repo/.github/workflows/"
+                            "sandbox-image-release.yml@refs/heads/main"
+                        },
+                    },
+                }
+            )
+            statement = {
+                "_type": "https://in-toto.io/Statement/v1",
+                "predicateType": (
+                    "https://cyclonedx.org/bom"
+                    if sbom
+                    else "https://slsa.dev/provenance/v1"
+                ),
+                "subject": [{"digest": {"sha256": "a" * 64}}],
+                "predicate": predicate,
+            }
+            return SupplyChainCommandResult(
+                returncode=self.signature_returncode,
+                stdout=json.dumps(
+                    {
+                        "payload": base64.b64encode(
+                            json.dumps(statement).encode()
+                        ).decode()
+                    }
+                ),
+            )
         return SupplyChainCommandResult(returncode=0, stdout="runsc 20260810.0")
 
     def cgroup_version(self) -> int | None:
@@ -135,6 +192,19 @@ def _setup(tmp_path: Path) -> tuple[_Probe, ProductionPreflightSettings, dict[st
                         }
                     }
                 ],
+                "predicate": {
+                    "buildDefinition": {
+                        "resolvedDependencies": [
+                            {
+                                "uri": "urn:se-skills:sandbox-rootfs",
+                                "digest": {"sha256": ROOTFS_DIGEST.removeprefix("sha256:")},
+                            }
+                        ]
+                    },
+                    "runDetails": {
+                        "builder": {"id": "release@example.invalid"}
+                    },
+                },
             }
         ),
         encoding="utf-8",
@@ -146,9 +216,14 @@ def _setup(tmp_path: Path) -> tuple[_Probe, ProductionPreflightSettings, dict[st
                 "rootfs_digest": ROOTFS_DIGEST,
                 "sbom_path": str(sbom_path),
                 "provenance_path": str(provenance_path),
+                "source_repository": "https://github.com/example/repo",
+                "source_commit": "c" * 40,
                 "signature": {
                     "image_reference": f"registry.example/image@{IMAGE_DIGEST}",
-                    "certificate_identity": "release@example.invalid",
+                    "certificate_identity": (
+                        "https://github.com/example/repo/.github/workflows/"
+                        "sandbox-image-release.yml@refs/heads/main"
+                    ),
                     "certificate_oidc_issuer": "https://issuer.example",
                 },
             }
@@ -215,7 +290,7 @@ def test_build_manifest_promotion_round_trip_passes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     bundle = tmp_path / "bundle"
-    bundle.mkdir()
+    bundle.mkdir(parents=True)
     digest_hex = IMAGE_DIGEST.removeprefix("sha256:")
     (bundle / f"{digest_hex}.sbom.json").write_text(
         json.dumps(
@@ -246,7 +321,9 @@ def test_build_manifest_promotion_round_trip_passes(
                 "image_digest": IMAGE_DIGEST,
                 "rootfs_digest": ROOTFS_DIGEST,
                 "sbom_name": f"{digest_hex}.sbom.json",
-                "provenance_name": f"{digest_hex}.provenance.json",
+                    "provenance_name": f"{digest_hex}.provenance.json",
+                    "source_repository": "https://github.com/example/repo",
+                    "source_commit": "c" * 40,
                 "signature": {
                     "image_reference": f"registry.example/image@{IMAGE_DIGEST}",
                     "certificate_identity": "https://github.com/example/repo/.github/workflows/sandbox-image-release.yml@refs/heads/main",
@@ -280,6 +357,141 @@ def test_build_manifest_promotion_round_trip_passes(
         settings, probe, rootfs_digest_fn=lambda path: ROOTFS_DIGEST
     )
     assert report.ok
+
+
+def _installer_fixture(
+    tmp_path: Path, image_digest: str = IMAGE_DIGEST
+) -> tuple[Path, Path, Path]:
+    bundle = tmp_path / "bundle"
+    bundle.mkdir(parents=True)
+    sbom_name = "evidence.sbom.json"
+    provenance_name = "evidence.provenance.json"
+    (bundle / sbom_name).write_text("{}", encoding="utf-8")
+    (bundle / provenance_name).write_text("{}", encoding="utf-8")
+    manifest = bundle / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "image_digest": image_digest,
+                "rootfs_digest": ROOTFS_DIGEST,
+                "sbom_name": sbom_name,
+                "provenance_name": provenance_name,
+                "source_repository": "https://github.com/example/repo",
+                "source_commit": "c" * 40,
+                "signature": {
+                    "image_reference": f"registry.example/image@{image_digest}",
+                    "certificate_identity": "builder",
+                    "certificate_oidc_issuer": "issuer",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return bundle, manifest, tmp_path / "etc/se-skills/sandbox-manifest.json"
+
+
+def test_evidence_installer_rejects_traversal_and_unsafe_names(tmp_path: Path) -> None:
+    bundle, manifest, output = _installer_fixture(tmp_path)
+    data = json.loads(manifest.read_text())
+    data["image_digest"] = "sha256:../../etc"
+    manifest.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="sha256 image digest"):
+        install_evidence(
+            bundle,
+            manifest,
+            tmp_path / "etc/se-skills/evidence",
+            output,
+            geteuid_fn=lambda: 0,
+            owner_uid_fn=lambda path: 0,
+        )
+
+    bundle, manifest, output = _installer_fixture(tmp_path / "names")
+    data = json.loads(manifest.read_text())
+    data["sbom_name"] = "../escape"
+    manifest.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="unsafe"):
+        install_evidence(
+            bundle,
+            manifest,
+            tmp_path / "names/etc/se-skills/evidence",
+            output,
+            geteuid_fn=lambda: 0,
+            owner_uid_fn=lambda path: 0,
+        )
+
+
+@pytest.mark.parametrize("source_kind", ("symlink", "fifo", "oversized"))
+def test_evidence_installer_rejects_unsafe_sources(
+    tmp_path: Path, source_kind: str
+) -> None:
+    bundle, manifest, output = _installer_fixture(tmp_path)
+    source = bundle / "evidence.sbom.json"
+    if source_kind == "symlink":
+        source.unlink()
+        source.symlink_to("/etc/hosts")
+    elif source_kind == "fifo":
+        source.unlink()
+        os.mkfifo(source)
+    else:
+        with source.open("wb") as handle:
+            handle.truncate(64 * 1024 * 1024 + 1)
+    with pytest.raises(ValueError):
+        install_evidence(
+            bundle,
+            manifest,
+            tmp_path / "etc/se-skills/evidence",
+            output,
+            geteuid_fn=lambda: 0,
+            owner_uid_fn=lambda path: 0,
+        )
+
+
+def test_evidence_installer_refuses_different_replacement_and_accepts_idempotent(
+    tmp_path: Path,
+) -> None:
+    bundle, manifest, output = _installer_fixture(tmp_path)
+    root = tmp_path / "etc/se-skills/evidence"
+    install_evidence(
+        bundle,
+        manifest,
+        root,
+        output,
+        geteuid_fn=lambda: 0,
+        owner_uid_fn=lambda path: 0,
+    )
+    source = bundle / "evidence.sbom.json"
+    source.write_text("different", encoding="utf-8")
+    with pytest.raises(FileExistsError, match="rotate or remove"):
+        install_evidence(
+            bundle,
+            manifest,
+            root,
+            output,
+            geteuid_fn=lambda: 0,
+            owner_uid_fn=lambda path: 0,
+        )
+    source.write_text("{}", encoding="utf-8")
+    install_evidence(
+        bundle,
+        manifest,
+        root,
+        output,
+        geteuid_fn=lambda: 0,
+        owner_uid_fn=lambda path: 0,
+    )
+
+
+def test_evidence_installer_requires_root(tmp_path: Path) -> None:
+    bundle, manifest, output = _installer_fixture(tmp_path)
+    with pytest.raises(PermissionError, match="must run as root"):
+        install_evidence(
+            bundle,
+            manifest,
+            tmp_path / "etc/se-skills/evidence",
+            output,
+            geteuid_fn=lambda: 1000,
+            owner_uid_fn=lambda path: 0,
+        )
 
 
 @pytest.mark.parametrize("case", ("manifest", "manifest_dir", "sbom"))

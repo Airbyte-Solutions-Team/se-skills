@@ -88,31 +88,57 @@ if [[ "$PUBLISH" == "1" ]]; then
       grep -F "${IMAGE}@" | head -n 1 | cut -d@ -f2
   )"
   [[ "$registry_digest" == sha256:* ]] || fail "published image has no registry manifest digest"
+  if [[ "${COSIGN_SIGN:-0}" == "1" ]]; then
+    [[ -n "${CERTIFICATE_IDENTITY:-}" ]] || fail "signed release is missing workflow builder identity"
+    [[ -n "${GITHUB_REPOSITORY:-}" ]] || fail "signed release is missing source repository"
+    [[ -n "${GITHUB_SHA:-}" ]] || fail "signed release is missing source commit"
+  fi
   syft "${IMAGE}@${registry_digest}" --output cyclonedx-json >"${work_dir}/sbom.json"
   provenance="${work_dir}/provenance.json"
-  python3 - "$provenance" "$IMAGE" "$registry_digest" <<'PY'
+  provenance_predicate="${work_dir}/provenance-predicate.json"
+  python3 - "$provenance_predicate" "$provenance" "$IMAGE" "$registry_digest" \
+    "$rootfs_digest" "${CERTIFICATE_IDENTITY:-}" "${GITHUB_REPOSITORY:-}" \
+    "${GITHUB_SHA:-}" <<'PY'
 import json
 import sys
 from pathlib import Path
 
-Path(sys.argv[1]).write_text(
-    json.dumps(
-        {
-            "_type": "https://in-toto.io/Statement/v1",
-            "predicateType": "https://slsa.dev/provenance/v1",
-            "subject": [{"name": sys.argv[2], "digest": {"sha256": sys.argv[3].split(":", 1)[1]}}],
-            "predicate": {"buildType": "https://se-skills.dev/sandbox-image"},
+predicate = {
+    "buildDefinition": {
+        "buildType": "https://se-skills.dev/sandbox-image",
+        "externalParameters": {
+            "source": {
+                "uri": f"https://github.com/{sys.argv[7]}",
+                "digest": {"sha1": sys.argv[8]},
+            }
         },
-        sort_keys=True,
-        separators=(",", ":"),
-    ) + "\n"
+        "resolvedDependencies": [
+            {
+                "uri": "urn:se-skills:sandbox-rootfs",
+                "digest": {"sha256": sys.argv[5].split(":", 1)[1]},
+            }
+        ],
+    },
+    "runDetails": {"builder": {"id": sys.argv[6]}},
+}
+Path(sys.argv[1]).write_text(
+    json.dumps(predicate, sort_keys=True, separators=(",", ":")) + "\n"
+)
+statement = {
+    "_type": "https://in-toto.io/Statement/v1",
+    "predicateType": "https://slsa.dev/provenance/v1",
+    "subject": [{"name": sys.argv[3], "digest": {"sha256": sys.argv[4].split(":", 1)[1]}}],
+    "predicate": predicate,
+}
+Path(sys.argv[2]).write_text(
+    json.dumps(statement, sort_keys=True, separators=(",", ":")) + "\n"
 )
 PY
   if [[ "${COSIGN_SIGN:-0}" == "1" ]]; then
     require_tool cosign
     cosign sign --yes "${IMAGE}@${registry_digest}" >/dev/null
     cosign attest --yes --type cyclonedx --predicate "${work_dir}/sbom.json" "${IMAGE}@${registry_digest}" >/dev/null
-    cosign attest --yes --type slsaprovenance --predicate "$provenance" "${IMAGE}@${registry_digest}" >/dev/null
+    cosign attest --yes --type slsaprovenance --predicate "$provenance_predicate" "${IMAGE}@${registry_digest}" >/dev/null
   fi
 else
   registry_digest="unpublished"
@@ -164,7 +190,8 @@ tar --create --sort=name --mtime='UTC 1970-01-01' \
   --numeric-owner --directory "$rootfs_dir" . |
   gzip -n >"${OUTPUT_DIR}/${evidence_stem}.rootfs.tar.gz"
 python3 - "$manifest" "$registry_digest" "$rootfs_digest" "$IMAGE" \
-  "${CERTIFICATE_IDENTITY:-}" "${CERTIFICATE_OIDC_ISSUER:-}" "$evidence_stem" <<'PY'
+  "${CERTIFICATE_IDENTITY:-}" "${CERTIFICATE_OIDC_ISSUER:-}" "$evidence_stem" \
+  "${GITHUB_REPOSITORY:-}" "${GITHUB_SHA:-}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -176,6 +203,10 @@ Path(sys.argv[1]).write_text(
             "rootfs_digest": sys.argv[3],
             "sbom_name": f"{sys.argv[7]}.sbom.json",
             "provenance_name": f"{sys.argv[7]}.provenance.json",
+            "source_repository": (
+                f"https://github.com/{sys.argv[8]}" if sys.argv[8] else None
+            ),
+            "source_commit": sys.argv[9] or None,
             "signature": {
                 "image_reference": (
                     f"{sys.argv[4]}@{sys.argv[2]}"

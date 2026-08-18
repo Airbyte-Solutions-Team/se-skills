@@ -76,6 +76,9 @@ bundle; it copies the named SBOM and provenance into
 `/etc/se-skills/evidence/<digest-hex>/` and writes the host manifest with
 absolute paths. Extract the rootfs archive as root with
 `--same-owner --numeric-owner`.
+The release workflow is `workflow_dispatch`-only, requires
+`BUILD_SANDBOX_IMAGE`, uses the protected `sandbox-release` environment, and
+rejects signing from refs other than `main` or an approved immutable `v*` tag.
 The current Linux-amd64 tool pins are Syft 1.50.0, Grype 0.116.1, and Cosign
 3.1.3; only releases public for at least seven days are eligible for these
 pins. Their checksums live in `deploy/pins.json` and the workflow verifies

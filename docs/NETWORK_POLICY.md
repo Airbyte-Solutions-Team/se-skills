@@ -40,7 +40,10 @@ generic private-range drops. The proxy must allow only `CONNECT`/TLS to
 bounded timeouts and concurrency, redact audit logs, and never log request or
 response bodies. The configured URL carries no credentials; authentication is
 provided by operator-owned network identity such as mTLS or an equivalent
-mechanism. Provisioning that identity remains 5B2B2 work.
+mechanism. This authentication direction is decided but is not implemented in
+the worker yet: there is no client-certificate or trust-bundle wiring and no
+live handshake test. Credentials stay out of the proxy URL. Provisioning,
+trust-bundle/client-certificate wiring, and rotation remain 5B2B2 work.
 
 `HOSTED_APPROVED_HTTPS_DESTINATIONS` is the preflight-verified set of approved
 HTTPS destinations. It must contain the same destinations that the rendered

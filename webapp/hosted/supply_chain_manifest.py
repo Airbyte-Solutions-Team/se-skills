@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict
 
 from webapp.hosted.supply_chain import SupplyChainArtifacts
 
+CANONICAL_IMAGE_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 class ManifestProbe(Protocol):
     """Host access needed to load an approved artifact manifest."""
@@ -54,11 +55,13 @@ class ArtifactManifest(BaseModel):
     provenance_path: str | None = None
     sbom_name: str | None = None
     provenance_name: str | None = None
+    source_repository: str
+    source_commit: str
     signature: SignatureManifest
 
     @property
     def published(self) -> bool:
-        return bool(re.fullmatch(r"sha256:[0-9a-f]{64}", self.image_digest))
+        return bool(CANONICAL_IMAGE_DIGEST.fullmatch(self.image_digest))
 
 
 class ManifestLoadResult(BaseModel):
@@ -137,6 +140,9 @@ def load_artifact_manifest(
         provenance_attestation_command=_attestation_command(
             signature, "slsaprovenance"
         ),
+        expected_builder_id=signature.certificate_identity,
+        source_repository=manifest.source_repository,
+        source_commit=manifest.source_commit,
     )
     return ManifestLoadResult(
         artifacts=artifacts,

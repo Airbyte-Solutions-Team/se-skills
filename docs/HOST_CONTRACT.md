@@ -90,7 +90,10 @@ The proxy must enforce
 authenticate the worker through operator-owned network identity such as mTLS
 or an equivalent mechanism, bound timeouts and concurrency, redact audit logs,
 and omit request/response bodies. The configured URL carries no credentials.
-Provisioning the proxy identity remains 5B2B2 work.
+This authentication direction is decided but not yet implemented in the
+worker: there is no client-certificate or trust-bundle wiring and no live
+handshake test. Provisioning, trust-bundle/client-certificate wiring, and
+rotation remain 5B2B2 work.
 An unset destination produces no firewall accept rule.
 `HOSTED_APPROVED_HTTPS_DESTINATIONS` must match the worker-scoped destinations
 rendered by the firewall on TCP/443; the proxy host/port is verified separately.
@@ -125,6 +128,14 @@ gates; rollback means selecting a previously approved digest and restarting
 the worker, not rebuilding from an unpinned tag. Extract retained rootfs
 archives as root with `--same-owner --numeric-owner` so uid/gid inputs remain
 consistent with the canonical digest.
+The verified CycloneDX attestation must match the installed SBOM byte-for-byte
+after canonical JSON serialization. Verified SLSA provenance carries the
+canonical rootfs digest plus source repository/commit and is checked against
+both the installed manifest and deployed rootfs.
+Release signing remains `workflow_dispatch`-only, requires the literal
+`BUILD_SANDBOX_IMAGE` confirmation token and protected `sandbox-release`
+environment, and is accepted only from `refs/heads/main` or an approved
+immutable `v*` tag.
 
 Postgres is the source of truth for jobs, leases, attempts, and tombstones;
 private object storage is the source of truth for transcripts and outputs.

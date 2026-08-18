@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import uuid
@@ -167,7 +168,53 @@ class _OfflineProbe:
 
 class _OfflineCommandRunner:
     def run(self, argv: Sequence[str]) -> SupplyChainCommandResult:
-        return SupplyChainCommandResult(returncode=0)
+        sbom = "cyclonedx" in argv
+        predicate = (
+            {
+                "metadata": {
+                    "component": {
+                        "hashes": [
+                            {"alg": "SHA-256", "content": "a" * 64}
+                        ]
+                    }
+                }
+            }
+            if sbom
+            else {
+                "buildDefinition": {
+                    "buildType": "https://se-skills.dev/sandbox-image",
+                    "externalParameters": {
+                        "source": {
+                            "uri": "https://github.com/example/repo",
+                            "digest": {"sha1": "c" * 40},
+                        }
+                    },
+                    "resolvedDependencies": [
+                        {
+                            "uri": "urn:se-skills:sandbox-rootfs",
+                            "digest": {"sha256": "b" * 64},
+                        }
+                    ]
+                },
+                "runDetails": {"builder": {"id": "builder"}},
+            }
+        )
+        statement = {
+            "_type": "https://in-toto.io/Statement/v1",
+            "predicateType": (
+                "https://cyclonedx.org/bom"
+                if sbom
+                else "https://slsa.dev/provenance/v1"
+            ),
+            "subject": [{"digest": {"sha256": "a" * 64}}],
+            "predicate": predicate,
+        }
+        return SupplyChainCommandResult(
+            returncode=0,
+            stdout=json.dumps(
+                {"payload": base64.b64encode(json.dumps(statement).encode()).decode()}
+            ),
+        )
 
 
 @dataclass
@@ -311,8 +358,22 @@ def run_offline_smoke(faults: OfflineFaults | None = None) -> SmokeReport:
             rootfs_digest=rootfs_digest,
             manifest_rootfs_digest=rootfs_digest,
             signature_command=("cosign", "verify"),
-            sbom_attestation_command=("cosign", "verify-attestation"),
-            provenance_attestation_command=("cosign", "verify-attestation"),
+            sbom_attestation_command=(
+                "cosign",
+                "verify-attestation",
+                "--type",
+                "cyclonedx",
+            ),
+            provenance_attestation_command=(
+                "cosign",
+                "verify-attestation",
+                "--type",
+                "slsaprovenance",
+            ),
+            signed_rootfs_digest=rootfs_digest,
+            expected_builder_id="builder",
+            source_repository="https://github.com/example/repo",
+            source_commit="c" * 40,
         ),
         _OfflineCommandRunner(),
     )

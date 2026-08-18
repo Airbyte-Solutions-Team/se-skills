@@ -315,7 +315,10 @@ The Anthropic egress mechanism is decided: use a controlled forward proxy with
 a stable operator-owned address. The proxy must restrict `CONNECT`/TLS to the
 approved Anthropic hostname and port. Provisioning, authentication, bounded
 timeouts/concurrency, redacted audit logging, and live validation remain
-5B2B2 work; maintained Anthropic CIDRs are not an accepted alternative.
+5B2B2 work; maintained Anthropic CIDRs are not an accepted alternative. The
+worker does not yet implement mTLS/workload-identity authentication: trust
+bundle and client-certificate wiring, provisioning, rotation, and a live
+handshake test remain explicit 5B2B2 work.
 
 ## Slice 6A: Review, correction, approval, versioning, and audit
 

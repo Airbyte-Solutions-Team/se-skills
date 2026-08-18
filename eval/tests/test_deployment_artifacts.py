@@ -178,6 +178,19 @@ def test_release_workflow_is_manual_and_confirmed() -> None:
     )
 
 
+def test_release_workflow_gates_signing_to_approved_refs() -> None:
+    text = (ROOT / ".github/workflows/sandbox-image-release.yml").read_text()
+    assert re.search(
+        r"https://github\.com/\$\{\{\s*github\.repository\s*\}\}/"
+        r"\.github/workflows/sandbox-image-release\.yml@\$\{\{\s*github\.ref\s*\}\}",
+        text,
+    )
+    assert text.index("Validate approved release ref") < text.index(
+        "Build and verify sandbox image"
+    )
+    assert "refs/heads/main|refs/tags/v[0-9]*.[0-9]*.[0-9]*" in text
+
+
 def test_release_workflow_derives_verified_tools_and_retains_evidence() -> None:
     text = (ROOT / ".github/workflows/sandbox-image-release.yml").read_text()
     pins = (ROOT / "deploy/pins.json").read_text()

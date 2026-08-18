@@ -135,6 +135,8 @@ def test_manifest_loader_populates_evidence_and_rejects_worker_writable_manifest
     manifest = {
         "image_digest": digest,
         "rootfs_digest": "sha256:" + "b" * 64,
+        "source_repository": "https://github.com/example/repo",
+        "source_commit": "c" * 40,
         "sbom_path": sbom_path,
         "provenance_path": provenance_path,
         "signature": {

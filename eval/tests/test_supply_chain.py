@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 from typing import Sequence
@@ -22,7 +23,47 @@ class _CommandRunner:
 
     def run(self, argv: Sequence[str]) -> SupplyChainCommandResult:
         self.calls.append(argv)
-        return SupplyChainCommandResult(returncode=self.returncode)
+        return SupplyChainCommandResult(
+            returncode=self.returncode,
+            stdout=_attestation(
+                "cyclonedx" in argv,
+                _artifacts().sbom_text or "{}",
+            ),
+        )
+
+
+def _attestation(sbom: bool, payload_text: str) -> str:
+    if sbom:
+        predicate = json.loads(payload_text)
+        predicate_type = "https://cyclonedx.org/bom"
+    else:
+        predicate = {
+            "buildDefinition": {
+                "buildType": "https://se-skills.dev/sandbox-image",
+                "externalParameters": {
+                    "source": {
+                        "uri": "https://github.com/example/repo",
+                        "digest": {"sha1": "c" * 40},
+                    }
+                },
+                "resolvedDependencies": [
+                    {
+                        "uri": "urn:se-skills:sandbox-rootfs",
+                        "digest": {"sha256": "b" * 64},
+                    }
+                ],
+            },
+            "runDetails": {"builder": {"id": "builder"}},
+        }
+        predicate_type = "https://slsa.dev/provenance/v1"
+    statement = {
+        "_type": "https://in-toto.io/Statement/v1",
+        "predicateType": predicate_type,
+        "subject": [{"digest": {"sha256": "a" * 64}}],
+        "predicate": predicate,
+    }
+    encoded = base64.b64encode(json.dumps(statement).encode()).decode()
+    return json.dumps({"payload": encoded})
 
 
 def _artifacts() -> SupplyChainArtifacts:
@@ -47,6 +88,10 @@ def _artifacts() -> SupplyChainArtifacts:
         signature_command=("cosign", "verify"),
         sbom_attestation_command=("cosign", "verify-attestation", "--type", "cyclonedx"),
         provenance_attestation_command=("cosign", "verify-attestation", "--type", "slsaprovenance"),
+        signed_rootfs_digest=rootfs,
+        expected_builder_id="builder",
+        source_repository="https://github.com/example/repo",
+        source_commit="c" * 40,
     )
 
 
@@ -132,7 +177,7 @@ def test_supply_chain_honors_signature_failure() -> None:
 
 @pytest.mark.parametrize(
     ("index", "check_id"),
-    ((2, "sbom_attestation"), (3, "provenance_attestation")),
+    ((1, "sbom_attestation"), (2, "provenance_attestation")),
 )
 def test_supply_chain_honors_attestation_failure(
     index: int, check_id: str
