@@ -196,9 +196,12 @@ class RunscSandboxRunner:
         self._validate_mount_paths(input_dir, output_dir, proxy_uds_path)
 
         container_id = f"se-{uuid.uuid4().hex[:12]}"
-        bundle_dir = Path(tempfile.mkdtemp(prefix=f"se-runsc-bundle-{container_id}-"))
-        root_dir = bundle_dir / "root"
-        root_dir.mkdir(parents=True, exist_ok=True)
+        bundle_dir = Path(config.RUNSC_BUNDLE_DIR) / container_id
+        root_dir = Path(config.RUNSC_STATE_DIR) / container_id
+        bundle_dir.mkdir(parents=True, exist_ok=False)
+        root_dir.mkdir(parents=True, exist_ok=False)
+        bundle_dir.chmod(0o700)
+        root_dir.chmod(0o700)
         try:
             job_path = bundle_dir / "job.json"
             job_path.write_text(job.model_dump_json(), encoding="utf-8")
@@ -234,6 +237,7 @@ class RunscSandboxRunner:
                 with contextlib.suppress(asyncio.TimeoutError):
                     await asyncio.wait_for(proc.wait(), timeout=10.0)
                 await self._runsc_delete(root_dir, container_id)
+                shutil.rmtree(root_dir, ignore_errors=True)
         finally:
             shutil.rmtree(bundle_dir, ignore_errors=True)
 

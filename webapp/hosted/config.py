@@ -51,11 +51,18 @@ ANTHROPIC_API_VERSION = os.environ.get("ANTHROPIC_API_VERSION", "2023-06-01")
 MODEL_PROXY_SECRET = os.environ.get("MODEL_PROXY_SECRET", "")
 
 # gVisor/runsc executor configuration.
-RUNSC_BINARY = os.environ.get("RUNSC_BINARY", "runsc")
+RUNSC_BINARY = os.environ.get("RUNSC_BINARY", "/usr/local/bin/runsc")
 RUNSC_ROOTFS = os.environ.get("RUNSC_ROOTFS", "")
 HOSTED_ENV = os.environ.get("HOSTED_ENV", "development").lower()
 SANDBOX_IMAGE_DIGEST = os.environ.get("SANDBOX_IMAGE_DIGEST", "")
 RUNSC_ROOTFS_DIGEST = os.environ.get("RUNSC_ROOTFS_DIGEST", "")
+SANDBOX_MANIFEST_PATH = os.environ.get(
+    "SANDBOX_MANIFEST_PATH", "/etc/se-skills/sandbox-manifest.json"
+)
+SANDBOX_SBOM_PATH = os.environ.get("SANDBOX_SBOM_PATH", "")
+SANDBOX_PROVENANCE_PATH = os.environ.get("SANDBOX_PROVENANCE_PATH", "")
+RUNSC_BUNDLE_DIR = os.environ.get("RUNSC_BUNDLE_DIR", "/var/lib/se-skills/bundles")
+RUNSC_STATE_DIR = os.environ.get("RUNSC_STATE_DIR", "/var/lib/se-skills/runsc")
 HOSTED_FIREWALL_POLICY_PATH = os.environ.get(
     "HOSTED_FIREWALL_POLICY_PATH", "/etc/se-skills/firewall.nft"
 )

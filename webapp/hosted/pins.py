@@ -36,6 +36,14 @@ class SandboxImagePins(BaseModel):
     rootfs_digest: str | None = None
 
 
+class BuildToolPin(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    version: str
+    filename: str
+    sha256: str
+
+
 class LimitPins(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -55,6 +63,7 @@ class HostedPins(BaseModel):
     host: HostPins
     sandbox_image: SandboxImagePins
     limits: LimitPins
+    build_tools: Mapping[str, BuildToolPin] = {}
 
     def runsc_checksum(self, architecture: str) -> str | None:
         return self.runsc.sha512.get(architecture)

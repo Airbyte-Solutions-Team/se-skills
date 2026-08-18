@@ -107,9 +107,26 @@ class _OfflineProbe:
             return PathFacts(True, "se-worker", "se-worker", 0o750, False, True)
         if path == "/var/lib/se-skills/runsc":
             return PathFacts(True, "se-worker", "se-worker", 0o700, False, True)
+        if path == "/var/lib/se-skills/bundles":
+            return PathFacts(True, "se-worker", "se-worker", 0o700, False, True)
         return PathFacts(False, None, None, None, False, False)
 
     def command(self, argv: Sequence[str]) -> SupplyChainCommandResult:
+        if argv[:2] == ("nft", "list"):
+            return SupplyChainCommandResult(
+                returncode=0,
+                stdout="""table inet se_skills {
+  chain output {
+    type filter hook output priority 0; policy drop;
+    ip daddr 169.254.169.254 drop
+    ip6 daddr fd00:ec2::254 drop
+    ip daddr 10.0.0.0/8 drop
+    ip daddr 172.16.0.0/12 drop
+    ip daddr 192.168.0.0/16 drop
+    ip6 daddr fc00::/7 drop
+  }
+}""",
+            )
         return SupplyChainCommandResult(
             returncode=0, stdout=f"runsc {self.pins.runsc.version}"
         )

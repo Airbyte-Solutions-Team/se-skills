@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from webapp.hosted.firewall_policy import evaluate_output_policy, parse_output_policy
 from webapp.hosted.pins import HostedPins, load_pins
 from webapp.hosted.supply_chain import SupplyChainCommandResult, SupplyChainVerification
 
@@ -87,8 +88,6 @@ class PreflightConfig(BaseModel):
         "ANTHROPIC_API_KEY",
         "MODEL_PROXY_SECRET",
         "RUNSC_ROOTFS",
-        "SANDBOX_IMAGE_DIGEST",
-        "RUNSC_ROOTFS_DIGEST",
     )
     present_config_names: frozenset[str] = frozenset()
     model_proxy_secret: str = ""
@@ -102,12 +101,18 @@ class PreflightConfig(BaseModel):
     worker_state_mode: int = 0o750
     runsc_state_path: str = "/var/lib/se-skills/runsc"
     runsc_state_mode: int = 0o700
+    bundle_path: str = "/var/lib/se-skills/bundles"
+    bundle_mode: int = 0o700
+    worker_uid: int = 995
     rootfs_path: str = ""
     clock_tolerance_seconds: float = 1.0
     supply_chain: SupplyChainVerification | None = None
     supply_chain_skipped: bool = False
     hosted_env: str = "development"
     runtime: str = "echo"
+    approved_https_destinations: frozenset[str] = frozenset()
+    supply_chain_manifest_status: str | None = None
+    supply_chain_manifest_detail: str = ""
 
 
 class PreflightCheck(BaseModel):
@@ -218,13 +223,21 @@ def run_preflight(config: PreflightConfig, probe: HostProbe) -> PreflightReport:
     checks.append(_required("temp_disk_free", temp_disk_ok, "temporary filesystem has sufficient free space" if temp_disk_ok else "temporary filesystem free space is unavailable or below minimum"))
     offset = probe.clock_offset_seconds()
     checks.append(_required("clock_sync", offset is not None and abs(offset) <= config.clock_tolerance_seconds, "clock offset is within tolerance" if offset is not None and abs(offset) <= config.clock_tolerance_seconds else "clock offset exceeds tolerance"))
-    firewall_ok = _firewall_ok(pins.host.firewall_policy_path, probe)
+    firewall_ok = _firewall_ok(config, probe)
     checks.append(_required("firewall_policy", firewall_ok, "firewall is deny-by-default and blocks metadata" if firewall_ok else "firewall policy is missing or unsafe"))
     listeners = probe.listening_sockets()
     listener_ok = listeners is not None and not any(item.address not in {"127.0.0.1", "::1", "localhost"} for item in listeners)
     checks.append(_required("public_listener", listener_ok, "no unexpected public listener" if listener_ok else "listener enumeration failed or found an unexpected public listener"))
     production_runtime_ok = config.hosted_env != "production" or config.runtime == "post-call-runsc"
     checks.append(_required("production_runtime_policy", production_runtime_ok, "selected runtime is fail-closed" if production_runtime_ok else "production runtime is not fail-closed"))
+    if config.supply_chain_manifest_status is not None:
+        checks.append(
+            _required(
+                "supply_chain_manifest",
+                config.supply_chain_manifest_status == "ok",
+                config.supply_chain_manifest_detail,
+            )
+        )
     if config.supply_chain is None and config.supply_chain_skipped:
         checks.append(
             PreflightCheck(
@@ -313,6 +326,7 @@ def _valid_database_url(value: str) -> bool:
 def _worker_dirs_ok(config: PreflightConfig, probe: HostProbe) -> bool:
     state = probe.path_info(config.worker_state_path)
     runsc = probe.path_info(config.runsc_state_path)
+    bundles = probe.path_info(config.bundle_path)
     return (
         state.exists
         and state.is_directory
@@ -324,15 +338,40 @@ def _worker_dirs_ok(config: PreflightConfig, probe: HostProbe) -> bool:
         and runsc.owner == config.worker_user
         and runsc.group == config.worker_group
         and runsc.mode == config.runsc_state_mode
+        and bundles.exists
+        and bundles.is_directory
+        and bundles.owner == config.worker_user
+        and bundles.group == config.worker_group
+        and bundles.mode == config.bundle_mode
     )
 
 
-def _firewall_ok(path: str, probe: HostProbe) -> bool:
-    text = probe.file_text(path)
-    if text is None:
+def _firewall_ok(config: PreflightConfig, probe: HostProbe) -> bool:
+    result = probe.command(("nft", "list", "table", "inet", "se_skills"))
+    if result.returncode != 0:
         return False
-    normalized = text.lower()
-    return "policy drop" in normalized and "169.254.169.254" in normalized and "fd00:ec2::254" in normalized
+    rules = parse_output_policy(result.stdout)
+    if not rules:
+        return False
+    checks = (
+        ("169.254.169.254", "tcp", 443, "drop"),
+        ("10.0.0.1", "tcp", 443, "drop"),
+        ("fd00::1", "tcp", 443, "drop"),
+        ("93.184.216.34", "tcp", 443, "drop"),
+    )
+    if any(
+        evaluate_output_policy(rules, config.worker_uid, destination, protocol, port)
+        != expected
+        for destination, protocol, port, expected in checks
+    ):
+        return False
+    return all(
+        evaluate_output_policy(rules, config.worker_uid, destination, "tcp", 443)
+        == "accept"
+        and evaluate_output_policy(rules, config.worker_uid + 1, destination, "tcp", 443)
+        == "drop"
+        for destination in config.approved_https_destinations
+    )
 
 
 class LocalHostProbe:

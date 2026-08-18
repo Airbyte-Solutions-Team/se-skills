@@ -24,6 +24,23 @@
     "approved_digest": null,
     "rootfs_digest": null
   },
+  "build_tools": {
+    "syft": {
+      "version": "1.20.0",
+      "filename": "syft_1.20.0_linux_amd64.tar.gz",
+      "sha256": "689e12c5cbf67521ce61b9c126068f9eaabe1223e77971b2fede50033ff6b5cc"
+    },
+    "grype": {
+      "version": "0.84.0",
+      "filename": "grype_0.84.0_linux_amd64.tar.gz",
+      "sha256": "f2322ca8599ddcd5bc75679a584f04e1a6b48f50ff4318989c39a241be1616e4"
+    },
+    "cosign": {
+      "version": "2.4.1",
+      "filename": "cosign-linux-amd64",
+      "sha256": "8b24b946dd5809c6bd93de08033bcf6bc0ed7d336b7785787c080f574b89249b"
+    }
+  },
   "limits": {
     "worker_cpu_quota_percent": 100,
     "worker_memory_max_bytes": 2147483648,

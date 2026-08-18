@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import os
+import re
 import subprocess
 from typing import Sequence
 
@@ -39,6 +40,9 @@ class _Probe:
             "/var/lib/se-skills/runsc": PathFacts(
                 True, "se-worker", "se-worker", 0o700, False, True
             ),
+            "/var/lib/se-skills/bundles": PathFacts(
+                True, "se-worker", "se-worker", 0o700, False, True
+            ),
             "/opt/rootfs": PathFacts(
                 True, "root", "root", 0o755, False, True
             ),
@@ -48,6 +52,17 @@ class _Probe:
         self.clock = 0.1
         self.free = 20_000_000_000
         self.firewall = "policy drop\n169.254.169.254\nfd00:ec2::254"
+        self.firewall_rules = """table inet se_skills {
+  chain output {
+    type filter hook output priority 0; policy drop;
+    ip daddr 169.254.169.254 drop
+    ip6 daddr fd00:ec2::254 drop
+    ip daddr 10.0.0.0/8 drop
+    ip daddr 172.16.0.0/12 drop
+    ip daddr 192.168.0.0/16 drop
+    ip6 daddr fc00::/7 drop
+  }
+}"""
 
     def os_release(self) -> tuple[str, str]:
         return "ubuntu", "24.04"
@@ -62,6 +77,8 @@ class _Probe:
         return self.paths.get(path, PathFacts(False, None, None, None, False, False))
 
     def command(self, argv: Sequence[str]) -> SupplyChainCommandResult:
+        if argv[:2] == ("nft", "list"):
+            return SupplyChainCommandResult(returncode=0, stdout=self.firewall_rules)
         return SupplyChainCommandResult(returncode=0, stdout="runsc 20260810.0")
 
     def cgroup_version(self) -> int | None:
@@ -210,7 +227,7 @@ def test_preflight_rejects_clock_disk_and_firewall_failures() -> None:
     probe = _Probe()
     probe.clock = 2.0
     probe.free = 1
-    probe.firewall = "accept"
+    probe.firewall_rules = "accept"
 
     report = run_preflight(_config(), probe)
 
@@ -287,8 +304,21 @@ def test_shipped_firewall_template_matches_preflight_contract() -> None:
         "deploy/ansible/roles/hosted_worker/templates/firewall.nft.j2"
     ).read_text()
     probe = _Probe()
-    probe.firewall = template
+    probe.firewall_rules = _render_empty_destination_firewall(template)
 
     report = run_preflight(_config(), probe)
 
     assert not _failed(report, "firewall_policy")
+
+
+def _render_empty_destination_firewall(template: str) -> str:
+    rendered: list[str] = []
+    skip = False
+    for line in template.splitlines():
+        if line.lstrip().startswith("{%"):
+            skip = not line.lstrip().startswith("{% end")
+            continue
+        if skip:
+            continue
+        rendered.append(re.sub(r"\{\{\s*hosted_worker_uid\s*\}\}", "995", line))
+    return "\n".join(rendered)
