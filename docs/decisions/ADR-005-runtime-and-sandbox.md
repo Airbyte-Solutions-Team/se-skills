@@ -46,10 +46,13 @@ The managed container option is treated as a deployment variant of option 1 rath
 
 ### 5B2B1 host privilege decision
 
-The deployed worker uses a narrowly privileged root-owned launcher rather than
-gVisor rootless mode. The worker may sudo only to
-`/usr/local/sbin/se-skills-runsc`; that helper validates subcommands, paths, and
-IDs before executing the pinned rootful `/usr/local/bin/runsc`. This preserves
+The deployed worker uses a narrowly privileged root-owned Python broker rather
+than gVisor rootless mode. The worker may sudo only to
+`/usr/local/sbin/se-skills-runsc`; the broker accepts a strict frozen request on
+stdin and authors the complete OCI bundle and config itself. Rootfs, process
+argv/environment, UID/GID, capabilities, devices, namespaces, resource
+limits, and mounts are broker-controlled; worker input is limited to the
+container ID, sealed workspace paths, proxy socket, and typed job fields. This preserves
 the OCI process UID 65532 without provisioning subuid/subgid ranges or
 `newuidmap`/`newgidmap` setuid helpers. gVisor's rootless guide states that
 `--rootless` maps only the caller UID and cannot map another user; the explicit
@@ -57,10 +60,12 @@ mapping path is therefore rejected for this host contract. `NoNewPrivileges`
 is disabled only for this service-to-helper transition; the remaining systemd
 hardening and `RestrictSUIDSGID=yes` remain in force.
 
-The helper is rendered from the role's configured runsc, state, and bundle
-paths, and preflight verifies those compiled-in paths. It accepts and forwards
-the worker's text-format list request without injecting flags; the worker
-expects runsc's documented `ID` table header.
+The broker's root-owned configuration is rendered from the role's configured
+runsc, rootfs, state, bundle, and staging paths, and preflight verifies the
+helper/config/sudoers pair. It seals worker workspaces by no-follow validation
+and atomic rename into a root-owned staging parent before binding them. It
+accepts and forwards the worker's text-format list request without injecting
+worker flags; list/delete verification and stale cleanup use this same boundary.
 
 **Vendor references (2026-08-11):**
 - Anthropic Messages API reference: `https://docs.anthropic.com/en/api/messages`

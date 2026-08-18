@@ -198,39 +198,29 @@ class RunscSandboxRunner:
         self._validate_mount_paths(input_dir, output_dir, proxy_uds_path)
 
         container_id = f"se-{uuid.uuid4().hex[:12]}"
-        bundle_dir = Path(config.RUNSC_BUNDLE_DIR) / container_id
         root_dir = Path(config.RUNSC_STATE_DIR) / container_id
-        bundle_dir.parent.mkdir(parents=True, exist_ok=True)
-        root_dir.parent.mkdir(parents=True, exist_ok=True)
-        bundle_dir.mkdir(mode=0o700, exist_ok=False)
-        root_dir.mkdir(mode=0o700, exist_ok=False)
         try:
-            job_path = bundle_dir / "job.json"
-            job_path.write_text(job.model_dump_json(), encoding="utf-8")
-
-            config_path = bundle_dir / "config.json"
-            config_path.write_text(
-                json.dumps(
-                    self._build_config(
-                        bundle_dir=bundle_dir,
-                        root_dir=root_dir,
-                        job_path=job_path,
-                        input_dir=input_dir,
-                        output_dir=output_dir,
-                        proxy_uds_path=proxy_uds_path,
-                        container_id=container_id,
-                    ),
-                    indent=2,
-                ),
-                encoding="utf-8",
-            )
-
-            argv = self._build_argv(bundle_dir, root_dir, container_id)
+            request = {
+                "operation": "run",
+                "container_id": container_id,
+                "input_dir": str(input_dir),
+                "output_dir": str(output_dir),
+                "proxy_uds_path": str(proxy_uds_path) if proxy_uds_path else None,
+                "minimum_age_seconds": None,
+                "job": json.loads(job.model_dump_json()),
+            }
+            argv = self._build_argv(container_id)
             proc = await asyncio.create_subprocess_exec(
                 *argv,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
+            if proc.stdin is None:
+                raise RuntimeExecutionError("runsc broker stdin is unavailable")
+            proc.stdin.write(json.dumps(request, sort_keys=True).encode() + b"\n")
+            await proc.stdin.drain()
+            proc.stdin.close()
             try:
                 await self._wait_for_sandbox(proc, cancellation, job.execution_deadline)
             finally:
@@ -239,9 +229,9 @@ class RunscSandboxRunner:
                 with contextlib.suppress(asyncio.TimeoutError):
                     await asyncio.wait_for(proc.wait(), timeout=10.0)
                 await self._runsc_delete(root_dir, container_id)
-                shutil.rmtree(root_dir, ignore_errors=True)
         finally:
-            shutil.rmtree(bundle_dir, ignore_errors=True)
+            # The broker owns bundle and state cleanup.
+            pass
 
     def _validate_prerequisites(self) -> None:
         if not self.runsc_binary or not self.runsc_helper:
@@ -282,16 +272,23 @@ class RunscSandboxRunner:
             if not proxy_uds_path.exists():
                 raise RuntimeExecutionError("proxy socket does not exist")
 
-    def _build_argv(self, bundle_dir: Path, root_dir: Path, container_id: str) -> list[str]:
-        argv = ["sudo", "--non-interactive", self.runsc_helper, f"--root={root_dir}"]
-        if self.network:
-            argv.append(f"--network={self.network}")
+    def _build_argv(self, container_id: str) -> list[str]:
+        argv = ["sudo", "--non-interactive", self.runsc_helper]
         if self.rootless:
             raise RuntimeExecutionError("rootless runsc is not supported")
         if self.extra_runsc_args:
             raise RuntimeExecutionError("extra runsc arguments are not permitted")
-        argv.extend(["run", "--bundle", str(bundle_dir), container_id])
         return argv
+
+    @staticmethod
+    async def _send_broker_request(
+        proc: asyncio.subprocess.Process, request: dict[str, Any]
+    ) -> None:
+        if proc.stdin is None:
+            raise RuntimeExecutionError("runsc broker stdin is unavailable")
+        proc.stdin.write(json.dumps(request, sort_keys=True).encode() + b"\n")
+        await proc.stdin.drain()
+        proc.stdin.close()
 
     def _build_config(
         self,
@@ -456,17 +453,13 @@ class RunscSandboxRunner:
         """Build the `runsc delete` argv for the per-attempt root directory."""
         if self.rootless:
             raise RuntimeExecutionError("rootless runsc is not supported")
-        argv = ["sudo", "--non-interactive", self.runsc_helper, f"--root={root_dir}"]
-        argv.extend(["delete", "--force", container_id])
-        return argv
+        return ["sudo", "--non-interactive", self.runsc_helper]
 
     def _build_list_argv(self, root_dir: Path) -> list[str]:
         """Build the `runsc list` argv for verifying container cleanup."""
         if self.rootless:
             raise RuntimeExecutionError("rootless runsc is not supported")
-        argv = ["sudo", "--non-interactive", self.runsc_helper, f"--root={root_dir}"]
-        argv.extend(["list", "--format=text"])
-        return argv
+        return ["sudo", "--non-interactive", self.runsc_helper]
 
     async def _is_container_gone(
         self, root_dir: Path, container_id: str
@@ -481,8 +474,21 @@ class RunscSandboxRunner:
         argv = self._build_list_argv(root_dir)
         proc = await asyncio.create_subprocess_exec(
             *argv,
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=subprocess.DEVNULL,
+        )
+        await self._send_broker_request(
+            proc,
+            {
+                "operation": "list",
+                "container_id": container_id,
+                "input_dir": "",
+                "output_dir": str(root_dir),
+                "proxy_uds_path": None,
+                "minimum_age_seconds": None,
+                "job": None,
+            },
         )
         try:
             stdout, _ = await asyncio.wait_for(
@@ -521,8 +527,21 @@ class RunscSandboxRunner:
         argv = self._build_delete_argv(root_dir, container_id)
         proc = await asyncio.create_subprocess_exec(
             *argv,
+            stdin=asyncio.subprocess.PIPE,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+        )
+        await self._send_broker_request(
+            proc,
+            {
+                "operation": "delete",
+                "container_id": container_id,
+                "input_dir": "",
+                "output_dir": str(root_dir),
+                "proxy_uds_path": None,
+                "minimum_age_seconds": None,
+                "job": None,
+            },
         )
         try:
             await asyncio.wait_for(proc.wait(), timeout=10.0)
@@ -542,10 +561,6 @@ class RunscSandboxRunner:
                 f"runsc delete exited with code {proc.returncode}"
             )
 
-        if not await self._is_container_gone(root_dir, container_id):
-            raise RuntimeExecutionError(
-                f"container {container_id} still present after runsc delete"
-            )
 
 
 class RunscSkillRuntime:

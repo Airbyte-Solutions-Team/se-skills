@@ -15,18 +15,26 @@ loaded from `deploy/pins.json`; role defaults and paths are in
 - The worker uses `/usr/local/bin/runsc`; its durable per-attempt bundle and
   runsc state directories are `/var/lib/se-skills/bundles` and
   `/var/lib/se-skills/runsc`.
-- The worker invokes runsc through the root-owned
-  `/usr/local/sbin/se-skills-runsc` helper using the narrowly scoped
-  `/etc/sudoers.d/se-skills-runsc` rule. The helper accepts only `run`, `delete`,
-  and `list`, confines state and bundle paths, and validates container IDs.
+- The worker invokes the root-owned Python broker at
+  `/usr/local/sbin/se-skills-runsc` using the exact
+  `/etc/sudoers.d/se-skills-runsc` rule. It accepts only a strict typed request
+  on stdin; no secret or job value is placed in argv. The broker creates all
+  bundles/state and writes the fixed OCI config from
+  `/etc/se-skills/runsc-broker.json`; the worker cannot select rootfs,
+  process argv/environment, capabilities, devices, namespaces, or arbitrary
+  bind mounts.
   `runsc` is deliberately rootful (`rootless=false`); gVisor documents that
   built-in `--rootless` maps only the caller UID and cannot represent the
   image's UID 65532 without additional userns mapping helpers. The rejected
   rootless alternative would add setuid mapping infrastructure and host attack
-  surface. The launcher is rendered from the same Ansible variables as
-  `runsc`, the durable state directory, and the bundle directory; preflight
-  checks those compiled paths before allowing the worker to start. The worker
-  invokes `list --format=text`, matching the parser's required `ID` header.
+  surface. The broker configuration is rendered from the same Ansible variables
+  as `runsc`, the durable state, bundle, and staging directories; preflight
+  checks the rendered broker/config/sudoers pair before allowing the worker to
+  start.
+  Input/output/proxy workspaces are confined to approved worker paths and
+  atomically sealed into the root-owned staging parent; input is read-only and
+  output remains worker-readable. List, delete, and stale cleanup use the same
+  broker and `list --format=text` contract with its required `ID` header.
 - The sandbox image uses the pinned Python and distroless base digests in
   `deploy/pins.json`. An approved image digest and rootfs digest must be
   populated before production preflight passes. `SANDBOX_IMAGE_DIGEST` is
@@ -57,9 +65,12 @@ The role creates the non-login system user `se-worker` (UID `995`) and group
 | `/opt/se-skills` | root/root | 0755 | operator-delivered application payload |
 | `/opt/se-skills/rootfs` | root/root | 0755 | approved sandbox rootfs |
 | `/opt/se-skills/venv` | operator-delivered | role-created | pinned worker dependencies |
-| `/var/lib/se-skills` | se-worker/se-worker | 0750 | worker state |
-| `/var/lib/se-skills/bundles` | se-worker/se-worker | 0700 | ephemeral bundle parent |
-| `/var/lib/se-skills/runsc` | se-worker/se-worker | 0700 | runsc state |
+| `/var/lib/se-skills` | root/root | 0750 | worker state parent |
+| `/var/lib/se-skills/bundles` | root/root | 0700 | broker-owned bundle parent |
+| `/var/lib/se-skills/runsc` | root/root | 0700 | broker-owned runsc state |
+| `/var/lib/se-skills/runsc-staging` | root/root | 0700 | sealed workspace staging |
+| `/usr/local/sbin/se-skills-runsc` | root/root | 0755 | Python broker |
+| `/etc/se-skills/runsc-broker.json` | root/root | 0644 | broker-owned fixed paths |
 | `/etc/se-skills` | root/se-worker | 0750 | policy and operator configuration |
 | `/etc/se-skills/worker.env` | root/se-worker | 0640 | operator-provisioned secrets/config |
 | `/etc/se-skills/firewall.nft` | root/root | 0644 | worker nftables table |

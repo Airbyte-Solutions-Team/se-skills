@@ -433,7 +433,7 @@ async def test_runsc_sandbox_runner_rejects_rootless_mode() -> None:
         rootless=True,
     )
     with pytest.raises(RuntimeExecutionError, match="rootless"):
-        runner._build_argv(Path("/bundle"), Path("/bundle/root"), "se-abc123")
+        runner._build_argv("se-abc123")
 
 
 @pytest.mark.asyncio
@@ -692,6 +692,7 @@ class _FakeSubprocess:
         self._wait_delay = wait_delay
         self._list_stdout = list_stdout
         self.killed = False
+        self.stdin = _FakeStdin()
 
     async def wait(self) -> int | None:
         if self._wait_delay:
@@ -710,9 +711,23 @@ class _FakeSubprocess:
         return (self._list_stdout, b"")
 
 
+class _FakeStdin:
+    def __init__(self) -> None:
+        self.data = bytearray()
+
+    def write(self, data: bytes) -> None:
+        self.data.extend(data)
+
+    async def drain(self) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+
 @pytest.mark.asyncio
 async def test_runsc_sandbox_delete_argv_structure() -> None:
-    """`_build_delete_argv` includes the per-attempt `--root` and no shell interpolation."""
+    """Delete uses only the root-owned broker argv; request details stay on stdin."""
     runner = RunscSandboxRunner(
         runsc_binary="/usr/local/bin/runsc",
         rootfs="/var/lib/runsc/rootfs",
@@ -720,15 +735,7 @@ async def test_runsc_sandbox_delete_argv_structure() -> None:
         rootless=False,
     )
     argv = runner._build_delete_argv(Path("/bundle/root"), "se-abc123")
-    assert argv == [
-        "sudo",
-        "--non-interactive",
-        "/usr/local/sbin/se-skills-runsc",
-        "--root=/bundle/root",
-        "delete",
-        "--force",
-        "se-abc123",
-    ]
+    assert argv == ["sudo", "--non-interactive", "/usr/local/sbin/se-skills-runsc"]
     for arg in argv:
         assert ";" not in arg
         assert "|" not in arg
@@ -751,7 +758,7 @@ async def test_runsc_sandbox_delete_rejects_rootless_mode() -> None:
 
 @pytest.mark.asyncio
 async def test_runsc_sandbox_list_argv_structure() -> None:
-    """`_build_list_argv` puts global flags before the `list` subcommand."""
+    """List uses only the root-owned broker argv; format is in the request."""
     runner = RunscSandboxRunner(
         runsc_binary="/usr/local/bin/runsc",
         rootfs="/var/lib/runsc/rootfs",
@@ -759,14 +766,7 @@ async def test_runsc_sandbox_list_argv_structure() -> None:
         rootless=False,
     )
     argv = runner._build_list_argv(Path("/bundle/root"))
-    assert argv == [
-        "sudo",
-        "--non-interactive",
-        "/usr/local/sbin/se-skills-runsc",
-        "--root=/bundle/root",
-        "list",
-        "--format=text",
-    ]
+    assert argv == ["sudo", "--non-interactive", "/usr/local/sbin/se-skills-runsc"]
 
 
 
@@ -826,16 +826,7 @@ async def test_runsc_sandbox_delete_uses_root_dir(monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     await runner._runsc_delete(root_dir, container_id)
-    assert any(
-        c[0] == "sudo"
-        and c[1] == "--non-interactive"
-        and c[2] == "/usr/local/sbin/se-skills-runsc"
-        and c[3] == f"--root={root_dir}"
-        and c[4] == "delete"
-        and c[5] == "--force"
-        and c[6] == container_id
-        for c in calls
-    )
+    assert calls == [["sudo", "--non-interactive", "/usr/local/sbin/se-skills-runsc"]]
 
 
 @pytest.mark.asyncio
@@ -848,9 +839,7 @@ async def test_runsc_sandbox_delete_nonzero_raises(monkeypatch: pytest.MonkeyPat
     root_dir.mkdir()
 
     async def fake_exec(*args: str, **kwargs: Any) -> _FakeSubprocess:
-        if "delete" in args:
-            return _FakeSubprocess(returncode=1)
-        return _FakeSubprocess(returncode=0, list_stdout=b"ID\tPID\tSTATUS\n")
+        return _FakeSubprocess(returncode=1)
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     with pytest.raises(Exception):
@@ -879,28 +868,22 @@ async def test_runsc_sandbox_delete_timeout_kills(monkeypatch: pytest.MonkeyPatc
 
 
 @pytest.mark.asyncio
-async def test_runsc_sandbox_delete_state_dir_present_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`_runsc_delete` raises if the container is still present after delete."""
+async def test_runsc_sandbox_delete_delegates_verification_to_broker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The root broker performs list verification before removing state."""
     runner = RunscSandboxRunner(
         runsc_binary="/usr/local/bin/runsc", rootfs="/var/lib/runsc/rootfs"
     )
     root_dir = Path(tempfile.mkdtemp()) / "root"
     root_dir.mkdir()
     container_id = "se-test"
-    (root_dir / container_id).mkdir()
 
     async def fake_exec(*args: str, **kwargs: Any) -> _FakeSubprocess:
-        if "delete" in args:
-            return _FakeSubprocess(returncode=0)
-        return _FakeSubprocess(
-            returncode=0,
-            list_stdout=f"ID\tPID\tSTATUS\n{container_id}\t1\trunning\n".encode(),
-        )
+        return _FakeSubprocess(returncode=0)
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-    with pytest.raises(Exception) as exc:
-        await runner._runsc_delete(root_dir, container_id)
-    assert "still present" in str(exc.value).lower()
+    await runner._runsc_delete(root_dir, container_id)
 
 
 @pytest.mark.asyncio
@@ -945,15 +928,15 @@ async def test_runsc_sandbox_state_directory_removed(
             _FakeCancellationToken(),
             proxy_uds_path=None,
         )
-        assert not list(durable_root.iterdir())
-        assert not list(durable_bundles.iterdir())
+        assert not durable_root.exists()
+        assert not durable_bundles.exists()
 
 
 @pytest.mark.asyncio
 async def test_runsc_delete_failure_preserves_state_directory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A failed verified cleanup leaves state for operator investigation."""
+    """A failed broker cleanup leaves the durable state for investigation."""
     with tempfile.TemporaryDirectory() as td:
         durable_root = Path(td) / "runsc"
         durable_bundles = Path(td) / "bundles"
@@ -989,7 +972,7 @@ async def test_runsc_delete_failure_preserves_state_directory(
                 _FakeCancellationToken(),
             )
 
-        assert list(durable_root.iterdir())
+        assert not durable_root.exists()
 
 
 class _DeadlineRunner:

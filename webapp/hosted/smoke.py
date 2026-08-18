@@ -13,6 +13,7 @@ from typing import Protocol, Sequence
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
+from hosted import config as hosted_config
 from hosted.model_proxy import ModelProxy, ProxyConfig
 from hosted.pins import HostedPins, load_pins
 from hosted.post_call_orchestrator import (
@@ -105,19 +106,28 @@ class _OfflineProbe:
             )
         if path == "/usr/local/sbin/se-skills-runsc":
             return PathFacts(True, "root", "root", 0o755, True, False)
+        if path == "/etc/se-skills/runsc-broker.json":
+            return PathFacts(True, "root", "root", 0o644, True, False)
         if path == "/etc/sudoers.d/se-skills-runsc":
             return PathFacts(True, "root", "root", 0o440, True, False)
         if path == "/opt/se-skills/rootfs":
             return PathFacts(True, "root", "root", 0o755, False, True)
         if path == "/var/lib/se-skills":
-            return PathFacts(True, "se-worker", "se-worker", 0o750, False, True)
+            return PathFacts(True, "root", "root", 0o750, False, True)
         if path == "/var/lib/se-skills/runsc":
-            return PathFacts(True, "se-worker", "se-worker", 0o700, False, True)
+            return PathFacts(True, "root", "root", 0o700, False, True)
         if path == "/var/lib/se-skills/bundles":
-            return PathFacts(True, "se-worker", "se-worker", 0o700, False, True)
+            return PathFacts(True, "root", "root", 0o700, False, True)
         return PathFacts(False, None, None, None, False, False)
 
-    def command(self, argv: Sequence[str]) -> SupplyChainCommandResult:
+    def command(
+        self, argv: Sequence[str], stdin: str | None = None
+    ) -> SupplyChainCommandResult:
+        if stdin is not None:
+            return SupplyChainCommandResult(
+                returncode=1 if "unknown" in stdin else 0,
+                stdout="ID\tPID\tSTATUS\n",
+            )
         if argv[:2] == ("nft", "list"):
             return SupplyChainCommandResult(
                 returncode=0,
@@ -168,12 +178,14 @@ class _OfflineProbe:
 
     def file_text(self, path: str) -> str | None:
         if path == "/etc/sudoers.d/se-skills-runsc":
-            return "se-worker ALL=(root) NOPASSWD: /usr/local/sbin/se-skills-runsc *\n"
+            return "se-worker ALL=(root) NOPASSWD: /usr/local/sbin/se-skills-runsc\n"
         if path == "/usr/local/sbin/se-skills-runsc":
+            return 'CONFIG_PATH = Path("/etc/se-skills/runsc-broker.json")\n'
+        if path == "/etc/se-skills/runsc-broker.json":
             return (
-                'runsc="/usr/local/bin/runsc"\n'
-                'state_root="/var/lib/se-skills/runsc"\n'
-                'bundle_root="/var/lib/se-skills/bundles"\n'
+                '{"runsc": "/usr/local/bin/runsc", '
+                '"state_root": "/var/lib/se-skills/runsc", '
+                '"bundle_root": "/var/lib/se-skills/bundles"}'
             )
         return "policy drop\n169.254.169.254\nfd00:ec2::254"
 
@@ -280,9 +292,9 @@ class _OfflineSandboxRunner(FakeSandboxRunner):
         if self.faults.add_mount:
             mounts.add("/runtime/unauthorized")
         self.observation.observed_mounts = frozenset(mounts)
-        self.observation.argv = tuple(
-            runner._build_argv(bundle_dir, root_dir, "se-smoke")
-        )
+        self.observation.argv = tuple(runner._build_argv("se-smoke"))
+        if self.faults.drop_network_flag:
+            self.observation.argv += ("--network=bridge",)
         self.observation.workspace_path = output_dir
         self.observation.proxy_path = proxy_uds_path
         await super().run(
@@ -495,12 +507,9 @@ def run_offline_smoke(faults: OfflineFaults | None = None) -> SmokeReport:
             _check("preflight", preflight.ok, "fixture probe contract result"),
             _check(
                 "runtime",
-                "--network=none" in observation.argv
-                and not any(
-                    item.startswith("--network=") and item != "--network=none"
-                    for item in observation.argv
-                ),
-                "observed runsc argv contains only --network=none",
+                observation.argv
+                == ("sudo", "--non-interactive", hosted_config.RUNSC_HELPER_BINARY),
+                "observed runtime argv uses only the constrained broker helper",
             ),
             _check(
                 "mounts",

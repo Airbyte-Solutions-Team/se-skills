@@ -6,6 +6,7 @@ import os
 import stat
 import subprocess
 import tarfile
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -263,19 +264,12 @@ def test_cleanup_script_removes_only_verified_dead_state(tmp_path: Path) -> None
         encoding="utf-8",
     )
     shim.chmod(shim.stat().st_mode | stat.S_IXUSR)
-    template = Path(
-        "deploy/ansible/roles/hosted_worker/templates/cleanup-stale-sandboxes.sh.j2"
-    ).read_text(encoding="utf-8")
-    rendered = (
-        template.replace("{{ hosted_runsc_state_dir }}", str(root))
-        .replace("{{ hosted_bundle_dir }}", str(bundles))
-        .replace("{{ hosted_runsc_binary }}", str(shim))
-        .replace('{{ hosted_cleanup_min_age_minutes }}', '0')
+    script = _render_cleanup_script(tmp_path, root, bundles, shim, min_age=0)
+    subprocess.run(
+        [str(script)],
+        check=True,
+        env={**os.environ, "PATH": f"{tmp_path}:/usr/bin:/bin"},
     )
-    script = tmp_path / "cleanup.sh"
-    script.write_text(rendered, encoding="utf-8")
-    script.chmod(script.stat().st_mode | stat.S_IXUSR)
-    subprocess.run([str(script)], check=True, env={**os.environ, "PATH": "/usr/bin:/bin"})
 
     assert not (root / "dead").exists()
     assert (root / "live").exists()
@@ -290,10 +284,77 @@ def _render_cleanup_script(
     template = Path(
         "deploy/ansible/roles/hosted_worker/templates/cleanup-stale-sandboxes.sh.j2"
     ).read_text(encoding="utf-8")
+    broker = tmp_path / "broker-shim.py"
+    broker.write_text(
+        textwrap.dedent(
+            f"""\
+            #!/usr/bin/python3
+            import json
+            import shutil
+            import subprocess
+            import sys
+            import time
+            from pathlib import Path
+
+            root = Path({str(root)!r})
+            bundles = Path({str(bundles)!r})
+            runsc = {str(shim)!r}
+            request = json.load(sys.stdin)
+            if request.get("operation") != "cleanup":
+                raise SystemExit(64)
+            unverifiable = set()
+            for state in sorted(root.iterdir()):
+                if (
+                    not state.is_dir()
+                    or time.time() - state.stat().st_mtime
+                    < request["minimum_age_seconds"]
+                ):
+                    continue
+                identifier = state.name
+                listed = subprocess.run(
+                    [runsc, "--root=" + str(state), "list", "--format=json"],
+                    capture_output=True, text=True, check=False,
+                )
+                try:
+                    items = json.loads(listed.stdout).get("containers", [])
+                    status = next(
+                        (item.get("status", "").lower() for item in items
+                         if item.get("id") == identifier), "absent"
+                    )
+                except (ValueError, AttributeError, TypeError):
+                    unverifiable.add(identifier)
+                    continue
+                if status not in {{"dead", "stopped", "exited", "failed", "terminated", "absent"}}:
+                    continue
+                subprocess.run(
+                    [runsc, "--root=" + str(state), "delete", "--force", identifier],
+                    capture_output=True, check=False,
+                )
+                fresh = subprocess.run(
+                    [runsc, "--root=" + str(state), "list", "--format=json"],
+                    capture_output=True, text=True, check=False,
+                )
+                try:
+                    if not json.loads(fresh.stdout).get("containers", []):
+                        shutil.rmtree(state)
+                        shutil.rmtree(bundles / identifier, ignore_errors=True)
+                except (ValueError, AttributeError, TypeError):
+                    unverifiable.add(identifier)
+            for bundle in bundles.iterdir():
+                if bundle.is_dir() and not (root / bundle.name).exists() and bundle.name not in unverifiable:
+                    shutil.rmtree(bundle)
+            """
+        ),
+        encoding="utf-8",
+    )
+    broker.chmod(broker.stat().st_mode | stat.S_IXUSR)
+    sudo = tmp_path / "sudo"
+    sudo.write_text("#!/bin/sh\nshift 1\nexec \"$@\"\n", encoding="utf-8")
+    sudo.chmod(sudo.stat().st_mode | stat.S_IXUSR)
     rendered = (
         template.replace("{{ hosted_runsc_state_dir }}", str(root))
         .replace("{{ hosted_bundle_dir }}", str(bundles))
-        .replace("{{ hosted_runsc_binary }}", str(shim))
+        .replace("{{ hosted_runsc_helper }}", str(broker))
         .replace("{{ hosted_cleanup_min_age_minutes }}", str(min_age))
     )
     script = tmp_path / "cleanup.sh"
@@ -322,7 +383,11 @@ def test_cleanup_script_preserves_unverifiable_and_fresh_state(tmp_path: Path) -
     )
     shim.chmod(shim.stat().st_mode | stat.S_IXUSR)
     script = _render_cleanup_script(tmp_path, root, bundles, shim, min_age=60)
-    subprocess.run([str(script)], check=True, env={**os.environ, "PATH": "/usr/bin:/bin"})
+    subprocess.run(
+        [str(script)],
+        check=True,
+        env={**os.environ, "PATH": f"{tmp_path}:/usr/bin:/bin"},
+    )
 
     assert old_state.exists()
     assert (bundles / "old").exists()
@@ -350,7 +415,11 @@ def test_cleanup_script_reclaims_absent_state_after_verified_absence(
     )
     shim.chmod(shim.stat().st_mode | stat.S_IXUSR)
     script = _render_cleanup_script(tmp_path, root, bundles, shim)
-    subprocess.run([str(script)], check=True, env={**os.environ, "PATH": "/usr/bin:/bin"})
+    subprocess.run(
+        [str(script)],
+        check=True,
+        env={**os.environ, "PATH": f"{tmp_path}:/usr/bin:/bin"},
+    )
 
     assert not (root / "gone").exists()
     assert not (bundles / "gone").exists()

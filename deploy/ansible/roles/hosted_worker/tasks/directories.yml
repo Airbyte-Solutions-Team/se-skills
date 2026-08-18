@@ -14,8 +14,8 @@
   ansible.builtin.file:
     path: "{{ item.path }}"
     state: directory
-    owner: "{{ hosted_worker_user }}"
-    group: "{{ hosted_worker_group }}"
+    owner: root
+    group: root
     mode: "{{ item.mode }}"
   loop:
     - { path: "{{ hosted_state_dir }}", mode: "0750" }
@@ -23,11 +23,14 @@
 
 - name: Create runsc state directory
   ansible.builtin.file:
-    path: "{{ hosted_runsc_state_dir }}"
+    path: "{{ item.path }}"
     state: directory
-    owner: "{{ hosted_worker_user }}"
-    group: "{{ hosted_worker_group }}"
+    owner: root
+    group: root
     mode: "0700"
+  loop:
+    - { path: "{{ hosted_runsc_state_dir }}" }
+    - { path: "{{ hosted_runsc_staging_dir }}" }
 
 - name: Create configuration directory
   ansible.builtin.file:

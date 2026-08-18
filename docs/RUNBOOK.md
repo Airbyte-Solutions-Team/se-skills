@@ -65,9 +65,12 @@ expiry and `recover_expired_leases` requeue or dead-letter attempts. If a
 sandbox remains, the cleanup timer runs as `se-worker` and removes only
 verified-dead state.
 
-The worker's constrained runsc launcher forwards `list --format=text` without
-adding flags of its own; an unparseable `ID` header is a fail-closed cleanup
-error.
+The worker's root-owned Python runsc broker receives typed stdin requests and
+authors the OCI config. It seals input/output/proxy workspaces before binding
+them, and list/delete/stale cleanup all use the same sudo boundary. The
+supported list contract is `runsc list --format=text`; an unparseable `ID`
+header is a fail-closed cleanup error. Broker failures expose only fixed
+redacted error classes.
 
 Image promotion is manual and protected. Build the pinned image, run SBOM and
 vulnerability scans, push it, record the registry manifest digest, generate
@@ -83,10 +86,12 @@ absolute paths. Extract the rootfs archive as root with
 `--same-owner --numeric-owner`.
 The release builder itself runs as the normal workflow user and hashes the
 Docker-export tar stream without extracting it. For local workflow validation,
-install the pinned actionlint binary and run
-`ACTIONLINT_BIN=/path/to/actionlint ./scripts/check-workflows.sh`; the
-pull-request workflow performs the checksum verification and runs this command
-over every `.github/workflows/*.yml`.
+bootstrap the pinned actionlint binary with
+`./scripts/install-actionlint.sh`, then run
+`ACTIONLINT_BIN="$PWD/.tools/actionlint" ./scripts/check-workflows.sh`; the
+check fails closed when actionlint is unavailable. The pull-request workflow
+performs the checksum verification and runs this command over every
+`.github/workflows/*.yml`.
 The release workflow is `workflow_dispatch`-only, requires
 `BUILD_SANDBOX_IMAGE`, uses the protected `sandbox-release` environment, and
 rejects signing from refs other than `main` or an approved immutable `v*` tag

@@ -37,7 +37,9 @@ class HostProbe(Protocol):
     def path_info(self, path: str) -> "PathFacts":
         ...
 
-    def command(self, argv: Sequence[str]) -> SupplyChainCommandResult:
+    def command(
+        self, argv: Sequence[str], stdin: str | None = None
+    ) -> SupplyChainCommandResult:
         ...
 
     def cgroup_version(self) -> int | None:
@@ -85,6 +87,7 @@ class PreflightConfig(BaseModel):
     runsc_path: str = "/usr/local/bin/runsc"
     runsc_helper_path: str = "/usr/local/sbin/se-skills-runsc"
     runsc_sudoers_path: str = "/etc/sudoers.d/se-skills-runsc"
+    runsc_broker_config_path: str = "/etc/se-skills/runsc-broker.json"
     runsc_rootless: bool = False
     pins: HostedPins = Field(default_factory=load_pins)
     required_names: tuple[str, ...] = (
@@ -192,11 +195,16 @@ def run_preflight(config: PreflightConfig, probe: HostProbe) -> PreflightReport:
         _required("runsc_binary", runsc_mode_ok, "runsc is root-owned executable" if runsc_mode_ok else "runsc missing or ownership/mode is unsafe")
     )
     helper = probe.path_info(config.runsc_helper_path)
-    helper_text = probe.file_text(config.runsc_helper_path) or ""
+    broker_config = probe.path_info(config.runsc_broker_config_path)
+    broker_text = probe.file_text(config.runsc_broker_config_path) or ""
     helper_roots_ok = (
-        f'runsc="{config.runsc_path}"' in helper_text
-        and f'state_root="{config.runsc_state_path}"' in helper_text
-        and f'bundle_root="{config.bundle_path}"' in helper_text
+        broker_config.exists
+        and broker_config.is_file
+        and broker_config.owner == "root"
+        and broker_config.mode == 0o644
+        and f'"runsc": "{config.runsc_path}"' in broker_text
+        and f'"state_root": "{config.runsc_state_path}"' in broker_text
+        and f'"bundle_root": "{config.bundle_path}"' in broker_text
     )
     helper_ok = (
         helper.exists
@@ -224,7 +232,7 @@ def run_preflight(config: PreflightConfig, probe: HostProbe) -> PreflightReport:
         and sudoers.owner == "root"
         and sudoers.group == "root"
         and sudoers_text.strip()
-        == f"{config.worker_user} ALL=(root) NOPASSWD: {config.runsc_helper_path} *"
+        == f"{config.worker_user} ALL=(root) NOPASSWD: {config.runsc_helper_path}"
     )
     checks.append(
         _required(
@@ -235,24 +243,29 @@ def run_preflight(config: PreflightConfig, probe: HostProbe) -> PreflightReport:
             else "runsc sudoers policy is missing or unconstrained",
         )
     )
+    runtime_helper_argv = (
+        "sudo",
+        "--non-interactive",
+        config.runsc_helper_path,
+    )
+    rejected_request = probe.command(
+        runtime_helper_argv,
+        stdin='{"operation":"run","unknown":"field"}\n',
+    )
     helper_invocation = probe.command(
-        (
-            "sudo",
-            "-n",
-            "-u",
-            config.worker_user,
-            config.runsc_helper_path,
-            f"--root={config.runsc_state_path}/preflight",
-            "list",
-            "--format=text",
-        )
+        runtime_helper_argv,
+        stdin=(
+            '{"operation":"list","container_id":"se-000000000000",'
+            f'"input_dir":"","output_dir":"{config.runsc_state_path}/preflight",'
+            '"proxy_uds_path":null,"minimum_age_seconds":null,"job":null}\n'
+        ),
     )
     checks.append(
         _required(
             "runsc_helper_invocation",
-            helper_invocation.returncode == 0,
+            rejected_request.returncode != 0 and helper_invocation.returncode == 0,
             "worker can invoke the constrained runsc helper"
-            if helper_invocation.returncode == 0
+            if rejected_request.returncode != 0 and helper_invocation.returncode == 0
             else "worker cannot invoke the constrained runsc helper",
         )
     )
@@ -439,18 +452,18 @@ def _worker_dirs_ok(config: PreflightConfig, probe: HostProbe) -> bool:
     return (
         state.exists
         and state.is_directory
-        and state.owner == config.worker_user
-        and state.group == config.worker_group
+        and state.owner == "root"
+        and state.group == "root"
         and state.mode == config.worker_state_mode
         and runsc.exists
         and runsc.is_directory
-        and runsc.owner == config.worker_user
-        and runsc.group == config.worker_group
+        and runsc.owner == "root"
+        and runsc.group == "root"
         and runsc.mode == config.runsc_state_mode
         and bundles.exists
         and bundles.is_directory
-        and bundles.owner == config.worker_user
-        and bundles.group == config.worker_group
+        and bundles.owner == "root"
+        and bundles.group == "root"
         and bundles.mode == config.bundle_mode
     )
 
@@ -630,9 +643,17 @@ class LocalHostProbe:
             digest,
         )
 
-    def command(self, argv: Sequence[str]) -> SupplyChainCommandResult:
+    def command(
+        self, argv: Sequence[str], stdin: str | None = None
+    ) -> SupplyChainCommandResult:
         try:
-            completed = subprocess.run(argv, capture_output=True, text=True, check=False)
+            completed = subprocess.run(
+                argv,
+                input=stdin,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
         except OSError:
             return SupplyChainCommandResult(returncode=127)
         return SupplyChainCommandResult(returncode=completed.returncode, stdout=completed.stdout)

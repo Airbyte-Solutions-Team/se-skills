@@ -1,10 +1,19 @@
 - name: Install root-owned runsc launcher
-  ansible.builtin.template:
-    src: se-skills-runsc.j2
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../../../scripts/runsc_broker.py"
     dest: "{{ hosted_runsc_helper }}"
     owner: root
     group: root
     mode: "0755"
+  notify: Restart hosted worker
+
+- name: Install root-owned runsc broker configuration
+  ansible.builtin.template:
+    src: runsc-broker.json.j2
+    dest: "{{ hosted_runsc_broker_config }}"
+    owner: root
+    group: root
+    mode: "0644"
   notify: Restart hosted worker
 
 - name: Install runsc sudoers policy

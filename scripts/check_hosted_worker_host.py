@@ -43,6 +43,9 @@ def _config(offline: bool) -> ProductionPreflightSettings:
         runsc_helper_path=os.environ.get(
             "RUNSC_HELPER_BINARY", "/usr/local/sbin/se-skills-runsc"
         ),
+        runsc_broker_config_path=os.environ.get(
+            "RUNSC_BROKER_CONFIG", "/etc/se-skills/runsc-broker.json"
+        ),
         present_config_names=present,
         model_proxy_secret=os.environ.get("MODEL_PROXY_SECRET", ""),
         anthropic_api_url=os.environ.get("ANTHROPIC_API_URL", "https://api.anthropic.com"),

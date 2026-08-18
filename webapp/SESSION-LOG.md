@@ -2,10 +2,21 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 18, 2026 — HEAD (this change) on `devin/slice5b2b1-deployment-foundation`. Closed deployment and actionlint review follow-ups._
+_Last updated: August 18, 2026 — HEAD (this change) on `devin/slice5b2b1-deployment-foundation`. Added the root-owned OCI broker boundary._
 
 
 ## Built this session (newest first — see `git log`)
+
+- **Privileged OCI broker boundary (August 18).**
+  1. Replaced worker-authored bundles/config with a root-owned Python broker
+     receiving a strict typed stdin request and authoring the fixed OCI
+     contract.
+  2. Added no-follow workspace validation and atomic staging seals for input,
+     output, and proxy paths; rootfs, capabilities, devices, namespaces, and
+     process argv/environment are broker-controlled.
+  3. Routed run/list/delete and stale cleanup through the same sudo boundary,
+     made preflight exercise the exact worker transition, and made local
+     actionlint validation fail closed with a pinned bootstrap command.
 
 - **Deployment follow-ups (August 18).**
   1. Made tar/tree rootfs digest equivalence execute unprivileged with explicit

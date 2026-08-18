@@ -1,76 +1,9 @@
 #!/bin/sh
 set -eu
 
-root="{{ hosted_runsc_state_dir }}"
-bundles="{{ hosted_bundle_dir }}"
-runsc="{{ hosted_runsc_binary }}"
-min_age_minutes="{{ hosted_cleanup_min_age_minutes }}"
+helper="{{ hosted_runsc_helper }}"
+minimum_age_seconds=$(({{ hosted_cleanup_min_age_minutes }} * 60))
 
-status_for_state() {
-  "$runsc" --root="$1" list --format=json 2>/dev/null |
-    python3 -c '
-import json
-import sys
-
-try:
-    value = json.load(sys.stdin)
-except (ValueError, TypeError):
-    raise SystemExit(2)
-items = value.get("containers", value) if isinstance(value, dict) else value
-if not isinstance(items, list):
-    raise SystemExit(2)
-state_id = sys.argv[1]
-for item in items:
-    if not isinstance(item, dict):
-        continue
-    item_id = item.get("id", item.get("ID"))
-    if item_id == state_id:
-        status = item.get("status", item.get("Status"))
-        if isinstance(status, str):
-            print(status.lower())
-            raise SystemExit(0)
-print("absent")
-' "$2"
-}
-
-is_terminal() {
-  case "$1" in
-    dead|stopped|exited|failed|terminated) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-unverifiable_ids=""
-for state in "$root"/*; do
-  [ -d "$state" ] || continue
-  id=$(basename "$state")
-  [ "$(find "$state" -prune -mmin +"$min_age_minutes" -print)" = "$state" ] || continue
-  if ! status="$(status_for_state "$state" "$id")"; then
-    unverifiable_ids="${unverifiable_ids}${id}
-"
-    continue
-  fi
-  is_terminal "$status" || [ "$status" = "absent" ] || continue
-  "$runsc" --root="$state" delete --force "$id" >/dev/null 2>&1 || true
-  if ! fresh_status="$(status_for_state "$state" "$id")"; then
-    unverifiable_ids="${unverifiable_ids}${id}
-"
-    continue
-  fi
-  [ "$fresh_status" = "absent" ] || continue
-  rm -rf -- "$state"
-  rm -rf -- "$bundles/$id"
-done
-
-for bundle in "$bundles"/*; do
-  [ -d "$bundle" ] || continue
-  [ "$(find "$bundle" -prune -mmin +"$min_age_minutes" -print)" = "$bundle" ] || continue
-  id=$(basename "$bundle")
-  state="$root/$id"
-  if printf '%s' "$unverifiable_ids" | grep -Fqx "$id"; then
-    continue
-  fi
-  if [ ! -d "$state" ]; then
-    rm -rf -- "$bundle"
-  fi
-done
+exec sudo --non-interactive "$helper" <<EOF
+{"operation":"cleanup","container_id":"se-000000000000","input_dir":"","output_dir":"{{ hosted_runsc_state_dir }}","proxy_uds_path":null,"minimum_age_seconds":$minimum_age_seconds,"job":null}
+EOF

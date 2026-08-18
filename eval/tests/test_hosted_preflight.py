@@ -44,13 +44,16 @@ class _Probe:
                 True, "root", "root", 0o440, True, False
             ),
             "/var/lib/se-skills": PathFacts(
-                True, "se-worker", "se-worker", 0o750, False, True
+                True, "root", "root", 0o750, False, True
             ),
             "/var/lib/se-skills/runsc": PathFacts(
-                True, "se-worker", "se-worker", 0o700, False, True
+                True, "root", "root", 0o700, False, True
             ),
             "/var/lib/se-skills/bundles": PathFacts(
-                True, "se-worker", "se-worker", 0o700, False, True
+                True, "root", "root", 0o700, False, True
+            ),
+            "/etc/se-skills/runsc-broker.json": PathFacts(
+                True, "root", "root", 0o644, True, False
             ),
             "/opt/rootfs": PathFacts(
                 True, "root", "root", 0o755, False, True
@@ -97,7 +100,14 @@ class _Probe:
     def path_info(self, path: str) -> PathFacts:
         return self.paths.get(path, PathFacts(False, None, None, None, False, False))
 
-    def command(self, argv: Sequence[str]) -> SupplyChainCommandResult:
+    def command(
+        self, argv: Sequence[str], stdin: str | None = None
+    ) -> SupplyChainCommandResult:
+        if stdin is not None:
+            return SupplyChainCommandResult(
+                returncode=1 if "unknown" in stdin else 0,
+                stdout="ID\tPID\tSTATUS\n",
+            )
         if argv[:2] == ("nft", "list"):
             return SupplyChainCommandResult(returncode=0, stdout=self.firewall_rules)
         return SupplyChainCommandResult(returncode=0, stdout="runsc 20260810.0")
@@ -123,12 +133,14 @@ class _Probe:
 
     def file_text(self, path: str) -> str | None:
         if path == "/etc/sudoers.d/se-skills-runsc":
-            return "se-worker ALL=(root) NOPASSWD: /usr/local/sbin/se-skills-runsc *\n"
+            return "se-worker ALL=(root) NOPASSWD: /usr/local/sbin/se-skills-runsc\n"
         if path == "/usr/local/sbin/se-skills-runsc":
+            return 'CONFIG_PATH = Path("/etc/se-skills/runsc-broker.json")\n'
+        if path == "/etc/se-skills/runsc-broker.json":
             return (
-                'runsc="/usr/local/bin/runsc"\n'
-                'state_root="/var/lib/se-skills/runsc"\n'
-                'bundle_root="/var/lib/se-skills/bundles"\n'
+                '{"runsc": "/usr/local/bin/runsc", '
+                '"state_root": "/var/lib/se-skills/runsc", '
+                '"bundle_root": "/var/lib/se-skills/bundles"}'
             )
         return self.firewall
 

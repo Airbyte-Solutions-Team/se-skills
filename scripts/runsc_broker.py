@@ -1,0 +1,549 @@
+#!/usr/bin/python3
+"""Root-owned broker for the hosted worker's gVisor OCI contract.
+
+The worker supplies only a typed request on stdin. This broker owns the OCI
+configuration, durable runsc state, and bundle creation so a worker compromise
+cannot author a privileged runsc document.
+"""
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import stat
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+CONFIG_PATH = Path("/etc/se-skills/runsc-broker.json")
+CONTAINER_ID_PREFIX = "se-"
+CONTAINER_ID_LENGTH = 15
+REQUEST_OPERATIONS = frozenset({"run", "list", "delete", "cleanup"})
+
+
+class BrokerError(Exception):
+    """Raised for a rejected request or unsafe host path."""
+
+
+@dataclass(frozen=True)
+class BrokerConfig:
+    """Root-owned broker configuration."""
+
+    runsc: Path
+    rootfs: Path
+    state_root: Path
+    bundle_root: Path
+    staging_root: Path
+    worker_uid: int
+    worker_gid: int
+
+    @classmethod
+    def load(cls, path: Path = CONFIG_PATH) -> "BrokerConfig":
+        """Load and strictly validate the root-owned configuration."""
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise BrokerError("broker configuration unavailable") from exc
+        required = {
+            "runsc",
+            "rootfs",
+            "state_root",
+            "bundle_root",
+            "staging_root",
+            "worker_uid",
+            "worker_gid",
+        }
+        if set(raw) != required:
+            raise BrokerError("broker configuration has unexpected fields")
+        if not all(isinstance(raw[key], str) for key in required - {"worker_uid", "worker_gid"}):
+            raise BrokerError("broker configuration has invalid paths")
+        if not all(isinstance(raw[key], int) for key in ("worker_uid", "worker_gid")):
+            raise BrokerError("broker configuration has invalid ownership")
+        return cls(
+            runsc=Path(raw["runsc"]),
+            rootfs=Path(raw["rootfs"]),
+            state_root=Path(raw["state_root"]),
+            bundle_root=Path(raw["bundle_root"]),
+            staging_root=Path(raw["staging_root"]),
+            worker_uid=raw["worker_uid"],
+            worker_gid=raw["worker_gid"],
+        )
+
+
+@dataclass(frozen=True)
+class RunRequest:
+    """Frozen, typed request accepted from the worker."""
+
+    container_id: str
+    input_dir: Path
+    output_dir: Path
+    proxy_uds_path: Path | None
+    job: dict[str, Any]
+
+
+def _fail() -> None:
+    """Emit one fixed diagnostic without reflecting untrusted input."""
+    print("invalid runsc broker request", file=sys.stderr)
+    raise SystemExit(64)
+
+
+def _require_string(value: Any) -> str:
+    if not isinstance(value, str) or not value:
+        raise BrokerError("invalid string")
+    return value
+
+
+def _validate_container_id(value: Any) -> str:
+    container_id = _require_string(value)
+    if (
+        len(container_id) != CONTAINER_ID_LENGTH
+        or not container_id.startswith(CONTAINER_ID_PREFIX)
+        or any(char not in "0123456789abcdef" for char in container_id[3:])
+    ):
+        raise BrokerError("invalid container id")
+    return container_id
+
+
+def _validate_job(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise BrokerError("invalid job")
+    allowed = {
+        "job_id", "org_id", "account_id", "transcript_id", "requester_id",
+        "opportunity_id", "skill", "skill_version", "requested_model",
+        "requested_runtime_version", "mode", "attempt_number",
+        "input_manifest", "allowlist", "execution_deadline",
+        "input_workspace", "output_workspace", "attempt_id", "proxy_token",
+        "proxy_uds_path",
+    }
+    if set(value) != allowed:
+        raise BrokerError("job has unexpected fields")
+    manifest = value["input_manifest"]
+    if not isinstance(manifest, dict) or set(manifest) != {
+        "transcript_id", "transcript_ref", "account_id", "org_id",
+        "opportunity_id", "prior_context_refs",
+    }:
+        raise BrokerError("job manifest has unexpected fields")
+    allowlist = value["allowlist"]
+    if not isinstance(allowlist, dict) or set(allowlist) != {"tools", "network"}:
+        raise BrokerError("job allowlist has unexpected fields")
+    if not isinstance(allowlist["tools"], list) or not isinstance(allowlist["network"], list):
+        raise BrokerError("job allowlist has invalid fields")
+    for destination in allowlist["network"]:
+        if not isinstance(destination, dict) or set(destination) != {
+            "host", "port", "scheme", "path_prefix"
+        }:
+            raise BrokerError("job network has unexpected fields")
+    return dict(value)
+
+
+def _load_request(stream: Any) -> tuple[str, RunRequest | tuple[Path, str, int] | None]:
+    try:
+        request = json.load(stream)
+    except (ValueError, TypeError):
+        raise BrokerError("request is not JSON") from None
+    if not isinstance(request, dict) or set(request) != {
+        "operation", "container_id", "input_dir", "output_dir",
+        "proxy_uds_path", "job",
+    }:
+        raise BrokerError("request has unexpected fields")
+    operation = _require_string(request["operation"])
+    if operation not in REQUEST_OPERATIONS:
+        raise BrokerError("unsupported operation")
+    container_id = _validate_container_id(request["container_id"])
+    root_dir = Path(_require_string(request["output_dir"]))
+    minimum_age_seconds = request["minimum_age_seconds"]
+    if minimum_age_seconds is not None and (
+        not isinstance(minimum_age_seconds, int) or minimum_age_seconds < 0
+    ):
+        raise BrokerError("invalid cleanup age")
+    if operation in {"list", "delete", "cleanup"}:
+        return operation, (root_dir, container_id, minimum_age_seconds or 0)
+    proxy = request["proxy_uds_path"]
+    if proxy is not None and not isinstance(proxy, str):
+        raise BrokerError("invalid proxy path")
+    return operation, RunRequest(
+        container_id=container_id,
+        input_dir=Path(_require_string(request["input_dir"])),
+        output_dir=root_dir,
+        proxy_uds_path=Path(proxy) if proxy else None,
+        job=_validate_job(request["job"]),
+    )
+
+
+def _safe_worker_path(path: Path, prefix: str, worker_uid: int | None = None) -> None:
+    if path.parent != Path("/tmp") or not path.name.startswith(prefix):
+        raise BrokerError("worker path is outside the approved workspace")
+    try:
+        facts = path.lstat()
+    except OSError as exc:
+        raise BrokerError("worker path is unavailable") from exc
+    if (
+        not stat.S_ISDIR(facts.st_mode)
+        or stat.S_ISLNK(facts.st_mode)
+        or (worker_uid is not None and facts.st_uid != worker_uid)
+    ):
+        raise BrokerError("worker workspace is not a directory")
+
+
+def _safe_socket_path(path: Path, worker_uid: int | None = None) -> None:
+    if path.parent.parent != Path("/tmp") or not path.parent.name.startswith("se-proxy-"):
+        raise BrokerError("proxy path is outside the approved workspace")
+    try:
+        facts = path.lstat()
+    except OSError as exc:
+        raise BrokerError("proxy socket is unavailable") from exc
+    if (
+        stat.S_ISLNK(facts.st_mode)
+        or not stat.S_ISSOCK(facts.st_mode)
+        or (worker_uid is not None and facts.st_uid != worker_uid)
+    ):
+        raise BrokerError("proxy path is not a socket")
+
+
+def _root_directory(path: Path) -> None:
+    try:
+        facts = path.lstat()
+    except OSError as exc:
+        raise BrokerError("broker root is unavailable") from exc
+    if (
+        stat.S_ISLNK(facts.st_mode)
+        or not stat.S_ISDIR(facts.st_mode)
+        or facts.st_uid != 0
+        or facts.st_mode & 0o022
+    ):
+        raise BrokerError("broker root is unsafe")
+
+
+def _root_executable(path: Path) -> None:
+    try:
+        facts = path.lstat()
+    except OSError as exc:
+        raise BrokerError("broker executable is unavailable") from exc
+    if (
+        stat.S_ISLNK(facts.st_mode)
+        or not stat.S_ISREG(facts.st_mode)
+        or facts.st_uid != 0
+        or facts.st_mode & 0o022
+        or not facts.st_mode & 0o111
+    ):
+        raise BrokerError("broker executable is unsafe")
+
+
+def _make_tree_read_only(path: Path) -> None:
+    for child in path.rglob("*"):
+        if child.is_symlink():
+            raise BrokerError("worker workspace contains a symlink")
+        facts = child.lstat()
+        if facts.st_uid != 0:
+            os.chown(child, 0, 0)
+        if child.is_dir():
+            os.chmod(child, 0o555)
+        elif child.is_file():
+            os.chmod(child, 0o444)
+        else:
+            raise BrokerError("worker workspace contains a special file")
+    os.chown(path, 0, 0)
+    os.chmod(path, 0o555)
+
+
+def _make_output_writable(path: Path, config: BrokerConfig) -> None:
+    for child in path.rglob("*"):
+        if child.is_symlink():
+            raise BrokerError("worker output contains a symlink")
+        facts = child.lstat()
+        if child.is_dir():
+            os.chown(child, config.worker_uid, config.worker_gid)
+            os.chmod(child, 0o777)
+        elif child.is_file():
+            os.chown(child, config.worker_uid, config.worker_gid)
+            os.chmod(child, 0o666)
+        else:
+            raise BrokerError("worker output contains a special file")
+    os.chown(path, 0, 0)
+    os.chmod(path, 0o777)
+
+
+def _fixed_config(
+    config: BrokerConfig,
+    state_dir: Path,
+    bundle_dir: Path,
+    job_path: Path,
+    input_dir: Path,
+    output_dir: Path,
+    proxy_path: Path | None,
+    container_id: str,
+) -> dict[str, Any]:
+    mounts: list[dict[str, Any]] = [
+        {"destination": "/proc", "source": "proc", "type": "proc"},
+        {
+            "destination": "/tmp",
+            "source": "tmpfs",
+            "type": "tmpfs",
+            "options": ["nosuid", "nodev", "noexec", "mode=1777", "size=128m"],
+        },
+        {
+            "destination": "/runtime/job.json",
+            "source": str(job_path),
+            "type": "bind",
+            "options": ["bind", "ro"],
+        },
+        {
+            "destination": "/runtime/input",
+            "source": str(input_dir),
+            "type": "bind",
+            "options": ["bind", "ro"],
+        },
+        {
+            "destination": "/runtime/output",
+            "source": str(output_dir),
+            "type": "bind",
+            "options": ["bind", "rw"],
+        },
+    ]
+    if proxy_path is not None:
+        mounts.append({
+            "destination": "/runtime/proxy.sock",
+            "source": str(proxy_path),
+            "type": "bind",
+            "options": ["bind", "rw"],
+        })
+    return {
+        "ociVersion": "1.1.0",
+        "process": {
+            "terminal": False,
+            "user": {"uid": 65532, "gid": 65532, "umask": 27},
+            "args": ["/usr/bin/python3", "/app/webapp/hosted/runsc/sandbox_entry.py"],
+            "env": [
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "PYTHONPATH=/app/venv/lib/python3.11/site-packages:/app",
+                "SE_RUNTIME_JOB_PATH=/runtime/job.json",
+                "SE_RUNTIME_RESULT_PATH=/runtime/output/result.json",
+            ],
+            "cwd": "/tmp",
+            "rlimits": [
+                {"type": "RLIMIT_CPU", "hard": 120, "soft": 120},
+                {"type": "RLIMIT_AS", "hard": 2_000_000_000, "soft": 2_000_000_000},
+                {"type": "RLIMIT_NOFILE", "hard": 1024, "soft": 1024},
+                {"type": "RLIMIT_FSIZE", "hard": 100_000_000, "soft": 100_000_000},
+                {"type": "RLIMIT_NPROC", "hard": 64, "soft": 64},
+            ],
+            "noNewPrivileges": True,
+            "capabilities": {
+                "bounding": [], "effective": [], "permitted": [],
+                "inheritable": [], "ambient": [],
+            },
+        },
+        "root": {"path": str(config.rootfs), "readonly": True},
+        "hostname": container_id,
+        "mounts": mounts,
+        "linux": {
+            "namespaces": [
+                {"type": "pid"}, {"type": "network"}, {"type": "ipc"},
+                {"type": "uts"}, {"type": "mount"},
+            ],
+            "resources": {
+                "cpu": {"shares": 1024, "quota": 100000, "period": 100000},
+                "memory": {"limit": 2147483648, "reservation": 268435456},
+                "pids": {"limit": 64},
+            },
+            "maskedPaths": [
+                "/proc/acpi", "/proc/asound", "/proc/kcore", "/proc/keys",
+                "/proc/latency_stats", "/proc/timer_list", "/proc/timer_stats",
+                "/proc/sched_debug", "/proc/scsi", "/sys/firmware",
+                "/sys/devices/virtual/powercap",
+            ],
+            "readonlyPaths": [
+                "/proc/bus", "/proc/fs", "/proc/irq", "/proc/sys",
+                "/proc/sysrq-trigger",
+            ],
+        },
+    }
+
+
+def _run(config: BrokerConfig, request: RunRequest) -> int:
+    for root in (config.state_root, config.bundle_root, config.staging_root):
+        _root_directory(root)
+    _root_directory(config.rootfs)
+    _root_executable(config.runsc)
+    _safe_worker_path(request.input_dir, "se-runtime-input-", config.worker_uid)
+    _safe_worker_path(request.output_dir, "se-runtime-output-", config.worker_uid)
+    if request.proxy_uds_path is not None:
+        _safe_socket_path(request.proxy_uds_path, config.worker_uid)
+    container_dir = config.staging_root / request.container_id
+    bundle_dir = config.bundle_root / request.container_id
+    state_dir = config.state_root / request.container_id
+    if any(path.exists() or path.is_symlink() for path in (container_dir, bundle_dir, state_dir)):
+        raise BrokerError("container state already exists")
+    container_dir.mkdir(mode=0o700)
+    bundle_dir.mkdir(mode=0o700)
+    state_dir.mkdir(mode=0o700)
+    staged_input = container_dir / "input"
+    staged_output = container_dir / "output"
+    staged_proxy = container_dir / "proxy.sock"
+    job_path = bundle_dir / "job.json"
+    config_path = bundle_dir / "config.json"
+    try:
+        os.rename(request.input_dir, staged_input)
+        os.rename(request.output_dir, staged_output)
+        for staged_path in (staged_input, staged_output):
+            facts = staged_path.lstat()
+            if stat.S_ISLNK(facts.st_mode) or not stat.S_ISDIR(facts.st_mode):
+                raise BrokerError("worker workspace sealing failed")
+        os.mkdir(request.output_dir, 0o700)
+        os.chown(request.output_dir, 0, 0)
+        _make_tree_read_only(staged_input)
+        _make_output_writable(staged_output, config)
+        if request.proxy_uds_path is not None:
+            os.rename(request.proxy_uds_path, staged_proxy)
+            facts = staged_proxy.lstat()
+            if stat.S_ISLNK(facts.st_mode) or not stat.S_ISSOCK(facts.st_mode):
+                raise BrokerError("proxy sealing failed")
+        job_path.write_text(json.dumps(request.job, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+        os.chown(job_path, 0, 0)
+        os.chmod(job_path, 0o400)
+        config_path.write_text(
+            json.dumps(
+                _fixed_config(
+                    config, state_dir, bundle_dir, job_path, staged_input,
+                    staged_output, staged_proxy if request.proxy_uds_path else None,
+                    request.container_id,
+                ),
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            encoding="utf-8",
+        )
+        os.chown(config_path, 0, 0)
+        os.chmod(config_path, 0o400)
+        process = subprocess.run(
+            [
+                str(config.runsc), f"--root={state_dir}", "--network=none",
+                "run", "--bundle", str(bundle_dir), request.container_id,
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        return process.returncode
+    finally:
+        if request.output_dir.exists() and request.output_dir.is_dir():
+            shutil.rmtree(request.output_dir, ignore_errors=True)
+        if staged_output.exists():
+            os.rename(staged_output, request.output_dir)
+            _make_output_writable(request.output_dir, config)
+        shutil.rmtree(container_dir, ignore_errors=True)
+        shutil.rmtree(bundle_dir, ignore_errors=True)
+
+
+def _run_simple(config: BrokerConfig, operation: str, root_dir: Path, container_id: str) -> int:
+    _root_directory(config.state_root)
+    expected = config.state_root / container_id
+    if root_dir != expected:
+        raise BrokerError("state path is outside the approved root")
+    if not expected.is_dir() or expected.is_symlink():
+        raise BrokerError("state path is unavailable")
+    command = [str(config.runsc), f"--root={expected}", operation]
+    if operation == "list":
+        command.append("--format=text")
+        result = subprocess.run(
+            command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False
+        )
+        sys.stdout.buffer.write(result.stdout)
+        return result.returncode
+    command.extend(["--force", container_id])
+    result = subprocess.run(
+        command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False
+    )
+    if result.returncode != 0:
+        return result.returncode
+    listed = subprocess.run(
+        [str(config.runsc), f"--root={expected}", "list", "--format=text"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if listed.returncode != 0:
+        return listed.returncode
+    lines = listed.stdout.decode("utf-8", errors="replace").splitlines()
+    if not lines or not lines[0].startswith("ID"):
+        return 65
+    if any(line.split()[:1] == [container_id] for line in lines[1:]):
+        return 66
+    shutil.rmtree(expected)
+    return 0
+
+
+def _run_cleanup(config: BrokerConfig, minimum_age_seconds: int) -> int:
+    """Reclaim only old terminal or verified-absent broker-owned state."""
+    _root_directory(config.state_root)
+    _root_directory(config.bundle_root)
+    now = int(__import__("time").time())
+    for state in sorted(config.state_root.iterdir(), key=lambda path: path.name):
+        if not state.is_dir() or state.is_symlink() or now - int(state.stat().st_mtime) < minimum_age_seconds:
+            continue
+        try:
+            container_id = _validate_container_id(state.name)
+            listed = subprocess.run(
+                [str(config.runsc), f"--root={state}", "list", "--format=text"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            if listed.returncode != 0:
+                continue
+            lines = listed.stdout.decode("utf-8", errors="replace").splitlines()
+            if not lines or not lines[0].startswith("ID"):
+                continue
+            status = "absent"
+            for line in lines[1:]:
+                parts = line.split()
+                if parts and parts[0] == container_id:
+                    status = parts[2].lower() if len(parts) > 2 else ""
+                    break
+            if status not in {"dead", "stopped", "exited", "failed", "terminated", "absent"}:
+                continue
+            if status != "absent" and _run_simple(config, "delete", state, container_id) != 0:
+                continue
+            if status == "absent":
+                shutil.rmtree(state)
+            bundle = config.bundle_root / container_id
+            if bundle.is_dir() and not bundle.is_symlink():
+                shutil.rmtree(bundle)
+        except (BrokerError, OSError, ValueError):
+            continue
+    for bundle in sorted(config.bundle_root.iterdir(), key=lambda path: path.name):
+        if (
+            bundle.is_dir()
+            and not bundle.is_symlink()
+            and now - int(bundle.stat().st_mtime) >= minimum_age_seconds
+            and not (config.state_root / bundle.name).exists()
+        ):
+            try:
+                _validate_container_id(bundle.name)
+                shutil.rmtree(bundle)
+            except (BrokerError, OSError):
+                continue
+    return 0
+
+
+def main() -> int:
+    try:
+        config = BrokerConfig.load()
+        operation, request = _load_request(sys.stdin)
+        if operation == "run":
+            assert isinstance(request, RunRequest)
+            return _run(config, request)
+        assert isinstance(request, tuple)
+        if operation == "cleanup":
+            return _run_cleanup(config, request[2])
+        return _run_simple(config, operation, request[0], request[1])
+    except (BrokerError, OSError, AssertionError):
+        _fail()
+    return 64
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

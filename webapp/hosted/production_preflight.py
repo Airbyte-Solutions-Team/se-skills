@@ -23,6 +23,7 @@ class ProductionPreflightSettings(BaseModel):
     runsc_path: str
     runsc_helper_path: str = "/usr/local/sbin/se-skills-runsc"
     runsc_sudoers_path: str = "/etc/sudoers.d/se-skills-runsc"
+    runsc_broker_config_path: str = "/etc/se-skills/runsc-broker.json"
     rootfs_path: str
     manifest_path: str
     hosted_env: str
@@ -112,6 +113,7 @@ def run_production_preflight(
             runsc_path=settings.runsc_path,
             runsc_helper_path=settings.runsc_helper_path,
             runsc_sudoers_path=settings.runsc_sudoers_path,
+            runsc_broker_config_path=settings.runsc_broker_config_path,
             present_config_names=settings.present_config_names,
             model_proxy_secret=settings.model_proxy_secret,
             anthropic_api_url=settings.anthropic_api_url,

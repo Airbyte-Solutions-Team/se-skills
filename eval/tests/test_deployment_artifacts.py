@@ -269,26 +269,15 @@ def test_pinned_actionlint_rejects_old_input_context_fixture_when_available() ->
 
 
 def test_runsc_helper_rejects_flags_not_emitted_by_worker(tmp_path: Path) -> None:
-    template = (
-        ROOT
-        / "deploy/ansible/roles/hosted_worker/templates/se-skills-runsc.j2"
-    ).read_text()
-    helper = tmp_path / "se-skills-runsc"
-    helper.write_text(
-        template
-        .replace("{{ hosted_runsc_binary }}", "/bin/true")
-        .replace("{{ hosted_runsc_state_dir }}", str(tmp_path / "runsc"))
-        .replace("{{ hosted_bundle_dir }}", str(tmp_path / "bundles")),
-        encoding="utf-8",
-    )
-    helper.chmod(0o755)
+    helper = ROOT / "scripts/runsc_broker.py"
     result = subprocess.run(
-        [
-            str(helper),
-            f"--root={tmp_path / 'runsc' / 'attempt'}",
-            "list",
-            "--format=json",
-        ],
+        [str(helper)],
+        input=(
+            '{"operation":"list","container_id":"se-aaaaaaaaaaaa",'
+            '"input_dir":"","output_dir":"/tmp/runsc",'
+            '"proxy_uds_path":null,"minimum_age_seconds":null,'
+            '"job":null,"unknown":"field"}'
+        ),
         capture_output=True,
         text=True,
         check=False,

@@ -66,10 +66,12 @@ class _Probe:
             return PathFacts(True, "root", "root", 0o755, True, False)
         if path == "/etc/sudoers.d/se-skills-runsc":
             return PathFacts(True, "root", "root", 0o440, True, False)
+        if path == "/etc/se-skills/runsc-broker.json":
+            return PathFacts(True, "root", "root", 0o644, True, False)
         if path == "/var/lib/se-skills":
-            return PathFacts(True, "se-worker", "se-worker", 0o750, False, True)
+            return PathFacts(True, "root", "root", 0o750, False, True)
         if path in {"/var/lib/se-skills/runsc", "/var/lib/se-skills/bundles"}:
-            return PathFacts(True, "se-worker", "se-worker", 0o700, False, True)
+            return PathFacts(True, "root", "root", 0o700, False, True)
         if path == str(self.root):
             return PathFacts(True, "root", "root", 0o755, False, True)
         if candidate.is_file():
@@ -78,7 +80,14 @@ class _Probe:
             return PathFacts(True, "root", "root", 0o755, False, True)
         return PathFacts(False, None, None, None, False, False)
 
-    def command(self, argv: Sequence[str]) -> SupplyChainCommandResult:
+    def command(
+        self, argv: Sequence[str], stdin: str | None = None
+    ) -> SupplyChainCommandResult:
+        if stdin is not None:
+            return SupplyChainCommandResult(
+                returncode=1 if "unknown" in stdin else 0,
+                stdout="ID\tPID\tSTATUS\n",
+            )
         if argv[:2] == ("nft", "list"):
             return SupplyChainCommandResult(returncode=0, stdout=self.firewall)
         if argv and argv[0] == "cosign":
@@ -157,12 +166,14 @@ class _Probe:
 
     def file_text(self, path: str) -> str | None:
         if path == "/etc/sudoers.d/se-skills-runsc":
-            return "se-worker ALL=(root) NOPASSWD: /usr/local/sbin/se-skills-runsc *\n"
+            return "se-worker ALL=(root) NOPASSWD: /usr/local/sbin/se-skills-runsc\n"
         if path == "/usr/local/sbin/se-skills-runsc":
+            return 'CONFIG_PATH = Path("/etc/se-skills/runsc-broker.json")\n'
+        if path == "/etc/se-skills/runsc-broker.json":
             return (
-                'runsc="/usr/local/bin/runsc"\n'
-                'state_root="/var/lib/se-skills/runsc"\n'
-                'bundle_root="/var/lib/se-skills/bundles"\n'
+                '{"runsc": "/usr/local/bin/runsc", '
+                '"state_root": "/var/lib/se-skills/runsc", '
+                '"bundle_root": "/var/lib/se-skills/bundles"}'
             )
         candidate = Path(path)
         return candidate.read_text(encoding="utf-8") if candidate.is_file() else None
