@@ -13,9 +13,8 @@ on:
         default: ghcr.io
         type: string
       image:
-        description: "Repository/image name"
+        description: "Image path in the form <owner>/<repo>/se-skills-sandbox"
         required: true
-        default: ${{ github.repository }}/se-skills-sandbox
         type: string
       tag:
         description: "Immutable release tag"
@@ -42,6 +41,21 @@ jobs:
             refs/heads/main|refs/tags/v[0-9]*.[0-9]*.[0-9]*) ;;
             *)
               echo "release signing is only permitted from main or an approved v* tag" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Validate image namespace
+        env:
+          IMAGE_NAME: ${{ inputs.image }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          case "$IMAGE_NAME" in
+            "$REPOSITORY/se-skills-sandbox")
+              ;;
+            *)
+              echo "image must be within the running repository namespace" >&2
               exit 1
               ;;
           esac

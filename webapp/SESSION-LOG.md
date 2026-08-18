@@ -7,6 +7,14 @@ _Last updated: August 18, 2026 — HEAD 06d8970 on `devin/slice5b2b1-deployment-
 
 ## Built this session (newest first — see `git log`)
 
+- **Release workflow input validation (August 18).**
+  1. Removed the unsupported repository expression from the manual image
+     input default.
+  2. Added a namespace gate requiring the image path to remain under the
+     running repository.
+  3. Audited the remaining workflow expressions; expressions are confined to
+     job/step contexts supported by GitHub Actions.
+
 - **Release-ref and installer follow-ups (August 18).**
   1. Require approved release tags to point at commits reachable from
      `origin/main`, with full checkout history and an early ref-shape gate.

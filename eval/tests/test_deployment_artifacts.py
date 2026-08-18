@@ -164,6 +164,12 @@ def test_release_workflow_is_manual_and_confirmed() -> None:
     assert "BUILD_SANDBOX_IMAGE" in text
     assert "environment: sandbox-release" in text
     assert "PUBLISH: \"1\"" in text
+    on_block = workflow.get("on", workflow.get(True, {}))
+    assert "${{" not in yaml.safe_dump(on_block)
+    image_input = on_block["workflow_dispatch"]["inputs"]["image"]
+    assert image_input["required"] is True
+    assert "default" not in image_input
+    assert "<owner>/<repo>/se-skills-sandbox" in image_input["description"]
     assert "docker push" in (
         ROOT / "deploy/images/build_sandbox_image.sh"
     ).read_text()
@@ -188,6 +194,10 @@ def test_release_workflow_gates_signing_to_approved_refs() -> None:
     assert text.index("Validate approved release ref") < text.index(
         "Build and verify sandbox image"
     )
+    assert text.index("Validate image namespace") < text.index(
+        "Build and verify sandbox image"
+    )
+    assert '"$REPOSITORY/se-skills-sandbox"' in text
     assert text.index("Verify approved release commit") < text.index(
         "Build and verify sandbox image"
     )

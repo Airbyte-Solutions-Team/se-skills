@@ -81,6 +81,9 @@ The release workflow is `workflow_dispatch`-only, requires
 `BUILD_SANDBOX_IMAGE`, uses the protected `sandbox-release` environment, and
 rejects signing from refs other than `main` or an approved immutable `v*` tag
 whose commit is reachable from `origin/main`.
+When dispatching it, provide the image input as
+`<owner>/<repo>/se-skills-sandbox`; the workflow rejects image paths outside
+the running repository namespace.
 The current Linux-amd64 tool pins are Syft 1.50.0, Grype 0.116.1, and Cosign
 3.1.3; only releases public for at least seven days are eligible for these
 pins. Their checksums live in `deploy/pins.json` and the workflow verifies
