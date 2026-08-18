@@ -236,21 +236,54 @@ This is the source of truth for productionalization slices and progress. Each sl
 
 ---
 
-## Slice 5B2: Production gVisor sandbox and hosted model proxy
+## Slice 5B2A: Production-shaped gVisor `runsc` execution and worker-side Anthropic model proxy
 
-**Status:** `Proposed`
+**Status:** `Complete` (PR #45)
 
-**Product outcome:** The trusted orchestration from Slice 5B1 runs inside a production gVisor container with a worker-side Anthropic Messages API proxy, completing the isolated hosted post-call runtime.
+**Product outcome:** The trusted Slice 5B1 orchestration invokes a per-attempt gVisor `runsc` sandbox that runs the existing manual typed-tool loop. All model traffic passes through a trusted worker-side proxy; the sandbox never receives the Anthropic API key or unrestricted network access. The slice is deterministic and deployable without paid cloud infrastructure.
 
 **Scope:**
-- Implement the production Anthropic model proxy and gVisor/runsc image/lifecycle chosen in ADR-005.
-- Enforce job-level filesystem isolation, deny-by-default network egress, and immutable wall-clock deadlines inside the sandbox.
-- Provision deployment hosts and operational runbook; add gated real-sandbox integration tests marked/skipped when runsc is unavailable.
+- Minimal OCI image and sandbox entry point with a pinned base-image digest, non-root UID/GID, and only the runtime dependencies.
+- `runsc` executor: one ephemeral sandbox per attempt, explicit argv arrays, read-only input mounts, read-write output mount, read-only root filesystem, dropped capabilities, `no_new_privileges`, and bounded CPU/memory/PID/file-size/open-file/output limits.
+- Worker-side Anthropic Messages API proxy with job-scoped capability tokens, request-shape validation, header stripping, deadline propagation, and trusted token-usage accounting.
+- Deny-by-default sandbox egress reachable only to the per-job model-proxy endpoint.
+- Worker runtime selection in `scripts/run_hosted_worker.py`; `EchoExecutor` remains available, `runsc` mode is explicit and fails closed when prerequisites are missing.
+- Deterministic unit tests with fakes for subprocess, proxy, and network isolation; a gated real-`runsc` marker skipped when `runsc`/privileges are unavailable.
 
 **Dependencies:** Slice 5B1.
 
 **Acceptance criteria:**
-- `post-call` runs from an uploaded transcript inside the sandbox and produces Markdown + sidecar.
+- Sandbox image builds reproducibly and contains no shell, Git, browser, MCP discovery, package manager, cloud credentials, or provider key.
+- Sandbox accepts `RuntimeJob` from bounded IPC, writes only `output.md`/`sidecar.json`, and emits only bounded `RuntimeResult`/redacted failures.
+- `runsc` executor never interpolates job data into shell commands and removes all bundles/ephemeral directories on cancellation, timeout, proxy failure, or worker shutdown.
+- Proxy rejects expired, replayed, malformed, cross-job, cross-attempt, wrong-model, and wrong-route requests; only the approved method/route/content-type/bounded JSON body reaches Anthropic.
+- Sandbox can reach the proxy endpoint and nothing else; direct Anthropic, DNS, metadata, database, Storage, and arbitrary localhost access fail closed.
+- Actual `requested_model`, runtime version, trusted token usage, and cost flow through the existing worker/orchestrator persistence path.
+- Existing deterministic test suite passes with `EchoExecutor`; new fake-runsc/proxy tests exercise the full trust boundary.
+
+**Non-goals:**
+- No cloud-host provisioning, production firewall/namespace setup, image registry signing/rollout, or fleet scaling.
+- No live Anthropic smoke tests in the default suite.
+- No Firecracker evaluation, Claude Code/CLI, or Agent SDK.
+
+---
+
+## Slice 5B2B: Deployment-host provisioning and production operations
+
+**Status:** `Proposed`
+
+**Product outcome:** The 5B2A sandbox and proxy are deployed on production hosts with the required network namespace, firewall, image registry, signing, observability, and operational runbook.
+
+**Scope:**
+- Dedicated VM vs managed Kubernetes/gVisor service vs managed container service selection.
+- Production namespace/firewall provisioning, registry, signing/SBOM, rollout/rollback, and fleet scaling.
+- Live Anthropic smoke tests and cost controls.
+- Firecracker evaluation, if desired later.
+
+**Dependencies:** Slice 5B2A.
+
+**Acceptance criteria:**
+- `post-call` runs from an uploaded transcript inside the sandbox on production infrastructure and produces a valid Markdown + sidecar.
 - Sandbox has no host filesystem access except the mounted transcript and read-only reference data.
 - Sandbox network egress is allowlisted and deny-by-default; model calls are mediated through the worker-side proxy.
 - No unrestricted shell, `bypassPermissions`, Git, browser automation, or local repo access.

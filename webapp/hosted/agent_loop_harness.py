@@ -378,12 +378,13 @@ class TypedToolRuntime:
         except (RuntimeError, ValueError):
             return _failure("configuration_error")
 
-        client = self.model_client or _default_client(proxy_url)
-        if str(client.base_url) != proxy_url:
+        client = self.model_client or _default_client(proxy_url, job.proxy_token, job.proxy_uds_path, job)
+        if _base_url_mismatch(client, proxy_url):
             return _failure("configuration_error")
 
         allowed_tools = job.allowlist.tools
         tools = _tool_definitions(allowed_tools)
+        request_seq = 0
         messages: list[Message] = [
             Message(
                 role="user",
@@ -410,13 +411,15 @@ class TypedToolRuntime:
 
             request = MessageRequest(
                 model=job.requested_model,
+                max_tokens=4096,
                 system=self._system_prompt(job),
                 messages=messages,
                 tools=tools,
             )
+            request_seq += 1
             try:
                 response = await _cancellable_await(
-                    _call_proxy(client, request),
+                    _call_proxy(client, request, request_seq),
                     cancellation,
                     timeout=remaining,
                 )
@@ -498,14 +501,43 @@ def _failure(category: FailureCategory) -> RuntimeResult:
     return RuntimeResult(failure=RedactedFailure(category=category))
 
 
-def _default_client(base_url: str) -> httpx.AsyncClient:
-    """Build a client that targets the single allowlisted model proxy destination."""
+def _default_client(
+    base_url: str,
+    proxy_token: str | None = None,
+    proxy_uds_path: str | None = None,
+    job: RuntimeJob | None = None,
+) -> httpx.AsyncClient:
+    """Build a client that targets the single allowlisted model proxy destination.
+
+    When `proxy_uds_path` is provided the client connects over a Unix domain
+    socket instead of TCP, which lets the gVisor sandbox run with `--network=none`
+    while still reaching the worker proxy.
+    """
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if proxy_token:
+        headers["Authorization"] = f"Bearer {proxy_token}"
+    if job is not None:
+        headers["x-job-id"] = str(job.job_id)
+        headers["x-attempt-number"] = str(job.attempt_number)
+        if job.attempt_id:
+            headers["x-attempt-id"] = job.attempt_id
+    if proxy_uds_path:
+        return httpx.AsyncClient(
+            base_url=base_url,
+            transport=httpx.AsyncHTTPTransport(uds=proxy_uds_path),
+            headers=headers,
+            timeout=httpx.Timeout(60.0),
+        )
     return httpx.AsyncClient(
         base_url=base_url,
-        # No Anthropic API key is attached here; the worker proxy adds it.
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         timeout=httpx.Timeout(60.0),
     )
+
+
+def _base_url_mismatch(client: httpx.AsyncClient, proxy_url: str) -> bool:
+    """Return True when the client's configured base URL does not match the proxy."""
+    return str(client.base_url).rstrip("/") != proxy_url.rstrip("/")
 
 
 async def _cancellable_await(
@@ -545,13 +577,17 @@ async def _cancellable_await(
     return request_task.result()
 
 
-async def _call_proxy(client: httpx.AsyncClient, request: MessageRequest) -> MessageResponse:
+async def _call_proxy(client: httpx.AsyncClient, request: MessageRequest, seq: int) -> MessageResponse:
     """POST a model turn to the worker proxy and parse the response.
 
     `exclude_none=True` keeps unknown/redacted/thinking fallback blocks from
     being reserialized with invented null fields that Anthropic rejects.
     """
-    response = await client.post("/v1/messages", json=request.model_dump(exclude_none=True))
+    response = await client.post(
+        "/v1/messages",
+        json=request.model_dump(exclude_none=True),
+        headers={"x-request-seq": str(seq)},
+    )
     response.raise_for_status()
     return MessageResponse(**response.json())
 

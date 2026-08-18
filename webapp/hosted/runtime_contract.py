@@ -66,8 +66,10 @@ def _is_safe_path(value: str) -> bool:
 
 
 def _is_safe_absolute_path(value: str) -> bool:
-    """Return True when an absolute sandbox path is under /tmp and has no traversal."""
-    if not value or not value.startswith("/tmp/"):
+    """Return True when an absolute sandbox path is under /tmp or /runtime and has no traversal."""
+    if not value:
+        return False
+    if not (value.startswith("/tmp/") or value.startswith("/runtime/")):
         return False
     if ".." in value or "~" in value:
         return False
@@ -306,11 +308,26 @@ class RuntimeJob(BaseModel):
     requested_model: str
     requested_runtime_version: str | None = None
     mode: Mode = "full"
+    attempt_number: int = 1
     input_manifest: InputManifest
     allowlist: Allowlist = Field(default_factory=Allowlist)
     execution_deadline: datetime
     input_workspace: str = "/tmp/runtime-input"
     output_workspace: str = "/tmp/runtime-output"
+    # Opaque attempt identity issued by the trusted worker. Used to bind proxy
+    # requests to the session without exposing the database lease token.
+    attempt_id: str = ""
+    # Short-lived, job-scoped proxy capability and optional UDS path. These are
+    # issued by the trusted worker and never contain the Anthropic API key.
+    proxy_token: str | None = None
+    proxy_uds_path: str | None = None
+
+    @field_validator("attempt_number")
+    @classmethod
+    def _validate_attempt_number(cls, value: int) -> int:
+        if value < 1:
+            raise RuntimeValidationError("attempt_number must be positive")
+        return value
 
     @field_validator("execution_deadline")
     @classmethod
@@ -323,14 +340,23 @@ class RuntimeJob(BaseModel):
     @classmethod
     def _validate_input_workspace(cls, value: str) -> str:
         if not _is_safe_absolute_path(value):
-            raise RuntimeValidationError("input_workspace must be an absolute sandbox path under /tmp with no traversal")
+            raise RuntimeValidationError("input_workspace must be an absolute sandbox path under /tmp or /runtime with no traversal")
         return value
 
     @field_validator("output_workspace")
     @classmethod
     def _validate_output_workspace(cls, value: str) -> str:
         if not _is_safe_absolute_path(value):
-            raise RuntimeValidationError("output_workspace must be an absolute sandbox path under /tmp with no traversal")
+            raise RuntimeValidationError("output_workspace must be an absolute sandbox path under /tmp or /runtime with no traversal")
+        return value
+
+    @field_validator("proxy_uds_path")
+    @classmethod
+    def _validate_proxy_uds_path(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        if not value.startswith("/runtime/") or ".." in value or "~" in value:
+            raise RuntimeValidationError("proxy_uds_path must be an absolute path under /runtime with no traversal")
         return value
 
     @model_validator(mode="after")

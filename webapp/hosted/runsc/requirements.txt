@@ -1,0 +1,13 @@
+# Pinned runtime dependencies for the gVisor sandbox image.
+# These are installed in a builder stage and copied to the distroless runtime.
+annotated-types==0.7.0
+anyio==4.8.0
+certifi==2024.12.14
+h11==0.14.0
+httpcore==1.0.7
+httpx==0.28.1
+idna==3.10
+pydantic==2.10.4
+pydantic-core==2.27.2
+sniffio==1.3.1
+typing_extensions==4.12.2

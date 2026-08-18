@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted — core runtime decision operative for Slice 5B1; cloud host / runsc provisioning / live Anthropic proxy remain Slice 5B2 decisions |
+| **Status** | Accepted — core runtime decision operative for Slices 5B1 and 5B2A; production host provisioning, registry signing, and live Anthropic smoke testing remain Slice 5B2B decisions |
 | **Date** | 2026-08-11 |
 | **Deciders** | Devin (implementation), requester (review) |
 | **Applies to** | Slice 5B1 (trusted worker-side orchestration) and Slice 5B2 (gVisor sandbox + production model proxy) |
@@ -68,7 +68,7 @@ The managed container option is treated as a deployment variant of option 1 rath
   - a network namespace that can only reach the worker's model proxy.
 - Inside the container, a small Python runtime runs a manual multi-step Anthropic Messages API loop with the `Allowlist` of typed tools.
 - Tool implementations are typed and sandbox-aware: `read_transcript`, `read_prior_context`, `write_output`, `list_priors`, `finish`, `report_failure`. Generic `Bash`, `Git`, `Browser`, `Http`, `McpDiscover`, and `BypassPermissions` are not registered and cannot be invoked.
-- Model calls do not leave the sandbox directly. The runtime POSTs to the worker's model proxy; the proxy adds the platform Anthropic API key and forwards the HTTPS call. The sandbox never sees the key.
+- Model calls do not leave the sandbox directly. The runtime POSTs to the worker's model proxy over a Unix domain socket (the sandbox runs with `--network=none`); the proxy validates a short-lived, job-scoped capability token, adds the platform Anthropic API key, and forwards the HTTPS call. The sandbox never sees the key.
 - The runtime writes `output.md` and `sidecar.json` into the temporary output directory.
 - The worker stops the container, validates the Markdown and sidecar with `output_schema.parse_output` outside the sandbox, and only then writes the validated artifacts to private org-scoped Storage and the `outputs` row.
 

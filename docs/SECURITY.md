@@ -71,9 +71,10 @@
 - The sandbox has no access to the host filesystem except explicitly mounted, read-only input files and a temporary writable workspace that is destroyed after the job.
 - The sandbox receives no host environment variables except an allowlist (for example, `PATH`, `HOME` for a temporary home, model endpoint config).
 - The runtime does not have unrestricted shell, `bypassPermissions`, arbitrary Git, browser/computer automation, local repository access, Live Transcribe, or arbitrary outbound network.
+- Network egress is deny-by-default. In `runsc --network=none` mode the sandbox reaches only the per-job worker-side model proxy over a Unix domain socket; direct Anthropic, DNS, metadata, database, Storage, and arbitrary localhost access are blocked.
 - Tool use is mediated and logged. The agent can only call tools that are registered in the runtime config for that job type.
 
-## Runtime contract and output validation (Slice 5A)
+## Runtime contract and output validation (Slices 5A and 5B2A)
 
 - The `SkillRuntime` protocol in `webapp/hosted/runtime_contract.py` is provider-neutral. A durable job carries only stable identifiers; transcript bodies, bearer tokens, signed URLs, DB credentials, Storage credentials, and arbitrary browser-supplied paths are never passed through the job payload.
 - `Allowlist` rejects generic tools such as `Bash`, `Shell`, `Exec`, `Git`, `Browser`, `Chrome`, `Http`, `McpDiscover`, and `BypassPermissions` at contract construction time. Each tool input is validated against a strict Pydantic model at dispatch. Only the Anthropic `tool_use` stop reason authorizes tool dispatch; `end_turn`/`stop_sequence` terminate a turn only when no tools are present, and every other stop reason (including unknown future values and `None`) fails closed as `model_error`.
@@ -84,11 +85,12 @@
 - `report_failure` is a controlled model-report tool: its input schema exposes only a closed `model_reported_failure` category, and the runtime maps it to the host-owned `model_error` category. The model cannot report lifecycle categories such as `cancelled`, `timeout`, or `configuration_error`.
 - `output_schema.parse_output` validates the generated Markdown and sidecar deterministically, without an LLM. For `post-call`, it requires a title, date, At a Glance decision fields, Key Takeaways, Action Items, Next Step, Source Coverage with concrete read/total counts, and rejects unfilled template placeholders. Conditional sections such as Sources & Destinations, Technical Notes, MEDDPICC Quick Pass, and Coaching Observations are not required when their triggering evidence is absent.
 - Only the worker persists validated artifacts to Storage and the `outputs` row; the sandbox has no direct access to either.
+- The sandbox model proxy (`webapp/hosted/model_proxy.py`) issues short-lived capability tokens bound to `job_id`, `attempt_number`, `lease_token`, `model`, `execution_deadline`, endpoint, and API version. The proxy overrides the model with the worker-authorized value, strips sandbox-supplied `x-api-key`/`anthropic-version`/`x-forwarded-for` headers, adds the real Anthropic key, and forwards only the Anthropic Messages API `v1/messages` route. Expired, replayed, malformed, cross-job, cross-attempt, wrong-model, and wrong-route requests are rejected.
 
 ## Tool and network allowlisting
 
-- Network egress is deny-by-default. Each job type declares an allowlist of domains and protocols.
-- `post-call` may need the model provider API and the transcript storage endpoint; it does not need general web access.
+- Network egress is deny-by-default. Each job type declares an allowlist of domains and protocols; in `runsc --network=none` mode this is realized as a single Unix domain socket to the per-job worker-side model proxy.
+- `post-call` reaches only the model proxy endpoint; it does not need general web access, DNS, metadata services, database sockets, or storage endpoints.
 - DNS resolution is restricted if possible; IP-based egress is blocked.
 - No tool or MCP may be called unless it is in the approved list for the skill and the job's network allowlist permits it.
 - Local-only tools (browser automation, `gh`/`git`, `sf` CLI, audio capture, arbitrary MCP servers) are not available in the hosted runtime.

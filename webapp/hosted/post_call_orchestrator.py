@@ -466,6 +466,8 @@ class PostCallOrchestrator:
             # deadline use a short default window.
             deadline = datetime.now(tz=timezone.utc) + timedelta(minutes=5)
 
+        attempt_number = int(job.get("attempt_number") or 1)
+
         return RuntimeJob(
             job_id=job_id,
             org_id=org_id,
@@ -478,6 +480,7 @@ class PostCallOrchestrator:
             requested_model=model,
             requested_runtime_version=runtime_version,
             mode=mode,  # type: ignore[arg-type]
+            attempt_number=attempt_number,
             input_manifest=manifest,
             allowlist=allowlist,
             execution_deadline=deadline,
