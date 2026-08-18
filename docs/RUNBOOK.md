@@ -69,13 +69,21 @@ Image promotion is manual and protected. Build the pinned image, run SBOM and
 vulnerability scans, push it, record the registry manifest digest, generate
 and attest digest-bound SBOM/provenance, and sign that digest. Install the
 resulting root-owned manifest and evidence files before starting the worker.
-The current Linux-amd64 tool pins are Syft 1.50.0, Grype 0.117.0, and Cosign
-3.1.3; the checksums live in `deploy/pins.json` and the workflow verifies each
-download before execution. Production preflight compares
+The current Linux-amd64 tool pins are Syft 1.50.0, Grype 0.116.1, and Cosign
+3.1.3; only releases public for at least seven days are eligible for these
+pins. Their checksums live in `deploy/pins.json` and the workflow verifies
+each download before execution. Production preflight compares
 `SANDBOX_IMAGE_DIGEST` with the manifest and repository pin, verifies every
 evidence file and parent directory, and hashes the deployed rootfs tree.
 The Ansible role validates and applies the firewall transaction before the
 systemd task enables or starts the worker.
+
+Before promotion, choose how the worker will reach Anthropic. The role accepts
+only address literals, and an empty `hosted_anthropic_host` intentionally
+installs no Anthropic HTTPS accept rule. Populate the approved address set and
+ensure `HOSTED_APPROVED_HTTPS_DESTINATIONS` matches the rendered accepts, or
+route the worker through an approved forward proxy. Maintained Anthropic CIDRs
+versus a forward proxy remains an open 5B2B2 decision.
 
 For containment, stop the worker, remove it from queue intake, preserve
 redacted logs and derived timestamps, rotate affected credentials, and

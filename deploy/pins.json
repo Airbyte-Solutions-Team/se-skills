@@ -30,9 +30,9 @@
       "sha256": "bf7b29ff57f06da30918266a0e1c2885a8f99784798d1bdb1628886aa015d788"
     },
     "grype": {
-      "version": "0.117.0",
-      "filename": "grype_0.117.0_linux_amd64.tar.gz",
-      "sha256": "38525dab1e06f162ebaa02f94d82d1f807076b011a44180cf2777edf1a7b9c26"
+      "version": "0.116.1",
+      "filename": "grype_0.116.1_linux_amd64.tar.gz",
+      "sha256": "0122df7b655981abe547ad3d2190d65551dac6a2bfc80b4dc2a989b5d0587458"
     },
     "cosign": {
       "version": "3.1.3",

@@ -309,7 +309,8 @@ and establish operational rollback and cost controls.
 network/VPC; DNS and certificate ownership; secret-manager choice; registry
 coordinates; observability backend; budget and token/cost alert thresholds;
 named operational owner and escalation path; approved beta users and test
-transcript; maintenance and rollback window.
+transcript; maintenance and rollback window; Anthropic egress mechanism
+(maintained pinned CIDRs or a forward proxy) and ownership of its updates.
 
 ## Slice 6A: Review, correction, approval, versioning, and audit
 

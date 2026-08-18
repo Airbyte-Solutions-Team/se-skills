@@ -21,10 +21,11 @@ loaded from `deploy/pins.json`; role defaults and paths are in
   required in the worker configuration and must match both the root-owned
   manifest and any non-null approved digest in `deploy/pins.json`.
 - Release tooling is pinned for Linux amd64 because this host contract is
-  x86_64: Syft `1.50.0`
+  x86_64. Each selected release must have been public for at least seven days
+  before it is recorded here: Syft `1.50.0`
   (`bf7b29ff57f06da30918266a0e1c2885a8f99784798d1bdb1628886aa015d788`),
-  Grype `0.117.0`
-  (`38525dab1e06f162ebaa02f94d82d1f807076b011a44180cf2777edf1a7b9c26`),
+  Grype `0.116.1`
+  (`0122df7b655981abe547ad3d2190d65551dac6a2bfc80b4dc2a989b5d0587458`),
   and Cosign `3.1.3`
   (`4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71`).
 
@@ -73,9 +74,16 @@ configured as address literals when needed.
 
 The required outbound destinations are the worker database, private Storage,
 approved registry, observability backend, time service, DNS, and Anthropic API
-as approved during 5B2B2. Host-level static IP allowlisting is defense in depth;
-the worker proxy's HTTPS hostname and request policy remain authoritative for
-changing provider addresses.
+as approved during 5B2B2. Every destination supplied to the role, including
+Anthropic, must be an IP address or CIDR literal. An unset destination produces
+no firewall accept rule; in particular, the default-empty Anthropic host means
+the worker cannot reach Anthropic until an operator supplies a concrete
+address-list or proxy arrangement. `HOSTED_APPROVED_HTTPS_DESTINATIONS` must
+match the destinations the rendered table actually accepts for the worker UID.
+Host-level static IP allowlisting is defense in depth; the worker proxy's TLS
+hostname verification and request policy remain authoritative for changing
+provider addresses. Choosing maintained Anthropic CIDRs versus a forward proxy
+is an open 5B2B2 operator decision.
 
 ## Secrets and data handling
 
