@@ -2,10 +2,17 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 18, 2026 — HEAD d5f6f86 on `devin/slice5b2b1-deployment-foundation`. Closed deployment preflight and release-tooling gaps._
+_Last updated: August 18, 2026 — HEAD aea7593 on `devin/slice5b2b1-deployment-foundation`. Documented pin currency and Anthropic egress decisions._
 
 
 ## Built this session (newest first — see `git log`)
+
+- **Pin currency and Anthropic egress documentation (August 18).**
+  1. Pinned Grype to `0.116.1`, requiring release pins to be at least seven
+     days old and preserving the verified checksum.
+  2. Documented that worker destinations, including Anthropic, must be address
+     literals; an unset Anthropic host creates no accept rule, and choosing
+     maintained CIDRs versus a forward proxy remains a 5B2B2 decision.
 
 - **Offline smoke fixture follows fail-closed firewall preflight (August 18).**
   The deterministic fixture now includes both drop-policy chains and an
