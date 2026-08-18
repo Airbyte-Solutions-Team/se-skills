@@ -48,8 +48,42 @@ jobs:
       - name: Lint all workflow files
         run: ACTIONLINT_BIN="$PWD/.tools/actionlint" ./scripts/check-workflows.sh
 
+      - name: Diagnose broker lifecycle privilege paths
+        run: |
+          set +e
+          sysctl kernel.apparmor_restrict_unprivileged_userns
+          unshare --map-root-user --mount --fork true
+          echo "unshare_userns_exit=$?"
+          sudo --non-interactive unshare --mount --fork true
+          echo "sudo_root_mount_exit=$?"
+
       - name: Run pytest
-        run: uv run --extra dev pytest eval/ -v
+        run: uv run --extra dev pytest eval/ -v -rs --junitxml=/tmp/eval-junit.xml
+
+      - name: Require real broker lifecycle coverage
+        run: |
+          uv run python - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("/tmp/eval-junit.xml").getroot()
+          cases = [
+              case
+              for case in root.iter("testcase")
+              if "test_runsc_broker_lifecycle" in case.attrib.get("classname", "")
+          ]
+          executed = [
+              case
+              for case in cases
+              if case.find("skipped") is None
+          ]
+          if not cases:
+              raise SystemExit("broker lifecycle test file collected no tests")
+          if not executed:
+              raise SystemExit(
+                  "broker lifecycle test file collected tests but executed none"
+              )
+          print(f"broker lifecycle cases: {len(executed)} executed")
+          PY
 
       - name: Run mock evaluation suite
         run: uv run python -m eval.runner run-suite --manifest-dir eval/manifests/phase1 --executor mock

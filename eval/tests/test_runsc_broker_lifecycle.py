@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -15,26 +16,52 @@ ROOT = Path(__file__).parents[2]
 BROKER = ROOT / "scripts/runsc_broker.py"
 
 
-def _unshare_available() -> bool:
-    result = subprocess.run(
-        [
-            "unshare",
-            "--map-root-user",
-            "--mount",
-            "--fork",
-            sys.executable,
-            "-c",
-            "import os; assert os.getuid() == 0",
-        ],
-        capture_output=True,
-        check=False,
-    )
-    return result.returncode == 0
+def _lifecycle_command_prefix() -> tuple[str, ...] | None:
+    if shutil.which("unshare") is not None:
+        result = subprocess.run(
+            [
+                "unshare",
+                "--map-root-user",
+                "--mount",
+                "--fork",
+                sys.executable,
+                "-c",
+                "import os; assert os.getuid() == 0",
+            ],
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            return ("unshare", "--map-root-user", "--mount", "--fork")
+    if shutil.which("sudo") is not None:
+        result = subprocess.run(
+            ["sudo", "--non-interactive", "unshare", "--mount", "--fork", "true"],
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            return ("sudo", "--non-interactive", "unshare", "--mount", "--fork")
+    return None
+
+
+_LIFECYCLE_COMMAND_PREFIX = _lifecycle_command_prefix()
+
+
+def _skip_reason() -> str:
+    if shutil.which("unshare") is None:
+        namespace_reason = "unshare is unavailable"
+    else:
+        namespace_reason = "unshare --map-root-user --mount user namespace is unavailable"
+    if shutil.which("sudo") is None:
+        sudo_reason = "sudo is unavailable"
+    else:
+        sudo_reason = "passwordless sudo -n root fallback is unavailable"
+    return f"{namespace_reason}; {sudo_reason}"
 
 
 pytestmark = pytest.mark.skipif(
-    not _unshare_available(),
-    reason="user namespaces unavailable: unshare --map-root-user --mount failed",
+    _LIFECYCLE_COMMAND_PREFIX is None,
+    reason=_skip_reason(),
 )
 
 
@@ -58,12 +85,10 @@ def test_real_signal_reconciles_every_custody_phase(
         ),
         encoding="utf-8",
     )
+    assert _LIFECYCLE_COMMAND_PREFIX is not None
     result = subprocess.run(
         [
-            "unshare",
-            "--map-root-user",
-            "--mount",
-            "--fork",
+            *_LIFECYCLE_COMMAND_PREFIX,
             sys.executable,
             str(child),
         ],
