@@ -21,6 +21,7 @@ import httpx
 import jwt
 import pytest
 
+from webapp.hosted import config as hosted_config
 from webapp.hosted.model_proxy import ModelProxy, ProxyConfig
 from webapp.hosted.runtime_contract import (
     Allowlist,
@@ -926,10 +927,15 @@ async def test_runsc_sandbox_delete_state_dir_present_raises(monkeypatch: pytest
 
 
 @pytest.mark.asyncio
-async def test_runsc_sandbox_state_directory_removed() -> None:
+async def test_runsc_sandbox_state_directory_removed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """`RunscSandboxRunner.run` removes the bundle/state directory on exit."""
-    before = _se_runsc_bundle_dirs()
     with tempfile.TemporaryDirectory() as td:
+        durable_root = Path(td) / "runsc"
+        durable_bundles = Path(td) / "bundles"
+        monkeypatch.setattr(hosted_config, "RUNSC_STATE_DIR", str(durable_root))
+        monkeypatch.setattr(hosted_config, "RUNSC_BUNDLE_DIR", str(durable_bundles))
         rootfs = Path(td) / "rootfs"
         rootfs.mkdir()
         input_dir = Path(td) / "input"
@@ -961,8 +967,8 @@ async def test_runsc_sandbox_state_directory_removed() -> None:
             _FakeCancellationToken(),
             proxy_uds_path=None,
         )
-    after = _se_runsc_bundle_dirs()
-    assert not (after - before)
+        assert not list(durable_root.iterdir())
+        assert not list(durable_bundles.iterdir())
 
 
 class _DeadlineRunner:
