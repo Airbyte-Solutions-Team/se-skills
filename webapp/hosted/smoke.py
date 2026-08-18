@@ -116,14 +116,22 @@ class _OfflineProbe:
             return SupplyChainCommandResult(
                 returncode=0,
                 stdout="""table inet se_skills {
+  chain input {
+    type filter hook input priority 0; policy drop;
+    iifname "lo" accept
+    ct state established,related accept
+  }
   chain output {
     type filter hook output priority 0; policy drop;
+    oifname "lo" accept
+    ct state established,related accept
     ip daddr 169.254.169.254 drop
     ip6 daddr fd00:ec2::254 drop
     ip daddr 10.0.0.0/8 drop
     ip daddr 172.16.0.0/12 drop
     ip daddr 192.168.0.0/16 drop
     ip6 daddr fc00::/7 drop
+    meta skuid 995 ip daddr 203.0.113.10 tcp dport 443 accept
   }
 }""",
             )
@@ -312,6 +320,7 @@ def run_offline_smoke(faults: OfflineFaults | None = None) -> SmokeReport:
             supply_chain=supply_chain.model_dump(),
             hosted_env="production",
             runtime="post-call-runsc",
+            approved_https_destinations=frozenset({"203.0.113.10"}),
         ),
         _OfflineProbe(pins),
     )
