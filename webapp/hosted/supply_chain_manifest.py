@@ -12,6 +12,7 @@ from webapp.hosted.supply_chain import SupplyChainArtifacts
 
 CANONICAL_IMAGE_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
+
 class ManifestProbe(Protocol):
     """Host access needed to load an approved artifact manifest."""
 

@@ -7,8 +7,8 @@ logs command output.
 from __future__ import annotations
 
 import base64
-import json
 import hashlib
+import json
 from dataclasses import dataclass
 from collections.abc import Sequence
 from typing import Protocol
@@ -89,13 +89,21 @@ def verify_supply_chain(
     effective = artifacts.model_copy(
         update={
             "sbom_attestation_stdout": (
-                sbom_result.stdout if sbom_result.returncode == 0 else None
+                sbom_result.stdout
+                if sbom_result is not None and sbom_result.returncode == 0
+                else None
             ),
             "provenance_attestation_stdout": (
-                provenance_result.stdout if provenance_result.returncode == 0 else None
+                provenance_result.stdout
+                if provenance_result is not None
+                and provenance_result.returncode == 0
+                else None
             ),
             "signed_rootfs_digest": _extract_signed_rootfs_digest(
                 provenance_result.stdout
+                if provenance_result is not None
+                and provenance_result.returncode == 0
+                else ""
             ),
         }
     )
@@ -201,15 +209,21 @@ def _check_signature(
 
 def _check_attestation(
     check_id: str,
-    result: SupplyChainCommandResult,
+    result: SupplyChainCommandResult | None,
     image_digest: str | None,
     predicate_type: str,
 ) -> SupplyChainCheck:
-    if result.returncode == 127:
+    if result is None:
         return SupplyChainCheck(
             check_id=check_id,
             ok=False,
             detail="attestation verification command is missing",
+        )
+    if result.returncode == 127:
+        return SupplyChainCheck(
+            check_id=check_id,
+            ok=False,
+            detail="attestation verification failed",
         )
     if result.returncode != 0:
         return SupplyChainCheck(
@@ -238,9 +252,9 @@ def _check_attestation(
 def _run_command(
     command: tuple[str, ...],
     command_runner: SupplyChainCommandRunner,
-) -> SupplyChainCommandResult:
+) -> SupplyChainCommandResult | None:
     if not command:
-        return SupplyChainCommandResult(returncode=127)
+        return None
     return command_runner.run(command)
 
 

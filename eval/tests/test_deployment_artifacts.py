@@ -188,6 +188,11 @@ def test_release_workflow_gates_signing_to_approved_refs() -> None:
     assert text.index("Validate approved release ref") < text.index(
         "Build and verify sandbox image"
     )
+    assert text.index("Verify approved release commit") < text.index(
+        "Build and verify sandbox image"
+    )
+    assert "fetch-depth: 0" in text
+    assert "git merge-base --is-ancestor" in text
     assert "refs/heads/main|refs/tags/v[0-9]*.[0-9]*.[0-9]*" in text
 
 

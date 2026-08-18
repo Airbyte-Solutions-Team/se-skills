@@ -8,16 +8,14 @@ import json
 import os
 import re
 import stat
-import sys
 from collections.abc import Callable
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from webapp.hosted.supply_chain_manifest import CANONICAL_IMAGE_DIGEST
 
 MAX_EVIDENCE_BYTES = 64 * 1024 * 1024
 SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
+
 
 def _ensure_trusted_directory(
     path: Path, owner_uid_fn: Callable[[Path], int]
@@ -140,10 +138,11 @@ def install_evidence(
     digest = manifest.get("image_digest")
     if not isinstance(digest, str) or not CANONICAL_IMAGE_DIGEST.fullmatch(digest):
         raise ValueError("published manifest must contain a sha256 image digest")
-    trusted_root = evidence_root.parent.resolve()
+    trusted_root = output_manifest.parent.resolve()
     resolved_evidence_root = _resolved_child(trusted_root, evidence_root)
     digest_dir = _resolved_child(
-        trusted_root, resolved_evidence_root / digest.removeprefix("sha256:")
+        resolved_evidence_root,
+        resolved_evidence_root / digest.removeprefix("sha256:"),
     )
     resolved_output = _resolved_child(trusted_root, output_manifest)
     _ensure_trusted_directory(trusted_root, owner_uid_fn)

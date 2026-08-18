@@ -69,7 +69,8 @@ Image promotion is manual and protected. Build the pinned image, run SBOM and
 vulnerability scans, push it, record the registry manifest digest, generate
 and attest digest-bound SBOM/provenance, and sign that digest. Install the
 resulting root-owned manifest and evidence files before starting the worker.
-Run `scripts/install_sandbox_evidence.py --bundle-dir <release-bundle>
+From the repository root, run `python -m scripts.install_sandbox_evidence
+--bundle-dir <release-bundle>
 --manifest <build-manifest> --output-manifest
 /etc/se-skills/sandbox-manifest.json` as root with the downloaded release
 bundle; it copies the named SBOM and provenance into
@@ -78,7 +79,8 @@ absolute paths. Extract the rootfs archive as root with
 `--same-owner --numeric-owner`.
 The release workflow is `workflow_dispatch`-only, requires
 `BUILD_SANDBOX_IMAGE`, uses the protected `sandbox-release` environment, and
-rejects signing from refs other than `main` or an approved immutable `v*` tag.
+rejects signing from refs other than `main` or an approved immutable `v*` tag
+whose commit is reachable from `origin/main`.
 The current Linux-amd64 tool pins are Syft 1.50.0, Grype 0.116.1, and Cosign
 3.1.3; only releases public for at least seven days are eligible for these
 pins. Their checksums live in `deploy/pins.json` and the workflow verifies

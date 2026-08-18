@@ -10,7 +10,6 @@ import pytest
 from webapp.hosted.supply_chain import (
     SupplyChainArtifacts,
     SupplyChainCommandResult,
-    SupplyChainVerification,
     verify_supply_chain,
 )
 from webapp.hosted.supply_chain_manifest import _find_sbom_digest

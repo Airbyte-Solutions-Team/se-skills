@@ -2,10 +2,19 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 18, 2026 — HEAD 2dc272b on `devin/slice5b2b1-deployment-foundation`. Hardened trusted evidence and bound signed attestations to release artifacts._
+_Last updated: August 18, 2026 — HEAD 06d8970 on `devin/slice5b2b1-deployment-foundation`. Hardened release-ref ancestry checks and finalized trusted evidence installation._
 
 
 ## Built this session (newest first — see `git log`)
+
+- **Release-ref and installer follow-ups (August 18).**
+  1. Require approved release tags to point at commits reachable from
+     `origin/main`, with full checkout history and an early ref-shape gate.
+  2. Anchor evidence digest containment to the evidence root and keep output
+     manifest containment explicit.
+  3. Use only successful attestation verification output, distinguish missing
+     commands from command exit failures, and document module-based evidence
+     installation.
 
 - **Supply-chain trust-boundary hardening (August 18).**
   1. Hardened root-only evidence promotion with canonical digest and safe-name
