@@ -238,7 +238,7 @@ This is the source of truth for productionalization slices and progress. Each sl
 
 ## Slice 5B2A: Production-shaped gVisor `runsc` execution and worker-side Anthropic model proxy
 
-**Status:** `In Progress`
+**Status:** `Complete` (PR #45)
 
 **Product outcome:** The trusted Slice 5B1 orchestration invokes a per-attempt gVisor `runsc` sandbox that runs the existing manual typed-tool loop. All model traffic passes through a trusted worker-side proxy; the sandbox never receives the Anthropic API key or unrestricted network access. The slice is deterministic and deployable without paid cloud infrastructure.
 
