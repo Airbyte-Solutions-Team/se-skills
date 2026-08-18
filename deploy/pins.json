@@ -1,0 +1,35 @@
+{
+  "runsc": {
+    "version": "20260810.0",
+    "download_base_url": "https://storage.googleapis.com/gvisor/releases/release/<version>/<arch>/runsc",
+    "sha512": {
+      "x86_64": "4463ce276e207f5a516a08ec627a768a19cf7bed0094d522b0810bee3424585caa8d344e093204012b974f5c508ab2362dcb0d7236f0c1992fccc426beeb7ffc",
+      "aarch64": "26a306b4c51a54dd5c44f4c602d5326b92c1ba02757c591847d53f2cad448c0f838b1d8f7bd93cc50eb8d6ec88073c5d4b4a14b53bc572338ced49f42d618f9f"
+    },
+    "min_version": "20260810.0"
+  },
+  "host": {
+    "os": "ubuntu",
+    "os_version": "24.04",
+    "arch": "x86_64",
+    "min_kernel": "6.8",
+    "cgroup_version": 2
+  },
+  "sandbox_image": {
+    "base_digests": {
+      "python": "sha256:bb3a5d38989ec658710f06b08bc23cb78d079eb852405e42b124fdf430281454",
+      "distroless": "sha256:0f8ca62dea61023c1fe02e445bd154ee02b2d97aec377f965ae3c641ec838e61"
+    },
+    "approved_digest": null,
+    "rootfs_digest": null
+  },
+  "limits": {
+    "worker_cpu_quota_percent": 100,
+    "worker_memory_max_bytes": 2147483648,
+    "worker_pid_max": 64,
+    "worker_nofile_max": 1024,
+    "worker_fsize_max_bytes": 100000000,
+    "min_root_free_bytes": 10737418240,
+    "min_temp_free_bytes": 2147483648
+  }
+}

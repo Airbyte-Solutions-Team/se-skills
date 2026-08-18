@@ -53,6 +53,14 @@ MODEL_PROXY_SECRET = os.environ.get("MODEL_PROXY_SECRET", "")
 # gVisor/runsc executor configuration.
 RUNSC_BINARY = os.environ.get("RUNSC_BINARY", "runsc")
 RUNSC_ROOTFS = os.environ.get("RUNSC_ROOTFS", "")
+HOSTED_ENV = os.environ.get("HOSTED_ENV", "development").lower()
+SANDBOX_IMAGE_DIGEST = os.environ.get("SANDBOX_IMAGE_DIGEST", "")
+RUNSC_ROOTFS_DIGEST = os.environ.get("RUNSC_ROOTFS_DIGEST", "")
+HOSTED_FIREWALL_POLICY_PATH = os.environ.get(
+    "HOSTED_FIREWALL_POLICY_PATH", "/etc/se-skills/firewall.nft"
+)
+OBSERVABILITY_ENDPOINT = os.environ.get("OBSERVABILITY_ENDPOINT", "")
+ALLOW_LIVE_HOSTED_SMOKE = os.environ.get("ALLOW_LIVE_HOSTED_SMOKE", "")
 
 # Worker tuning. The worker process uses short lease/heartbeat intervals to detect
 # crashed workers; values are configurable for tests and small deployments.
