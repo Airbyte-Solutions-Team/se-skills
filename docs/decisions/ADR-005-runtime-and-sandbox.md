@@ -66,21 +66,31 @@ helper/config/sudoers pair. It seals worker workspaces by no-follow validation
 and atomic rename into a root-owned staging parent before binding them. It
 accepts and forwards the worker's text-format list request without injecting
 worker flags; list/delete verification and stale cleanup use this same boundary.
-Requests are frozen operation-specific Pydantic models with `extra="forbid"`:
-`run` carries the job and sealed workspace paths, `list`/`delete` carry a
-state path, and `cleanup` carries only its minimum age. The broker owns the
+Requests use bounded, operation-specific standard-library dataclasses with
+strict types and closed fields; the broker has no third-party imports. `run`
+carries the job and sealed workspace paths, `list`/`delete` carry a state path,
+and `cleanup` carries only its minimum age. The broker owns the
 complete OCI document, including the fixed image entrypoint/environment,
 UID/GID, mounts, namespaces, capabilities, devices, read-only rootfs, and
 deadline-derived CPU limit. The worker maps broker sentinels 65 (unverifiable
 list output) and 66 (container still present after delete verification) to
 closed cleanup failures.
 
-The broker executes with `/opt/se-skills/venv/bin/python -I`. Isolated Python
-mode prevents `PYTHONPATH` and user-site packages from changing root imports;
-the venv's own packages remain available. Ansible owns the venv and broker
-import-path directories as `root:root` and removes group/other write bits.
-Preflight checks the interpreter, broker script, venv, and each configured
-import-path directory before allowing the worker service to start.
+The broker executes with `/usr/bin/python3 -I` and only the standard library.
+Preflight runs that isolated interpreter to obtain its actual `sys.path`, then
+checks every resolved component, the broker script, and config for root
+ownership and non-writability. The host Python 3.12 contract is separate from
+the sandbox image's Python 3.11 contract.
+
+Custody is journaled under the root-owned runsc journal before the first
+workspace rename and fsynced after each sealing phase. The journal, rather
+than `finally`, is the recovery source of truth after broker crash or SIGKILL.
+The broker owns a process group for each runsc child and terminates/escalates
+that group on cancellation or timeout; a cgroup adds no required guarantee
+beyond the existing service cgroup and explicit process-group ownership.
+Cleanup only removes state, bundle, and staging after verified absence. It
+always destroys input, proxy, and job material, and restores output only for a
+durably journaled successful run; partial or unknown output is discarded.
 
 **Vendor references (2026-08-11):**
 - Anthropic Messages API reference: `https://docs.anthropic.com/en/api/messages`

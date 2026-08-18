@@ -24,18 +24,10 @@ class ProductionPreflightSettings(BaseModel):
     runsc_helper_path: str = "/usr/local/sbin/se-skills-runsc"
     runsc_sudoers_path: str = "/etc/sudoers.d/se-skills-runsc"
     runsc_broker_config_path: str = "/etc/se-skills/runsc-broker.json"
-    broker_interpreter_path: str = "/opt/se-skills/venv/bin/python"
+    broker_interpreter_path: str = "/usr/bin/python3"
     broker_script_path: str = "/usr/local/sbin/se-skills-runsc"
-    broker_venv_path: str = "/opt/se-skills/venv"
-    broker_import_paths: tuple[str, ...] = (
-        "/usr/local/sbin",
-        "/opt/se-skills",
-        "/opt/se-skills/venv",
-        "/opt/se-skills/venv/lib",
-        "/opt/se-skills/venv/lib/python3.11",
-        "/opt/se-skills/venv/lib/python3.11/site-packages",
-        "/usr/lib/python3.11",
-    )
+    broker_venv_path: str = ""
+    broker_import_paths: tuple[str, ...] = ()
     rootfs_path: str
     manifest_path: str
     hosted_env: str

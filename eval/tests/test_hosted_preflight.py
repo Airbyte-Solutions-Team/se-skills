@@ -82,8 +82,11 @@ class _Probe:
             "/opt/se-skills/venv/lib/python3.11/site-packages": PathFacts(
                 True, "root", "root", 0o755, False, True
             ),
-            "/usr/lib/python3.11": PathFacts(
+            "/usr/lib/python3.12": PathFacts(
                 True, "root", "root", 0o755, False, True
+            ),
+            "/usr/bin/python3": PathFacts(
+                True, "root", "root", 0o755, True, False
             ),
         }
         self.public = False
@@ -130,6 +133,11 @@ class _Probe:
     def command(
         self, argv: Sequence[str], stdin: str | None = None
     ) -> SupplyChainCommandResult:
+        if len(argv) >= 3 and argv[1:2] == ("-I",):
+            return SupplyChainCommandResult(
+                returncode=0,
+                stdout="/usr/lib/python3.12\n",
+            )
         if stdin is not None:
             return SupplyChainCommandResult(
                 returncode=1 if "unknown" in stdin else 0,
@@ -333,7 +341,7 @@ def test_preflight_rejects_unsafe_runsc_path() -> None:
 
 def test_preflight_rejects_worker_writable_broker_import_path() -> None:
     probe = _Probe()
-    probe.paths["/opt/se-skills/venv/lib/python3.11/site-packages"] = PathFacts(
+    probe.paths["/usr/lib/python3.12"] = PathFacts(
         True, "root", "root", 0o775, False, True
     )
 

@@ -6,5 +6,14 @@
   "staging_root": "{{ hosted_runsc_staging_dir }}",
   "workspace_root": "{{ hosted_runsc_workspace_dir }}",
   "worker_uid": {{ hosted_worker_uid }},
-  "worker_gid": {{ hosted_worker_gid }}
+  "worker_gid": {{ hosted_worker_gid }},
+  "max_request_bytes": {{ hosted_broker_max_request_bytes }},
+  "request_read_timeout_seconds": {{ hosted_broker_request_read_timeout_seconds }},
+  "max_string_length": {{ hosted_broker_max_string_length }},
+  "max_collection_length": {{ hosted_broker_max_collection_length }},
+  "max_nesting_depth": {{ hosted_broker_max_nesting_depth }},
+  "max_concurrent_operations": {{ hosted_broker_max_concurrent_operations }},
+  "max_attempt_duration_seconds": {{ hosted_broker_max_attempt_duration_seconds }},
+  "operation_timeout_seconds": {{ hosted_broker_operation_timeout_seconds }},
+  "journal_root": "{{ hosted_runsc_journal_dir }}"
 }

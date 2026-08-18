@@ -2,10 +2,20 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 18, 2026 — working tree on `devin/slice5b2b1-deployment-foundation`. Locked the broker interpreter import boundary._
+_Last updated: August 18, 2026 — working tree on `devin/slice5b2b1-deployment-foundation`. Added bounded stdlib broker custody and dynamic host interpreter checks._
 
 
 ## Built this session (newest first — see `git log`)
+
+- **Crash recovery and bounded broker admission (August 18).**
+  1. Added a root-owned, fsynced lifecycle journal and reconciliation of
+     state, bundle, staging, and worker paths; `finally` remains only a fast
+     path.
+  2. Added process-group termination, operation deadlines, bounded stdin and
+     strict standard-library request validation with root-configured limits.
+  3. Switched the host broker to `/usr/bin/python3 -I` and preflight now
+     verifies the isolated interpreter's actual resolved import paths. The
+     host Python 3.12 contract remains separate from sandbox Python 3.11.
 
 - **Broker interpreter import boundary (August 18).**
   1. Runs the root broker with Python isolated mode (`python -I`) so

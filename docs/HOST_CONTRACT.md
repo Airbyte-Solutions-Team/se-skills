@@ -41,11 +41,26 @@ loaded from `deploy/pins.json`; role defaults and paths are in
   `minimum_age_seconds`. Unknown fields and wrong types fail closed with one
   fixed diagnostic. The broker derives `RLIMIT_CPU` from the validated job
   deadline. Worker exit sentinels 65 and 66 become closed cleanup failures.
-- The broker runs as `/opt/se-skills/venv/bin/python -I`. Isolated mode ignores
-  `PYTHONPATH` and user-site packages while retaining the interpreter's own
-  environment and installed dependencies. The role owns the venv, interpreter,
-  broker script, and managed import-path directories as `root:root`; their
-  directory and file modes must not grant group or other write access.
+- The broker runs as `/usr/bin/python3 -I` and uses only the Python standard
+  library. Isolated mode ignores `PYTHONPATH` and user-site packages. The role
+  and preflight require the interpreter, broker script, and broker config to be
+  `root:root` and non-group/world-writable; preflight executes this exact
+  isolated interpreter to obtain its actual `sys.path` and verifies every
+  resolved file or directory. The host interpreter is Ubuntu 24.04's Python
+  3.12 contract; the sandbox image's Python 3.11 path is a separate image
+  contract and is not used to validate the host broker.
+- Broker admission is root-configured: stdin is capped at 1 MiB and five
+  seconds, strings at 8 KiB, collections at 256 items, nesting at 16 levels,
+  and concurrent operations at four. Run/list/delete are bounded by a
+  30-second broker deadline; execution deadlines must be future and within
+  the configured 15-minute attempt horizon.
+- A root-owned journal under `/var/lib/se-skills/runsc-journal` is fsynced
+  before sealing and after every sealing phase. It records custody paths and
+  phase, while the fast-path `finally` only accelerates cleanup. Cleanup
+  reconciles journal, staging, bundle, and state records after verified
+  process absence. Input, proxy, and job material is always discarded;
+  output is restored only for a journaled successful run, and otherwise
+  discarded to avoid restoring untrusted partial output.
 - The sandbox image uses the pinned Python and distroless base digests in
   `deploy/pins.json`. An approved image digest and rootfs digest must be
   populated before production preflight passes. `SANDBOX_IMAGE_DIGEST` is
@@ -75,16 +90,15 @@ The role creates the non-login system user `se-worker` (UID `995`) and group
 |---|---|---:|---|
 | `/opt/se-skills` | root/root | 0755 | operator-delivered application payload |
 | `/opt/se-skills/rootfs` | root/root | 0755 | approved sandbox rootfs |
-| `/opt/se-skills/venv` | root/root | 0755 and recursively non-group/world-writable | pinned worker dependencies and broker interpreter |
-| `/opt/se-skills/venv/bin/python` | root/root | 0755 | isolated broker/worker interpreter |
-| `/usr/local/sbin`, `/opt/se-skills`, venv library/site-package directories, and `/usr/lib/python3.11` | root/root | non-group/world-writable | broker interpreter import path |
+| `/usr/bin/python3` | root/root | executable, non-group/world-writable | isolated standard-library broker interpreter |
+| `/usr/local/sbin/se-skills-runsc` | root/root | 0755 | Python broker |
+| `/etc/se-skills/runsc-broker.json` | root/root | 0644 | broker-owned paths and admission limits |
 | `/var/lib/se-skills` | root/root | 0750 | worker state parent |
 | `/var/lib/se-skills/bundles` | root/root | 0700 | broker-owned bundle parent |
 | `/var/lib/se-skills/runsc` | root/root | 0700 | broker-owned runsc state |
 | `/var/lib/se-skills/runsc-staging` | root/root | 0700 | sealed workspace staging |
+| `/var/lib/se-skills/runsc-journal` | root/root | 0700 | fsynced lifecycle custody journal |
 | `/var/lib/se-skills/workspaces` | root/se-worker | 0730 | worker-created input/output/proxy workspaces |
-| `/usr/local/sbin/se-skills-runsc` | root/root | 0755 | Python broker |
-| `/etc/se-skills/runsc-broker.json` | root/root | 0644 | broker-owned fixed paths |
 | `/etc/se-skills` | root/se-worker | 0750 | policy and operator configuration |
 | `/etc/se-skills/worker.env` | root/se-worker | 0640 | operator-provisioned secrets/config |
 | `/etc/se-skills/firewall.nft` | root/root | 0644 | worker nftables table |

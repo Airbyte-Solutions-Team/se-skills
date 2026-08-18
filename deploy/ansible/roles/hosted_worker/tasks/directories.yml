@@ -31,6 +31,7 @@
   loop:
     - { path: "{{ hosted_runsc_state_dir }}" }
     - { path: "{{ hosted_runsc_staging_dir }}" }
+    - { path: "{{ hosted_runsc_journal_dir }}" }
 
 - name: Create worker workspace root
   ansible.builtin.file:
@@ -77,23 +78,20 @@
   changed_when: false
   when: not ansible_check_mode
 
-- name: Lock broker interpreter and import paths
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "u=rwX,go-w"
-    recurse: true
-  loop: "{{ hosted_broker_import_paths | select('search', '^' ~ hosted_venv_dir) | list }}"
+- name: Verify broker system interpreter is root-owned
+  ansible.builtin.stat:
+    path: /usr/bin/python3
+  register: hosted_broker_interpreter_stat
 
-- name: Lock broker interpreter executable
-  ansible.builtin.file:
-    path: "{{ hosted_venv_dir }}/bin/python"
-    state: file
-    owner: root
-    group: root
-    mode: "0755"
+- name: Refuse unsafe broker system interpreter
+  ansible.builtin.assert:
+    that:
+      - hosted_broker_interpreter_stat.stat.exists
+      - hosted_broker_interpreter_stat.stat.isreg
+      - hosted_broker_interpreter_stat.stat.pw_name == "root"
+      - hosted_broker_interpreter_stat.stat.gr_name == "root"
+      - hosted_broker_interpreter_stat.stat.mode == "0755"
+    fail_msg: "The broker interpreter must be a root-owned non-writable executable."
 
 - name: Require operator-provisioned environment file
   ansible.builtin.stat:

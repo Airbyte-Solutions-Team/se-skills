@@ -10,6 +10,7 @@ hosted_state_dir: /var/lib/se-skills
 hosted_runsc_state_dir: /var/lib/se-skills/runsc
 hosted_runsc_staging_dir: /var/lib/se-skills/runsc-staging
 hosted_runsc_workspace_dir: /var/lib/se-skills/workspaces
+hosted_runsc_journal_dir: /var/lib/se-skills/runsc-journal
 hosted_bundle_dir: /var/lib/se-skills/bundles
 hosted_env_file: /etc/se-skills/worker.env
 hosted_firewall_path: /etc/se-skills/firewall.nft
@@ -32,14 +33,15 @@ hosted_runsc_helper: /usr/local/sbin/se-skills-runsc
 hosted_runsc_broker_config: /etc/se-skills/runsc-broker.json
 hosted_runsc_sudoers: /etc/sudoers.d/se-skills-runsc
 hosted_venv_dir: /opt/se-skills/venv
-hosted_broker_import_paths:
-  - /usr/local/sbin
-  - "{{ hosted_app_dir }}"
-  - "{{ hosted_venv_dir }}"
-  - "{{ hosted_venv_dir }}/lib"
-  - "{{ hosted_venv_dir }}/lib/python3.11"
-  - "{{ hosted_venv_dir }}/lib/python3.11/site-packages"
-  - /usr/lib/python3.11
+hosted_broker_import_paths: []
+hosted_broker_max_request_bytes: 1048576
+hosted_broker_request_read_timeout_seconds: 5
+hosted_broker_max_string_length: 8192
+hosted_broker_max_collection_length: 256
+hosted_broker_max_nesting_depth: 16
+hosted_broker_max_concurrent_operations: 4
+hosted_broker_max_attempt_duration_seconds: 900
+hosted_broker_operation_timeout_seconds: 30
 hosted_worker_requirements: /opt/se-skills/deploy/requirements-worker.txt
 hosted_worker_uid: 995
 hosted_worker_gid: 995

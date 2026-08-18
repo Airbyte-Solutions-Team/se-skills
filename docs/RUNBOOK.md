@@ -78,6 +78,28 @@ and sandbox group only. The broker computes the CPU rlimit from the job's
 validated execution deadline. Broker exit 65 and 66 become explicit,
 redacted cleanup failures rather than undocumented generic errors.
 
+The broker is standard-library-only and runs as `/usr/bin/python3 -I`; it
+does not trust the worker environment or user-site imports. Preflight executes
+that isolated interpreter and validates every actual `sys.path` component,
+plus the broker script and config, as root-owned and non-group/world-writable.
+The host Python 3.12 contract is separate from the sandbox image's Python 3.11
+runtime.
+
+Admission limits are root-owned in `/etc/se-skills/runsc-broker.json`: 1 MiB
+stdin, a five-second read deadline, 8 KiB strings, 256-item collections,
+16-level nesting, four concurrent operations, 30-second broker operations,
+and a 15-minute maximum attempt horizon. Expired and far-future deadlines
+fail closed.
+
+Crash custody is recorded in the fsynced root-owned
+`/var/lib/se-skills/runsc-journal`. The record is updated through sealing and
+is removed only after state, bundle, staging, and worker paths are reconciled.
+`finally` is only a fast path. The broker-owned runsc process group is
+terminated on cancellation, timeout, or graceful termination; cleanup handles
+SIGKILL recovery. Input, proxy sockets, and `job.json` are always destroyed.
+Output is restored only for a durably successful terminal record; all other
+partial output is discarded.
+
 Image promotion is manual and protected. Build the pinned image, run SBOM and
 vulnerability scans, push it, record the registry manifest digest, generate
 and attest digest-bound SBOM/provenance, and sign that digest. Install the

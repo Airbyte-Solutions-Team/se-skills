@@ -99,6 +99,7 @@ def _invoke(
     )
     monkeypatch.setattr(broker, "CONFIG_PATH", config_path)
     monkeypatch.setattr(broker, "_root_directory", lambda path: None)
+    monkeypatch.setattr(broker, "_worker_workspace_root", lambda path, gid: None)
     monkeypatch.setattr(broker, "_root_executable", lambda path: None)
     monkeypatch.setattr(
         broker.os,
@@ -329,3 +330,37 @@ def test_request_models_reject_operation_specific_fields(
             },
         )
     assert exc_info.value.code == 64
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda request: request["job"].update(skill="x" * 8193),
+        lambda request: request["job"].update(
+            execution_deadline=(datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+        ),
+        lambda request: request["job"].update(
+            execution_deadline=(datetime.now(timezone.utc) + timedelta(seconds=901)).isoformat()
+        ),
+        lambda request: request["job"]["input_manifest"].update(
+            prior_context_refs=["x"] * 257
+        ),
+    ],
+)
+def test_broker_bounds_worker_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: object,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = _config(tmp_path)
+    input_dir = config.workspace_root / "se-runtime-input-attempt"
+    output_dir = config.workspace_root / "se-runtime-output-attempt"
+    input_dir.mkdir()
+    output_dir.mkdir()
+    request = _run_request(input_dir, output_dir)
+    mutation(request)
+    with pytest.raises(SystemExit) as exc_info:
+        _invoke(monkeypatch, config, request)
+    assert exc_info.value.code == 64
+    assert capsys.readouterr().err.strip() == "invalid runsc broker request"

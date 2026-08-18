@@ -70,12 +70,15 @@ class _Probe:
             return PathFacts(True, "root", "root", 0o755, False, True)
         if path == "/opt/se-skills/venv/bin/python":
             return PathFacts(True, "root", "root", 0o755, True, False)
+        if path == "/usr/bin/python3":
+            return PathFacts(True, "root", "root", 0o755, True, False)
         if path in {
             "/opt/se-skills/venv",
             "/opt/se-skills/venv/lib",
             "/opt/se-skills/venv/lib/python3.11",
             "/opt/se-skills/venv/lib/python3.11/site-packages",
             "/usr/lib/python3.11",
+            "/usr/lib/python3.12",
         }:
             return PathFacts(True, "root", "root", 0o755, False, True)
         if path == "/etc/sudoers.d/se-skills-runsc":
@@ -99,6 +102,11 @@ class _Probe:
     def command(
         self, argv: Sequence[str], stdin: str | None = None
     ) -> SupplyChainCommandResult:
+        if len(argv) >= 3 and argv[1:2] == ("-I",):
+            return SupplyChainCommandResult(
+                returncode=0,
+                stdout="/usr/lib/python3.12\n",
+            )
         if stdin is not None:
             return SupplyChainCommandResult(
                 returncode=1 if "unknown" in stdin else 0,
