@@ -4,8 +4,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
+from collections.abc import Callable
 from pathlib import Path
+
+
+def _ensure_trusted_directory(
+    path: Path, owner_uid_fn: Callable[[Path], int]
+) -> None:
+    path.mkdir(mode=0o755, parents=True, exist_ok=True)
+    if owner_uid_fn(path) != 0:
+        raise PermissionError(f"trusted directory is not root-owned: {path}")
+    path.chmod(0o755)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -26,14 +37,19 @@ def install_evidence(
     manifest_path: Path,
     evidence_root: Path,
     output_manifest: Path,
+    geteuid_fn: Callable[[], int] = os.geteuid,
+    owner_uid_fn: Callable[[Path], int] = lambda path: path.stat().st_uid,
 ) -> Path:
     """Copy named release evidence into a digest-specific trusted directory."""
+    if geteuid_fn() != 0:
+        raise PermissionError("sandbox evidence installation must run as root")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     digest = manifest.get("image_digest")
     if not isinstance(digest, str) or not digest.startswith("sha256:"):
         raise ValueError("published manifest must contain a sha256 image digest")
     digest_dir = evidence_root / digest.removeprefix("sha256:")
-    digest_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_trusted_directory(evidence_root, owner_uid_fn)
+    _ensure_trusted_directory(digest_dir, owner_uid_fn)
     installed = dict(manifest)
     for field in ("sbom_name", "provenance_name"):
         name = manifest.get(field)
@@ -45,10 +61,12 @@ def install_evidence(
         destination = digest_dir / name
         if destination.is_symlink():
             raise ValueError(f"destination {destination} is unsafe")
+        if destination.exists() and owner_uid_fn(destination) != 0:
+            raise PermissionError(f"evidence destination is not root-owned: {destination}")
         shutil.copyfile(source, destination)
         destination.chmod(0o644)
         installed[field.removesuffix("_name") + "_path"] = str(destination)
-    output_manifest.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_trusted_directory(output_manifest.parent, owner_uid_fn)
     output_manifest.write_text(
         json.dumps(installed, sort_keys=True, separators=(",", ":")) + "\n",
         encoding="utf-8",

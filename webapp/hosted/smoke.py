@@ -133,6 +133,7 @@ class _OfflineProbe:
     ip daddr 192.168.0.0/16 drop
     ip6 daddr fc00::/7 drop
     meta skuid 995 ip daddr 203.0.113.10 tcp dport 443 accept
+    meta skuid 995 ip daddr 203.0.113.10 tcp dport 3128 accept
   }
 }""",
             )
@@ -332,6 +333,8 @@ def run_offline_smoke(faults: OfflineFaults | None = None) -> SmokeReport:
             present_config_names=names,
             model_proxy_secret="OfflineSmokeSecretWithSufficientDiversity0123",
             anthropic_proxy_url="http://203.0.113.10:3128",
+            anthropic_proxy_host="203.0.113.10",
+            anthropic_proxy_port=3128,
             database_url="postgresql://worker@db/app?sslmode=require",
             storage_url="https://storage.example",
             rootfs_path="/opt/se-skills/rootfs",

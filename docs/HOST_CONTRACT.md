@@ -81,13 +81,20 @@ The required outbound destinations are the worker database, private Storage,
 approved registry, observability backend, time service, and DNS. Every
 firewall destination must be an IP address or CIDR literal. Direct Anthropic
 egress is disabled: configure `ANTHROPIC_EGRESS_PROXY_URL` for the controlled
-forward proxy and configure its host/port in the role. The proxy must enforce
+forward proxy; its endpoint must be an IPv4 literal configured with
+`HOSTED_ANTHROPIC_PROXY_HOST` and `HOSTED_ANTHROPIC_PROXY_PORT` in the worker
+environment and the corresponding role variables. IPv6 proxy endpoints are
+rejected by the host contract.
+The proxy must enforce
 `CONNECT`/TLS only to `api.anthropic.com:443`, resolve DNS at the proxy,
-authenticate the worker, bound timeouts and concurrency, redact audit logs,
-and omit request/response bodies. Provisioning the proxy remains 5B2B2 work.
+authenticate the worker through operator-owned network identity such as mTLS
+or an equivalent mechanism, bound timeouts and concurrency, redact audit logs,
+and omit request/response bodies. The configured URL carries no credentials.
+Provisioning the proxy identity remains 5B2B2 work.
 An unset destination produces no firewall accept rule.
 `HOSTED_APPROVED_HTTPS_DESTINATIONS` must match the worker-scoped destinations
-rendered by the firewall, including the proxy. Host-level static IP
+rendered by the firewall on TCP/443; the proxy host/port is verified separately.
+Host-level static IP
 allowlisting is defense in depth; the worker proxy's TLS hostname verification
 and request policy remain authoritative.
 

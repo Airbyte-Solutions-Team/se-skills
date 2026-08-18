@@ -73,6 +73,7 @@ class _Probe:
     ip daddr 192.168.0.0/16 drop
     ip6 daddr fc00::/7 drop
     meta skuid 995 ip daddr 203.0.113.10 tcp dport 443 accept
+    meta skuid 995 ip daddr 203.0.113.10 tcp dport 3128 accept
   }
 }"""
 
@@ -157,6 +158,8 @@ def _config(**updates: object) -> PreflightConfig:
         ),
         model_proxy_secret="Abcdefghijklmnopqrstuvwxyz012345",
         anthropic_proxy_url="http://203.0.113.10:3128",
+        anthropic_proxy_host="203.0.113.10",
+        anthropic_proxy_port=3128,
         database_url="postgresql://worker@db/app?sslmode=require",
         storage_url="https://storage.example",
         rootfs_path="/opt/rootfs",
@@ -327,7 +330,7 @@ def test_shipped_firewall_template_matches_preflight_contract() -> None:
     report = run_preflight(
         _config(
             approved_https_destinations=frozenset(
-                {"203.0.113.10", "198.51.100.12", "198.51.100.13", "198.51.100.14"}
+                {"203.0.113.10", "198.51.100.12", "198.51.100.13"}
             )
         ),
         probe,
@@ -339,7 +342,6 @@ def test_shipped_firewall_template_matches_preflight_contract() -> None:
         "203.0.113.10",
         "198.51.100.12",
         "198.51.100.13",
-        "198.51.100.14",
     ):
         assert evaluate_output_policy(parsed, 995, destination, "tcp", 443) == "accept"
         assert evaluate_output_policy(parsed, 994, destination, "tcp", 443) == "drop"
@@ -348,6 +350,10 @@ def test_shipped_firewall_template_matches_preflight_contract() -> None:
     assert evaluate_output_policy(parsed, 995, "fd00::5", "tcp", 443) == "drop"
     for metadata in ("169.254.169.254", "169.254.1.1", "fe80::1"):
         assert evaluate_output_policy(parsed, 995, metadata, "tcp", 443) == "drop"
+    assert evaluate_output_policy(parsed, 995, "203.0.113.10", "tcp", 3128) == "accept"
+    assert evaluate_output_policy(parsed, 994, "203.0.113.10", "tcp", 3128) == "drop"
+    assert evaluate_output_policy(parsed, 995, "10.0.0.5", "tcp", 3128) == "drop"
+    assert evaluate_output_policy(parsed, 995, "169.254.169.254", "tcp", 3128) == "drop"
     assert evaluate_output_policy(parsed, 995, "192.0.2.53", "udp", 53) == "accept"
     assert evaluate_output_policy(parsed, 994, "192.0.2.53", "udp", 53) == "drop"
     assert evaluate_output_policy(parsed, 995, "192.0.2.123", "udp", 123) == "accept"
@@ -364,8 +370,8 @@ def _render_firewall_template(template: str) -> str:
         "hosted_storage_host": "203.0.113.10",
         "hosted_registry_host": "198.51.100.12",
         "hosted_observability_host": "198.51.100.13",
-        "hosted_anthropic_proxy_host": "198.51.100.14",
-        "hosted_anthropic_proxy_port": 443,
+        "hosted_anthropic_proxy_host": "203.0.113.10",
+        "hosted_anthropic_proxy_port": 3128,
         "hosted_postgres_port": 5432,
         "hosted_storage_port": 443,
         "hosted_registry_port": 443,

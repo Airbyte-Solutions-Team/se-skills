@@ -40,19 +40,21 @@ is_terminal() {
   esac
 }
 
-unverifiable=0
+unverifiable_ids=""
 for state in "$root"/*; do
   [ -d "$state" ] || continue
   id=$(basename "$state")
   [ "$(find "$state" -prune -mmin +"$min_age_minutes" -print)" = "$state" ] || continue
   if ! status="$(status_for_state "$state" "$id")"; then
-    unverifiable=1
+    unverifiable_ids="${unverifiable_ids}${id}
+"
     continue
   fi
   is_terminal "$status" || [ "$status" = "absent" ] || continue
   "$runsc" --root="$state" delete --force "$id" >/dev/null 2>&1 || true
   if ! fresh_status="$(status_for_state "$state" "$id")"; then
-    unverifiable=1
+    unverifiable_ids="${unverifiable_ids}${id}
+"
     continue
   fi
   [ "$fresh_status" = "absent" ] || continue
@@ -60,15 +62,14 @@ for state in "$root"/*; do
   rm -rf -- "$bundles/$id"
 done
 
-if [ "$unverifiable" -ne 0 ]; then
-  exit 0
-fi
-
 for bundle in "$bundles"/*; do
   [ -d "$bundle" ] || continue
   [ "$(find "$bundle" -prune -mmin +"$min_age_minutes" -print)" = "$bundle" ] || continue
   id=$(basename "$bundle")
   state="$root/$id"
+  if printf '%s' "$unverifiable_ids" | grep -Fqx "$id"; then
+    continue
+  fi
   if [ ! -d "$state" ]; then
     rm -rf -- "$bundle"
   fi

@@ -12,6 +12,7 @@ from webapp.hosted.supply_chain import (
     SupplyChainVerification,
     verify_supply_chain,
 )
+from webapp.hosted.supply_chain_manifest import _find_sbom_digest
 
 
 class _CommandRunner:
@@ -55,6 +56,34 @@ def test_supply_chain_accepts_matching_artifacts() -> None:
 
     assert result.ok
     assert len(runner.calls) == 3
+
+
+@pytest.mark.parametrize("field", ("hashes", "version", "purl", "bom-ref"))
+def test_sbom_digest_must_be_bound_to_metadata_component(field: str) -> None:
+    digest = "a" * 64
+    component: dict[str, object] = {}
+    if field == "hashes":
+        component["hashes"] = [{"alg": "SHA-256", "content": digest}]
+    elif field == "version":
+        component[field] = digest
+    else:
+        component[field] = f"pkg:docker/example@sha256:{digest}"
+    assert _find_sbom_digest(json.dumps({"metadata": {"component": component}})) == f"sha256:{digest}"
+
+
+def test_sbom_digest_outside_component_is_rejected() -> None:
+    digest = "a" * 64
+    assert (
+        _find_sbom_digest(
+            json.dumps(
+                {
+                    "metadata": {"component": {"name": "sandbox"}},
+                    "components": [{"bom-ref": f"sha256:{digest}"}],
+                }
+            )
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize(

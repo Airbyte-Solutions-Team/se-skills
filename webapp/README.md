@@ -177,7 +177,8 @@ Set `HOSTED_MODE=1` to use Supabase Auth + Postgres instead of the local filesys
 - `ANTHROPIC_API_KEY` / `ANTHROPIC_API_URL` / `ANTHROPIC_API_VERSION` —
   used only by the worker-side model proxy (not the sandbox) to forward
   Anthropic Messages API calls. Hosted production also requires
-  `ANTHROPIC_EGRESS_PROXY_URL`; direct Anthropic egress is disabled.
+  `ANTHROPIC_EGRESS_PROXY_URL`, `HOSTED_ANTHROPIC_PROXY_HOST`, and
+  `HOSTED_ANTHROPIC_PROXY_PORT`; direct Anthropic egress is disabled.
 - `MODEL_PROXY_SECRET` — a strong secret used to sign per-job model-proxy capability tokens.
 - `RUNSC_BINARY` — path to the `runsc` executable when selecting `post-call-runsc` runtime.
 - `RUNSC_ROOTFS` — path to the pinned sandbox rootfs when selecting `post-call-runsc` runtime.

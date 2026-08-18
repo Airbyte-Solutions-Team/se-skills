@@ -22,6 +22,12 @@
     fail_msg: "DNS and NTP firewall destinations must be IP addresses or CIDRs."
   loop: "{{ hosted_dns_servers + hosted_ntp_servers }}"
 
+- name: Require IPv4 address for the proxy endpoint
+  ansible.builtin.assert:
+    that:
+      - hosted_anthropic_proxy_host == "" or hosted_anthropic_proxy_host is match("^[0-9.]+$")
+    fail_msg: "The hosted Anthropic proxy endpoint must be an IPv4 literal."
+
 - name: Require supported operating system
   ansible.builtin.assert:
     that:

@@ -131,13 +131,25 @@ digest = sys.argv[2]
 if digest == "unpublished":
     raise SystemExit(0)
 component = sbom.get("metadata", {}).get("component", {})
-hashes = component.get("hashes", [])
 expected = digest.removeprefix("sha256:")
-if digest == "unpublished" or not any(
-    item.get("alg") == "SHA-256" and item.get("content") == expected
-    for item in hashes
-    if isinstance(item, dict)
-):
+matched = False
+hashes = component.get("hashes", [])
+if isinstance(hashes, list):
+    matched = any(
+        isinstance(item, dict)
+        and item.get("alg") == "SHA-256"
+        and item.get("content") == expected
+        for item in hashes
+    )
+if not matched:
+    for field in ("version", "purl", "bom-ref"):
+        value = component.get(field)
+        if isinstance(value, str) and (
+            expected in value or f"sha256:{expected}" in value
+        ):
+            matched = True
+            break
+if not matched:
     raise SystemExit("SBOM metadata.component does not cover the image digest")
 PY
 

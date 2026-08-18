@@ -265,6 +265,7 @@ def test_cleanup_script_preserves_unverifiable_and_fresh_state(tmp_path: Path) -
     (bundles / "orphan").mkdir()
     old_time = 1_000_000
     os.utime(old_state, (old_time, old_time))
+    os.utime(bundles / "orphan", (old_time, old_time))
     shim = tmp_path / "runsc-shim"
     shim.write_text(
         "#!/bin/sh\n"
@@ -277,7 +278,7 @@ def test_cleanup_script_preserves_unverifiable_and_fresh_state(tmp_path: Path) -
 
     assert old_state.exists()
     assert (bundles / "old").exists()
-    assert (bundles / "orphan").exists()
+    assert not (bundles / "orphan").exists()
 
 
 def test_cleanup_script_reclaims_absent_state_after_verified_absence(

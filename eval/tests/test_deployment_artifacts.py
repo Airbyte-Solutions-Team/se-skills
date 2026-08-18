@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import yaml
@@ -91,7 +92,7 @@ def test_worker_requirements_match_standalone_metadata() -> None:
         "pyjwt[crypto]",
         "uvicorn[standard]",
     }
-    for version in ("0.30.0", "2.10.0", "2.0", "0.25", "0.100", "0.30.0"):
+    for version in ("0.30.0", "2.10.0", "2.0", "0.28.1", "0.100", "0.30.0"):
         assert version in script
     service = (
         ANSIBLE
@@ -166,6 +167,15 @@ def test_release_workflow_is_manual_and_confirmed() -> None:
     assert "docker push" in (
         ROOT / "deploy/images/build_sandbox_image.sh"
     ).read_text()
+    identity = re.search(
+        r"CERTIFICATE_IDENTITY:\s+(.+)", text
+    )
+    assert identity is not None
+    assert (
+        identity.group(1)
+        == "https://github.com/${{ github.repository }}/.github/workflows/"
+        "sandbox-image-release.yml@${{ github.ref }}"
+    )
 
 
 def test_release_workflow_derives_verified_tools_and_retains_evidence() -> None:

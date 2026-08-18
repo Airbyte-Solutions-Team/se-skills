@@ -49,6 +49,10 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_API_URL = os.environ.get("ANTHROPIC_API_URL", "https://api.anthropic.com")
 ANTHROPIC_API_VERSION = os.environ.get("ANTHROPIC_API_VERSION", "2023-06-01")
 ANTHROPIC_EGRESS_PROXY_URL = os.environ.get("ANTHROPIC_EGRESS_PROXY_URL", "")
+ANTHROPIC_EGRESS_PROXY_HOST = os.environ.get("HOSTED_ANTHROPIC_PROXY_HOST", "")
+ANTHROPIC_EGRESS_PROXY_PORT = int(
+    os.environ.get("HOSTED_ANTHROPIC_PROXY_PORT", "3128")
+)
 MODEL_PROXY_SECRET = os.environ.get("MODEL_PROXY_SECRET", "")
 
 # gVisor/runsc executor configuration.

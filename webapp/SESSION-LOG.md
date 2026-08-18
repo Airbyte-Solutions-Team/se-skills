@@ -2,10 +2,23 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 18, 2026 — HEAD aea7593 on `devin/slice5b2b1-deployment-foundation`. Documented pin currency and Anthropic egress decisions._
+_Last updated: August 18, 2026 — HEAD 16dace4 on `devin/slice5b2b1-deployment-foundation`. Closed release identity, SBOM subject, proxy firewall, cleanup, and trusted-install seams._
 
 
 ## Built this session (newest first — see `git log`)
+
+- **Release and proxy seam corrections (August 18).**
+  1. Corrected the Fulcio GitHub workflow identity shape and accepted SBOM
+     digest bindings in CycloneDX component fields without accepting unrelated
+     document fields.
+  2. Verified the configured proxy address and port against the live firewall
+     table for both worker identities, constrained the role to IPv4 proxy
+     endpoints, and scoped cleanup unverifiability to the affected container.
+  3. Made evidence installation root-only with explicit safe directory modes
+     and raised the hosted HTTPX lower bound to the pinned `0.28.1`.
+     Deterministic tests use injected ownership and command probes; live
+     nftables, proxy identity, and registry behavior remain deferred to
+     Slice 5B2B2.
 
 - **Slice 5B2B1 integration contracts (August 18).**
   1. Bound published SBOMs and attestations to the immutable registry digest,

@@ -30,17 +30,22 @@ table so it does not destroy provider or container-manager tables. DNS and NTP
 allowlists are empty by default. Destination variables must be IP addresses or
 CIDRs; hostnames such as `ghcr.io` are not inserted into `ip daddr` rules.
 Direct Anthropic egress is disabled. The worker uses a controlled forward proxy
-at `ANTHROPIC_EGRESS_PROXY_URL`; the firewall allows only the proxy's
-configured address and port. If that address is RFC1918, the policy places a
+at `ANTHROPIC_EGRESS_PROXY_URL`; set `HOSTED_ANTHROPIC_PROXY_HOST` and
+`HOSTED_ANTHROPIC_PROXY_PORT` to the same endpoint so preflight verifies the
+live accept. The firewall allows only the proxy's configured IPv4 address and
+port. IPv6 proxy addresses are rejected by the host contract. If that address is RFC1918, the policy places a
 narrow worker-UID-scoped exception after metadata/link-local drops and before
 generic private-range drops. The proxy must allow only `CONNECT`/TLS to
 `api.anthropic.com:443`, resolve DNS itself, authenticate the worker, enforce
 bounded timeouts and concurrency, redact audit logs, and never log request or
-response bodies.
+response bodies. The configured URL carries no credentials; authentication is
+provided by operator-owned network identity such as mTLS or an equivalent
+mechanism. Provisioning that identity remains 5B2B2 work.
 
 `HOSTED_APPROVED_HTTPS_DESTINATIONS` is the preflight-verified set of approved
 HTTPS destinations. It must contain the same destinations that the rendered
-policy accepts for the worker UID; an empty or incoherent set fails closed.
+policy accepts for the worker UID on TCP/443; the proxy endpoint is verified
+separately. An empty or incoherent set fails closed.
 The Product Owner rejected maintained Anthropic CIDRs in favor of this proxy
 contract. Provisioning and operating the actual proxy remains 5B2B2 work.
 TLS hostname verification and worker-side proxy mediation remain primary

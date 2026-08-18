@@ -205,13 +205,22 @@ def _find_sbom_digest(text: str) -> str | None:
     if not isinstance(component, dict):
         return None
     hashes = component.get("hashes")
-    if not isinstance(hashes, list):
-        return None
-    for item in hashes:
-        if isinstance(item, dict) and item.get("alg") == "SHA-256":
-            digest = item.get("content")
-            if isinstance(digest, str) and len(digest) == 64:
-                return f"sha256:{digest}"
+    if isinstance(hashes, list):
+        for item in hashes:
+            if isinstance(item, dict) and item.get("alg") == "SHA-256":
+                digest = item.get("content")
+                if (
+                    isinstance(digest, str)
+                    and re.fullmatch(r"[0-9a-fA-F]{64}", digest)
+                ):
+                    return f"sha256:{digest.lower()}"
+    for field in ("version", "purl", "bom-ref"):
+        value = component.get(field)
+        if not isinstance(value, str):
+            continue
+        match = re.search(r"(?:sha256:)?([0-9a-fA-F]{64})", value)
+        if match:
+            return f"sha256:{match.group(1).lower()}"
     return None
 
 

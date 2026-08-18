@@ -39,6 +39,8 @@ class ProductionPreflightSettings(BaseModel):
     pins: HostedPins = Field(default_factory=load_pins)
     offline: bool = False
     anthropic_proxy_url: str = ""
+    anthropic_proxy_host: str = ""
+    anthropic_proxy_port: int = 3128
 
 
 class _ProbeCommandRunner:
@@ -108,6 +110,8 @@ def run_production_preflight(
             model_proxy_secret=settings.model_proxy_secret,
             anthropic_api_url=settings.anthropic_api_url,
             anthropic_proxy_url=settings.anthropic_proxy_url,
+            anthropic_proxy_host=settings.anthropic_proxy_host,
+            anthropic_proxy_port=settings.anthropic_proxy_port,
             database_url=settings.database_url,
             storage_url=settings.storage_url,
             rootfs_path=settings.rootfs_path,

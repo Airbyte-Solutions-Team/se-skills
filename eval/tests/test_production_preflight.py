@@ -38,6 +38,7 @@ class _Probe:
     ip6 daddr fe80::/10 drop
     ip6 daddr fd00::/8 drop
     meta skuid 995 ip daddr 203.0.113.10 tcp dport 443 accept
+    meta skuid 995 ip daddr 203.0.113.10 tcp dport 3128 accept
   }
 }"""
 
@@ -169,6 +170,8 @@ def _setup(tmp_path: Path) -> tuple[_Probe, ProductionPreflightSettings, dict[st
         storage_url="https://storage.example",
         anthropic_api_url="https://api.anthropic.com",
         anthropic_proxy_url="http://203.0.113.10:3128",
+        anthropic_proxy_host="203.0.113.10",
+        anthropic_proxy_port=3128,
         model_proxy_secret="PreflightSecretWithSufficientDiversity0123",
         present_config_names=frozenset(
             {
@@ -208,7 +211,9 @@ def test_production_preflight_valid_configuration_passes(tmp_path: Path) -> None
     assert report.ok
 
 
-def test_build_manifest_promotion_round_trip_passes(tmp_path: Path) -> None:
+def test_build_manifest_promotion_round_trip_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     bundle = tmp_path / "bundle"
     bundle.mkdir()
     digest_hex = IMAGE_DIGEST.removeprefix("sha256:")
@@ -257,7 +262,13 @@ def test_build_manifest_promotion_round_trip_passes(tmp_path: Path) -> None:
         build_manifest,
         tmp_path / "etc/se-skills/evidence",
         installed,
+        geteuid_fn=lambda: 0,
+        owner_uid_fn=lambda path: 0,
     )
+    evidence_dir = tmp_path / "etc/se-skills/evidence" / digest_hex
+    assert evidence_dir.stat().st_mode & 0o022 == 0
+    assert evidence_dir.parent.stat().st_mode & 0o022 == 0
+    assert installed.parent.stat().st_mode & 0o022 == 0
     probe, settings, paths = _setup(tmp_path)
     settings = settings.model_copy(
         update={

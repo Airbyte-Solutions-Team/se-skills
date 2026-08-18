@@ -97,6 +97,8 @@ class PreflightConfig(BaseModel):
     model_proxy_secret: str = ""
     anthropic_api_url: str = "https://api.anthropic.com"
     anthropic_proxy_url: str = ""
+    anthropic_proxy_host: str = ""
+    anthropic_proxy_port: int = 3128
     approved_anthropic_hosts: frozenset[str] = frozenset({"api.anthropic.com"})
     database_url: str = ""
     storage_url: str = ""
@@ -398,6 +400,43 @@ def _firewall_ok(config: PreflightConfig, probe: HostProbe) -> bool:
         for destination, protocol, port, expected in checks
     ):
         return False
+    if (
+        not config.anthropic_proxy_host
+        or _is_ipv4_address(config.anthropic_proxy_host) is False
+        or evaluate_output_policy(
+            rules,
+            config.worker_uid,
+            config.anthropic_proxy_host,
+            "tcp",
+            config.anthropic_proxy_port,
+        )
+        != "accept"
+        or evaluate_output_policy(
+            rules,
+            config.non_worker_uid,
+            config.anthropic_proxy_host,
+            "tcp",
+            config.anthropic_proxy_port,
+        )
+        != "drop"
+        or evaluate_output_policy(
+            rules,
+            config.worker_uid,
+            "10.0.0.1",
+            "tcp",
+            config.anthropic_proxy_port,
+        )
+        != "drop"
+        or evaluate_output_policy(
+            rules,
+            config.worker_uid,
+            "169.254.169.254",
+            "tcp",
+            config.anthropic_proxy_port,
+        )
+        != "drop"
+    ):
+        return False
     if not config.approved_https_destinations:
         return False
     normalized_destinations: set[str] = set()
@@ -431,6 +470,13 @@ def _firewall_ok(config: PreflightConfig, probe: HostProbe) -> bool:
         )
     }
     return rendered_destinations == normalized_destinations
+
+
+def _is_ipv4_address(value: str) -> bool:
+    try:
+        return ipaddress.ip_address(value).version == 4
+    except ValueError:
+        return False
 
 
 class LocalHostProbe:
