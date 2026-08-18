@@ -5,6 +5,7 @@ import re
 import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -47,7 +48,7 @@ def test_ansible_package_has_check_mode_safe_pinned_runsc_and_hardening() -> Non
     assert 'checksum: "sha512:' in runsc
     assert "when: not ansible_check_mode" in runsc
     for directive in (
-            "NoNewPrivileges=no",
+        "NoNewPrivileges=no",
         "PrivateTmp=yes",
         "ProtectSystem=strict",
         "ProtectHome=yes",
@@ -265,6 +266,34 @@ def test_pinned_actionlint_rejects_old_input_context_fixture_when_available() ->
         check=False,
     )
     assert corrected.returncode == 0, corrected.stderr
+
+
+def test_runsc_helper_rejects_flags_not_emitted_by_worker(tmp_path: Path) -> None:
+    template = (
+        ROOT
+        / "deploy/ansible/roles/hosted_worker/templates/se-skills-runsc.j2"
+    ).read_text()
+    helper = tmp_path / "se-skills-runsc"
+    helper.write_text(
+        template
+        .replace("{{ hosted_runsc_binary }}", "/bin/true")
+        .replace("{{ hosted_runsc_state_dir }}", str(tmp_path / "runsc"))
+        .replace("{{ hosted_bundle_dir }}", str(tmp_path / "bundles")),
+        encoding="utf-8",
+    )
+    helper.chmod(0o755)
+    result = subprocess.run(
+        [
+            str(helper),
+            f"--root={tmp_path / 'runsc' / 'attempt'}",
+            "list",
+            "--format=json",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
 
 
 def test_firewall_is_applied_before_worker_start_and_as_one_transaction() -> None:

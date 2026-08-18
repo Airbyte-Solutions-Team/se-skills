@@ -723,7 +723,7 @@ async def test_runsc_sandbox_delete_argv_structure() -> None:
     assert argv == [
         "sudo",
         "--non-interactive",
-        "/usr/local/bin/runsc",
+        "/usr/local/sbin/se-skills-runsc",
         "--root=/bundle/root",
         "delete",
         "--force",
@@ -735,7 +735,6 @@ async def test_runsc_sandbox_delete_argv_structure() -> None:
         assert "&" not in arg
         assert "`" not in arg
         assert "$" not in arg
-
 
 @pytest.mark.asyncio
 async def test_runsc_sandbox_delete_rejects_rootless_mode() -> None:
@@ -763,9 +762,10 @@ async def test_runsc_sandbox_list_argv_structure() -> None:
     assert argv == [
         "sudo",
         "--non-interactive",
-        "/usr/local/bin/runsc",
+        "/usr/local/sbin/se-skills-runsc",
         "--root=/bundle/root",
         "list",
+        "--format=text",
     ]
 
 
@@ -829,7 +829,7 @@ async def test_runsc_sandbox_delete_uses_root_dir(monkeypatch: pytest.MonkeyPatc
     assert any(
         c[0] == "sudo"
         and c[1] == "--non-interactive"
-            and c[2] == "/usr/local/bin/runsc"
+        and c[2] == "/usr/local/sbin/se-skills-runsc"
         and c[3] == f"--root={root_dir}"
         and c[4] == "delete"
         and c[5] == "--force"
@@ -930,6 +930,7 @@ async def test_runsc_sandbox_state_directory_removed(
 
         runner = RunscSandboxRunner(
             runsc_binary=str(fake_runsc),
+            runsc_helper=str(fake_runsc),
             rootfs=str(rootfs),
             network="none",
             rootless=False,
@@ -969,6 +970,7 @@ async def test_runsc_delete_failure_preserves_state_directory(
         fake_runsc.chmod(0o755)
         runner = RunscSandboxRunner(
             runsc_binary=str(fake_runsc),
+            runsc_helper=str(fake_runsc),
             rootfs=str(rootfs),
             network="none",
             rootless=False,

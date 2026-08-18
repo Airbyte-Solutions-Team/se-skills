@@ -179,11 +179,7 @@ class RunscSandboxRunner:
         extra_runsc_args: list[str] | None = None,
     ) -> None:
         self.runsc_binary = runsc_binary or config.RUNSC_BINARY
-        self.runsc_helper = runsc_helper or (
-            config.RUNSC_HELPER_BINARY
-            if runsc_binary is None
-            else self.runsc_binary
-        )
+        self.runsc_helper = runsc_helper or config.RUNSC_HELPER_BINARY
         self.rootfs = rootfs or config.RUNSC_ROOTFS
         self.network = network
         self.rootless = rootless
@@ -252,6 +248,10 @@ class RunscSandboxRunner:
             raise RuntimeExecutionError("runsc binary is not configured")
         if not shutil.which(self.runsc_binary):
             raise RuntimeExecutionError(f"runsc binary not found: {self.runsc_binary}")
+        if not shutil.which("sudo"):
+            raise RuntimeExecutionError("sudo is not installed")
+        if not shutil.which(self.runsc_helper):
+            raise RuntimeExecutionError(f"runsc helper not found: {self.runsc_helper}")
         if not self.rootfs:
             raise RuntimeExecutionError("runsc rootfs is not configured")
         rootfs_path = Path(self.rootfs)
@@ -259,12 +259,6 @@ class RunscSandboxRunner:
             raise RuntimeExecutionError(f"runsc rootfs does not exist: {self.rootfs}")
         if not rootfs_path.is_dir():
             raise RuntimeExecutionError(f"runsc rootfs is not a directory: {self.rootfs}")
-        if self.runsc_binary == config.RUNSC_BINARY and not shutil.which(
-            self.runsc_helper
-        ):
-            raise RuntimeExecutionError(
-                f"runsc helper not found: {self.runsc_helper}"
-            )
 
     def _validate_mount_paths(
         self,
@@ -471,7 +465,7 @@ class RunscSandboxRunner:
         if self.rootless:
             raise RuntimeExecutionError("rootless runsc is not supported")
         argv = ["sudo", "--non-interactive", self.runsc_helper, f"--root={root_dir}"]
-        argv.append("list")
+        argv.extend(["list", "--format=text"])
         return argv
 
     async def _is_container_gone(

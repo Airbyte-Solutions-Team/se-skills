@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import io
 import os
 import stat
 import subprocess
@@ -10,7 +11,11 @@ from pathlib import Path
 import pytest
 
 from webapp.hosted.firewall_policy import evaluate_output_policy, parse_output_policy
-from webapp.hosted.rootfs_digest import digest_rootfs, digest_rootfs_tar
+from webapp.hosted.rootfs_digest import (
+    digest_rootfs,
+    digest_rootfs_tar,
+    normalize_rootfs_tar,
+)
 from webapp.hosted.supply_chain_manifest import load_artifact_manifest
 from webapp.hosted.preflight import PathFacts
 from webapp.hosted.supply_chain import SupplyChainCommandResult
@@ -29,41 +34,54 @@ def test_rootfs_digest_changes_for_materialized_tree_tampering(tmp_path: Path) -
 
 
 def test_rootfs_tar_digest_matches_tree_digest_with_metadata(tmp_path: Path) -> None:
-    rootfs = tmp_path / "rootfs"
-    rootfs.mkdir()
-    (rootfs / "bin").mkdir()
-    executable = rootfs / "bin" / "app"
-    executable.write_text("safe", encoding="utf-8")
-    executable.chmod(0o751)
-    try:
-        os.chown(executable, 994, 993)
-    except PermissionError:
-        pytest.skip("test environment cannot create non-root-owned fixtures")
-    (rootfs / "link").symlink_to("bin/app")
     archive = tmp_path / "rootfs.tar"
+    uid = os.getuid()
+    gid = os.getgid()
     with tarfile.open(archive, "w") as output:
-        for path in sorted(rootfs.rglob("*")):
-            info = output.gettarinfo(str(path), arcname=path.relative_to(rootfs).as_posix())
-            if path.is_file():
-                with path.open("rb") as source:
-                    output.addfile(info, source)
-            else:
-                output.addfile(info)
-    with archive.open("rb") as source:
-        assert digest_rootfs_tar(source) == digest_rootfs(rootfs)
-    (rootfs / "bin" / "app").write_text("safe", encoding="utf-8")
-    (rootfs / "bin" / "app").chmod(0o700)
-    assert digest_rootfs(rootfs) != original
-    (rootfs / "bin" / "app").chmod(0o644)
-    (rootfs / "added").write_text("new", encoding="utf-8")
-    assert digest_rootfs(rootfs) != original
-    (rootfs / "added").unlink()
-    (rootfs / "bin" / "app").unlink()
-    assert digest_rootfs(rootfs) != original
-    (rootfs / "bin" / "app").write_text("safe", encoding="utf-8")
-    (rootfs / "link").unlink()
-    (rootfs / "link").symlink_to("bin")
-    assert digest_rootfs(rootfs) != original
+        directory = tarfile.TarInfo("bin")
+        directory.type = tarfile.DIRTYPE
+        directory.mode = 0o750
+        directory.uid = uid
+        directory.gid = gid
+        output.addfile(directory)
+
+        content = b"safe"
+        executable = tarfile.TarInfo("bin/app")
+        executable.type = tarfile.REGTYPE
+        executable.mode = 0o751
+        executable.uid = uid
+        executable.gid = gid
+        executable.size = len(content)
+        output.addfile(executable, io.BytesIO(content))
+
+        link = tarfile.TarInfo("link")
+        link.type = tarfile.SYMTYPE
+        link.mode = 0o777
+        link.uid = uid
+        link.gid = gid
+        link.linkname = "bin/app"
+        output.addfile(link)
+
+        hardlink = tarfile.TarInfo("hardlink")
+        hardlink.type = tarfile.LNKTYPE
+        hardlink.mode = 0o751
+        hardlink.uid = uid
+        hardlink.gid = gid
+        hardlink.linkname = "bin/app"
+        output.addfile(hardlink)
+
+    normalized = tmp_path / "normalized.tar"
+    with archive.open("rb") as source, normalized.open("wb") as destination:
+        normalize_rootfs_tar(source, destination)
+    extracted = tmp_path / "extracted"
+    extracted.mkdir()
+    with normalized.open("rb") as source:
+        with tarfile.open(fileobj=source, mode="r:") as input_tar:
+            input_tar.extractall(extracted)
+
+    with normalized.open("rb") as source:
+        normalized_digest = digest_rootfs_tar(source)
+    assert normalized_digest == digest_rootfs(extracted)
 
 
 def test_firewall_policy_evaluates_ordered_boundary() -> None:

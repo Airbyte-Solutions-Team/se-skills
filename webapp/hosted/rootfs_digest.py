@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+import shutil
 import stat
 import sys
 import tarfile
+import tempfile
 from typing import BinaryIO
 
 
@@ -44,6 +46,7 @@ def digest_rootfs(rootfs: Path) -> str:
 def digest_rootfs_tar(stream: BinaryIO) -> str:
     """Hash a Docker-export tar stream using the materialized-tree contract."""
     entries: list[tuple[str, str, int, int, int, str | None, bytes | None]] = []
+    content_digests: dict[str, bytes] = {}
     with tarfile.open(fileobj=stream, mode="r|") as archive:
         for member in archive:
             relative = member.name.removeprefix("./").rstrip("/")
@@ -60,11 +63,16 @@ def digest_rootfs_tar(stream: BinaryIO) -> str:
             )
             target = member.linkname if member.issym() else None
             content = None
-            if member.isreg() or member.islnk():
+            if member.isreg():
                 extracted = archive.extractfile(member)
                 if extracted is None:
                     raise ValueError("regular tar entry has no content")
                 content = _bytes_digest(extracted)
+                content_digests[relative] = content
+            elif member.islnk():
+                content = content_digests.get(member.linkname)
+                if content is None:
+                    raise ValueError("hardlink target is missing or comes later")
             entries.append(
                 (
                     relative,
@@ -101,24 +109,35 @@ def digest_rootfs_tar(stream: BinaryIO) -> str:
 
 def normalize_rootfs_tar(source: BinaryIO, destination: BinaryIO) -> None:
     """Write a deterministic tar stream while preserving numeric metadata."""
-    members: list[tuple[tarfile.TarInfo, bytes | None]] = []
-    with tarfile.open(fileobj=source, mode="r|") as archive:
-        for member in archive:
-            relative = member.name.removeprefix("./").rstrip("/")
-            if not relative:
-                continue
-            member.name = relative
-            member.mtime = 0
-            content = None
-            if member.isreg() or member.islnk():
-                extracted = archive.extractfile(member)
-                if extracted is None:
-                    raise ValueError("regular tar entry has no content")
-                content = extracted.read()
-            members.append((member, content))
-    with tarfile.open(fileobj=destination, mode="w|", format=tarfile.PAX_FORMAT) as archive:
-        for member, content in sorted(members, key=lambda item: item[0].name):
-            archive.addfile(member, None if content is None else _BytesReader(content))
+    with tempfile.TemporaryDirectory(prefix="se-skills-rootfs-") as temp_dir:
+        members: list[tuple[tarfile.TarInfo, Path | None]] = []
+        with tarfile.open(fileobj=source, mode="r|") as archive:
+            for index, member in enumerate(archive):
+                relative = member.name.removeprefix("./").rstrip("/")
+                if not relative:
+                    continue
+                member.name = relative
+                member.mtime = 0
+                content_path = None
+                if member.isreg():
+                    extracted = archive.extractfile(member)
+                    if extracted is None:
+                        raise ValueError("regular tar entry has no content")
+                    content_path = Path(temp_dir) / str(index)
+                    with content_path.open("wb") as content:
+                        shutil.copyfileobj(extracted, content)
+                members.append((member, content_path))
+        with tarfile.open(
+            fileobj=destination, mode="w|", format=tarfile.PAX_FORMAT
+        ) as archive:
+            for member, content_path in sorted(
+                members, key=lambda item: item[0].name
+            ):
+                if content_path is None:
+                    archive.addfile(member)
+                else:
+                    with content_path.open("rb") as content:
+                        archive.addfile(member, content)
 
 
 def _entry_type(mode: int) -> str:
@@ -144,21 +163,6 @@ def _bytes_digest(stream: BinaryIO) -> bytes:
     for chunk in iter(lambda: stream.read(1024 * 1024), b""):
         file_digest.update(chunk)
     return file_digest.digest()
-
-
-class _BytesReader:
-    """Minimal file-like adapter for tarfile.addfile."""
-
-    def __init__(self, content: bytes) -> None:
-        self.content = content
-        self.offset = 0
-
-    def read(self, size: int = -1) -> bytes:
-        if size < 0:
-            size = len(self.content) - self.offset
-        result = self.content[self.offset : self.offset + size]
-        self.offset += len(result)
-        return result
 
 
 if __name__ == "__main__":

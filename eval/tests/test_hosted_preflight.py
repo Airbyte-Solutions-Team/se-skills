@@ -124,6 +124,12 @@ class _Probe:
     def file_text(self, path: str) -> str | None:
         if path == "/etc/sudoers.d/se-skills-runsc":
             return "se-worker ALL=(root) NOPASSWD: /usr/local/sbin/se-skills-runsc *\n"
+        if path == "/usr/local/sbin/se-skills-runsc":
+            return (
+                'runsc="/usr/local/bin/runsc"\n'
+                'state_root="/var/lib/se-skills/runsc"\n'
+                'bundle_root="/var/lib/se-skills/bundles"\n'
+            )
         return self.firewall
 
 

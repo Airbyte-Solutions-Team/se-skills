@@ -23,7 +23,10 @@ loaded from `deploy/pins.json`; role defaults and paths are in
   built-in `--rootless` maps only the caller UID and cannot represent the
   image's UID 65532 without additional userns mapping helpers. The rejected
   rootless alternative would add setuid mapping infrastructure and host attack
-  surface.
+  surface. The launcher is rendered from the same Ansible variables as
+  `runsc`, the durable state directory, and the bundle directory; preflight
+  checks those compiled paths before allowing the worker to start. The worker
+  invokes `list --format=text`, matching the parser's required `ID` header.
 - The sandbox image uses the pinned Python and distroless base digests in
   `deploy/pins.json`. An approved image digest and rootfs digest must be
   populated before production preflight passes. `SANDBOX_IMAGE_DIGEST` is

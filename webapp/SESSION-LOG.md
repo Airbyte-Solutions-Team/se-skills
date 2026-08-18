@@ -2,10 +2,19 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 18, 2026 — HEAD (this change) on `devin/slice5b2b1-deployment-foundation`. Closed deployment and actionlint review blockers._
+_Last updated: August 18, 2026 — HEAD (this change) on `devin/slice5b2b1-deployment-foundation`. Closed deployment and actionlint review follow-ups._
 
 
 ## Built this session (newest first — see `git log`)
+
+- **Deployment follow-ups (August 18).**
+  1. Made tar/tree rootfs digest equivalence execute unprivileged with explicit
+     numeric metadata, symlink, nested-directory, hardlink, and archive
+     round-trip coverage; normalization now spills member content to disk.
+  2. Made the runsc helper template-driven and aligned worker cleanup on the
+     documented text list format, with preflight path-contract checks.
+  3. Kept actionlint installation ahead of pytest, added helper rejection
+     coverage, and refreshed deterministic runtime tests.
 
 - **Deployment and workflow hardening (August 18).**
   1. Removed root requirements from release image hashing by normalizing and

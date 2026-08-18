@@ -192,12 +192,19 @@ def run_preflight(config: PreflightConfig, probe: HostProbe) -> PreflightReport:
         _required("runsc_binary", runsc_mode_ok, "runsc is root-owned executable" if runsc_mode_ok else "runsc missing or ownership/mode is unsafe")
     )
     helper = probe.path_info(config.runsc_helper_path)
+    helper_text = probe.file_text(config.runsc_helper_path) or ""
+    helper_roots_ok = (
+        f'runsc="{config.runsc_path}"' in helper_text
+        and f'state_root="{config.runsc_state_path}"' in helper_text
+        and f'bundle_root="{config.bundle_path}"' in helper_text
+    )
     helper_ok = (
         helper.exists
         and helper.is_file
         and helper.mode == 0o755
         and helper.owner == "root"
         and helper.group == "root"
+        and helper_roots_ok
     )
     checks.append(
         _required(
@@ -237,7 +244,7 @@ def run_preflight(config: PreflightConfig, probe: HostProbe) -> PreflightReport:
             config.runsc_helper_path,
             f"--root={config.runsc_state_path}/preflight",
             "list",
-            "--format=json",
+            "--format=text",
         )
     )
     checks.append(

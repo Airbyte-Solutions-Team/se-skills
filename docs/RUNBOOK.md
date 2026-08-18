@@ -65,6 +65,10 @@ expiry and `recover_expired_leases` requeue or dead-letter attempts. If a
 sandbox remains, the cleanup timer runs as `se-worker` and removes only
 verified-dead state.
 
+The worker's constrained runsc launcher forwards `list --format=text` without
+adding flags of its own; an unparseable `ID` header is a fail-closed cleanup
+error.
+
 Image promotion is manual and protected. Build the pinned image, run SBOM and
 vulnerability scans, push it, record the registry manifest digest, generate
 and attest digest-bound SBOM/provenance, and sign that digest. Install the

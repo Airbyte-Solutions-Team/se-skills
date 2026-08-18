@@ -1,9 +1,9 @@
 #!/bin/sh
 set -eu
 
-runsc=/usr/local/bin/runsc
-state_root=/var/lib/se-skills/runsc
-bundle_root=/var/lib/se-skills/bundles
+runsc="{{ hosted_runsc_binary }}"
+state_root="{{ hosted_runsc_state_dir }}"
+bundle_root="{{ hosted_bundle_dir }}"
 
 die() {
   printf '%s\n' "invalid runsc invocation" >&2
@@ -19,6 +19,7 @@ network=
 subcommand=
 bundle=
 container_id=
+list_format=
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --root=*)
@@ -46,8 +47,10 @@ while [ "$#" -gt 0 ]; do
     --force)
       [ "$subcommand" = delete ] || die
       ;;
-    --format=json)
+    --format=text)
       [ "$subcommand" = list ] || die
+      [ -z "$list_format" ] || die
+      list_format=text
       ;;
     *)
       case "$subcommand" in
@@ -78,6 +81,7 @@ case "$subcommand" in
     [ -n "$container_id" ] || die
     ;;
   list)
+    [ "$list_format" = text ] || die
     [ -z "$container_id" ] || die
     ;;
 esac
@@ -96,6 +100,6 @@ case "$subcommand" in
     exec "$runsc" "--root=$resolved_root" delete --force "$container_id"
     ;;
   list)
-    exec "$runsc" "--root=$resolved_root" list --format=json
+    exec "$runsc" "--root=$resolved_root" list --format=text
     ;;
 esac

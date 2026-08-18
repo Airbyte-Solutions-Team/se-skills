@@ -57,6 +57,11 @@ mapping path is therefore rejected for this host contract. `NoNewPrivileges`
 is disabled only for this service-to-helper transition; the remaining systemd
 hardening and `RestrictSUIDSGID=yes` remain in force.
 
+The helper is rendered from the role's configured runsc, state, and bundle
+paths, and preflight verifies those compiled-in paths. It accepts and forwards
+the worker's text-format list request without injecting flags; the worker
+expects runsc's documented `ID` table header.
+
 **Vendor references (2026-08-11):**
 - Anthropic Messages API reference: `https://docs.anthropic.com/en/api/messages`
 - Anthropic Agent SDK overview (rejected as the runtime, but informative): `https://code.claude.com/docs/en/agent-sdk/overview`
