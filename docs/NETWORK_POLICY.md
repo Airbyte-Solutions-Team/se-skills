@@ -45,8 +45,11 @@ worker host.
 
 Production preflight obtains `nft list table inet se_skills` through its host
 probe and evaluates ordered rules for identity, destination, protocol, and
-port. Missing `nft` or a missing live table fails closed; rendering the
-template alone is not evidence that the live policy is loaded.
+port. It also requires `policy drop` on both input and output chains and
+rejects any unknown rule or verdict rather than silently ignoring it. Missing
+`nft`, a missing live table, an empty approved HTTPS destination set, or an
+unparseable chain fails closed; rendering the template alone is not evidence
+that the live policy is loaded.
 
 ## Failure expectations
 

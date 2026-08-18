@@ -69,6 +69,11 @@ Image promotion is manual and protected. Build the pinned image, run SBOM and
 vulnerability scans, push it, record the registry manifest digest, generate
 and attest digest-bound SBOM/provenance, and sign that digest. Install the
 resulting root-owned manifest and evidence files before starting the worker.
+The current Linux-amd64 tool pins are Syft 1.50.0, Grype 0.117.0, and Cosign
+3.1.3; the checksums live in `deploy/pins.json` and the workflow verifies each
+download before execution. Production preflight compares
+`SANDBOX_IMAGE_DIGEST` with the manifest and repository pin, verifies every
+evidence file and parent directory, and hashes the deployed rootfs tree.
 The Ansible role validates and applies the firewall transaction before the
 systemd task enables or starts the worker.
 

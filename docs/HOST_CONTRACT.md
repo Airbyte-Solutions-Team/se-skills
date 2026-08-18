@@ -17,7 +17,16 @@ loaded from `deploy/pins.json`; role defaults and paths are in
   `/var/lib/se-skills/runsc`.
 - The sandbox image uses the pinned Python and distroless base digests in
   `deploy/pins.json`. An approved image digest and rootfs digest must be
-  populated before production preflight passes.
+  populated before production preflight passes. `SANDBOX_IMAGE_DIGEST` is
+  required in the worker configuration and must match both the root-owned
+  manifest and any non-null approved digest in `deploy/pins.json`.
+- Release tooling is pinned for Linux amd64 because this host contract is
+  x86_64: Syft `1.50.0`
+  (`bf7b29ff57f06da30918266a0e1c2885a8f99784798d1bdb1628886aa015d788`),
+  Grype `0.117.0`
+  (`38525dab1e06f162ebaa02f94d82d1f807076b011a44180cf2777edf1a7b9c26`),
+  and Cosign `3.1.3`
+  (`4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71`).
 
 ## Identity, files, and modes
 
@@ -88,7 +97,7 @@ registry manifest digest, digest-bound provenance, and a canonical rootfs
 digest manifest. The operator installs the root-owned sandbox manifest with
 the approved image/rootfs digests, SBOM/provenance paths, image reference, and
 cosign identity/key/certificate expectations. Production preflight verifies
-ownership and modes for every evidence file, hashes the materialized rootfs,
+ownership and modes for every evidence file and its parent directory, hashes the materialized rootfs,
 and runs the manifest-built signature command. A worker-writable manifest or
 evidence file fails closed. Promotion and rollback are operator
 gates; rollback means selecting a previously approved digest and restarting

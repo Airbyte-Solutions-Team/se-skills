@@ -180,9 +180,14 @@ Set `HOSTED_MODE=1` to use Supabase Auth + Postgres instead of the local filesys
 - `RUNSC_ROOTFS` — path to the pinned sandbox rootfs when selecting `post-call-runsc` runtime.
 - `SANDBOX_MANIFEST_PATH` — root-owned approved image/evidence manifest,
   defaulting to `/etc/se-skills/sandbox-manifest.json`.
+- `SANDBOX_IMAGE_DIGEST` — required deployed registry manifest digest; it must
+  match the approved manifest and any non-null repository pin.
 - `RUNSC_BUNDLE_DIR` and `RUNSC_STATE_DIR` — durable bundle and runsc state
   directories, defaulting to `/var/lib/se-skills/bundles` and
   `/var/lib/se-skills/runsc`.
+- `HOSTED_APPROVED_HTTPS_DESTINATIONS` — comma-separated IP/CIDR destinations
+  approved by the live firewall check. Production preflight fails closed when
+  this set is empty.
 
 Run migrations before starting the app:
 
