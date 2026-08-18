@@ -11,7 +11,9 @@ User={{ hosted_worker_user }}
 Group={{ hosted_worker_group }}
 WorkingDirectory={{ hosted_app_dir }}
 EnvironmentFile={{ hosted_env_file }}
-ExecStart=/usr/bin/python3 {{ hosted_app_entrypoint }} --runtime post-call-runsc
+Environment=HOSTED_MODE=1
+Environment=HOSTED_ENV=production
+ExecStart={{ hosted_venv_dir }}/bin/python {{ hosted_app_entrypoint }} --runtime post-call-runsc
 Restart=on-failure
 RestartSec=10
 NoNewPrivileges=yes

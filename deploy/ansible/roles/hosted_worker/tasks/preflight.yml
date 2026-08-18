@@ -3,6 +3,24 @@
   ansible.builtin.set_fact:
     hosted_pins: "{{ lookup('ansible.builtin.file', hosted_pins_file) | from_json }}"
 
+- name: Require address literals for firewall destinations
+  ansible.builtin.assert:
+    that:
+      - item.value == "" or item.value is match("^[0-9A-Fa-f:.]+(/[0-9]{1,3})?$")
+    fail_msg: "Firewall destination variables must be IP addresses or CIDRs."
+  loop:
+    - { name: database, value: "{{ hosted_database_host }}" }
+    - { name: storage, value: "{{ hosted_storage_host }}" }
+    - { name: registry, value: "{{ hosted_registry_host }}" }
+    - { name: observability, value: "{{ hosted_observability_host }}" }
+
+- name: Require address literals for DNS and NTP destinations
+  ansible.builtin.assert:
+    that:
+      - item is match("^[0-9A-Fa-f:.]+(/[0-9]{1,3})?$")
+    fail_msg: "DNS and NTP firewall destinations must be IP addresses or CIDRs."
+  loop: "{{ hosted_dns_servers + hosted_ntp_servers }}"
+
 - name: Require supported operating system
   ansible.builtin.assert:
     that:

@@ -1,6 +1,4 @@
 #!/usr/sbin/nft -f
-flush ruleset
-
 table inet se_skills {
   chain input {
     type filter hook input priority 0; policy drop;
@@ -22,7 +20,7 @@ table inet se_skills {
 {% for server in hosted_dns_servers %}
     ip daddr {{ server }} udp dport 53 accept
 {% endfor %}
-    tcp dport 443 accept
+    meta skuid {{ hosted_worker_uid }} tcp dport 443 accept
 {% if hosted_database_host | length > 0 %}
     ip daddr {{ hosted_database_host }} tcp dport {{ hosted_postgres_port }} accept
 {% endif %}
@@ -38,5 +36,9 @@ table inet se_skills {
 {% for server in hosted_ntp_servers %}
     ip daddr {{ server }} udp dport 123 accept
 {% endfor %}
+    ip daddr 10.0.0.0/8 drop
+    ip daddr 172.16.0.0/12 drop
+    ip daddr 192.168.0.0/16 drop
+    ip6 daddr fc00::/7 drop
   }
 }

@@ -37,6 +37,35 @@
     group: "{{ hosted_worker_group }}"
     mode: "0750"
 
+- name: Create worker virtualenv
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -m
+      - venv
+      - "{{ hosted_venv_dir }}"
+  args:
+    creates: "{{ hosted_venv_dir }}/bin/python"
+  when: not ansible_check_mode
+
+- name: Install pinned worker requirements manifest
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../../requirements-worker.txt"
+    dest: "{{ hosted_worker_requirements }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install pinned worker dependencies
+  ansible.builtin.command:
+    argv:
+      - "{{ hosted_venv_dir }}/bin/pip"
+      - install
+      - --requirement
+      - "{{ hosted_worker_requirements }}"
+  changed_when: false
+  when: not ansible_check_mode
+
 - name: Require operator-provisioned environment file
   ansible.builtin.stat:
     path: "{{ hosted_env_file }}"

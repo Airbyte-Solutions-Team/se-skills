@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.11,<3.14"
 # dependencies = [
 #   "asyncpg>=0.30.0",
 #   "pyjwt[crypto]>=2.10.0",

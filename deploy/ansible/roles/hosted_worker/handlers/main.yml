@@ -12,9 +12,22 @@
   ansible.builtin.command:
     argv:
       - nft
+      - delete
+      - table
+      - inet
+      - se_skills
+  failed_when: false
+  changed_when: false
+  listen: Reload nftables
+
+- name: Load SE Skills nftables table
+  ansible.builtin.command:
+    argv:
+      - nft
       - -f
       - "{{ hosted_firewall_path }}"
   changed_when: false
+  listen: Reload nftables
 
 - name: Restart systemd-journald
   ansible.builtin.systemd:

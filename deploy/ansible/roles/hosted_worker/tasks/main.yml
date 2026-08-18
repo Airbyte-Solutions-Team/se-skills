@@ -1,6 +1,16 @@
 ---
 - name: Validate host contract
   ansible.builtin.include_tasks: preflight.yml
+
+- name: Install host contract packages
+  ansible.builtin.apt:
+    name:
+      - chrony
+      - nftables
+      - python3-venv
+    state: present
+    update_cache: true
+
 - name: Create service account
   ansible.builtin.include_tasks: user.yml
 - name: Create worker directories

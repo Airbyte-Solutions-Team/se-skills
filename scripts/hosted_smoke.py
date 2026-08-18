@@ -10,6 +10,7 @@ from pathlib import Path
 
 repo_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(repo_root))
+sys.path.insert(0, str(repo_root / "webapp"))
 
 from webapp.hosted.smoke import SmokeReport, run_live_smoke, run_offline_smoke
 

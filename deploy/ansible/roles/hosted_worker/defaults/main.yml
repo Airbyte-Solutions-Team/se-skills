@@ -15,17 +15,18 @@ hosted_operator_ssh_cidr: ""
 hosted_anthropic_host: api.anthropic.com
 hosted_database_host: ""
 hosted_storage_host: ""
-hosted_registry_host: ghcr.io
+hosted_registry_host: ""
 hosted_observability_host: ""
-hosted_dns_servers:
-  - 1.1.1.1
-  - 8.8.8.8
+hosted_dns_servers: []
 hosted_ntp_servers: []
 hosted_postgres_port: 5432
 hosted_storage_port: 443
 hosted_registry_port: 443
 hosted_observability_port: 443
 hosted_runsc_binary: /usr/local/bin/runsc
+hosted_venv_dir: /opt/se-skills/venv
+hosted_worker_requirements: /opt/se-skills/deploy/requirements-worker.txt
+hosted_worker_uid: 995
 hosted_service_unit: se-skills-worker.service
 hosted_cleanup_unit: se-skills-cleanup.service
 hosted_cleanup_timer: se-skills-cleanup.timer

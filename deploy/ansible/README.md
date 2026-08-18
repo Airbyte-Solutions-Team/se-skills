@@ -13,4 +13,7 @@ ansible-playbook -i inventory.example.ini site.yml --check --diff
 
 Applying this package to a real host is deferred to Slice 5B2B2. The referenced
 `/etc/se-skills/worker.env` must be provisioned by an approved secret-management
-process; this role never templates secret values.
+process; this role never templates secret values. The application payload under
+`/opt/se-skills` and `deploy/requirements-worker.txt` are supplied by the
+operator or the later application-delivery step. The role creates the pinned
+virtualenv only after those files are present.

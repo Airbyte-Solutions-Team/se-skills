@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from webapp.hosted.smoke import run_live_smoke, run_offline_smoke
+import pytest
+
+from webapp.hosted.smoke import OfflineFaults, run_live_smoke, run_offline_smoke
 
 
 class _Environment:
@@ -16,6 +18,21 @@ def test_offline_smoke_passes() -> None:
 
     assert report.ok
     assert all(check.status == "ok" for check in report.checks)
+
+
+@pytest.mark.parametrize(
+    "faults",
+    [
+        OfflineFaults(drop_network_flag=True),
+        OfflineFaults(add_mount=True),
+        OfflineFaults(leak_sentinel=True),
+        OfflineFaults(leave_state=True),
+    ],
+)
+def test_offline_smoke_fails_when_boundary_is_broken(faults: OfflineFaults) -> None:
+    report = run_offline_smoke(faults)
+
+    assert not report.ok
 
 
 def test_live_smoke_requires_explicit_gate() -> None:
