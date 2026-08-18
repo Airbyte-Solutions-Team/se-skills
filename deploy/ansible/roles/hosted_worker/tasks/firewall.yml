@@ -1,0 +1,15 @@
+---
+- name: Install deny-by-default firewall policy
+  ansible.builtin.template:
+    src: firewall.nft.j2
+    dest: "{{ hosted_firewall_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload nftables
+
+- name: Require nftables service
+  ansible.builtin.service:
+    name: nftables
+    enabled: true
+    state: started

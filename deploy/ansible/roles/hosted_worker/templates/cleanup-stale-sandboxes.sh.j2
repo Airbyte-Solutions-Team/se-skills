@@ -1,0 +1,22 @@
+#!/bin/sh
+set -eu
+
+root="{{ hosted_runsc_state_dir }}"
+bundles="{{ hosted_bundle_dir }}"
+runsc="{{ hosted_runsc_binary }}"
+
+for state in "$root"/*; do
+  [ -d "$state" ] || continue
+  output="$("$runsc" --root="$state" list 2>/dev/null)" || continue
+  first_line=$(printf '%s\n' "$output" | sed -n '1p')
+  [ "${first_line#ID}" != "$first_line" ] || continue
+  id=$(basename "$state")
+  printf '%s\n' "$output" | awk -v id="$id" 'NR > 1 && $1 == id { found=1 } END { exit found ? 0 : 1 }' && continue
+  "$runsc" --root="$state" delete --force "$id" >/dev/null 2>&1 || continue
+  rm -rf -- "$state"
+done
+
+for bundle in "$bundles"/*; do
+  [ -d "$bundle" ] || continue
+  [ -e "$bundle/runtime/job.json" ] || rm -rf -- "$bundle"
+done

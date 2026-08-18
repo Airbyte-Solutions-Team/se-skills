@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 from pathlib import Path
@@ -22,9 +21,6 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _config(offline: bool) -> PreflightConfig:
-    pins = json.loads((repo_root / "deploy" / "pins.json").read_text(encoding="utf-8"))
-    runsc = pins["runsc"]
-    limits = pins["limits"]
     present = frozenset(name for name in (
         "DATABASE_WORKER_URL",
         "ANTHROPIC_API_KEY",
@@ -36,21 +32,16 @@ def _config(offline: bool) -> PreflightConfig:
     supply_chain = None
     return PreflightConfig(
         runsc_path=os.environ.get("RUNSC_BINARY", "/usr/local/bin/runsc"),
-        runsc_version=runsc["version"],
-        runsc_sha512=runsc["sha512"]["x86_64"],
         present_config_names=present,
         model_proxy_secret=os.environ.get("MODEL_PROXY_SECRET", ""),
         anthropic_api_url=os.environ.get("ANTHROPIC_API_URL", "https://api.anthropic.com"),
         database_url=os.environ.get("DATABASE_WORKER_URL", ""),
         storage_url=os.environ.get("SUPABASE_STORAGE_ENDPOINT", ""),
         rootfs_path=os.environ.get("RUNSC_ROOTFS", ""),
-        firewall_policy_path=os.environ.get(
-            "HOSTED_FIREWALL_POLICY_PATH", "/etc/se-skills/firewall.nft"
-        ),
-        min_root_free_bytes=limits["min_root_free_bytes"],
-        min_temp_free_bytes=limits["min_temp_free_bytes"],
         supply_chain=supply_chain,
         supply_chain_skipped=offline,
+        hosted_env=os.environ.get("HOSTED_ENV", "development").lower(),
+        runtime=os.environ.get("HOSTED_RUNTIME", "post-call-runsc"),
     )
 
 

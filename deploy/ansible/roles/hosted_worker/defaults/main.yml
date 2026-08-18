@@ -1,0 +1,33 @@
+---
+hosted_repo_root: /opt/se-skills
+hosted_pins_file: "{{ role_path }}/../../../pins.json"
+hosted_worker_user: se-worker
+hosted_worker_group: se-worker
+hosted_remove_user: false
+hosted_app_dir: /opt/se-skills
+hosted_rootfs_dir: /opt/se-skills/rootfs
+hosted_state_dir: /var/lib/se-skills
+hosted_runsc_state_dir: /var/lib/se-skills/runsc
+hosted_bundle_dir: /var/lib/se-skills/bundles
+hosted_env_file: /etc/se-skills/worker.env
+hosted_firewall_path: /etc/se-skills/firewall.nft
+hosted_operator_ssh_cidr: ""
+hosted_anthropic_host: api.anthropic.com
+hosted_database_host: ""
+hosted_storage_host: ""
+hosted_registry_host: ghcr.io
+hosted_observability_host: ""
+hosted_dns_servers:
+  - 1.1.1.1
+  - 8.8.8.8
+hosted_ntp_servers: []
+hosted_postgres_port: 5432
+hosted_storage_port: 443
+hosted_registry_port: 443
+hosted_observability_port: 443
+hosted_runsc_binary: /usr/local/bin/runsc
+hosted_service_unit: se-skills-worker.service
+hosted_cleanup_unit: se-skills-cleanup.service
+hosted_cleanup_timer: se-skills-cleanup.timer
+hosted_runtime_directory: /run/se-skills
+hosted_app_entrypoint: /opt/se-skills/scripts/run_hosted_worker.py

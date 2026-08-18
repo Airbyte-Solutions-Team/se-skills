@@ -1,0 +1,42 @@
+#!/usr/sbin/nft -f
+flush ruleset
+
+table inet se_skills {
+  chain input {
+    type filter hook input priority 0; policy drop;
+    iifname "lo" accept
+    ct state established,related accept
+{% if hosted_operator_ssh_cidr | length > 0 %}
+    ip saddr {{ hosted_operator_ssh_cidr }} tcp dport 22 accept
+{% endif %}
+  }
+
+  chain output {
+    type filter hook output priority 0; policy drop;
+    oifname "lo" accept
+    ct state established,related accept
+    ip daddr 169.254.169.254 drop
+    ip6 daddr fd00:ec2::254 drop
+    ip daddr 169.254.0.0/16 drop
+    ip6 daddr fe80::/10 drop
+{% for server in hosted_dns_servers %}
+    ip daddr {{ server }} udp dport 53 accept
+{% endfor %}
+    tcp dport 443 accept
+{% if hosted_database_host | length > 0 %}
+    ip daddr {{ hosted_database_host }} tcp dport {{ hosted_postgres_port }} accept
+{% endif %}
+{% if hosted_storage_host | length > 0 %}
+    ip daddr {{ hosted_storage_host }} tcp dport {{ hosted_storage_port }} accept
+{% endif %}
+{% if hosted_registry_host | length > 0 %}
+    ip daddr {{ hosted_registry_host }} tcp dport {{ hosted_registry_port }} accept
+{% endif %}
+{% if hosted_observability_host | length > 0 %}
+    ip daddr {{ hosted_observability_host }} tcp dport {{ hosted_observability_port }} accept
+{% endif %}
+{% for server in hosted_ntp_servers %}
+    ip daddr {{ server }} udp dport 123 accept
+{% endfor %}
+  }
+}

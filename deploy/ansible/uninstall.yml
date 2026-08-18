@@ -1,0 +1,46 @@
+---
+- name: Remove the SE Skills hosted worker
+  hosts: hosted_workers
+  become: true
+  vars:
+    hosted_remove_user: false
+  tasks:
+    - name: Stop hosted worker
+      ansible.builtin.systemd:
+        name: se-skills-worker.service
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Remove hosted worker unit and drop-ins
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/se-skills-worker.service
+        - /etc/systemd/system/se-skills-worker.service.d
+        - /etc/systemd/system/se-skills-worker.timer
+
+    - name: Remove hosted firewall policy
+      ansible.builtin.file:
+        path: /etc/se-skills/firewall.nft
+        state: absent
+
+    - name: Remove hosted worker directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /opt/se-skills
+        - /var/lib/se-skills
+
+    - name: Remove hosted worker user
+      ansible.builtin.user:
+        name: se-worker
+        state: absent
+        remove: false
+      when: hosted_remove_user | bool
+
+    - name: Reload systemd after removal
+      ansible.builtin.systemd:
+        daemon_reload: true

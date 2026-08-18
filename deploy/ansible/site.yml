@@ -1,0 +1,6 @@
+---
+- name: Configure the SE Skills hosted worker
+  hosts: hosted_workers
+  become: true
+  roles:
+    - hosted_worker

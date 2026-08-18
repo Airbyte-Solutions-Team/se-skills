@@ -1,0 +1,20 @@
+---
+- name: Load authoritative deployment pins
+  ansible.builtin.set_fact:
+    hosted_pins: "{{ lookup('ansible.builtin.file', hosted_pins_file) | from_json }}"
+
+- name: Require supported operating system
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.system == "Linux"
+      - ansible_facts.distribution == "Ubuntu"
+      - ansible_facts.distribution_version is version(hosted_pins.host.os_version, "==")
+      - ansible_facts.architecture in hosted_pins.runsc.sha512
+    fail_msg: "Host does not satisfy the pinned Ubuntu/architecture contract."
+
+- name: Require supported pinned architecture
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.architecture in hosted_pins.runsc.sha512
+      - hosted_pins.host.arch == ansible_facts.architecture
+    fail_msg: "No runsc checksum pin exists for this architecture."

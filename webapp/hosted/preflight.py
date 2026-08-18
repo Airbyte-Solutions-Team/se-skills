@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from webapp.hosted.pins import HostedPins, load_pins
 from webapp.hosted.supply_chain import SupplyChainCommandResult, SupplyChainVerification
 
 
@@ -43,13 +44,13 @@ class HostProbe(Protocol):
     def namespace_features(self) -> frozenset[str]:
         ...
 
-    def listening_sockets(self) -> tuple["ListeningSocket", ...]:
+    def listening_sockets(self) -> tuple["ListeningSocket", ...] | None:
         ...
 
     def clock_offset_seconds(self) -> float | None:
         ...
 
-    def disk_free_bytes(self, path: str) -> int:
+    def disk_free_bytes(self, path: str) -> int | None:
         ...
 
     def file_text(self, path: str) -> str | None:
@@ -80,8 +81,7 @@ class PreflightConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     runsc_path: str = "/usr/local/bin/runsc"
-    runsc_version: str = "20260810.0"
-    runsc_sha512: str = ""
+    pins: HostedPins = Field(default_factory=load_pins)
     required_names: tuple[str, ...] = (
         "DATABASE_WORKER_URL",
         "ANTHROPIC_API_KEY",
@@ -103,14 +103,11 @@ class PreflightConfig(BaseModel):
     runsc_state_path: str = "/var/lib/se-skills/runsc"
     runsc_state_mode: int = 0o700
     rootfs_path: str = ""
-    firewall_policy_path: str = "/etc/se-skills/firewall.nft"
-    min_kernel: str = "6.8"
-    min_root_free_bytes: int = 0
-    min_temp_free_bytes: int = 0
     clock_tolerance_seconds: float = 1.0
     supply_chain: SupplyChainVerification | None = None
     supply_chain_skipped: bool = False
-    production: bool = True
+    hosted_env: str = "development"
+    runtime: str = "echo"
 
 
 class PreflightCheck(BaseModel):
@@ -149,57 +146,47 @@ class PreflightReport(BaseModel):
 def run_preflight(config: PreflightConfig, probe: HostProbe) -> PreflightReport:
     """Run every required host check without logging sensitive values."""
     checks: list[PreflightCheck] = []
+    pins = config.pins
     os_name, os_version = probe.os_release()
+    os_ok = os_name == pins.host.os and os_version == pins.host.os_version
     checks.append(
-        _required(
-            "host_os",
-            os_name == "ubuntu" and os_version == "24.04",
-            "supported OS is ubuntu 24.04" if os_name == "ubuntu" and os_version == "24.04" else "unsupported OS or version",
-        )
+        _required("host_os", os_ok, "supported OS and version" if os_ok else "unsupported OS or version")
     )
+    architecture = probe.architecture()
+    arch_ok = architecture == pins.host.arch
     checks.append(
-        _required(
-            "host_architecture",
-            probe.architecture() == "x86_64",
-            "architecture is x86_64" if probe.architecture() == "x86_64" else "unsupported architecture",
-        )
+        _required("host_architecture", arch_ok, "supported architecture" if arch_ok else "unsupported architecture")
     )
+    kernel = probe.kernel_version()
+    kernel_ok = _version_at_least(kernel, pins.host.min_kernel)
     checks.append(
-        _required(
-            "host_kernel",
-            _version_at_least(probe.kernel_version(), config.min_kernel),
-            "kernel meets minimum" if _version_at_least(probe.kernel_version(), config.min_kernel) else "kernel is below minimum",
-        )
+        _required("host_kernel", kernel_ok, "kernel meets minimum" if kernel_ok else "kernel is below minimum")
     )
     runsc = probe.path_info(config.runsc_path)
+    runsc_mode_ok = (
+        runsc.exists
+        and runsc.is_file
+        and runsc.mode == 0o755
+        and runsc.owner == "root"
+        and runsc.group == "root"
+    )
     checks.append(
-        _required(
-            "runsc_binary",
-            runsc.exists and runsc.is_file and runsc.mode == 0o755 and runsc.owner == "root" and runsc.group == "root",
-            "runsc is root-owned executable" if runsc.exists and runsc.is_file and runsc.mode == 0o755 and runsc.owner == "root" and runsc.group == "root" else "runsc missing or ownership/mode is unsafe",
-        )
+        _required("runsc_binary", runsc_mode_ok, "runsc is root-owned executable" if runsc_mode_ok else "runsc missing or ownership/mode is unsafe")
     )
     version_result = probe.command((config.runsc_path, "--version"))
+    version_ok = version_result.returncode == 0 and pins.runsc.version in version_result.stdout
     checks.append(
-        _required(
-            "runsc_version",
-            version_result.returncode == 0 and config.runsc_version in version_result.stdout,
-            "runsc version matches pin" if version_result.returncode == 0 and config.runsc_version in version_result.stdout else "runsc version does not match pin",
-        )
+        _required("runsc_version", version_ok, "runsc version matches pin" if version_ok else "runsc version does not match pin")
     )
+    checksum = pins.runsc_checksum(architecture)
+    checksum_ok = bool(runsc.sha512) and checksum is not None and runsc.sha512 == checksum
     checks.append(
-        _required(
-            "runsc_checksum",
-            bool(runsc.sha512) and runsc.sha512 == config.runsc_sha512,
-            "runsc checksum matches pin" if runsc.sha512 == config.runsc_sha512 and bool(runsc.sha512) else "runsc checksum does not match pin",
-        )
+        _required("runsc_checksum", checksum_ok, "runsc checksum matches pin" if checksum_ok else "runsc checksum does not match pin")
     )
+    cgroup_version = probe.cgroup_version()
+    cgroup_ok = cgroup_version == pins.host.cgroup_version
     checks.append(
-        _required(
-            "cgroup_v2",
-            probe.cgroup_version() == 2,
-            "cgroup v2 is enabled" if probe.cgroup_version() == 2 else "cgroup v2 is unavailable",
-        )
+        _required("cgroup_v2", cgroup_ok, "required cgroup version is enabled" if cgroup_ok else "required cgroup version is unavailable")
     )
     required_names_missing = sorted(set(config.required_names) - set(config.present_config_names))
     checks.append(
@@ -211,23 +198,33 @@ def run_preflight(config: PreflightConfig, probe: HostProbe) -> PreflightReport:
     )
     checks.append(_required("model_proxy_secret", _strong_secret(config.model_proxy_secret), _secret_detail(config.model_proxy_secret)))
     checks.append(_required("anthropic_url", _valid_anthropic_url(config.anthropic_api_url, config.approved_anthropic_hosts), _url_detail(config.anthropic_api_url, config.approved_anthropic_hosts)))
-    checks.append(_required("database_url", _valid_database_url(config.database_url), "database URL is secure" if _valid_database_url(config.database_url) else "database URL must use postgresql with TLS"))
-    checks.append(_required("storage_url", _valid_https_url(config.storage_url), "Storage URL is secure" if _valid_https_url(config.storage_url) else "Storage URL must use https"))
-    checks.append(_required("worker_directories", _worker_dirs_ok(config, probe), "worker directories have expected ownership and modes" if _worker_dirs_ok(config, probe) else "worker directory ownership or mode is unsafe"))
+    database_ok = _valid_database_url(config.database_url)
+    checks.append(_required("database_url", database_ok, "database URL is secure" if database_ok else "database URL must use postgresql with TLS"))
+    storage_ok = _valid_https_url(config.storage_url)
+    checks.append(_required("storage_url", storage_ok, "Storage URL is secure" if storage_ok else "storage URL must use https"))
+    worker_dirs_ok = _worker_dirs_ok(config, probe)
+    checks.append(_required("worker_directories", worker_dirs_ok, "worker directories have expected ownership and modes" if worker_dirs_ok else "worker directory ownership or mode is unsafe"))
     rootfs = probe.path_info(config.rootfs_path) if config.rootfs_path else PathFacts(False, None, None, None, False, False)
     checks.append(_required("rootfs_path", rootfs.exists and rootfs.is_directory, "sandbox rootfs directory is present" if rootfs.exists and rootfs.is_directory else "sandbox rootfs directory is missing"))
     namespaces = probe.namespace_features()
     has_network_namespace = "net" in namespaces or "network" in namespaces
     has_required_namespaces = {"pid", "user"}.issubset(namespaces) and has_network_namespace
     checks.append(_required("namespace_features", has_required_namespaces, "required namespace features are present" if has_required_namespaces else "required namespace features are missing"))
-    checks.append(_required("root_disk_free", probe.disk_free_bytes("/") >= config.min_root_free_bytes, "root filesystem has sufficient free space" if probe.disk_free_bytes("/") >= config.min_root_free_bytes else "root filesystem free space is below minimum"))
-    checks.append(_required("temp_disk_free", probe.disk_free_bytes("/tmp") >= config.min_temp_free_bytes, "temporary filesystem has sufficient free space" if probe.disk_free_bytes("/tmp") >= config.min_temp_free_bytes else "temporary filesystem free space is below minimum"))
+    root_free = probe.disk_free_bytes("/")
+    root_disk_ok = root_free is not None and root_free >= pins.limits.min_root_free_bytes
+    checks.append(_required("root_disk_free", root_disk_ok, "root filesystem has sufficient free space" if root_disk_ok else "root filesystem free space is unavailable or below minimum"))
+    temp_free = probe.disk_free_bytes("/tmp")
+    temp_disk_ok = temp_free is not None and temp_free >= pins.limits.min_temp_free_bytes
+    checks.append(_required("temp_disk_free", temp_disk_ok, "temporary filesystem has sufficient free space" if temp_disk_ok else "temporary filesystem free space is unavailable or below minimum"))
     offset = probe.clock_offset_seconds()
     checks.append(_required("clock_sync", offset is not None and abs(offset) <= config.clock_tolerance_seconds, "clock offset is within tolerance" if offset is not None and abs(offset) <= config.clock_tolerance_seconds else "clock offset exceeds tolerance"))
-    checks.append(_required("firewall_policy", _firewall_ok(config.firewall_policy_path, probe), "firewall is deny-by-default and blocks metadata" if _firewall_ok(config.firewall_policy_path, probe) else "firewall policy is missing or unsafe"))
-    public_listener = any(socket.address not in {"127.0.0.1", "::1", "localhost"} for socket in probe.listening_sockets())
-    checks.append(_required("public_listener", not public_listener, "no unexpected public listener" if not public_listener else "unexpected public listener is present"))
-    checks.append(_required("production_runtime", config.production, "production runtime is fail-closed" if config.production else "production runtime fallback is unsafe"))
+    firewall_ok = _firewall_ok(pins.host.firewall_policy_path, probe)
+    checks.append(_required("firewall_policy", firewall_ok, "firewall is deny-by-default and blocks metadata" if firewall_ok else "firewall policy is missing or unsafe"))
+    listeners = probe.listening_sockets()
+    listener_ok = listeners is not None and not any(item.address not in {"127.0.0.1", "::1", "localhost"} for item in listeners)
+    checks.append(_required("public_listener", listener_ok, "no unexpected public listener" if listener_ok else "listener enumeration failed or found an unexpected public listener"))
+    production_runtime_ok = config.hosted_env != "production" or config.runtime == "post-call-runsc"
+    checks.append(_required("production_runtime_policy", production_runtime_ok, "selected runtime is fail-closed" if production_runtime_ok else "production runtime is not fail-closed"))
     if config.supply_chain is None and config.supply_chain_skipped:
         checks.append(
             PreflightCheck(
@@ -298,7 +295,14 @@ def _url_detail(value: str, approved_hosts: frozenset[str]) -> str:
 
 def _valid_https_url(value: str) -> bool:
     parsed = urlparse(value)
-    return parsed.scheme == "https" and not parsed.username and not parsed.query and not parsed.fragment and bool(parsed.hostname)
+    return (
+        parsed.scheme == "https"
+        and not parsed.username
+        and not parsed.password
+        and not parsed.query
+        and not parsed.fragment
+        and bool(parsed.hostname)
+    )
 
 
 def _valid_database_url(value: str) -> bool:
@@ -335,7 +339,10 @@ class LocalHostProbe:
     """Production probe implementation; tests should inject a fake instead."""
 
     def os_release(self) -> tuple[str, str]:
-        release = Path("/etc/os-release").read_text(encoding="utf-8")
+        try:
+            release = Path("/etc/os-release").read_text(encoding="utf-8")
+        except OSError:
+            return "", ""
         values = dict(
             line.split("=", 1)
             for line in release.splitlines()
@@ -386,10 +393,15 @@ class LocalHostProbe:
     def namespace_features(self) -> frozenset[str]:
         return frozenset(name for name in ("pid", "net", "user") if Path(f"/proc/self/ns/{name}").exists())
 
-    def listening_sockets(self) -> tuple[ListeningSocket, ...]:
-        completed = subprocess.run(
-            ("ss", "-lntuH"), capture_output=True, text=True, check=False
-        )
+    def listening_sockets(self) -> tuple[ListeningSocket, ...] | None:
+        try:
+            completed = subprocess.run(
+                ("ss", "-lntuH"), capture_output=True, text=True, check=False
+            )
+        except OSError:
+            return None
+        if completed.returncode != 0:
+            return None
         sockets: list[ListeningSocket] = []
         for line in completed.stdout.splitlines():
             fields = line.split()
@@ -406,10 +418,51 @@ class LocalHostProbe:
         return tuple(sockets)
 
     def clock_offset_seconds(self) -> float | None:
-        return 0.0
+        try:
+            timedate = subprocess.run(
+                (
+                    "timedatectl",
+                    "show",
+                    "-p",
+                    "NTPSynchronized",
+                    "-p",
+                    "TimeUSec",
+                    "--value",
+                ),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            timedate = None
+        if timedate is not None and timedate.returncode == 0:
+            values = [line.strip() for line in timedate.stdout.splitlines() if line.strip()]
+            if values and values[0].lower() == "yes":
+                return 0.0
+        try:
+            chrony = subprocess.run(
+                ("chronyc", "tracking"),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            return None
+        if chrony.returncode != 0:
+            return None
+        for line in chrony.stdout.splitlines():
+            if line.lower().startswith("system time"):
+                try:
+                    return abs(float(line.split(":", 1)[1].split()[0]))
+                except (IndexError, ValueError):
+                    return None
+        return None
 
-    def disk_free_bytes(self, path: str) -> int:
-        return shutil.disk_usage(path).free
+    def disk_free_bytes(self, path: str) -> int | None:
+        try:
+            return shutil.disk_usage(path).free
+        except OSError:
+            return None
 
     def file_text(self, path: str) -> str | None:
         try:

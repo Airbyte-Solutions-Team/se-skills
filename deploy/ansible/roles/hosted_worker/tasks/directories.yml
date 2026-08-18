@@ -1,0 +1,52 @@
+---
+- name: Create application and rootfs directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ hosted_app_dir }}", mode: "0755" }
+    - { path: "{{ hosted_rootfs_dir }}", mode: "0755" }
+
+- name: Create worker state directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ hosted_worker_user }}"
+    group: "{{ hosted_worker_group }}"
+    mode: "0750"
+  loop:
+    - "{{ hosted_state_dir }}"
+    - "{{ hosted_bundle_dir }}"
+
+- name: Create runsc state directory
+  ansible.builtin.file:
+    path: "{{ hosted_runsc_state_dir }}"
+    state: directory
+    owner: "{{ hosted_worker_user }}"
+    group: "{{ hosted_worker_group }}"
+    mode: "0700"
+
+- name: Create configuration directory
+  ansible.builtin.file:
+    path: /etc/se-skills
+    state: directory
+    owner: root
+    group: "{{ hosted_worker_group }}"
+    mode: "0750"
+
+- name: Require operator-provisioned environment file
+  ansible.builtin.stat:
+    path: "{{ hosted_env_file }}"
+  register: hosted_env_stat
+
+- name: Refuse missing environment file
+  ansible.builtin.assert:
+    that:
+      - hosted_env_stat.stat.exists
+      - hosted_env_stat.stat.pw_name == "root"
+      - hosted_env_stat.stat.gr_name == hosted_worker_group
+      - hosted_env_stat.stat.mode == "0640"
+    fail_msg: "Provision {{ hosted_env_file }} with root:{{ hosted_worker_group }} mode 0640."

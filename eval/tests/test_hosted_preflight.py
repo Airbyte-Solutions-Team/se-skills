@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
+import os
+import subprocess
 from typing import Sequence
 
 import pytest
@@ -10,6 +13,7 @@ from webapp.hosted.preflight import (
     PreflightConfig,
     run_preflight,
 )
+from webapp.hosted.pins import load_pins
 from webapp.hosted.supply_chain import (
     SupplyChainArtifacts,
     SupplyChainCommandResult,
@@ -21,7 +25,13 @@ class _Probe:
     def __init__(self) -> None:
         self.paths = {
             "/usr/local/bin/runsc": PathFacts(
-                True, "root", "root", 0o755, True, False, "f" * 128
+                True,
+                "root",
+                "root",
+                0o755,
+                True,
+                False,
+                load_pins().runsc_checksum("x86_64"),
             ),
             "/var/lib/se-skills": PathFacts(
                 True, "se-worker", "se-worker", 0o750, False, True
@@ -36,7 +46,7 @@ class _Probe:
         self.public = False
         self.namespace = frozenset({"pid", "net", "user"})
         self.clock = 0.1
-        self.free = 20_000
+        self.free = 20_000_000_000
         self.firewall = "policy drop\n169.254.169.254\nfd00:ec2::254"
 
     def os_release(self) -> tuple[str, str]:
@@ -60,7 +70,7 @@ class _Probe:
     def namespace_features(self) -> frozenset[str]:
         return self.namespace
 
-    def listening_sockets(self) -> tuple[ListeningSocket, ...]:
+    def listening_sockets(self) -> tuple[ListeningSocket, ...] | None:
         return (
             (ListeningSocket("0.0.0.0", 0),)
             if self.public
@@ -70,7 +80,7 @@ class _Probe:
     def clock_offset_seconds(self) -> float | None:
         return self.clock
 
-    def disk_free_bytes(self, path: str) -> int:
+    def disk_free_bytes(self, path: str) -> int | None:
         return self.free
 
     def file_text(self, path: str) -> str | None:
@@ -102,7 +112,7 @@ def _supply_chain():
 
 def _config(**updates: object) -> PreflightConfig:
     base = dict(
-        runsc_sha512="f" * 128,
+        pins=load_pins(),
         present_config_names=frozenset(
             {
                 "DATABASE_WORKER_URL",
@@ -116,9 +126,6 @@ def _config(**updates: object) -> PreflightConfig:
         model_proxy_secret="Abcdefghijklmnopqrstuvwxyz012345",
         database_url="postgresql://worker@db/app?sslmode=require",
         storage_url="https://storage.example",
-        min_root_free_bytes=10_000,
-        min_temp_free_bytes=10_000,
-        firewall_policy_path="/etc/firewall",
         rootfs_path="/opt/rootfs",
         supply_chain=_supply_chain(),
     )
@@ -139,12 +146,35 @@ def test_compliant_host_passes() -> None:
 @pytest.mark.parametrize(
     ("updates", "check_id"),
     [
-        ({"runsc_sha512": "0" * 128}, "runsc_checksum"),
-        ({"runsc_version": "20270101.0"}, "runsc_version"),
+        (
+            {
+                "pins": load_pins().model_copy(
+                    update={
+                        "runsc": load_pins().runsc.model_copy(
+                            update={"sha512": {"x86_64": "0" * 128}}
+                        )
+                    }
+                )
+            },
+            "runsc_checksum",
+        ),
+        (
+            {
+                "pins": load_pins().model_copy(
+                    update={
+                        "runsc": load_pins().runsc.model_copy(
+                            update={"version": "20270101.0"}
+                        )
+                    }
+                )
+            },
+            "runsc_version",
+        ),
         ({"model_proxy_secret": "a" * 32}, "model_proxy_secret"),
         ({"anthropic_api_url": "http://api.anthropic.com"}, "anthropic_url"),
         ({"database_url": "postgresql://worker@db/app"}, "database_url"),
         ({"storage_url": "http://storage.example"}, "storage_url"),
+        ({"storage_url": "https://user:password@storage.example"}, "storage_url"),
         ({"supply_chain": None}, "supply_chain"),
     ],
 )
@@ -200,3 +230,65 @@ def test_preflight_output_is_redacted() -> None:
 
     assert secret not in rendered
     assert "DATABASE_WORKER_URL" in rendered
+
+
+def test_unknown_clock_offset_fails_closed() -> None:
+    probe = _Probe()
+    probe.clock = None
+
+    report = run_preflight(_config(), probe)
+
+    assert _failed(report, "clock_sync")
+
+
+def test_listener_enumeration_failure_fails_closed() -> None:
+    probe = _Probe()
+    probe.listening_sockets = lambda: None
+
+    report = run_preflight(_config(), probe)
+
+    assert _failed(report, "public_listener")
+
+
+def test_production_runtime_policy_rejects_echo() -> None:
+    report = run_preflight(
+        _config(hosted_env="production", runtime="echo"),
+        _Probe(),
+    )
+
+    assert _failed(report, "production_runtime_policy")
+
+
+def test_production_entrypoint_rejects_echo_before_any_offline_path() -> None:
+    environment = os.environ.copy()
+    environment.update({"HOSTED_MODE": "1", "HOSTED_ENV": "production"})
+    result = subprocess.run(
+        [
+            "uv",
+            "run",
+            "python",
+            "scripts/run_hosted_worker.py",
+            "--runtime",
+            "echo",
+        ],
+        capture_output=True,
+        text=True,
+        env=environment,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "EchoExecutor is not allowed in production" in result.stderr
+    assert "offline" not in result.stderr.lower()
+
+
+def test_shipped_firewall_template_matches_preflight_contract() -> None:
+    template = Path(
+        "deploy/ansible/roles/hosted_worker/templates/firewall.nft.j2"
+    ).read_text()
+    probe = _Probe()
+    probe.firewall = template
+
+    report = run_preflight(_config(), probe)
+
+    assert not _failed(report, "firewall_policy")

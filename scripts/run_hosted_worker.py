@@ -28,23 +28,29 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import logging
 import os
 import shutil
 import signal
 import sys
+from typing import TYPE_CHECKING
 from pathlib import Path
 
 # Make the webapp package importable when running this script directly.
 repo_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(repo_root / "webapp"))
+sys.path.insert(0, str(repo_root))
 
 import config  # noqa: E402
 from hosted import config as hosted_config  # noqa: E402
+from hosted.executor import Executor  # noqa: E402
 from hosted.preflight import LocalHostProbe, PreflightConfig, run_preflight  # noqa: E402
+from hosted.pins import load_pins  # noqa: E402
 from hosted.supply_chain import SupplyChainArtifacts, verify_supply_chain  # noqa: E402
 from hosted.worker import Worker, create_pool  # noqa: E402
+
+if TYPE_CHECKING:
+    import asyncpg
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO").upper())
 logger = logging.getLogger("run_hosted_worker")
@@ -66,7 +72,7 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _build_executor(runtime: str, pool: object) -> object:
+def _build_executor(runtime: str, pool: "asyncpg.Pool") -> Executor:
     """Build the executor selected by the operator.
 
     The `post-call-runsc` mode fails closed if the model proxy or sandbox
@@ -103,16 +109,12 @@ def _build_executor(runtime: str, pool: object) -> object:
 
 
 def _run_production_preflight() -> bool:
-    pins = json.loads(
-        (repo_root / "deploy" / "pins.json").read_text(encoding="utf-8")
-    )
-    runsc = pins["runsc"]
-    limits = pins["limits"]
+    pins = load_pins()
     artifacts = SupplyChainArtifacts(
         image_digest=hosted_config.SANDBOX_IMAGE_DIGEST or None,
-        approved_image_digest=pins["sandbox_image"]["approved_digest"],
+        approved_image_digest=pins.sandbox_image.approved_digest,
         rootfs_digest=hosted_config.RUNSC_ROOTFS_DIGEST or None,
-        manifest_rootfs_digest=pins["sandbox_image"]["rootfs_digest"],
+        manifest_rootfs_digest=pins.sandbox_image.rootfs_digest,
     )
     supply_chain = verify_supply_chain(artifacts, LocalHostProbe())
     names = (
@@ -127,18 +129,15 @@ def _run_production_preflight() -> bool:
     report = run_preflight(
         PreflightConfig(
             runsc_path=hosted_config.RUNSC_BINARY,
-            runsc_version=runsc["version"],
-            runsc_sha512=runsc["sha512"]["x86_64"],
             present_config_names=present,
             model_proxy_secret=hosted_config.MODEL_PROXY_SECRET,
             anthropic_api_url=hosted_config.ANTHROPIC_API_URL,
             database_url=hosted_config.DATABASE_WORKER_URL,
             storage_url=hosted_config.SUPABASE_STORAGE_ENDPOINT,
             rootfs_path=hosted_config.RUNSC_ROOTFS,
-            firewall_policy_path=hosted_config.HOSTED_FIREWALL_POLICY_PATH,
-            min_root_free_bytes=limits["min_root_free_bytes"],
-            min_temp_free_bytes=limits["min_temp_free_bytes"],
             supply_chain=supply_chain,
+            hosted_env=hosted_config.HOSTED_ENV,
+            runtime="post-call-runsc",
         ),
         LocalHostProbe(),
     )

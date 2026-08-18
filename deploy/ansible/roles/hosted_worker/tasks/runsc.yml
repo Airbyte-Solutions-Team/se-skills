@@ -1,0 +1,29 @@
+---
+- name: Download pinned runsc
+  ansible.builtin.get_url:
+    url: "{{ hosted_pins.runsc.download_base_url | replace('<version>', hosted_pins.runsc.version) | replace('<arch>', ansible_facts.architecture) }}"
+    dest: "{{ hosted_runsc_binary }}"
+    owner: root
+    group: root
+    mode: "0755"
+    checksum: "sha512:{{ hosted_pins.runsc.sha512[ansible_facts.architecture] }}"
+  register: hosted_runsc_download
+  notify: Restart hosted worker
+
+- name: Verify installed runsc version
+  ansible.builtin.command:
+    argv:
+      - "{{ hosted_runsc_binary }}"
+      - --version
+  register: hosted_runsc_version
+  changed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: Refuse runsc version drift
+  ansible.builtin.assert:
+    that:
+      - hosted_runsc_version.rc == 0
+      - hosted_pins.runsc.version in hosted_runsc_version.stdout
+    fail_msg: "Installed runsc does not match deploy/pins.json."
+  when: not ansible_check_mode
