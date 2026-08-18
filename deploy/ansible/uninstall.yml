@@ -31,6 +31,7 @@
         - /etc/systemd/system/se-skills-worker.service.d
         - /etc/systemd/system/se-skills-worker.timer
         - /etc/systemd/system/se-skills-cleanup.service
+        - /etc/systemd/system/se-skills-firewall.service
         - /etc/systemd/system/se-skills-cleanup.timer
         - /etc/systemd/journald.conf.d/se-skills-worker.conf
 

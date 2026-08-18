@@ -1,8 +1,9 @@
 """Fail-closed, injectable checks for a hosted worker host."""
 from __future__ import annotations
 
-import hashlib
 import grp
+import hashlib
+import ipaddress
 import os
 import platform
 import pwd
@@ -86,6 +87,7 @@ class PreflightConfig(BaseModel):
     required_names: tuple[str, ...] = (
         "DATABASE_WORKER_URL",
         "ANTHROPIC_API_KEY",
+        "ANTHROPIC_EGRESS_PROXY_URL",
         "MODEL_PROXY_SECRET",
         "RUNSC_ROOTFS",
         "SANDBOX_IMAGE_DIGEST",
@@ -94,6 +96,7 @@ class PreflightConfig(BaseModel):
     present_config_names: frozenset[str] = frozenset()
     model_proxy_secret: str = ""
     anthropic_api_url: str = "https://api.anthropic.com"
+    anthropic_proxy_url: str = ""
     approved_anthropic_hosts: frozenset[str] = frozenset({"api.anthropic.com"})
     database_url: str = ""
     storage_url: str = ""
@@ -206,6 +209,15 @@ def run_preflight(config: PreflightConfig, probe: HostProbe) -> PreflightReport:
     )
     checks.append(_required("model_proxy_secret", _strong_secret(config.model_proxy_secret), _secret_detail(config.model_proxy_secret)))
     checks.append(_required("anthropic_url", _valid_anthropic_url(config.anthropic_api_url, config.approved_anthropic_hosts), _url_detail(config.anthropic_api_url, config.approved_anthropic_hosts)))
+    checks.append(
+        _required(
+            "anthropic_egress_proxy",
+            _valid_proxy_url(config.anthropic_proxy_url),
+            "Anthropic egress proxy URL is configured"
+            if _valid_proxy_url(config.anthropic_proxy_url)
+            else "Anthropic egress proxy URL is missing or unsafe",
+        )
+    )
     database_ok = _valid_database_url(config.database_url)
     checks.append(_required("database_url", database_ok, "database URL is secure" if database_ok else "database URL must use postgresql with TLS"))
     storage_ok = _valid_https_url(config.storage_url)
@@ -321,6 +333,19 @@ def _valid_https_url(value: str) -> bool:
     )
 
 
+def _valid_proxy_url(value: str) -> bool:
+    parsed = urlparse(value)
+    return (
+        parsed.scheme in {"http", "https"}
+        and bool(parsed.hostname)
+        and not parsed.username
+        and not parsed.password
+        and not parsed.query
+        and not parsed.fragment
+        and parsed.path in {"", "/"}
+    )
+
+
 def _valid_database_url(value: str) -> bool:
     parsed = urlparse(value)
     return parsed.scheme == "postgresql" and parsed.hostname is not None and "sslmode=require" in parsed.query
@@ -375,13 +400,37 @@ def _firewall_ok(config: PreflightConfig, probe: HostProbe) -> bool:
         return False
     if not config.approved_https_destinations:
         return False
-    return all(
-        evaluate_output_policy(rules, config.worker_uid, destination, "tcp", 443)
-        == "accept"
-        and evaluate_output_policy(rules, config.non_worker_uid, destination, "tcp", 443)
-        == "drop"
-        for destination in config.approved_https_destinations
-    )
+    normalized_destinations: set[str] = set()
+    for destination in config.approved_https_destinations:
+        try:
+            normalized_destinations.add(
+                str(ipaddress.ip_network(destination, strict=False))
+            )
+        except ValueError:
+            return False
+        if (
+            evaluate_output_policy(
+                rules, config.worker_uid, destination, "tcp", 443
+            )
+            != "accept"
+            or evaluate_output_policy(
+                rules, config.non_worker_uid, destination, "tcp", 443
+            )
+            != "drop"
+        ):
+            return False
+    rendered_destinations = {
+        str(rule.destination)
+        for rule in rules
+        if (
+            rule.uid == config.worker_uid
+            and rule.action == "accept"
+            and rule.protocol == "tcp"
+            and rule.port == 443
+            and rule.destination is not None
+        )
+    }
+    return rendered_destinations == normalized_destinations
 
 
 class LocalHostProbe:

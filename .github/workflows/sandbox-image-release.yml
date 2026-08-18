@@ -108,6 +108,8 @@ jobs:
           TAG: ${{ inputs.tag }}
           PUBLISH: "1"
           COSIGN_SIGN: "1"
+          CERTIFICATE_IDENTITY: https://${{ github.repository }}/.github/workflows/sandbox-image-release.yml@${{ github.ref }}
+          CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
         run: ./deploy/images/build_sandbox_image.sh
 
       - name: Retain release evidence

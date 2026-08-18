@@ -28,6 +28,11 @@ loaded from `deploy/pins.json`; role defaults and paths are in
   (`0122df7b655981abe547ad3d2190d65551dac6a2bfc80b4dc2a989b5d0587458`),
   and Cosign `3.1.3`
   (`4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71`).
+- Release output is promoted under
+  `/etc/se-skills/evidence/<image-digest-hex>/`. The installed manifest is
+  `/etc/se-skills/sandbox-manifest.json`; it references absolute SBOM and
+  provenance paths below that digest-specific directory. The release bundle
+  contains evidence names, not runner-local absolute paths.
 
 ## Identity, files, and modes
 
@@ -73,24 +78,25 @@ are explicitly dropped. DNS and NTP destinations default to empty and must be
 configured as address literals when needed.
 
 The required outbound destinations are the worker database, private Storage,
-approved registry, observability backend, time service, DNS, and Anthropic API
-as approved during 5B2B2. Every destination supplied to the role, including
-Anthropic, must be an IP address or CIDR literal. An unset destination produces
-no firewall accept rule; in particular, the default-empty Anthropic host means
-the worker cannot reach Anthropic until an operator supplies a concrete
-address-list or proxy arrangement. `HOSTED_APPROVED_HTTPS_DESTINATIONS` must
-match the destinations the rendered table actually accepts for the worker UID.
-Host-level static IP allowlisting is defense in depth; the worker proxy's TLS
-hostname verification and request policy remain authoritative for changing
-provider addresses. Choosing maintained Anthropic CIDRs versus a forward proxy
-is an open 5B2B2 operator decision.
+approved registry, observability backend, time service, and DNS. Every
+firewall destination must be an IP address or CIDR literal. Direct Anthropic
+egress is disabled: configure `ANTHROPIC_EGRESS_PROXY_URL` for the controlled
+forward proxy and configure its host/port in the role. The proxy must enforce
+`CONNECT`/TLS only to `api.anthropic.com:443`, resolve DNS at the proxy,
+authenticate the worker, bound timeouts and concurrency, redact audit logs,
+and omit request/response bodies. Provisioning the proxy remains 5B2B2 work.
+An unset destination produces no firewall accept rule.
+`HOSTED_APPROVED_HTTPS_DESTINATIONS` must match the worker-scoped destinations
+rendered by the firewall, including the proxy. Host-level static IP
+allowlisting is defense in depth; the worker proxy's TLS hostname verification
+and request policy remain authoritative.
 
 ## Secrets and data handling
 
 The role never templates secret values. Operators provision `/etc/se-skills/worker.env`
 through the approved secret-management process. It contains the worker database
 URL, model-proxy secret, Anthropic key, rootfs/image references, and
-provider-specific configuration. Secret rotation is owned by the operational
+provider-specific configuration, including `ANTHROPIC_EGRESS_PROXY_URL`. Secret rotation is owned by the operational
 owner selected in 5B2B2; rotate in the secret manager, replace the environment
 file atomically, and restart the worker.
 
@@ -109,7 +115,9 @@ ownership and modes for every evidence file and its parent directory, hashes the
 and runs the manifest-built signature command. A worker-writable manifest or
 evidence file fails closed. Promotion and rollback are operator
 gates; rollback means selecting a previously approved digest and restarting
-the worker, not rebuilding from an unpinned tag.
+the worker, not rebuilding from an unpinned tag. Extract retained rootfs
+archives as root with `--same-owner --numeric-owner` so uid/gid inputs remain
+consistent with the canonical digest.
 
 Postgres is the source of truth for jobs, leases, attempts, and tombstones;
 private object storage is the source of truth for transcripts and outputs.

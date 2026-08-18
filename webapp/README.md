@@ -174,7 +174,10 @@ Set `HOSTED_MODE=1` to use Supabase Auth + Postgres instead of the local filesys
 - `HOSTED_JWT_ALGORITHM` (`HS256` for local tests, `RS256` for Supabase) and `HOSTED_JWT_SECRET` or Supabase JWKS.
 - `SUPABASE_JWT_SECRET` — the Supabase JWT secret used by the backend to sign short-lived Storage JWTs for the dedicated `app_storage` Postgres role. It is only used server-side and must not be sent to the browser.
 - `TRANSCRIPT_MAX_BYTES` (optional, defaults to `10485760` — 10 MiB).
-- `ANTHROPIC_API_KEY` / `ANTHROPIC_API_URL` / `ANTHROPIC_API_VERSION` — used only by the worker-side model proxy (not the sandbox) to forward Anthropic Messages API calls.
+- `ANTHROPIC_API_KEY` / `ANTHROPIC_API_URL` / `ANTHROPIC_API_VERSION` —
+  used only by the worker-side model proxy (not the sandbox) to forward
+  Anthropic Messages API calls. Hosted production also requires
+  `ANTHROPIC_EGRESS_PROXY_URL`; direct Anthropic egress is disabled.
 - `MODEL_PROXY_SECRET` — a strong secret used to sign per-job model-proxy capability tokens.
 - `RUNSC_BINARY` — path to the `runsc` executable when selecting `post-call-runsc` runtime.
 - `RUNSC_ROOTFS` — path to the pinned sandbox rootfs when selecting `post-call-runsc` runtime.

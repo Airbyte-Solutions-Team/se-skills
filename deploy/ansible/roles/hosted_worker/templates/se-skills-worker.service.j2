@@ -1,6 +1,7 @@
 [Unit]
 Description=SE Skills hosted worker
-After=network-online.target nftables.service
+Requires={{ hosted_firewall_unit }}
+After=network-online.target {{ hosted_firewall_unit }}
 Wants=network-online.target
 StartLimitIntervalSec=300
 StartLimitBurst=5

@@ -14,6 +14,7 @@ from webapp.hosted.preflight import (
     PreflightConfig,
     run_preflight,
 )
+from webapp.hosted.firewall_policy import evaluate_output_policy, parse_output_policy
 from webapp.hosted.pins import load_pins
 from webapp.hosted.supply_chain import (
     SupplyChainArtifacts,
@@ -133,6 +134,8 @@ def _supply_chain():
             rootfs_digest=rootfs,
             manifest_rootfs_digest=rootfs,
             signature_command=("verify",),
+            sbom_attestation_command=("verify-attestation", "cyclonedx"),
+            provenance_attestation_command=("verify-attestation", "slsaprovenance"),
         ),
         _CommandRunner(),
     )
@@ -145,6 +148,7 @@ def _config(**updates: object) -> PreflightConfig:
             {
                 "DATABASE_WORKER_URL",
                 "ANTHROPIC_API_KEY",
+                "ANTHROPIC_EGRESS_PROXY_URL",
                 "MODEL_PROXY_SECRET",
                 "RUNSC_ROOTFS",
                 "SANDBOX_IMAGE_DIGEST",
@@ -152,6 +156,7 @@ def _config(**updates: object) -> PreflightConfig:
             }
         ),
         model_proxy_secret="Abcdefghijklmnopqrstuvwxyz012345",
+        anthropic_proxy_url="http://203.0.113.10:3128",
         database_url="postgresql://worker@db/app?sslmode=require",
         storage_url="https://storage.example",
         rootfs_path="/opt/rootfs",
@@ -201,6 +206,7 @@ def test_compliant_host_passes() -> None:
         ),
         ({"model_proxy_secret": "a" * 32}, "model_proxy_secret"),
         ({"anthropic_api_url": "http://api.anthropic.com"}, "anthropic_url"),
+        ({"anthropic_proxy_url": ""}, "anthropic_egress_proxy"),
         ({"database_url": "postgresql://worker@db/app"}, "database_url"),
         ({"storage_url": "http://storage.example"}, "storage_url"),
         ({"storage_url": "https://user:password@storage.example"}, "storage_url"),
@@ -318,9 +324,34 @@ def test_shipped_firewall_template_matches_preflight_contract() -> None:
     probe = _Probe()
     probe.firewall_rules = _render_firewall_template(template)
 
-    report = run_preflight(_config(), probe)
+    report = run_preflight(
+        _config(
+            approved_https_destinations=frozenset(
+                {"203.0.113.10", "198.51.100.12", "198.51.100.13", "198.51.100.14"}
+            )
+        ),
+        probe,
+    )
 
     assert not _failed(report, "firewall_policy")
+    parsed = parse_output_policy(probe.firewall_rules)
+    for destination in (
+        "203.0.113.10",
+        "198.51.100.12",
+        "198.51.100.13",
+        "198.51.100.14",
+    ):
+        assert evaluate_output_policy(parsed, 995, destination, "tcp", 443) == "accept"
+        assert evaluate_output_policy(parsed, 994, destination, "tcp", 443) == "drop"
+    assert evaluate_output_policy(parsed, 995, "93.184.216.34", "tcp", 443) == "drop"
+    assert evaluate_output_policy(parsed, 995, "10.0.0.5", "tcp", 443) == "drop"
+    assert evaluate_output_policy(parsed, 995, "fd00::5", "tcp", 443) == "drop"
+    for metadata in ("169.254.169.254", "169.254.1.1", "fe80::1"):
+        assert evaluate_output_policy(parsed, 995, metadata, "tcp", 443) == "drop"
+    assert evaluate_output_policy(parsed, 995, "192.0.2.53", "udp", 53) == "accept"
+    assert evaluate_output_policy(parsed, 994, "192.0.2.53", "udp", 53) == "drop"
+    assert evaluate_output_policy(parsed, 995, "192.0.2.123", "udp", 123) == "accept"
+    assert evaluate_output_policy(parsed, 994, "192.0.2.123", "udp", 123) == "drop"
 
 
 def _render_firewall_template(template: str) -> str:
@@ -333,7 +364,8 @@ def _render_firewall_template(template: str) -> str:
         "hosted_storage_host": "203.0.113.10",
         "hosted_registry_host": "198.51.100.12",
         "hosted_observability_host": "198.51.100.13",
-        "hosted_anthropic_host": "198.51.100.14",
+        "hosted_anthropic_proxy_host": "198.51.100.14",
+        "hosted_anthropic_proxy_port": 443,
         "hosted_postgres_port": 5432,
         "hosted_storage_port": 443,
         "hosted_registry_port": 443,
@@ -367,7 +399,7 @@ def _render_firewall_without_jinja(template: str, values: dict[str, object]) -> 
         "hosted_storage_host",
         "hosted_registry_host",
         "hosted_observability_host",
-        "hosted_anthropic_host",
+        "hosted_anthropic_proxy_host",
     ):
         pattern = re.compile(
             rf"\{{% if {name} \| length > 0 %\}}(.*?)\{{% endif %\}}",

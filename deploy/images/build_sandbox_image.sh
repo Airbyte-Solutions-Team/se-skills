@@ -60,7 +60,6 @@ docker build --pull=false --file "$DOCKERFILE" --tag "$image_ref" "$REPO_ROOT" >
 image_config_id="$(docker image inspect --format '{{.Id}}' "$image_ref")"
 [[ "$image_config_id" == sha256:* ]] || fail "docker did not return an immutable image config ID"
 
-syft "$image_ref" --output cyclonedx-json >"${work_dir}/sbom.json"
 if [[ "$SCANNER" == "grype" ]]; then
   grype "$image_ref" --fail-on high --quiet >/dev/null
 else
@@ -89,6 +88,7 @@ if [[ "$PUBLISH" == "1" ]]; then
       grep -F "${IMAGE}@" | head -n 1 | cut -d@ -f2
   )"
   [[ "$registry_digest" == sha256:* ]] || fail "published image has no registry manifest digest"
+  syft "${IMAGE}@${registry_digest}" --output cyclonedx-json >"${work_dir}/sbom.json"
   provenance="${work_dir}/provenance.json"
   python3 - "$provenance" "$IMAGE" "$registry_digest" <<'PY'
 import json
@@ -116,9 +116,30 @@ PY
   fi
 else
   registry_digest="unpublished"
+  syft "$image_ref" --output cyclonedx-json >"${work_dir}/sbom.json"
   provenance="${work_dir}/provenance.json"
   printf '{}\n' >"$provenance"
 fi
+
+python3 - "$work_dir/sbom.json" "$registry_digest" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+sbom = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+digest = sys.argv[2]
+if digest == "unpublished":
+    raise SystemExit(0)
+component = sbom.get("metadata", {}).get("component", {})
+hashes = component.get("hashes", [])
+expected = digest.removeprefix("sha256:")
+if digest == "unpublished" or not any(
+    item.get("alg") == "SHA-256" and item.get("content") == expected
+    for item in hashes
+    if isinstance(item, dict)
+):
+    raise SystemExit("SBOM metadata.component does not cover the image digest")
+PY
 
 evidence_stem="${registry_digest#sha256:}"
 [[ "$registry_digest" == "unpublished" ]] && evidence_stem="${image_config_id#sha256:}"
@@ -128,10 +149,10 @@ provenance_path="${OUTPUT_DIR}/${evidence_stem}.provenance.json"
 cp "${work_dir}/sbom.json" "$sbom_path"
 cp "$provenance" "$provenance_path"
 tar --create --sort=name --mtime='UTC 1970-01-01' \
-  --owner=0 --group=0 --numeric-owner --directory "$rootfs_dir" . |
+  --numeric-owner --directory "$rootfs_dir" . |
   gzip -n >"${OUTPUT_DIR}/${evidence_stem}.rootfs.tar.gz"
-python3 - "$manifest" "$registry_digest" "$rootfs_digest" "$sbom_path" \
-  "$provenance_path" "$IMAGE" <<'PY'
+python3 - "$manifest" "$registry_digest" "$rootfs_digest" "$IMAGE" \
+  "${CERTIFICATE_IDENTITY:-}" "${CERTIFICATE_OIDC_ISSUER:-}" "$evidence_stem" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -141,14 +162,16 @@ Path(sys.argv[1]).write_text(
         {
             "image_digest": sys.argv[2],
             "rootfs_digest": sys.argv[3],
-            "sbom_path": sys.argv[4],
-            "provenance_path": sys.argv[5],
+            "sbom_name": f"{sys.argv[7]}.sbom.json",
+            "provenance_name": f"{sys.argv[7]}.provenance.json",
             "signature": {
                 "image_reference": (
-                    f"{sys.argv[6]}@{sys.argv[2]}"
+                    f"{sys.argv[4]}@{sys.argv[2]}"
                     if sys.argv[2] != "unpublished"
-                    else f"{sys.argv[6]}:unpublished"
-                )
+                    else f"{sys.argv[4]}:unpublished"
+                ),
+                "certificate_identity": sys.argv[5] or None,
+                "certificate_oidc_issuer": sys.argv[6] or None,
             },
         },
         sort_keys=True,

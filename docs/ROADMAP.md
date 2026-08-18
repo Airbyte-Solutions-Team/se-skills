@@ -309,8 +309,13 @@ and establish operational rollback and cost controls.
 network/VPC; DNS and certificate ownership; secret-manager choice; registry
 coordinates; observability backend; budget and token/cost alert thresholds;
 named operational owner and escalation path; approved beta users and test
-transcript; maintenance and rollback window; Anthropic egress mechanism
-(maintained pinned CIDRs or a forward proxy) and ownership of its updates.
+transcript; maintenance and rollback window.
+
+The Anthropic egress mechanism is decided: use a controlled forward proxy with
+a stable operator-owned address. The proxy must restrict `CONNECT`/TLS to the
+approved Anthropic hostname and port. Provisioning, authentication, bounded
+timeouts/concurrency, redacted audit logging, and live validation remain
+5B2B2 work; maintained Anthropic CIDRs are not an accepted alternative.
 
 ## Slice 6A: Review, correction, approval, versioning, and audit
 

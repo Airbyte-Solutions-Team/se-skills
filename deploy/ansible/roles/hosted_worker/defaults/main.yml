@@ -12,7 +12,8 @@ hosted_bundle_dir: /var/lib/se-skills/bundles
 hosted_env_file: /etc/se-skills/worker.env
 hosted_firewall_path: /etc/se-skills/firewall.nft
 hosted_operator_ssh_cidr: ""
-hosted_anthropic_host: ""
+hosted_anthropic_proxy_host: ""
+hosted_anthropic_proxy_port: 3128
 hosted_database_host: ""
 hosted_storage_host: ""
 hosted_registry_host: ""
@@ -30,5 +31,7 @@ hosted_worker_uid: 995
 hosted_service_unit: se-skills-worker.service
 hosted_cleanup_unit: se-skills-cleanup.service
 hosted_cleanup_timer: se-skills-cleanup.timer
+hosted_cleanup_min_age_minutes: 60
+hosted_firewall_unit: se-skills-firewall.service
 hosted_runtime_directory: /run/se-skills
 hosted_app_entrypoint: /opt/se-skills/scripts/run_hosted_worker.py

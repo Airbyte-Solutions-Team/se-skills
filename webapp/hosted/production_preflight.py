@@ -38,6 +38,7 @@ class ProductionPreflightSettings(BaseModel):
     sandbox_image_digest: str = ""
     pins: HostedPins = Field(default_factory=load_pins)
     offline: bool = False
+    anthropic_proxy_url: str = ""
 
 
 class _ProbeCommandRunner:
@@ -106,6 +107,7 @@ def run_production_preflight(
             present_config_names=settings.present_config_names,
             model_proxy_secret=settings.model_proxy_secret,
             anthropic_api_url=settings.anthropic_api_url,
+            anthropic_proxy_url=settings.anthropic_proxy_url,
             database_url=settings.database_url,
             storage_url=settings.storage_url,
             rootfs_path=settings.rootfs_path,

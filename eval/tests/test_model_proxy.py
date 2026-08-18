@@ -16,6 +16,7 @@ import httpx
 import pytest
 import jwt
 
+from webapp.hosted import model_proxy
 from webapp.hosted.model_proxy import ModelProxy, ProxyConfig
 from webapp.hosted.runtime_contract import (
     Allowlist,
@@ -120,6 +121,25 @@ def _proxy(
         transport=httpx.MockTransport(_upstream_response)
     )
     return ModelProxy(proxy_config=cfg, anthropic_client=upstream_client)
+
+
+def test_default_anthropic_client_uses_configured_egress_proxy(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeClient:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr(model_proxy.httpx, "AsyncClient", _FakeClient)
+    client = model_proxy._default_anthropic_client(
+        ProxyConfig(
+            secret="a" * 32,
+            anthropic_api_key="test-key",
+            anthropic_proxy_url="http://proxy.example:3128",
+        )
+    )
+    assert captured["base_url"] == "https://api.anthropic.com"
+    assert captured["proxy"] == "http://proxy.example:3128"
 
 
 def _issue(proxy: ModelProxy, job: RuntimeJob) -> tuple[str, str, str]:

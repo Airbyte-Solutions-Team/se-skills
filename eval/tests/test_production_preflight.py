@@ -12,6 +12,7 @@ from webapp.hosted.production_preflight import (
     run_production_preflight,
 )
 from webapp.hosted.supply_chain import SupplyChainCommandResult
+from scripts.install_sandbox_evidence import install_evidence
 
 
 IMAGE_DIGEST = "sha256:" + "a" * 64
@@ -104,9 +105,38 @@ def _setup(tmp_path: Path) -> tuple[_Probe, ProductionPreflightSettings, dict[st
     manifest_path = tmp_path / "manifest.json"
     sbom_path = tmp_path / "sbom.json"
     provenance_path = tmp_path / "provenance.json"
-    sbom_path.write_text(json.dumps({"subject": [{"digest": IMAGE_DIGEST}]}), encoding="utf-8")
+    sbom_path.write_text(
+        json.dumps(
+            {
+                "metadata": {
+                    "component": {
+                        "hashes": [
+                            {
+                                "alg": "SHA-256",
+                                "content": IMAGE_DIGEST.removeprefix("sha256:"),
+                            }
+                        ]
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     provenance_path.write_text(
-        json.dumps({"subject": [{"digest": IMAGE_DIGEST}]}), encoding="utf-8"
+        json.dumps(
+            {
+                "_type": "https://in-toto.io/Statement/v1",
+                "predicateType": "https://slsa.dev/provenance/v1",
+                "subject": [
+                    {
+                        "digest": {
+                            "sha256": IMAGE_DIGEST.removeprefix("sha256:")
+                        }
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
     )
     manifest_path.write_text(
         json.dumps(
@@ -138,11 +168,13 @@ def _setup(tmp_path: Path) -> tuple[_Probe, ProductionPreflightSettings, dict[st
         database_url="postgresql://worker@db/app?sslmode=require",
         storage_url="https://storage.example",
         anthropic_api_url="https://api.anthropic.com",
+        anthropic_proxy_url="http://203.0.113.10:3128",
         model_proxy_secret="PreflightSecretWithSufficientDiversity0123",
         present_config_names=frozenset(
             {
                 "DATABASE_WORKER_URL",
                 "ANTHROPIC_API_KEY",
+                "ANTHROPIC_EGRESS_PROXY_URL",
                 "MODEL_PROXY_SECRET",
                 "RUNSC_ROOTFS",
                 "SANDBOX_IMAGE_DIGEST",
@@ -176,6 +208,69 @@ def test_production_preflight_valid_configuration_passes(tmp_path: Path) -> None
     assert report.ok
 
 
+def test_build_manifest_promotion_round_trip_passes(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    digest_hex = IMAGE_DIGEST.removeprefix("sha256:")
+    (bundle / f"{digest_hex}.sbom.json").write_text(
+        json.dumps(
+            {
+                "metadata": {
+                    "component": {
+                        "hashes": [{"alg": "SHA-256", "content": digest_hex}]
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (bundle / f"{digest_hex}.provenance.json").write_text(
+        json.dumps(
+            {
+                "_type": "https://in-toto.io/Statement/v1",
+                "predicateType": "https://slsa.dev/provenance/v1",
+                "subject": [{"digest": {"sha256": digest_hex}}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    build_manifest = bundle / "build.manifest.json"
+    build_manifest.write_text(
+        json.dumps(
+            {
+                "image_digest": IMAGE_DIGEST,
+                "rootfs_digest": ROOTFS_DIGEST,
+                "sbom_name": f"{digest_hex}.sbom.json",
+                "provenance_name": f"{digest_hex}.provenance.json",
+                "signature": {
+                    "image_reference": f"registry.example/image@{IMAGE_DIGEST}",
+                    "certificate_identity": "https://github.com/example/repo/.github/workflows/sandbox-image-release.yml@refs/heads/main",
+                    "certificate_oidc_issuer": "https://token.actions.githubusercontent.com",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    installed = tmp_path / "etc/se-skills/sandbox-manifest.json"
+    install_evidence(
+        bundle,
+        build_manifest,
+        tmp_path / "etc/se-skills/evidence",
+        installed,
+    )
+    probe, settings, paths = _setup(tmp_path)
+    settings = settings.model_copy(
+        update={
+            "manifest_path": str(installed),
+            "rootfs_path": str(paths["rootfs"]),
+        }
+    )
+    report = run_production_preflight(
+        settings, probe, rootfs_digest_fn=lambda path: ROOTFS_DIGEST
+    )
+    assert report.ok
+
+
 @pytest.mark.parametrize("case", ("manifest", "manifest_dir", "sbom"))
 def test_production_preflight_trust_failures_fail_closed(
     tmp_path: Path, case: str
@@ -201,6 +296,7 @@ def test_production_preflight_trust_failures_fail_closed(
 @pytest.mark.parametrize(
     "case",
     (
+        "unpublished",
         "unparseable_sbom",
         "sbom_digest",
         "missing_provenance",
@@ -215,7 +311,11 @@ def test_production_preflight_evidence_failures_fail_closed(
 ) -> None:
     _, settings, paths = _setup(tmp_path)
     probe = _Probe(paths["rootfs"])
-    if case == "unparseable_sbom":
+    if case == "unpublished":
+        manifest = json.loads(paths["manifest"].read_text(encoding="utf-8"))
+        manifest["image_digest"] = "unpublished"
+        paths["manifest"].write_text(json.dumps(manifest), encoding="utf-8")
+    elif case == "unparseable_sbom":
         paths["sbom"].write_text("{", encoding="utf-8")
     elif case == "sbom_digest":
         paths["sbom"].write_text(json.dumps({"subject": []}), encoding="utf-8")

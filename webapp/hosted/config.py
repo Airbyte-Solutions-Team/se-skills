@@ -48,6 +48,7 @@ SUPABASE_STORAGE_ENDPOINT = os.environ.get("SUPABASE_STORAGE_ENDPOINT", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_API_URL = os.environ.get("ANTHROPIC_API_URL", "https://api.anthropic.com")
 ANTHROPIC_API_VERSION = os.environ.get("ANTHROPIC_API_VERSION", "2023-06-01")
+ANTHROPIC_EGRESS_PROXY_URL = os.environ.get("ANTHROPIC_EGRESS_PROXY_URL", "")
 MODEL_PROXY_SECRET = os.environ.get("MODEL_PROXY_SECRET", "")
 
 # gVisor/runsc executor configuration.

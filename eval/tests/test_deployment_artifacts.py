@@ -125,6 +125,7 @@ def test_uninstall_does_not_touch_durable_services_or_data() -> None:
         "/etc/systemd/journald.conf.d/se-skills-worker.conf",
         "/etc/systemd/system/se-skills-cleanup.service",
         "/etc/systemd/system/se-skills-cleanup.timer",
+        "/etc/systemd/system/se-skills-firewall.service",
     ):
         assert path in text
 
@@ -144,6 +145,9 @@ def test_image_build_script_has_fail_closed_supply_chain_guardrails() -> None:
     assert "RepoDigests" in script
     assert script.index("docker push") < script.index("cosign sign")
     assert "--same-owner" in script
+    assert "--numeric-owner" in script
+    assert "--owner=0" not in script
+    assert "--group=0" not in script
     assert "curl | sh" not in script
 
 
@@ -183,8 +187,9 @@ def test_release_workflow_derives_verified_tools_and_retains_evidence() -> None:
     assert 'cosign attest --yes --type slsaprovenance --predicate' in build
     assert '"${IMAGE}@${registry_digest}"' in build
     assert '"image_digest": sys.argv[2]' in build
-    assert '"sbom_path": sys.argv[4]' in build
-    assert '"provenance_path": sys.argv[5]' in build
+    assert '"sbom_name"' in build
+    assert '"provenance_name"' in build
+    assert "metadata.component" in build
     assert "rootfs.tar.gz" in build
     assert "path: deploy/images/out/*" in text
     assert '"build_tools"' in pins
@@ -220,9 +225,28 @@ def test_firewall_is_applied_before_worker_start_and_as_one_transaction() -> Non
     policy = (
         ANSIBLE / "roles/hosted_worker/templates/firewall.nft.j2"
     ).read_text()
-    assert policy.index("delete table inet se_skills") < policy.index(
-        "table inet se_skills {"
+    delete_index = policy.index("delete table inet se_skills")
+    assert policy.index("table inet se_skills {", delete_index) > delete_index
+    service = (
+        ANSIBLE
+        / "roles/hosted_worker/templates/se-skills-firewall.service.j2"
+    ).read_text()
+    assert "ExecStart=/usr/sbin/nft -f {{ hosted_firewall_path }}" in service
+    assert "RemainAfterExit=yes" in service
+    worker = (
+        ANSIBLE
+        / "roles/hosted_worker/templates/se-skills-worker.service.j2"
+    ).read_text()
+    assert "Requires={{ hosted_firewall_unit }}" in worker
+    assert "After=network-online.target {{ hosted_firewall_unit }}" in worker
+    enable_task = next(
+        task
+        for task in firewall
+        if task.get("name") == "Enable persistent hosted firewall unit"
     )
+    assert enable_task["ansible.builtin.systemd"]["enabled"] is True
+    assert enable_task["ansible.builtin.systemd"]["state"] == "started"
+    assert "nftables" not in "\n".join(task.get("name", "") for task in firewall)
 
 
 def test_cleanup_unit_runs_as_worker_and_state_modes_match_preflight() -> None:

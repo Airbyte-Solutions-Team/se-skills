@@ -12,7 +12,9 @@ The SE Skills Suite today is a local-first Claude Code skill suite plus an optio
 - **Job execution:** local mode uses `claude -p`; hosted mode uses a separate Postgres-backed worker and the Slice 5B2A runsc/proxy runtime. Slice 5B2B1 now also contains root-owned image evidence loading, canonical rootfs verification, durable state paths, atomic firewall application, and digest-bound release evidence; real host provisioning and live smoke remain 5B2B2.
 - **Persistence:** local outputs are Markdown files with optional `.md.json` sidecars; hosted outputs use private Storage and Postgres.
 - **Validation:** `eval/` deterministic manifest-based framework plus `webapp/output_schema.py` Pydantic sidecar validation. Slice 5A added a deterministic `post-call` validation contract derived from `skills/post-call/SKILL.md` and validated without an LLM. Slice 5B1 added deterministic transcript-entity conditional triggers and wired validation into the worker-side post-call orchestrator. Slice 5B2A implemented a per-attempt gVisor `runsc` sandbox executor and a worker-side Anthropic Messages API proxy that routes model calls from the sandbox over a Unix domain socket.
-- **Worker egress:** the deployment foundation requires address-literal firewall destinations, including Anthropic. An unset Anthropic host creates no accept rule; selecting maintained Anthropic CIDRs or a forward proxy is deferred to the 5B2B2 operator decision.
+- **Worker egress:** direct Anthropic egress is disabled. The Product Owner
+  accepted a controlled forward proxy with a stable operator-owned address;
+  proxy provisioning and operation remain 5B2B2 work.
 - **Source coverage and anti-hallucination guardrails** are enforced through prompt discipline and deterministic tests, not a separate runtime.
 
 ## Hosted-beta objective

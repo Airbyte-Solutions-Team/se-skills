@@ -29,18 +29,22 @@ The firewall does not use `flush ruleset`; it replaces only the `se_skills`
 table so it does not destroy provider or container-manager tables. DNS and NTP
 allowlists are empty by default. Destination variables must be IP addresses or
 CIDRs; hostnames such as `ghcr.io` are not inserted into `ip daddr` rules.
-This applies to `hosted_anthropic_host` as well. Its default is empty, so an
-unset Anthropic destination has no accept rule and the worker cannot reach
-Anthropic until the operator supplies a literal address/CIDR or routes through
-an approved egress proxy.
+Direct Anthropic egress is disabled. The worker uses a controlled forward proxy
+at `ANTHROPIC_EGRESS_PROXY_URL`; the firewall allows only the proxy's
+configured address and port. If that address is RFC1918, the policy places a
+narrow worker-UID-scoped exception after metadata/link-local drops and before
+generic private-range drops. The proxy must allow only `CONNECT`/TLS to
+`api.anthropic.com:443`, resolve DNS itself, authenticate the worker, enforce
+bounded timeouts and concurrency, redact audit logs, and never log request or
+response bodies.
 
 `HOSTED_APPROVED_HTTPS_DESTINATIONS` is the preflight-verified set of approved
 HTTPS destinations. It must contain the same destinations that the rendered
-policy accepts for the worker UID; an empty set fails closed. Anthropic does
-not publish a stable address set, so choosing maintained pinned CIDRs versus a
-forward proxy is an open 5B2B2 operator decision. TLS hostname verification and
-worker-side proxy mediation remain the primary controls for changing upstreams;
-the host firewall is defense in depth.
+policy accepts for the worker UID; an empty or incoherent set fails closed.
+The Product Owner rejected maintained Anthropic CIDRs in favor of this proxy
+contract. Provisioning and operating the actual proxy remains 5B2B2 work.
+TLS hostname verification and worker-side proxy mediation remain primary
+controls; the host firewall is defense in depth.
 
 Static IP allowlisting is not a safe primary control for changing upstream
 services. TLS certificate/hostname verification and worker-side proxy

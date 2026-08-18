@@ -30,10 +30,11 @@ _RULE = re.compile(
     r"(?P<action>accept|drop)\s*)$"
 )
 _CHAIN = re.compile(r"^\s*chain (?P<name>input|output) \{$")
+_ANY_CHAIN = re.compile(r"^\s*chain (?P<name>\S+) \{$")
 _POLICY = re.compile(r"policy (?P<policy>accept|drop);")
 _KNOWN_BASE = re.compile(
-    r'^\s*(?:iifname "lo"|oifname "lo"|ct state established,related)'
-    r'(?:\s+accept)?$|^\s*ip saddr \S+ tcp dport \d+ accept$'
+    r'^\s*(?:iifname "lo"|oifname "lo"|ct state established,related) accept$'
+    r'|^\s*ip saddr \S+ tcp dport \d+ accept$'
 )
 
 
@@ -49,6 +50,10 @@ def parse_output_policy(text: str) -> ParsedFirewallPolicy:
         chain_match = _CHAIN.match(line)
         if chain_match:
             chain = chain_match.group("name")
+            continue
+        if _ANY_CHAIN.match(line):
+            valid = False
+            chain = None
             continue
         if chain is not None and stripped == "}":
             chain = None

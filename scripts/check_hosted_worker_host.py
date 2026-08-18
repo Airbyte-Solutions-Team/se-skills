@@ -30,6 +30,7 @@ def _config(offline: bool) -> ProductionPreflightSettings:
         for name in (
             "DATABASE_WORKER_URL",
             "ANTHROPIC_API_KEY",
+            "ANTHROPIC_EGRESS_PROXY_URL",
             "MODEL_PROXY_SECRET",
             "RUNSC_ROOTFS",
             "SANDBOX_IMAGE_DIGEST",
@@ -42,6 +43,7 @@ def _config(offline: bool) -> ProductionPreflightSettings:
         present_config_names=present,
         model_proxy_secret=os.environ.get("MODEL_PROXY_SECRET", ""),
         anthropic_api_url=os.environ.get("ANTHROPIC_API_URL", "https://api.anthropic.com"),
+        anthropic_proxy_url=os.environ.get("ANTHROPIC_EGRESS_PROXY_URL", ""),
         database_url=os.environ.get("DATABASE_WORKER_URL", ""),
         storage_url=os.environ.get("SUPABASE_STORAGE_ENDPOINT", ""),
         rootfs_path=os.environ.get("RUNSC_ROOTFS", ""),

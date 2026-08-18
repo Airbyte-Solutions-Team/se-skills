@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -42,6 +42,8 @@ class SupplyChainArtifacts(BaseModel):
     rootfs_digest: str | None = None
     manifest_rootfs_digest: str | None = None
     signature_command: tuple[str, ...] = ()
+    sbom_attestation_command: tuple[str, ...] = ()
+    provenance_attestation_command: tuple[str, ...] = ()
     signature_required: bool = True
 
 
@@ -77,6 +79,16 @@ def verify_supply_chain(
         _check_sbom(artifacts),
         _check_provenance(artifacts),
         _check_signature(artifacts, command_runner),
+        _check_attestation(
+            "sbom_attestation",
+            artifacts.sbom_attestation_command,
+            command_runner,
+        ),
+        _check_attestation(
+            "provenance_attestation",
+            artifacts.provenance_attestation_command,
+            command_runner,
+        ),
         _check_rootfs(artifacts),
     ]
     return SupplyChainVerification(checks=tuple(checks))
@@ -107,7 +119,9 @@ def _check_sbom(artifacts: SupplyChainArtifacts) -> SupplyChainCheck:
         return SupplyChainCheck(check_id="sbom", ok=False, detail="SBOM is not valid JSON")
     if not isinstance(parsed, dict):
         return SupplyChainCheck(check_id="sbom", ok=False, detail="SBOM root is not an object")
-    if not artifacts.sbom_image_digest and not _contains_value(parsed, artifacts.image_digest):
+    if not artifacts.image_digest:
+        return SupplyChainCheck(check_id="sbom", ok=False, detail="verified image digest is missing")
+    if not artifacts.sbom_image_digest:
         return SupplyChainCheck(check_id="sbom", ok=False, detail="SBOM image digest is missing")
     if artifacts.sbom_image_digest and artifacts.sbom_image_digest != artifacts.image_digest:
         return SupplyChainCheck(
@@ -116,18 +130,6 @@ def _check_sbom(artifacts: SupplyChainArtifacts) -> SupplyChainCheck:
             detail="SBOM does not cover the verified image digest",
         )
     return SupplyChainCheck(check_id="sbom", ok=True, detail="SBOM parses and covers image digest")
-
-
-def _contains_value(value: object, expected: str | None) -> bool:
-    if expected is None:
-        return False
-    if value == expected:
-        return True
-    if isinstance(value, Mapping):
-        return any(_contains_value(item, expected) for item in value.values())
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return any(_contains_value(item, expected) for item in value)
-    return False
 
 
 def _check_provenance(artifacts: SupplyChainArtifacts) -> SupplyChainCheck:
@@ -154,6 +156,27 @@ def _check_signature(
     if result.returncode != 0:
         return SupplyChainCheck(check_id="signature", ok=False, detail="signature verification failed")
     return SupplyChainCheck(check_id="signature", ok=True, detail="signature verified")
+
+
+def _check_attestation(
+    check_id: str,
+    command: tuple[str, ...],
+    command_runner: SupplyChainCommandRunner,
+) -> SupplyChainCheck:
+    if not command:
+        return SupplyChainCheck(
+            check_id=check_id,
+            ok=False,
+            detail="attestation verification command is missing",
+        )
+    result = command_runner.run(command)
+    if result.returncode != 0:
+        return SupplyChainCheck(
+            check_id=check_id,
+            ok=False,
+            detail="attestation verification failed",
+        )
+    return SupplyChainCheck(check_id=check_id, ok=True, detail="attestation verified")
 
 
 def _check_rootfs(artifacts: SupplyChainArtifacts) -> SupplyChainCheck:

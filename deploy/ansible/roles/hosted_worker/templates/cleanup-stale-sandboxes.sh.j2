@@ -4,19 +4,72 @@ set -eu
 root="{{ hosted_runsc_state_dir }}"
 bundles="{{ hosted_bundle_dir }}"
 runsc="{{ hosted_runsc_binary }}"
+min_age_minutes="{{ hosted_cleanup_min_age_minutes }}"
 
+status_for_state() {
+  "$runsc" --root="$1" list --format=json 2>/dev/null |
+    python3 -c '
+import json
+import sys
+
+try:
+    value = json.load(sys.stdin)
+except (ValueError, TypeError):
+    raise SystemExit(2)
+items = value.get("containers", value) if isinstance(value, dict) else value
+if not isinstance(items, list):
+    raise SystemExit(2)
+state_id = sys.argv[1]
+for item in items:
+    if not isinstance(item, dict):
+        continue
+    item_id = item.get("id", item.get("ID"))
+    if item_id == state_id:
+        status = item.get("status", item.get("Status"))
+        if isinstance(status, str):
+            print(status.lower())
+            raise SystemExit(0)
+print("absent")
+' "$2"
+}
+
+is_terminal() {
+  case "$1" in
+    dead|stopped|exited|failed|terminated) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+unverifiable=0
 for state in "$root"/*; do
   [ -d "$state" ] || continue
-  output="$("$runsc" --root="$state" list 2>/dev/null)" || continue
-  first_line=$(printf '%s\n' "$output" | sed -n '1p')
-  [ "${first_line#ID}" != "$first_line" ] || continue
   id=$(basename "$state")
-  printf '%s\n' "$output" | awk -v id="$id" 'NR > 1 && $1 == id { found=1 } END { exit found ? 0 : 1 }' && continue
-  "$runsc" --root="$state" delete --force "$id" >/dev/null 2>&1 || continue
+  [ "$(find "$state" -prune -mmin +"$min_age_minutes" -print)" = "$state" ] || continue
+  if ! status="$(status_for_state "$state" "$id")"; then
+    unverifiable=1
+    continue
+  fi
+  is_terminal "$status" || [ "$status" = "absent" ] || continue
+  "$runsc" --root="$state" delete --force "$id" >/dev/null 2>&1 || true
+  if ! fresh_status="$(status_for_state "$state" "$id")"; then
+    unverifiable=1
+    continue
+  fi
+  [ "$fresh_status" = "absent" ] || continue
   rm -rf -- "$state"
+  rm -rf -- "$bundles/$id"
 done
+
+if [ "$unverifiable" -ne 0 ]; then
+  exit 0
+fi
 
 for bundle in "$bundles"/*; do
   [ -d "$bundle" ] || continue
-  [ -e "$bundle/job.json" ] || rm -rf -- "$bundle"
+  [ "$(find "$bundle" -prune -mmin +"$min_age_minutes" -print)" = "$bundle" ] || continue
+  id=$(basename "$bundle")
+  state="$root/$id"
+  if [ ! -d "$state" ]; then
+    rm -rf -- "$bundle"
+  fi
 done

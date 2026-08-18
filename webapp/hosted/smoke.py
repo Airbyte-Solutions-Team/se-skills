@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import uuid
 from dataclasses import dataclass
@@ -290,12 +291,27 @@ def run_offline_smoke(faults: OfflineFaults | None = None) -> SmokeReport:
         SupplyChainArtifacts(
             image_digest=digest,
             approved_image_digest=digest,
-            sbom_text="{}",
+            sbom_text=json.dumps(
+                {
+                    "metadata": {
+                        "component": {
+                            "hashes": [
+                                {
+                                    "alg": "SHA-256",
+                                    "content": digest.removeprefix("sha256:"),
+                                }
+                            ]
+                        }
+                    }
+                }
+            ),
             sbom_image_digest=digest,
             provenance_image_digest=digest,
             rootfs_digest=rootfs_digest,
             manifest_rootfs_digest=rootfs_digest,
             signature_command=("cosign", "verify"),
+            sbom_attestation_command=("cosign", "verify-attestation"),
+            provenance_attestation_command=("cosign", "verify-attestation"),
         ),
         _OfflineCommandRunner(),
     )
@@ -303,6 +319,7 @@ def run_offline_smoke(faults: OfflineFaults | None = None) -> SmokeReport:
         {
             "DATABASE_WORKER_URL",
             "ANTHROPIC_API_KEY",
+            "ANTHROPIC_EGRESS_PROXY_URL",
             "MODEL_PROXY_SECRET",
             "RUNSC_ROOTFS",
             "SANDBOX_IMAGE_DIGEST",
@@ -314,6 +331,7 @@ def run_offline_smoke(faults: OfflineFaults | None = None) -> SmokeReport:
             runsc_path="/usr/local/bin/runsc",
             present_config_names=names,
             model_proxy_secret="OfflineSmokeSecretWithSufficientDiversity0123",
+            anthropic_proxy_url="http://203.0.113.10:3128",
             database_url="postgresql://worker@db/app?sslmode=require",
             storage_url="https://storage.example",
             rootfs_path="/opt/se-skills/rootfs",

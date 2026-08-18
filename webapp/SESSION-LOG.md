@@ -7,6 +7,21 @@ _Last updated: August 18, 2026 — HEAD aea7593 on `devin/slice5b2b1-deployment-
 
 ## Built this session (newest first — see `git log`)
 
+- **Slice 5B2B1 integration contracts (August 18).**
+  1. Bound published SBOMs and attestations to the immutable registry digest,
+     added constrained keyless verification, structured CycloneDX/in-toto
+     subject checks, and promoted release evidence into trusted
+     `/etc/se-skills/evidence/<digest>/` paths.
+  2. Preserved rootfs numeric ownership in retained archives, made the
+     firewall transaction valid for clean installs and reboot-persistent
+     through a dedicated systemd unit, and made cleanup reclaim only old
+     terminal/absent state after fresh absence verification.
+  3. Implemented the accepted controlled Anthropic forward-proxy contract in
+     host firewall, worker configuration, preflight, and the upstream HTTP
+     client. Deterministic tests use injected probes and fake tools; live
+     registry, nftables, runsc, Cosign, and proxy operation remain deferred to
+     Slice 5B2B2.
+
 - **Pin currency and Anthropic egress documentation (August 18).**
   1. Pinned Grype to `0.116.1`, requiring release pins to be at least seven
      days old and preserving the verified checksum.

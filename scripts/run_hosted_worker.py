@@ -114,6 +114,7 @@ def _run_production_preflight() -> bool:
     names = (
         "DATABASE_WORKER_URL",
         "ANTHROPIC_API_KEY",
+        "ANTHROPIC_EGRESS_PROXY_URL",
         "MODEL_PROXY_SECRET",
         "RUNSC_ROOTFS",
         "SANDBOX_IMAGE_DIGEST",
@@ -139,6 +140,7 @@ def _run_production_preflight() -> bool:
             present_config_names=present,
             model_proxy_secret=hosted_config.MODEL_PROXY_SECRET,
             anthropic_api_url=hosted_config.ANTHROPIC_API_URL,
+            anthropic_proxy_url=hosted_config.ANTHROPIC_EGRESS_PROXY_URL,
             database_url=hosted_config.DATABASE_WORKER_URL,
             storage_url=hosted_config.SUPABASE_STORAGE_ENDPOINT,
             sandbox_image_digest=hosted_config.SANDBOX_IMAGE_DIGEST,

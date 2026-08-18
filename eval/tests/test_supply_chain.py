@@ -30,12 +30,22 @@ def _artifacts() -> SupplyChainArtifacts:
     return SupplyChainArtifacts(
         image_digest=digest,
         approved_image_digest=digest,
-        sbom_text=json.dumps({"bomFormat": "CycloneDX"}),
+        sbom_text=json.dumps(
+            {
+                "metadata": {
+                    "component": {
+                        "hashes": [{"alg": "SHA-256", "content": "a" * 64}]
+                    }
+                }
+            }
+        ),
         sbom_image_digest=digest,
         provenance_image_digest=digest,
         rootfs_digest=rootfs,
         manifest_rootfs_digest=rootfs,
         signature_command=("cosign", "verify"),
+        sbom_attestation_command=("cosign", "verify-attestation", "--type", "cyclonedx"),
+        provenance_attestation_command=("cosign", "verify-attestation", "--type", "slsaprovenance"),
     )
 
 
@@ -44,7 +54,7 @@ def test_supply_chain_accepts_matching_artifacts() -> None:
     result = verify_supply_chain(_artifacts(), runner)
 
     assert result.ok
-    assert len(runner.calls) == 1
+    assert len(runner.calls) == 3
 
 
 @pytest.mark.parametrize(
@@ -89,6 +99,26 @@ def test_supply_chain_honors_signature_failure() -> None:
     signature = next(item for item in result.checks if item.check_id == "signature")
     assert not signature.ok
     assert "cosign" not in signature.detail
+
+
+@pytest.mark.parametrize(
+    ("index", "check_id"),
+    ((2, "sbom_attestation"), (3, "provenance_attestation")),
+)
+def test_supply_chain_honors_attestation_failure(
+    index: int, check_id: str
+) -> None:
+    class _SelectiveRunner(_CommandRunner):
+        def run(self, argv: Sequence[str]) -> SupplyChainCommandResult:
+            self.calls.append(argv)
+            return SupplyChainCommandResult(
+                returncode=1 if len(self.calls) == index else 0
+            )
+
+    result = verify_supply_chain(_artifacts(), _SelectiveRunner())
+
+    assert not result.ok
+    assert not next(item for item in result.checks if item.check_id == check_id).ok
 
 
 def test_pins_match_dockerfile_base_digests() -> None:
