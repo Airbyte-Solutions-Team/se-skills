@@ -31,6 +31,14 @@ TIER_LATE = "Late-stage — after POC"
 TIER_ANYTIME = "Anytime — as needed"
 TIER_META = "When you're not sure"
 
+# Wrapper skills that fan out into multiple child skills, each of which owns its
+# own output document. Their outputs must land as SIBLING folders under the
+# opportunity's outputs/ dir (outputs/biz-qual/, outputs/tech-qual/), exactly as
+# each child would save standalone — never nested under outputs/<wrapper>/.
+WRAPPER_CHILD_SKILLS: dict[str, list[str]] = {
+    "full-qual": ["biz-qual", "tech-qual"],
+}
+
 # Optional presentation overrides: preferred display order + friendlier labels/
 # blurbs than raw frontmatter. NOT the source of truth for WHICH skills exist —
 # that's derived from the skill folders on disk. A new skill appears
@@ -358,7 +366,9 @@ class SkillRuntimeService:
         if "ephemeral" in body.lower() and re.search(r"saves? only on", body, re.I):
             entry["output_location"] = "Ephemeral — not auto-saved (saves only on request)"
         else:
-            m = re.search(r"(~/airbyte-work/01-customers/\S*?/outputs/\S+)", body)
+            m = re.search(
+                r"(\{customers_dir\}/\S*?/outputs/\S+|~/airbyte-work/01-customers/\S*?/outputs/\S+)", body
+            )
             if m:
                 entry["output_location"] = m.group(1).strip("`")
         return entry
@@ -400,10 +410,21 @@ class SkillRuntimeService:
             if extra:
                 prompt += f" Additional context: {extra.strip()}"
         if out_dir:
-            prompt += (
-                f" IMPORTANT: save any output file under {out_dir}/<skill-name>/ "
-                f"instead of the default account outputs folder."
-            )
+            children = WRAPPER_CHILD_SKILLS.get(skill or "")
+            if children:
+                child_list = " and ".join(f"{out_dir}/{c}/" for c in children)
+                prompt += (
+                    f" IMPORTANT: {skill} produces separate documents from its child skills "
+                    f"({', '.join(children)}). Save each child's output under its OWN sibling folder — "
+                    f"{child_list} — exactly as that child skill would save standalone. Do NOT create "
+                    f"an {out_dir}/{skill}/ wrapper folder and do NOT nest one child's folder inside "
+                    f"another's."
+                )
+            else:
+                prompt += (
+                    f" IMPORTANT: save any output file under {out_dir}/<skill-name>/ "
+                    f"instead of the default account outputs folder."
+                )
         return prompt
 
     async def invoke(

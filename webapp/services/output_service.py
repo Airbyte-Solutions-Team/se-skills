@@ -356,7 +356,9 @@ class OutputService:
         meta = body.meta.strip() or self._build_card_meta(stats)
         description = body.description.strip()
         handover_path.write_text(
-            self._upsert_handover_card(handover_path.read_text(encoding="utf-8"), account, account_slug, description, meta),
+            self._upsert_handover_card(
+                handover_path.read_text(encoding="utf-8"), account, account_slug, description, meta
+            ),
             encoding="utf-8",
         )
 
