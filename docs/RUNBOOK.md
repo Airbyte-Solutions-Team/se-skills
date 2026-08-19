@@ -97,7 +97,10 @@ Crash custody is recorded in the fsynced root-owned
 is removed only after state, bundle, staging, workspace, and worker paths are
 reconciled. `finally` is only a fast path. Broker-owned `finalize` is the only
 terminal release operation, and the stale sweeper invokes the same
-reconciliation primitive using the root-configured reclaim age. The
+reconciliation primitive using the root-configured reclaim age. Old
+journal-less residue, or residue whose journal is corrupt or mismatched, is
+reclaimed only when its root-owned state path and container absence pass the
+same checks; otherwise it is retained and no process is signaled. The
 broker-owned runsc process group records PID/PGID/start-time identity and is
 terminated or escalated only while ownership remains verifiable. Input, proxy
 sockets, and `job.json` are always destroyed. Output is restored only for a

@@ -64,7 +64,11 @@ loaded from `deploy/pins.json`; role defaults and paths are in
   Input, proxy, and job material is always discarded; output is restored only
   for a journaled successful run, and otherwise discarded to avoid restoring
   untrusted partial output. The stale sweeper invokes the same finalization
-  primitive using the root-configured reclaim age.
+  primitive using the root-configured reclaim age. For an old journal-less or
+  unusable journal record, it reclaims only root-owned state, bundle, and
+  staging residue after validating the container id and proving absence with
+  the broker's `runsc list` check; unverifiable entries are retained and no
+  process is signaled.
 - The broker configuration pins `sandbox_uid: 65532` and `sandbox_gid: 65532`,
   matching the sandbox image's `USER 65532:65532` declaration. Preflight
   verifies these deployed values against the image contract. Test-only

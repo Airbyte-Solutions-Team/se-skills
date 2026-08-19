@@ -5,7 +5,9 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -57,8 +59,10 @@ def _job_payload() -> dict[str, object]:
     }
 
 
-def _config(tmp_path: Path) -> broker.BrokerConfig:
-    for name in ("state", "bundles", "staging", "workspace", "rootfs"):
+def _config(
+    tmp_path: Path, cleanup_min_age_seconds: int = 3600
+) -> broker.BrokerConfig:
+    for name in ("state", "bundles", "staging", "workspace", "rootfs", "journal"):
         (tmp_path / name).mkdir()
     runsc = tmp_path / "runsc"
     runsc.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
@@ -72,6 +76,8 @@ def _config(tmp_path: Path) -> broker.BrokerConfig:
         workspace_root=tmp_path / "workspace",
         worker_uid=os.getuid(),
         worker_gid=os.getgid(),
+        cleanup_min_age_seconds=cleanup_min_age_seconds,
+        journal_root=tmp_path / "journal",
     )
 
 
@@ -95,6 +101,8 @@ def _invoke(
                 "worker_gid": config.worker_gid,
                 "sandbox_uid": config.sandbox_uid,
                 "sandbox_gid": config.sandbox_gid,
+                "cleanup_min_age_seconds": config.cleanup_min_age_seconds,
+                "journal_root": str(config.journal_root),
             }
         ),
         encoding="utf-8",
@@ -261,6 +269,125 @@ def test_cleanup_rejects_worker_supplied_age(
             {"operation": "cleanup", "minimum_age_seconds": 0},
         )
     assert exc_info.value.code == 64
+
+
+def _stale_residue(config: broker.BrokerConfig) -> tuple[Path, Path, Path]:
+    state = config.state_root / CONTAINER_ID
+    bundle = config.bundle_root / CONTAINER_ID
+    staging = config.staging_root / CONTAINER_ID
+    state.mkdir()
+    bundle.mkdir()
+    staging.mkdir()
+    (bundle / "job.json").write_text("capability", encoding="utf-8")
+    old = time.time() - 10
+    for path in (state, bundle, staging):
+        os.utime(path, (old, old))
+    return state, bundle, staging
+
+
+def test_cleanup_reclaims_old_corrupt_journal_residue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path, cleanup_min_age_seconds=1)
+    state, bundle, staging = _stale_residue(config)
+    journal = config.journal_root / f"{CONTAINER_ID}.json"
+    journal.write_text("{not-json", encoding="utf-8")
+    os.utime(journal, (time.time() - 10, time.time() - 10))
+    config.runsc.write_text(
+        "#!/bin/sh\nprintf 'ID\\tPID\\tSTATUS\\n'\n", encoding="utf-8"
+    )
+    config.runsc.chmod(0o755)
+    monkeypatch.setattr(broker, "_safe_journal_file", lambda path: None)
+
+    assert _invoke(monkeypatch, config, {"operation": "cleanup"}) == 0
+    assert not state.exists()
+    assert not bundle.exists()
+    assert not staging.exists()
+    assert not journal.exists()
+
+
+def test_cleanup_reclaims_old_mismatched_journal_residue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path, cleanup_min_age_seconds=1)
+    state, bundle, staging = _stale_residue(config)
+    journal = config.journal_root / f"{CONTAINER_ID}.json"
+    journal.write_text(
+        json.dumps({"container_id": "se-" + "b" * 12}),
+        encoding="utf-8",
+    )
+    os.utime(journal, (time.time() - 10, time.time() - 10))
+    config.runsc.write_text(
+        "#!/bin/sh\nprintf 'ID\\tPID\\tSTATUS\\n'\n", encoding="utf-8"
+    )
+    config.runsc.chmod(0o755)
+    monkeypatch.setattr(broker, "_safe_journal_file", lambda path: None)
+
+    assert _invoke(monkeypatch, config, {"operation": "cleanup"}) == 0
+    assert not state.exists()
+    assert not bundle.exists()
+    assert not staging.exists()
+    assert not journal.exists()
+
+
+def test_cleanup_reclaims_old_journalless_residue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path, cleanup_min_age_seconds=1)
+    state, bundle, staging = _stale_residue(config)
+    config.runsc.write_text(
+        "#!/bin/sh\nprintf 'ID\\tPID\\tSTATUS\\n'\n", encoding="utf-8"
+    )
+    config.runsc.chmod(0o755)
+
+    assert _invoke(monkeypatch, config, {"operation": "cleanup"}) == 0
+    assert not state.exists()
+    assert not bundle.exists()
+    assert not staging.exists()
+
+
+def test_cleanup_reclaims_old_bundle_only_residue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path, cleanup_min_age_seconds=1)
+    _, bundle, staging = _stale_residue(config)
+    shutil.rmtree(config.state_root / CONTAINER_ID)
+    config.runsc.write_text(
+        "#!/bin/sh\nprintf 'ID\\tPID\\tSTATUS\\n'\n", encoding="utf-8"
+    )
+    config.runsc.chmod(0o755)
+
+    assert _invoke(monkeypatch, config, {"operation": "cleanup"}) == 0
+    assert not bundle.exists()
+    assert not staging.exists()
+
+
+@pytest.mark.parametrize("corrupt_journal", [False, True])
+def test_cleanup_retains_residue_when_container_absence_is_unverified(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    corrupt_journal: bool,
+) -> None:
+    config = _config(tmp_path, cleanup_min_age_seconds=1)
+    state, bundle, staging = _stale_residue(config)
+    journal = config.journal_root / f"{CONTAINER_ID}.json"
+    if corrupt_journal:
+        journal.write_text("{not-json", encoding="utf-8")
+        os.utime(journal, (time.time() - 10, time.time() - 10))
+        monkeypatch.setattr(broker, "_safe_journal_file", lambda path: None)
+    config.runsc.write_text(
+        "#!/bin/sh\nprintf 'ID\\tPID\\tSTATUS\\n%s\\t-\\trunning\\n' "
+        f"{CONTAINER_ID}\n",
+        encoding="utf-8",
+    )
+    config.runsc.chmod(0o755)
+
+    assert _invoke(monkeypatch, config, {"operation": "cleanup"}) == 0
+    assert state.exists()
+    assert bundle.exists()
+    assert staging.exists()
+    assert (bundle / "job.json").exists()
+    assert journal.exists() is corrupt_journal
 
 
 def test_entrypoint_rejects_state_root_swap(

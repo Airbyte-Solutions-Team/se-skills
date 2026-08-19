@@ -1134,8 +1134,6 @@ def _runsc_container_absent(
     state_dir: Path,
     container_id: str,
 ) -> bool:
-    if not state_dir.exists():
-        return True
     code, output = _run_command(
         [str(config.runsc), f"--root={state_dir}", "list", "--format=text"],
         config,
@@ -1227,18 +1225,131 @@ def _finalize_container(config: BrokerConfig, container_id: str) -> int:
     return 0
 
 
+def _safe_reclaim_directory(path: Path) -> None:
+    try:
+        facts = path.lstat()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise BrokerError("stale custody path is unavailable") from exc
+    if stat.S_ISLNK(facts.st_mode):
+        raise BrokerError("stale custody path is unsafe")
+    _root_directory(path)
+
+
+def _safe_journal_file(path: Path) -> None:
+    if not path.exists():
+        return
+    try:
+        facts = path.lstat()
+    except OSError as exc:
+        raise BrokerError("lifecycle journal unavailable") from exc
+    if (
+        stat.S_ISLNK(facts.st_mode)
+        or not stat.S_ISREG(facts.st_mode)
+        or facts.st_uid != 0
+        or facts.st_mode & 0o022
+    ):
+        raise BrokerError("lifecycle journal is unsafe")
+
+
+def _reclaim_without_journal(
+    config: BrokerConfig,
+    container_id: str,
+    journal_path: Path | None,
+    cutoff: float,
+) -> None:
+    """Reclaim only root-owned residue with no trustworthy custody record."""
+    state = config.state_root / container_id
+    bundle = config.bundle_root / container_id
+    staging = config.staging_root / container_id
+    _safe_reclaim_directory(state)
+    _safe_reclaim_directory(bundle)
+    _safe_reclaim_directory(staging)
+    if journal_path is not None:
+        _safe_journal_file(journal_path)
+
+    if not any(path.exists() for path in (state, bundle, staging)):
+        return
+    candidates = [state, bundle, staging]
+    if journal_path is not None and journal_path.exists():
+        candidates.append(journal_path)
+    for path in candidates:
+        if path.exists() and path.stat().st_mtime > cutoff:
+            return
+    if not _runsc_container_absent(config, state, container_id):
+        raise BrokerError("sandbox remains during stale reconciliation")
+
+    if bundle.exists():
+        shutil.rmtree(bundle)
+    if staging.exists():
+        shutil.rmtree(staging)
+    if state.exists():
+        shutil.rmtree(state)
+    if journal_path is not None and journal_path.exists():
+        journal_path.unlink()
+
+
 def _run_cleanup(config: BrokerConfig) -> int:
-    """Reconcile only old attempts through the same finalize primitive."""
+    """Reconcile old attempts through finalize or safe residue reclamation."""
     _root_directory(config.journal_root)
+    _root_directory(config.state_root)
+    _root_directory(config.bundle_root)
+    _root_directory(config.staging_root)
     now = time.time()
-    for journal_path in sorted(config.journal_root.glob("se-*.json")):
+    cutoff = now - config.cleanup_min_age_seconds
+    candidates: set[str] = set()
+    for root in (config.state_root, config.bundle_root, config.staging_root):
+        try:
+            entries = tuple(root.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.is_symlink():
+                continue
+            try:
+                candidates.add(_validate_container_id(entry.name))
+            except BrokerError:
+                continue
+    try:
+        journal_entries = tuple(config.journal_root.glob("se-*.json"))
+    except OSError:
+        journal_entries = ()
+    for journal_path in journal_entries:
         if journal_path.is_symlink():
             continue
         try:
-            if now - journal_path.stat().st_mtime < config.cleanup_min_age_seconds:
+            candidates.add(_validate_container_id(journal_path.stem))
+        except BrokerError:
+            continue
+
+    for container_id in sorted(candidates):
+        journal_path = _journal_path(config, container_id)
+        journal_present = journal_path.exists() or journal_path.is_symlink()
+        if journal_present:
+            try:
+                _safe_journal_file(journal_path)
+                if journal_path.stat().st_mtime > cutoff:
+                    continue
+            except (BrokerError, OSError, ValueError, TypeError):
                 continue
-            container_id = _validate_container_id(journal_path.stem)
-            _finalize_container(config, container_id)
+            try:
+                _load_journal(config, container_id)
+            except (BrokerError, OSError, ValueError, TypeError):
+                pass
+            else:
+                try:
+                    _finalize_container(config, container_id)
+                except (BrokerError, OSError, ValueError, TypeError):
+                    pass
+                continue
+        try:
+            _reclaim_without_journal(
+                config,
+                container_id,
+                journal_path if journal_present else None,
+                cutoff,
+            )
         except (BrokerError, OSError, ValueError, TypeError):
             continue
     return 0

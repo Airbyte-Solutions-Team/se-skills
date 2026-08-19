@@ -2,10 +2,22 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 19, 2026 — deployment-foundation finalize lifecycle work on `devin/slice5b2b1-deployment-foundation`._
+_Last updated: August 19, 2026 — finalize sweep-reclaim hardening on `devin/slice5b2b1-deployment-foundation`._
 
 
 ## Built this session (newest first — see `git log`)
+
+- **Closed journal-less hosted-worker residue (August 19).**
+  1. Extended the root-configured stale sweep beyond journal records to find
+     old state, bundle, and staging residue, while retaining fail-closed
+     behavior for unsafe paths, malformed or mismatched journals, and
+     unverifiable container absence.
+  2. Reclaim deletes capability-bearing bundle material first and removes a
+     stale journal last; the sweep never signals a process without a
+     trustworthy identity record.
+  3. Added deterministic coverage for corrupt journals, mismatched journals,
+     journal-less residue, and retention when `runsc list` cannot prove
+     absence.
 
 - **Productionized finalize-only hosted-worker custody (August 19).**
   1. Replaced the broker's terminal `delete` request with broker-owned
