@@ -1,0 +1,33 @@
+---
+- name: Install stale sandbox cleanup script
+  ansible.builtin.template:
+    src: cleanup-stale-sandboxes.sh.j2
+    dest: /usr/local/sbin/se-skills-cleanup-stale-sandboxes
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install stale sandbox cleanup service
+  ansible.builtin.template:
+    src: se-skills-cleanup.service.j2
+    dest: "/etc/systemd/system/{{ hosted_cleanup_unit }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Install stale sandbox cleanup timer
+  ansible.builtin.template:
+    src: se-skills-cleanup.timer.j2
+    dest: "/etc/systemd/system/{{ hosted_cleanup_timer }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable stale sandbox cleanup timer
+  ansible.builtin.systemd:
+    name: "{{ hosted_cleanup_timer }}"
+    enabled: true
+    state: started
+    daemon_reload: true

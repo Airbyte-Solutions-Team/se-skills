@@ -112,7 +112,7 @@ Notes:
 - **Live Transcribe** — transcribe a live call with an AI copilot ask-bar. Sessions are persisted to disk, so an app restart mid-call recovers the transcript; you can also name the mic and call channels (e.g. "You" / "Customer") instead of the default labels. If state cannot be written, a warning toast tells you the transcript may not survive a restart.
 - **Durable background jobs** — skill runs and live copilot deep-asks are persisted while in progress, so a server restart leaves the *job record* recoverable (or clearly marked as lost) rather than silently disappearing. The running child process cannot be reattached; persistence failures surface a warning toast.
 - **Skill-completion toasts** — run a skill, navigate away, and a top-right banner tells you when it's ready with an Open deep-link.
-- **Hosted beta (optional, `HOSTED_MODE=1`)** — sign in with Google via Supabase Auth, resolve your Airbyte organization membership, and list or create organization-owned accounts. You can select an account or opportunity and upload, list, download, or delete transcript files (`.txt`, `.md`, `.vtt`, `.srt`, up to 10 MiB by default). For each transcript you can enqueue a durable `post-call` job; a separate worker process claims the job, materializes authorized inputs read-only, invokes an injected `SkillRuntime`, validates the generated Markdown and sidecar outside the runtime, and persists only valid outputs to private org-scoped Storage and Postgres. The SPA polls the job and, on success, displays the rendered Markdown and validation status. Unvalidated or cancelled outputs are hidden from tenant queries by Postgres RLS and staged artifacts are tombstoned with a durable cleanup path before their Storage objects are deleted, so a failed cleanup never leaves orphaned customer content. Tombstone cleanup is lease-bound and independently retryable after the execution attempt finishes; a worker claims a tombstoned output, deletes its Storage object, and only then finalizes the metadata row. The worker poll loop also discovers tombstones automatically via `claim_next_tombstoned_output` without needing the original output id. Slice 5B1 implements the trusted worker-side orchestration (`webapp/hosted/post_call_orchestrator.py`) and output persistence boundary with deterministic fakes. Slice 5B2A implements the gVisor-backed `runsc` sandbox executor (`webapp/hosted/runsc_executor.py`) and worker-side Anthropic Messages API proxy (`webapp/hosted/model_proxy.py`). The proxy keeps the authoritative model/usage/cost ledger, signs replay-protected per-attempt capability tokens that do not contain the database lease token, validates every inbound request with bounded streaming and size limits, rejects `stream=true` and oversized `max_tokens`, and cancels in-flight upstream calls when the worker cancels. `RunscSkillRuntime` ingests `result.json` with `O_NOFOLLOW | O_NONBLOCK` regular-file checks, and `RunscSandboxRunner` uses a unique `runsc --root` state directory, discards raw sandbox stderr, and removes the entire proxy run directory on teardown. Slice 5B2B will cover production host provisioning, registry/signing, and live smoke tests. Uploads are validated as plain UTF-8 text (HTML, archives, executables, binary files, NUL bytes, and invalid UTF-8 are rejected) and streamed through FastAPI without persisting customer content to local disk. Storage access uses a server-side signed short-lived JWT for a dedicated `app_storage` Postgres role; the SPA never receives Storage credentials. When `HOSTED_MODE` is unset the app keeps using the local filesystem and local skill workflows.
+- **Hosted beta (optional, `HOSTED_MODE=1`)** — sign in with Google via Supabase Auth, resolve your Airbyte organization membership, and list or create organization-owned accounts. You can select an account or opportunity and upload, list, download, or delete transcript files (`.txt`, `.md`, `.vtt`, `.srt`, up to 10 MiB by default). For each transcript you can enqueue a durable `post-call` job; a separate worker process claims the job, materializes authorized inputs read-only, invokes the runsc-backed `SkillRuntime`, validates the generated Markdown and sidecar outside the runtime, and persists only valid outputs to private org-scoped Storage and Postgres. The SPA polls the job and, on success, displays the rendered Markdown and validation status. The repository now contains the pinned host contract, Ansible role, image-release tooling, and offline/gated smoke entry points for this worker. Applying the role and running the live smoke are deferred to Slice 5B2B2. When `HOSTED_MODE` is unset the app keeps using the local filesystem and local skill workflows.
 
 Invoking a skill shells out to Claude Code headless:
 ```
@@ -174,10 +174,24 @@ Set `HOSTED_MODE=1` to use Supabase Auth + Postgres instead of the local filesys
 - `HOSTED_JWT_ALGORITHM` (`HS256` for local tests, `RS256` for Supabase) and `HOSTED_JWT_SECRET` or Supabase JWKS.
 - `SUPABASE_JWT_SECRET` — the Supabase JWT secret used by the backend to sign short-lived Storage JWTs for the dedicated `app_storage` Postgres role. It is only used server-side and must not be sent to the browser.
 - `TRANSCRIPT_MAX_BYTES` (optional, defaults to `10485760` — 10 MiB).
-- `ANTHROPIC_API_KEY` / `ANTHROPIC_API_URL` / `ANTHROPIC_API_VERSION` — used only by the worker-side model proxy (not the sandbox) to forward Anthropic Messages API calls.
+- `ANTHROPIC_API_KEY` / `ANTHROPIC_API_URL` / `ANTHROPIC_API_VERSION` —
+  used only by the worker-side model proxy (not the sandbox) to forward
+  Anthropic Messages API calls. Hosted production also requires
+  `ANTHROPIC_EGRESS_PROXY_URL`, `HOSTED_ANTHROPIC_PROXY_HOST`, and
+  `HOSTED_ANTHROPIC_PROXY_PORT`; direct Anthropic egress is disabled.
 - `MODEL_PROXY_SECRET` — a strong secret used to sign per-job model-proxy capability tokens.
 - `RUNSC_BINARY` — path to the `runsc` executable when selecting `post-call-runsc` runtime.
 - `RUNSC_ROOTFS` — path to the pinned sandbox rootfs when selecting `post-call-runsc` runtime.
+- `SANDBOX_MANIFEST_PATH` — root-owned approved image/evidence manifest,
+  defaulting to `/etc/se-skills/sandbox-manifest.json`.
+- `SANDBOX_IMAGE_DIGEST` — required deployed registry manifest digest; it must
+  match the approved manifest and any non-null repository pin.
+- `RUNSC_BUNDLE_DIR` and `RUNSC_STATE_DIR` — durable bundle and runsc state
+  directories, defaulting to `/var/lib/se-skills/bundles` and
+  `/var/lib/se-skills/runsc`.
+- `HOSTED_APPROVED_HTTPS_DESTINATIONS` — comma-separated IP/CIDR destinations
+  approved by the live firewall check. Production preflight fails closed when
+  this set is empty.
 
 Run migrations before starting the app:
 

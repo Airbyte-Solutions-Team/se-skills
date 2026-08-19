@@ -1,0 +1,13 @@
+[Unit]
+Description=Remove verified-dead SE Skills sandboxes
+
+[Service]
+Type=oneshot
+User={{ hosted_worker_user }}
+Group={{ hosted_worker_group }}
+ExecStart=/usr/local/sbin/se-skills-cleanup-stale-sandboxes
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths={{ hosted_state_dir }} {{ hosted_bundle_dir }}

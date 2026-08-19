@@ -48,11 +48,38 @@ SUPABASE_STORAGE_ENDPOINT = os.environ.get("SUPABASE_STORAGE_ENDPOINT", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_API_URL = os.environ.get("ANTHROPIC_API_URL", "https://api.anthropic.com")
 ANTHROPIC_API_VERSION = os.environ.get("ANTHROPIC_API_VERSION", "2023-06-01")
+ANTHROPIC_EGRESS_PROXY_URL = os.environ.get("ANTHROPIC_EGRESS_PROXY_URL", "")
+ANTHROPIC_EGRESS_PROXY_HOST = os.environ.get("HOSTED_ANTHROPIC_PROXY_HOST", "")
+ANTHROPIC_EGRESS_PROXY_PORT = int(
+    os.environ.get("HOSTED_ANTHROPIC_PROXY_PORT", "3128")
+)
 MODEL_PROXY_SECRET = os.environ.get("MODEL_PROXY_SECRET", "")
 
 # gVisor/runsc executor configuration.
-RUNSC_BINARY = os.environ.get("RUNSC_BINARY", "runsc")
+RUNSC_BINARY = os.environ.get("RUNSC_BINARY", "/usr/local/bin/runsc")
+RUNSC_HELPER_BINARY = os.environ.get(
+    "RUNSC_HELPER_BINARY", "/usr/local/sbin/se-skills-runsc"
+)
 RUNSC_ROOTFS = os.environ.get("RUNSC_ROOTFS", "")
+HOSTED_ENV = os.environ.get("HOSTED_ENV", "development").lower()
+SANDBOX_IMAGE_DIGEST = os.environ.get("SANDBOX_IMAGE_DIGEST", "")
+SANDBOX_MANIFEST_PATH = os.environ.get(
+    "SANDBOX_MANIFEST_PATH", "/etc/se-skills/sandbox-manifest.json"
+)
+RUNSC_BUNDLE_DIR = os.environ.get("RUNSC_BUNDLE_DIR", "/var/lib/se-skills/bundles")
+RUNSC_STATE_DIR = os.environ.get("RUNSC_STATE_DIR", "/var/lib/se-skills/runsc")
+RUNSC_WORKSPACE_ROOT = os.environ.get(
+    "RUNSC_WORKSPACE_ROOT", "/var/lib/se-skills/workspaces"
+)
+HOSTED_WORKER_UID = int(os.environ.get("HOSTED_WORKER_UID", "995"))
+HOSTED_NON_WORKER_UID = int(os.environ.get("HOSTED_NON_WORKER_UID", "994"))
+APPROVED_HTTPS_DESTINATIONS = frozenset(
+    value
+    for value in os.environ.get("HOSTED_APPROVED_HTTPS_DESTINATIONS", "").split(",")
+    if value
+)
+OBSERVABILITY_ENDPOINT = os.environ.get("OBSERVABILITY_ENDPOINT", "")
+ALLOW_LIVE_HOSTED_SMOKE = os.environ.get("ALLOW_LIVE_HOSTED_SMOKE", "")
 
 # Worker tuning. The worker process uses short lease/heartbeat intervals to detect
 # crashed workers; values are configurable for tests and small deployments.

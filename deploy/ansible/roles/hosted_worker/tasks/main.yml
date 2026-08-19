@@ -1,0 +1,29 @@
+---
+- name: Validate host contract
+  ansible.builtin.include_tasks: preflight.yml
+
+- name: Install host contract packages
+  ansible.builtin.apt:
+    name:
+      - chrony
+      - nftables
+      - python3-venv
+    state: present
+    update_cache: true
+
+- name: Create service account
+  ansible.builtin.include_tasks: user.yml
+- name: Create worker directories
+  ansible.builtin.include_tasks: directories.yml
+- name: Install pinned runsc
+  ansible.builtin.include_tasks: runsc.yml
+- name: Install constrained runsc launcher
+  ansible.builtin.include_tasks: runsc-helper.yml
+- name: Configure firewall
+  ansible.builtin.include_tasks: firewall.yml
+- name: Configure logging
+  ansible.builtin.include_tasks: logging.yml
+- name: Configure stale sandbox cleanup
+  ansible.builtin.include_tasks: cleanup.yml
+- name: Configure systemd
+  ansible.builtin.include_tasks: systemd.yml

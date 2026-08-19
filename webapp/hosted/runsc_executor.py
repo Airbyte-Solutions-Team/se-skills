@@ -45,6 +45,10 @@ from webapp.hosted.runtime_contract import (
 logger = logging.getLogger(__name__)
 
 MAX_RESULT_BYTES = 1_000_000
+BROKER_EXIT_FAILURE_MESSAGES = {
+    65: "sandbox state verification failed",
+    66: "sandbox remained after finalize",
+}
 
 
 class RuntimeExecutionError(Exception):
@@ -70,9 +74,20 @@ def _map_runtime_execution_error(exc: Exception) -> RuntimeResult:
             return _redacted_failure("timeout")
         if "cancelled" in msg:
             return _redacted_failure("cancelled")
+        if "state verification" in msg or "remained after finalize" in msg:
+            return _redacted_failure("cleanup_error")
         if "cleanup" in msg:
             return _redacted_failure("cleanup_error")
     return _redacted_failure("runtime_error")
+
+
+def _raise_for_broker_exit(returncode: int, operation: str) -> None:
+    """Map broker sentinels to fixed, closed runtime diagnostics."""
+    if returncode == 65:
+        raise RuntimeExecutionError(BROKER_EXIT_FAILURE_MESSAGES[65])
+    if returncode == 66:
+        raise RuntimeExecutionError(BROKER_EXIT_FAILURE_MESSAGES[66])
+    raise RuntimeExecutionError(f"runsc {operation} exited with code {returncode}")
 
 
 @runtime_checkable
@@ -172,12 +187,14 @@ class RunscSandboxRunner:
     def __init__(
         self,
         runsc_binary: str | None = None,
+        runsc_helper: str | None = None,
         rootfs: str | None = None,
         network: str = "none",
         rootless: bool = False,
         extra_runsc_args: list[str] | None = None,
     ) -> None:
         self.runsc_binary = runsc_binary or config.RUNSC_BINARY
+        self.runsc_helper = runsc_helper or config.RUNSC_HELPER_BINARY
         self.rootfs = rootfs or config.RUNSC_ROOTFS
         self.network = network
         self.rootless = rootless
@@ -196,52 +213,55 @@ class RunscSandboxRunner:
         self._validate_mount_paths(input_dir, output_dir, proxy_uds_path)
 
         container_id = f"se-{uuid.uuid4().hex[:12]}"
-        bundle_dir = Path(tempfile.mkdtemp(prefix=f"se-runsc-bundle-{container_id}-"))
-        root_dir = bundle_dir / "root"
-        root_dir.mkdir(parents=True, exist_ok=True)
+        root_dir = Path(config.RUNSC_STATE_DIR) / container_id
+        proc: asyncio.subprocess.Process | None = None
         try:
-            job_path = bundle_dir / "job.json"
-            job_path.write_text(job.model_dump_json(), encoding="utf-8")
-
-            config_path = bundle_dir / "config.json"
-            config_path.write_text(
-                json.dumps(
-                    self._build_config(
-                        bundle_dir=bundle_dir,
-                        root_dir=root_dir,
-                        job_path=job_path,
-                        input_dir=input_dir,
-                        output_dir=output_dir,
-                        proxy_uds_path=proxy_uds_path,
-                        container_id=container_id,
-                    ),
-                    indent=2,
-                ),
-                encoding="utf-8",
-            )
-
-            argv = self._build_argv(bundle_dir, root_dir, container_id)
+            request = {
+                "operation": "run",
+                "container_id": container_id,
+                "input_dir": str(input_dir),
+                "output_dir": str(output_dir),
+                "proxy_uds_path": str(proxy_uds_path) if proxy_uds_path else None,
+                "job": json.loads(job.model_dump_json()),
+            }
+            argv = self._build_argv(container_id)
             proc = await asyncio.create_subprocess_exec(
                 *argv,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
+            if proc.stdin is None:
+                raise RuntimeExecutionError("runsc broker stdin is unavailable")
+            proc.stdin.write(json.dumps(request, sort_keys=True).encode() + b"\n")
+            await proc.stdin.drain()
+            proc.stdin.close()
             try:
                 await self._wait_for_sandbox(proc, cancellation, job.execution_deadline)
             finally:
-                with contextlib.suppress(ProcessLookupError, OSError):
-                    proc.send_signal(signal.SIGKILL)
-                with contextlib.suppress(asyncio.TimeoutError):
-                    await asyncio.wait_for(proc.wait(), timeout=10.0)
-                await self._runsc_delete(root_dir, container_id)
+                if proc.returncode is None:
+                    with contextlib.suppress(ProcessLookupError, OSError):
+                        proc.send_signal(signal.SIGTERM)
+                    with contextlib.suppress(asyncio.TimeoutError):
+                        await asyncio.wait_for(proc.wait(), timeout=5.0)
+                    if proc.returncode is None:
+                        with contextlib.suppress(ProcessLookupError, OSError):
+                            proc.kill()
+                        with contextlib.suppress(asyncio.TimeoutError):
+                            await asyncio.wait_for(proc.wait(), timeout=10.0)
         finally:
-            shutil.rmtree(bundle_dir, ignore_errors=True)
+            if proc is not None:
+                await self._runsc_finalize(container_id)
 
     def _validate_prerequisites(self) -> None:
-        if not self.runsc_binary:
+        if not self.runsc_binary or not self.runsc_helper:
             raise RuntimeExecutionError("runsc binary is not configured")
         if not shutil.which(self.runsc_binary):
             raise RuntimeExecutionError(f"runsc binary not found: {self.runsc_binary}")
+        if not shutil.which("sudo"):
+            raise RuntimeExecutionError("sudo is not installed")
+        if not shutil.which(self.runsc_helper):
+            raise RuntimeExecutionError(f"runsc helper not found: {self.runsc_helper}")
         if not self.rootfs:
             raise RuntimeExecutionError("runsc rootfs is not configured")
         rootfs_path = Path(self.rootfs)
@@ -272,16 +292,23 @@ class RunscSandboxRunner:
             if not proxy_uds_path.exists():
                 raise RuntimeExecutionError("proxy socket does not exist")
 
-    def _build_argv(self, bundle_dir: Path, root_dir: Path, container_id: str) -> list[str]:
-        argv = [self.runsc_binary, f"--root={root_dir}"]
-        if self.network:
-            argv.append(f"--network={self.network}")
+    def _build_argv(self, container_id: str) -> list[str]:
+        argv = ["sudo", "--non-interactive", self.runsc_helper]
         if self.rootless:
-            argv.append("--rootless")
-        for extra in self.extra_runsc_args:
-            argv.append(extra)
-        argv.extend(["run", "--bundle", str(bundle_dir), container_id])
+            raise RuntimeExecutionError("rootless runsc is not supported")
+        if self.extra_runsc_args:
+            raise RuntimeExecutionError("extra runsc arguments are not permitted")
         return argv
+
+    @staticmethod
+    async def _send_broker_request(
+        proc: asyncio.subprocess.Process, request: dict[str, Any]
+    ) -> None:
+        if proc.stdin is None:
+            raise RuntimeExecutionError("runsc broker stdin is unavailable")
+        proc.stdin.write(json.dumps(request, sort_keys=True).encode() + b"\n")
+        await proc.stdin.drain()
+        proc.stdin.close()
 
     def _build_config(
         self,
@@ -440,23 +467,17 @@ class RunscSandboxRunner:
             logger.warning("runsc exited with code %s", proc.returncode)
             raise RuntimeExecutionError(f"runsc exited with code {proc.returncode}")
 
-    def _build_delete_argv(
-        self, root_dir: Path, container_id: str
-    ) -> list[str]:
-        """Build the `runsc delete` argv for the per-attempt root directory."""
-        argv = [self.runsc_binary, f"--root={root_dir}"]
+    def _build_finalize_argv(self) -> list[str]:
+        """Build the argument-free broker invocation for finalization."""
         if self.rootless:
-            argv.append("--rootless")
-        argv.extend(["delete", "--force", container_id])
-        return argv
+            raise RuntimeExecutionError("rootless runsc is not supported")
+        return ["sudo", "--non-interactive", self.runsc_helper]
 
     def _build_list_argv(self, root_dir: Path) -> list[str]:
         """Build the `runsc list` argv for verifying container cleanup."""
-        argv = [self.runsc_binary, f"--root={root_dir}"]
         if self.rootless:
-            argv.append("--rootless")
-        argv.append("list")
-        return argv
+            raise RuntimeExecutionError("rootless runsc is not supported")
+        return ["sudo", "--non-interactive", self.runsc_helper]
 
     async def _is_container_gone(
         self, root_dir: Path, container_id: str
@@ -464,15 +485,24 @@ class RunscSandboxRunner:
         """Return True if gVisor reports the container no longer exists.
 
         `runsc list` is used rather than relying on the filesystem, because the
-        sandbox process can outlive its state directory if delete fails.  The
+        sandbox process can outlive its state directory if finalization fails. The
         command must exit 0; any non-zero exit or unparseable output is treated
         as "not gone" and fails closed.
         """
         argv = self._build_list_argv(root_dir)
         proc = await asyncio.create_subprocess_exec(
             *argv,
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=subprocess.DEVNULL,
+        )
+        await self._send_broker_request(
+            proc,
+            {
+                "operation": "list",
+                "container_id": container_id,
+                "state_dir": str(root_dir),
+            },
         )
         try:
             stdout, _ = await asyncio.wait_for(
@@ -486,9 +516,7 @@ class RunscSandboxRunner:
             raise RuntimeExecutionError("runsc list timed out during cleanup")
 
         if proc.returncode != 0:
-            raise RuntimeExecutionError(
-                f"runsc list exited with code {proc.returncode}"
-            )
+            _raise_for_broker_exit(proc.returncode, "list")
 
         lines = stdout.decode("utf-8", errors="replace").splitlines()
         if not lines or not lines[0].startswith("ID"):
@@ -500,19 +528,21 @@ class RunscSandboxRunner:
                 return False
         return True
 
-    async def _runsc_delete(
-        self, root_dir: Path, container_id: str
-    ) -> None:
-        """Delete the gVisor container and verify it is gone.
-
-        Uses the same `--root` that was passed to `runsc run`, requires a clean
-        exit, and confirms the container no longer appears in `runsc list`.
-        """
-        argv = self._build_delete_argv(root_dir, container_id)
+    async def _runsc_finalize(self, container_id: str) -> None:
+        """Release all broker custody for one terminal attempt."""
+        argv = self._build_finalize_argv()
         proc = await asyncio.create_subprocess_exec(
             *argv,
+            stdin=asyncio.subprocess.PIPE,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+        )
+        await self._send_broker_request(
+            proc,
+            {
+                "operation": "finalize",
+                "container_id": container_id,
+            },
         )
         try:
             await asyncio.wait_for(proc.wait(), timeout=10.0)
@@ -522,20 +552,12 @@ class RunscSandboxRunner:
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(proc.wait(), timeout=5.0)
             if proc.returncode is None:
-                raise RuntimeExecutionError(
-                    "runsc delete did not terminate after SIGKILL"
-                )
-            raise RuntimeExecutionError("runsc delete timed out")
+                raise RuntimeExecutionError("runsc finalize did not terminate")
+            raise RuntimeExecutionError("runsc finalize timed out")
 
         if proc.returncode != 0:
-            raise RuntimeExecutionError(
-                f"runsc delete exited with code {proc.returncode}"
-            )
+            _raise_for_broker_exit(proc.returncode, "finalize")
 
-        if not await self._is_container_gone(root_dir, container_id):
-            raise RuntimeExecutionError(
-                f"container {container_id} still present after runsc delete"
-            )
 
 
 class RunscSkillRuntime:
@@ -546,10 +568,12 @@ class RunscSkillRuntime:
         runner: SandboxRunner,
         proxy: ModelProxy,
         start_proxy_server: bool = True,
+        workspace_root: Path | None = None,
     ) -> None:
         self.runner = runner
         self.proxy = proxy
         self.start_proxy_server = start_proxy_server
+        self.workspace_root = workspace_root
 
     async def _finalize_proxy_session(self, jti: str | None) -> ProxyFinalization:
         """Signal cancellation and consume trusted proxy state once."""
@@ -711,7 +735,8 @@ class RunscSkillRuntime:
         import uvicorn
         from uvicorn.config import Config
 
-        run_dir = Path(tempfile.mkdtemp(prefix="se-proxy-"))
+        workspace_root = self.workspace_root or Path(config.RUNSC_WORKSPACE_ROOT)
+        run_dir = Path(tempfile.mkdtemp(prefix="se-proxy-", dir=workspace_root))
         uds_path = run_dir / "proxy.sock"
         app = self.proxy.create_app()
         uvicorn_config = Config(

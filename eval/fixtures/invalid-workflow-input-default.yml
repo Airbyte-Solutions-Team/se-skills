@@ -1,0 +1,12 @@
+name: invalid workflow fixture
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        required: true
+        default: ${{ github.repository }}/se-skills-sandbox
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - run: true

@@ -1,0 +1,170 @@
+name: Release sandbox image
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type BUILD_SANDBOX_IMAGE to authorize a release"
+        required: true
+        type: string
+      registry:
+        description: "Container registry hostname"
+        required: true
+        default: ghcr.io
+        type: string
+      image:
+        description: "Image path in the form <owner>/<repo>/se-skills-sandbox"
+        required: true
+        type: string
+      tag:
+        description: "Immutable release tag"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  release:
+    if: ${{ inputs.confirm == 'BUILD_SANDBOX_IMAGE' }}
+    runs-on: ubuntu-latest
+    environment: sandbox-release
+    steps:
+      - name: Validate approved release ref
+        env:
+          RELEASE_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          case "$RELEASE_REF" in
+            refs/heads/main|refs/tags/v[0-9]*.[0-9]*.[0-9]*) ;;
+            *)
+              echo "release signing is only permitted from main or an approved v* tag" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Validate image namespace
+        env:
+          IMAGE_NAME: ${{ inputs.image }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          case "$IMAGE_NAME" in
+            "$REPOSITORY/se-skills-sandbox")
+              ;;
+            *)
+              echo "image must be within the running repository namespace" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+
+      - name: Verify approved release commit
+        env:
+          RELEASE_REF: ${{ github.ref }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          case "$RELEASE_REF" in
+            refs/heads/main)
+              ;;
+            refs/tags/v[0-9]*.[0-9]*.[0-9]*)
+              git merge-base --is-ancestor "$RELEASE_SHA" origin/main || {
+                echo "release tag must point to a commit reachable from origin/main" >&2
+                exit 1
+              }
+              ;;
+            *)
+              echo "release ref is not approved" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Install pinned build tools
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/tools" "$RUNNER_TEMP/bin"
+          mapfile -t pin_values < <(python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          pins = json.loads(Path("deploy/pins.json").read_text())["build_tools"]
+          for tool in ("syft", "grype", "cosign"):
+              print(pins[tool]["version"])
+              print(pins[tool]["filename"])
+              print(pins[tool]["sha256"])
+          PY
+          )
+          syft_version="${pin_values[0]}"
+          syft_filename="${pin_values[1]}"
+          syft_checksum="${pin_values[2]}"
+          grype_version="${pin_values[3]}"
+          grype_filename="${pin_values[4]}"
+          grype_checksum="${pin_values[5]}"
+          cosign_version="${pin_values[6]}"
+          cosign_filename="${pin_values[7]}"
+          cosign_checksum="${pin_values[8]}"
+          for tool in syft grype cosign; do
+            case "$tool" in
+              syft)
+                owner=anchore
+                version="$syft_version"
+                filename="$syft_filename"
+                checksum="$syft_checksum"
+                ;;
+              grype)
+                owner=anchore
+                version="$grype_version"
+                filename="$grype_filename"
+                checksum="$grype_checksum"
+                ;;
+              cosign)
+                owner=sigstore
+                version="$cosign_version"
+                filename="$cosign_filename"
+                checksum="$cosign_checksum"
+                ;;
+            esac
+            archive="$RUNNER_TEMP/$filename"
+            curl --fail --location --silent --show-error \
+              "https://github.com/$owner/$tool/releases/download/v$version/$filename" \
+              --output "$archive"
+            printf '%s  %s\n' "$checksum" "$archive" | sha256sum --check
+          done
+          tar -xzf "$RUNNER_TEMP/$syft_filename" -C "$RUNNER_TEMP/tools" syft
+          tar -xzf "$RUNNER_TEMP/$grype_filename" -C "$RUNNER_TEMP/tools" grype
+          cp "$RUNNER_TEMP/$cosign_filename" "$RUNNER_TEMP/tools/cosign"
+          chmod 0755 "$RUNNER_TEMP/tools/"*
+          ln -s "$RUNNER_TEMP/tools/syft" "$RUNNER_TEMP/bin/syft"
+          ln -s "$RUNNER_TEMP/tools/grype" "$RUNNER_TEMP/bin/grype"
+          ln -s "$RUNNER_TEMP/tools/cosign" "$RUNNER_TEMP/bin/cosign"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Authenticate to GitHub Container Registry
+        if: ${{ inputs.registry == 'ghcr.io' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and verify sandbox image
+        env:
+          IMAGE: ${{ inputs.registry }}/${{ inputs.image }}
+          TAG: ${{ inputs.tag }}
+          PUBLISH: "1"
+          COSIGN_SIGN: "1"
+          CERTIFICATE_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/sandbox-image-release.yml@${{ github.ref }}
+          CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
+        run: ./deploy/images/build_sandbox_image.sh
+
+      - name: Retain release evidence
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        with:
+          name: sandbox-release-evidence
+          path: deploy/images/out/*
+          if-no-files-found: error
