@@ -2251,8 +2251,8 @@ function navOpenOutput(path, title, ctx) {
 async function openOutput(path, title, ctx) {
   const decodedPath = decodeURIComponent(path);
   const rawMeta = outputMeta[decodedPath] || await api("/api/output/meta?path=" + encodeURIComponent(decodedPath)).catch(() => null);
-  const meta = normalizeOutputMeta(rawMeta);
-  if (rawMeta) outputMeta[decodedPath] = meta;
+  const meta = rawMeta ? normalizeOutputMeta(rawMeta) : null;
+  if (meta) outputMeta[decodedPath] = meta;
   const text = await api("/api/output?path=" + encodeURIComponent(decodedPath));
   const toc = [];
   const bodyHtml = await mdToHtml(text, toc);

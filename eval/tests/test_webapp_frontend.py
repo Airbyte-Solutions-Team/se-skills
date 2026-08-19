@@ -13,5 +13,5 @@ def test_app_js_parses_and_normalizes_output_meta(repo_root: Path) -> None:
 
     assert "function normalizeOutputMeta(o)" in app_js
     assert "normalizeOutputMeta(o)]" in app_js
-    assert "const meta = normalizeOutputMeta(rawMeta);" in app_js
+    assert "const meta = rawMeta ? normalizeOutputMeta(rawMeta) : null;" in app_js
     assert app_js.count("normalizeOutputMeta(") >= 4
