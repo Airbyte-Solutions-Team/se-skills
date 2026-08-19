@@ -2,10 +2,12 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 19, 2026 — HEAD da8686c on `devin/1787165573-postcall-local-webapp-fixes`. Consistent output metadata and reader section separation._
+_Last updated: August 19, 2026 — HEAD 6eb3a80 on `devin/1787165573-postcall-local-webapp-fixes`. Visible Gong-fallback warning toast on skill invoke._
 
 
 ## Built this session (newest first — see `git log`)
+
+- **Visible planner warnings on invoke (August 19).** When the planner returns `ready: true` with warnings (e.g. post-call with no local transcript will fall back to Gong), the invoke flow now surfaces each warning as an amber toast instead of leaving it API-only. `showToast` gained a `warn` kind. A metadata fetch that fails outright still shows the "Metadata unavailable" state rather than a fabricated "unvalidated" one. `app.js` cache-busting was bumped.
 
 - **Consistent output metadata and reader section separation (August 19).** The opportunity page, post-run refresh, and direct output-open fallback now normalize output validation metadata through one shared frontend helper, preventing contradictory status badges before versus after navigation. The reader keeps its single-sheet design while adding more vertical breathing room and a soft full-width section divider band; the accent bar, semantic styles, dense tables/checklists, themes, and responsive layout remain intact. `app.js` cache-busting was bumped.
 

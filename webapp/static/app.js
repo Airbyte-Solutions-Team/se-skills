@@ -50,6 +50,9 @@ async function invokeWithPlan(payload, alreadyConfirmed = false) {
         }
         return invokeWithPlan({ ...payload, override_prerequisites: true }, true);
       }
+      if (plan.warnings && plan.warnings.length) {
+        plan.warnings.forEach((w) => showToast(w, "warn"));
+      }
     } catch (e) {
       if (e.message === "Cancelled") throw e;
       // Planner unavailable — proceed to invoke so a local/network glitch doesn't
@@ -513,9 +516,9 @@ function showToast(message, kind = "ok") {
   const wrap = document.getElementById("toast-container");
   if (!wrap) return;
   const el = document.createElement("div");
-  el.className = `toast ${kind === "err" ? "err" : "ok"}`;
+  el.className = `toast ${kind === "err" ? "err" : kind === "warn" ? "warn" : "ok"}`;
   el.innerHTML =
-    `<span class="toast-icon">${kind === "err" ? "✕" : "✓"}</span>`
+    `<span class="toast-icon">${kind === "err" ? "✕" : kind === "warn" ? "⚠" : "✓"}</span>`
     + `<div class="toast-body"><div class="toast-title">${esc(message)}</div></div>`
     + `<button class="toast-x" aria-label="Dismiss">✕</button>`;
   wrap.appendChild(el);
