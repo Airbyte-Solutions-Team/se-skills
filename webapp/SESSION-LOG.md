@@ -2,10 +2,14 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 19, 2026 — HEAD 4febed6 on `devin/1787165573-postcall-local-webapp-fixes`. UTF-8 text-boundary audit for the local webapp._
+_Last updated: August 19, 2026 — HEAD 9150c77 on `devin/1787165573-postcall-local-webapp-fixes`. Consistent output metadata and reader section separation._
 
 
 ## Built this session (newest first — see `git log`)
+
+- **Consistent output metadata and reader section separation (August 19).** The opportunity page, post-run refresh, and direct output-open fallback now normalize output validation metadata through one shared frontend helper, preventing contradictory status badges before versus after navigation. The reader keeps its single-sheet design while adding more vertical breathing room and a soft full-width section divider band; the accent bar, semantic styles, dense tables/checklists, themes, and responsive layout remain intact. `app.js` cache-busting was bumped.
+
+- **Post-call planner fallback and strict output validation (August 19).** Post-call prerequisite checks no longer block when no local transcript exists: the planner warns that it will narrow-search Gong for the most recent completed call, persist the transcript, and then analyze it. `.rtf` transcripts are recognized alongside `.txt`/`.md`. Output schema version 2 now treats Markdown links, images, reference links, footnotes, fenced code, and inline code as syntax while still rejecting unresolved placeholders; evidence markers such as `[stated — Name]` and `[inferred - source]` remain valid. Gong fallback wording is aligned across the planner, `skills/post-call/SKILL.md`, and the source-freshness playbook.
 
 - **Explicit UTF-8 at local webapp text boundaries (August 19).** Plain-text reads, writes, YAML/JSON sidecars, subprocess decoding, and generated HTML paths now pass `encoding="utf-8"` explicitly throughout `webapp/` (excluding hosted code), while binary PDF handling remains unchanged. This keeps accented names, smart punctuation, em dashes, and emoji stable regardless of the machine's locale.
 

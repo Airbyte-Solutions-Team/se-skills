@@ -65,7 +65,7 @@ class PlanResult(BaseModel):
 # ---------------------------------------------------------------------------
 SKILL_PREREQUISITES: dict[str, list[dict]] = {
     "prep-call": [],
-    "post-call": [{"kind": "transcript"}],
+    "post-call": [{"kind": "transcript", "fallback": "gong"}],
     "deployment-model-qual": [{"kind": "transcript"}],
     "biz-qual": [{"kind": "transcript"}],
     "deal-assessment": [{"kind": "transcript"}],
@@ -143,7 +143,7 @@ def _has_transcript(customers_dir: Path, account: str) -> bool:
         return False
     cust = _titlecase_folder(account)
     for f in tdir.iterdir():
-        if f.is_file() and f.suffix in (".txt", ".md") and f.name.startswith(f"{cust}-"):
+        if f.is_file() and f.suffix in (".txt", ".md", ".rtf") and f.name.startswith(f"{cust}-"):
             return True
     return False
 
@@ -280,7 +280,13 @@ def check_prerequisites(
         kind = rule["kind"]
         if kind == "transcript":
             if not _has_transcript(customers_dir, account):
-                missing.append("At least one customer transcript is required.")
+                if rule.get("fallback") == "gong":
+                    warnings.append(
+                        "No local transcript found for this account — post-call will search Gong "
+                        "for the most recent completed call and save it to _transcripts/ before analysis."
+                    )
+                else:
+                    missing.append("At least one customer transcript is required.")
         elif kind == "worker_config":
             modes = _check_worker_analysis_modes(customers_dir)
             if modes:

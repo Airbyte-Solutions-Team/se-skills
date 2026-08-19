@@ -23,7 +23,7 @@ from reference_freshness import ReferenceChange, ReferenceFreshness, compute_ref
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 Mode = Literal["full", "brief"]
 
@@ -307,14 +307,7 @@ def _extract_sections(text: str) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 # Bracket text that is allowed and does not indicate an unfilled template.
-_PLACEHOLDER_ALLOWED_BRACKETS = frozenset({
-    "stated",
-    "inferred",
-    "x",
-    "x",
-    " ",
-    "",
-})
+_PLACEHOLDER_ALLOWED_BRACKETS = frozenset({"stated", "inferred"})
 
 
 def _is_allowed_bracket_content(content: str) -> bool:
@@ -331,7 +324,28 @@ def _is_allowed_bracket_content(content: str) -> bool:
     # Checkbox states.
     if re.fullmatch(r"[xX ]?", content):
         return True
+    if re.match(r"^(?:stated|inferred)\b", content, re.IGNORECASE):
+        return True
     return False
+
+
+def _mask_markdown_non_placeholders(text: str) -> str:
+    """Mask Markdown constructs whose brackets are syntax, not placeholders."""
+    masked = text
+
+    def blank(match: re.Match[str]) -> str:
+        return "".join("\n" if char == "\n" else " " for char in match.group(0))
+
+    # Fenced blocks are checked first so bracket-like content inside them is
+    # never interpreted as document prose.
+    masked = re.sub(r"(?ms)^(```|~~~)[^\n]*\n.*?^\1\s*$", blank, masked)
+    # Inline code spans, links/images, reference links, and footnote refs all
+    # use brackets as Markdown syntax rather than template placeholders.
+    masked = re.sub(r"`{1,3}[^`\n]*`{1,3}", blank, masked)
+    masked = re.sub(r"!?\[[^\]\n]*\]\([^)\n]*\)", blank, masked)
+    masked = re.sub(r"!?\[[^\]\n]*\]\[[^\]\n]*\]", blank, masked)
+    masked = re.sub(r"\[\^[^\]\n]+\]", blank, masked)
+    return masked
 
 
 def _find_placeholders(text: str) -> list[str]:
@@ -339,10 +353,11 @@ def _find_placeholders(text: str) -> list[str]:
     placeholders: list[str] = []
     if not text:
         return placeholders
-    for match in re.finditer(r"\[([^\]]+)\]", text):
+    masked = _mask_markdown_non_placeholders(text)
+    for match in re.finditer(r"\[([^\]\n]+)\]", masked):
         inner = match.group(1)
         if not _is_allowed_bracket_content(inner):
-            placeholders.append(match.group(0))
+            placeholders.append(text[match.start():match.end()])
     return placeholders
 
 

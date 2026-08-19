@@ -645,7 +645,7 @@ The most recent call is crucial context for almost every SE skill. The defaults 
 | Skill | Default behavior |
 |---|---|
 | `prep-call` | **Always check Gong for the most recent call on this account.** The typical SE invocation is prepping for a tech call AFTER the AE did business discovery 1-14 days ago — that AE call is in Gong and is the primary input. **Lookback: 7 days first, expand to 14 days if empty.** If still no AE call found, declare "cold-prep mode" explicitly in output. For existing customers with local folders, also check local `_transcripts/` first. Pull the *most recent* call only, save it, and read it before generating prep. |
-| `post-call` | Check Gong if the user references a specific call that isn't local. |
+| `post-call` | If no local transcript matches, check Gong for the most recent completed call on the account; also check Gong when the user references a non-local call. An explicit user date/call always wins. Search narrowly, persist the selected transcript before analysis, and report which call was used. Ambiguous candidates require disambiguation. If Gong is unavailable or misconfigured, fail clearly and actionably — never treat partial data as valid. |
 | `deal-assessment`, `biz-qual`, `tech-qual`, `deployment-model-qual`, `poc-plan`, `connector-feasibility`, `follow-up-email` | Check Gong if the most-recent local transcript is more than **14 days old**, OR if the user signals "check for new activity." Pull the most recent call only. |
 | `objection-handler` | If the user provides a customer name (not just an abstract objection), check both local transcripts and Gong (14-day rule). Otherwise skip — abstract objections don't need customer call history. |
 

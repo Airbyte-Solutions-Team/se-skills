@@ -540,7 +540,16 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 }
 .doc-action:hover { border-color: var(--accent); background: var(--panel-hover); }
 .doc-action.copied { border-color: var(--accent2); color: var(--accent2); }
-.md-body .doc-section { padding: 30px 32px; border-top: 1px solid var(--line); }
+.md-body .doc-section {
+  padding: 38px 32px 34px;
+  border-top: 3px solid;
+  border-image: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--line-strong) 62%, transparent),
+    color-mix(in srgb, var(--line) 38%, transparent) 62%,
+    transparent
+  ) 1;
+}
 .md-body .doc-section:first-child { border-top: none; }
 .md-body .doc-section > :last-child { margin-bottom: 0; }
 /* a section's H2 acts as a header band inside the sheet */
@@ -1306,4 +1315,3 @@ a.live-btn { text-decoration: none; display: inline-flex; align-items: center; }
 .hosted-opps { margin: -8px 0 16px; color: var(--muted); font-size: 13px; }
 .hosted-opps a { color: var(--accent); text-decoration: none; margin-right: 8px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-

@@ -51,6 +51,21 @@ def test_read_output_content_returns_markdown(tmp_path: Path) -> None:
     assert "# Acme" in svc.read_output_content(rel)
 
 
+def test_read_and_export_output_round_trip_utf8_text(tmp_path: Path) -> None:
+    svc = _svc(tmp_path)
+    rel = "Acme/outputs/next-move/next-move-2026-07-14.md"
+    path = tmp_path / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = "# Résumé — naïve façade\n\n“Quoted” by Zoë 🚀"
+    path.write_bytes(text.encode("utf-8"))
+
+    assert svc.read_output_content(rel) == text
+    exported, _ = svc.export_internal_html(rel)
+    assert "Résumé" in exported
+    assert "Zoë" in exported
+    assert "🚀" in exported
+
+
 def test_read_output_html_serves_html_output(tmp_path: Path) -> None:
     svc = _svc(tmp_path)
     rel = "Acme/outputs/handover/handover.html"

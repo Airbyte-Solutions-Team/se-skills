@@ -19,6 +19,7 @@ def _load_fixture(repo_root: Path, filename: str) -> str:
     [
         pytest.param("post-call-full.md", "full", id="valid-full"),
         pytest.param("post-call-brief.md", "brief", id="valid-brief"),
+        pytest.param("post-call-canonical.md", "full", id="valid-canonical"),
     ],
 )
 def test_post_call_valid_fixtures(filename: str, mode: str, repo_root: Path) -> None:
@@ -70,6 +71,58 @@ def test_post_call_action_item_owner_placeholder(repo_root: Path) -> None:
     assert meta.valid is False
     assert meta.validation_status == "invalid"
     assert any("[Owner]" in e for e in meta.validation_errors)
+
+
+@pytest.mark.parametrize("placeholder", ["[action]", "[Customer Name]", "[Owner]"])
+def test_post_call_rejects_unresolved_placeholder(placeholder: str, repo_root: Path) -> None:
+    text = _load_fixture(repo_root, "post-call-canonical.md").replace(
+        "The team needs a managed deployment before renewal.",
+        f"The team needs {placeholder} before renewal.",
+    )
+    meta = output_schema.parse_output("post-call", text, mode="full")
+    assert meta.valid is False
+    assert any(placeholder in e for e in meta.validation_errors)
+
+
+def test_post_call_markdown_syntax_brackets_are_not_placeholders(repo_root: Path) -> None:
+    text = _load_fixture(repo_root, "post-call-canonical.md")
+    meta = output_schema.parse_output("post-call", text, mode="full")
+    assert meta.valid is True
+    assert not any("Jump to" in e for e in meta.validation_errors)
+
+
+def test_post_call_source_coverage_without_line_counts_is_invalid(repo_root: Path) -> None:
+    text = _load_fixture(repo_root, "post-call-canonical.md").replace(
+        "(612 / 612 lines)", "Transcript was reviewed.",
+    )
+    meta = output_schema.parse_output("post-call", text, mode="full")
+    assert meta.valid is False
+    assert any("line counts" in e for e in meta.validation_errors)
+
+
+def test_sidecar_schema_version_change_reparses_and_rewrites(tmp_path: Path, repo_root: Path) -> None:
+    md_path = tmp_path / "post-call.md"
+    md_path.write_text(
+        _load_fixture(repo_root, "post-call-canonical.md"),
+        encoding="utf-8",
+    )
+    sidecar = md_path.with_suffix(".md.json")
+    sidecar.write_text(
+        json.dumps({
+            "schema_version": 1,
+            "skill": "post-call",
+            "valid": True,
+            "validation_status": "valid",
+        }),
+        encoding="utf-8",
+    )
+
+    meta = output_schema.read_or_parse_sidecar(md_path, "post-call")
+
+    assert meta.valid is True
+    rewritten = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert rewritten["schema_version"] == 2
+    assert rewritten["validation_status"] == "valid"
 
 
 def _remove_section(text: str, heading: str) -> str:

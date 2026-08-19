@@ -18,7 +18,7 @@ The user will typically say something like "post-call for Acme" or "summarize th
    - If user specified a date, use that specific file
    - If user did not specify, **default to the most recent transcript by date in filename** (not file mtime — filename date is more reliable)
    - State up front which file you're using: "Reading `Acme-04.01.26.txt` — most recent of 4 transcripts found"
-4. If no matching transcript exists locally, **fall back to Gong** per `_se-playbook.md` Source Freshness Check (apply session-dedupe rule: check mtime ≤ 30 min before querying). Save the pulled transcript to `_transcripts/` before using it.
+4. If no matching transcript exists locally, **fall back to Gong** per `_se-playbook.md` Source Freshness Check (apply session-dedupe rule: check mtime ≤ 30 min before querying). Search narrowly for the most recent completed call on the account unless the user supplied an explicit date/call, which always wins. Persist the selected transcript to `_transcripts/` before using it, report which call was used, and ask for disambiguation when candidates are ambiguous. If Gong is unavailable or misconfigured, stop with a clear actionable failure; never treat partial data as valid.
 
 ## Source Coverage (mandatory, anti-hallucination)
 
@@ -191,11 +191,11 @@ Read `memory_dir` `MEMORY.md` and any customer-specific memory files before summ
 Don't ask the SE to update memory after every call — only when the call moved something meaningful.
 
 ### Source Freshness Check (Gong Fallback)
-Per `_se-playbook.md` ("Source Freshness Check"): if the user references a specific call that isn't in `_transcripts/`, fall back to Gong before asking the user to pull it manually.
-- Search Gong via `search_calls` with date + account filter
-- Pull the specific call only — do not bulk-pull
+Per `_se-playbook.md` ("Source Freshness Check"): if no matching transcript is in `_transcripts/`, or the user references a specific call that isn't local, fall back to Gong before asking the user to pull it manually.
+- Search Gong via `search_calls` with account + date filters (most recent completed call when no explicit date/call was supplied)
+- Pull the specific call only — do not bulk-pull; ambiguous candidates require disambiguation
 - Save to `{transcripts_dir}/<Customer-Name>-MM.DD.YY.txt` BEFORE using it (per CLAUDE.md)
-- If the requested call isn't in Gong either, say so and ask the user for clarification
+- Report which call was used. If Gong is unavailable or misconfigured, stop with a clear actionable failure; never use partial data as valid. If the requested call isn't in Gong either, say so and ask the user for clarification
 
 ### Apply Cross-Transcript Analysis
 If prior transcripts or call summaries exist for this customer, read the "Cross-Transcript Analysis" section in `_se-playbook.md` and apply it. Specifically:
