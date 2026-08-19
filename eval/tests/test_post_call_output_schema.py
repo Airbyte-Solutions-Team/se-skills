@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -91,6 +92,17 @@ def test_post_call_markdown_syntax_brackets_are_not_placeholders(repo_root: Path
     meta = output_schema.parse_output("post-call", text, mode="full")
     assert meta.valid is True
     assert not any("Jump to" in e for e in meta.validation_errors)
+
+
+def test_post_call_canonical_fixture_keeps_source_coverage_last(repo_root: Path) -> None:
+    text = _load_fixture(repo_root, "post-call-canonical.md")
+    headings = re.findall(r"^## (.+)$", text, re.MULTILINE)
+    assert headings[-1] == "Source Coverage"
+    assert headings.index("Coaching Observations") < headings.index("Source Coverage")
+
+    meta = output_schema.parse_output("post-call", text, mode="full")
+    assert meta.valid is True
+    assert meta.validation_errors == []
 
 
 def test_post_call_source_coverage_without_line_counts_is_invalid(repo_root: Path) -> None:

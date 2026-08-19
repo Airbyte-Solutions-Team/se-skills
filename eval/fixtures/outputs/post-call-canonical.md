@@ -8,7 +8,7 @@
 - **Action items:** ==[2]== · **Next step:** Confirm the technical workshop date
 - **Deal-assessment update needed?** yes — the evaluation timeline changed
 
-**Jump to:** [At a Glance](#at-a-glance) · [Key Takeaways](#key-takeaways) · [Deal Health Signals](#deal-health-signals) · [New Objections / Concerns Surfaced](#new-objections--concerns-surfaced) · [Action Items](#action-items) · [Attendees](#attendees) · [Next Step](#next-step) · [Source Coverage](#source-coverage)
+**Jump to:** [At a Glance](#at-a-glance) · [Key Takeaways](#key-takeaways) · [Deal Health Signals](#deal-health-signals) · [New Objections / Concerns Surfaced](#new-objections--concerns-surfaced) · [Action Items](#action-items) · [Attendees](#attendees) · [Next Step](#next-step) · [Coaching Observations](#coaching-observations) · [Source Coverage](#source-coverage)
 
 ## Key Takeaways
 - [stated — Patrice Puntis] The team needs a managed deployment before renewal.
@@ -38,8 +38,8 @@
 ## Next Step
 Confirm the technical workshop date with the security reviewer.
 
-## Source Coverage
-Read `Example-Co-08.19.26.txt` in full (612 / 612 lines). Session dedupe check found no recent Gong pull.
-
 ## Coaching Observations
 - [inferred — call structure] Anchor the workshop agenda to the stated security outcome.
+
+## Source Coverage
+Read `Example-Co-08.19.26.txt` in full (612 / 612 lines). Session dedupe check found no recent Gong pull.

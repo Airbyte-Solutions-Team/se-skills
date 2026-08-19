@@ -26,7 +26,7 @@ The user will typically say something like "post-call for Acme" or "summarize th
 
 - Count total lines in the transcript file
 - Read every line, not just the first N
-- Include a **Source Coverage** section at the top of the output reporting line count read / total line count
+- Include a **Source Coverage** section as the final section of the output, reporting line count read / total line count
 - If you didn't read the full file, say so explicitly and re-read
 
 Sample line:
@@ -67,9 +67,9 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 - **Action items:** ==[N]== · **Next step:** [one line]
 - **Deal-assessment update needed?** [yes/no — if yes, one line on what changed]
 
-**Jump to:** [At a Glance](#at-a-glance) · [Key Takeaways](#key-takeaways) · [Deal Health Signals](#deal-health-signals) · [New Objections / Concerns Surfaced](#new-objections--concerns-surfaced) · [Action Items](#action-items) · [Sources & Destinations](#sources--destinations) · [Technical Notes](#technical-notes) · [Open Questions / Follow-ups](#open-questions--follow-ups) · [Attendees](#attendees) · [Next Step](#next-step) · [Source Coverage](#source-coverage)
+**Jump to:** [At a Glance](#at-a-glance) · [Key Takeaways](#key-takeaways) · [Deal Health Signals](#deal-health-signals) · [New Objections / Concerns Surfaced](#new-objections--concerns-surfaced) · [Action Items](#action-items) · [Sources & Destinations](#sources--destinations) · [Technical Notes](#technical-notes) · [Open Questions / Follow-ups](#open-questions--follow-ups) · [Attendees](#attendees) · [Next Step](#next-step) · [Coaching Observations](#coaching-observations) · [Source Coverage](#source-coverage)
 *(omit the Sources & Destinations and/or Technical Notes anchors if the call had no such content)*
-*(Append [MEDDPICC Quick Pass](#meddpicc-quick-pass) and [Coaching Observations](#coaching-observations) to the Jump-to line only when those conditional sections are present — see SE Best Practices below.)*
+*(Append [MEDDPICC Quick Pass](#meddpicc-quick-pass) and/or [Coaching Observations](#coaching-observations) to the Jump-to line only when those conditional sections are present; place Coaching Observations immediately before the final Source Coverage section — see SE Best Practices below.)*
 *(Section order is "what changed → what to do": takeaways, health, and new objections lead; the attendee roster and source audit sit at the bottom — see `_se-playbook.md`.)*
 
 ## Key Takeaways
@@ -133,7 +133,7 @@ Questions the customer asked that weren't fully answered, or that you committed 
 The single most important next action. Be specific — "send POC proposal by Friday" not "follow up".
 
 ## Source Coverage
-*Audit trail — last content section (progressive disclosure per `_se-playbook.md`).* [Transcript read in full (lines read / total), attribution determination, prior transcripts/summaries cross-referenced, memory files — see Source Coverage section above.]
+*Audit trail — final content section, after all analytical and coaching content (progressive disclosure per `_se-playbook.md`).* [Transcript read in full (lines read / total), attribution determination, prior transcripts/summaries cross-referenced, memory files.]
 
 ## After Generating the Summary
 
@@ -215,7 +215,7 @@ Decision logic:
 
 ### Coaching layer — framed by call attribution
 
-Add a `## Coaching Observations` section (H2, so it lands in the Jump-to index). **Framing depends on call attribution** (per `_se-playbook.md` Call Attribution):
+Add a `## Coaching Observations` section (H2, so it lands in the Jump-to index) immediately **before the final `## Source Coverage` section**. **Framing depends on call attribution** (per `_se-playbook.md` Call Attribution):
 
 **If SE was on the call (SE-attended):**
 Frame as "what to do differently next time." Direct critique of the SE's moves:

@@ -7,6 +7,8 @@ _Last updated: August 19, 2026 — HEAD 3889f8c on `devin/1787165573-postcall-lo
 
 ## Built this session (newest first — see `git log`)
 
+- **Clarify post-call Source Coverage placement (August 19).** The post-call skill, canonical fixture, and shared playbook now consistently place `## Source Coverage` as the final output section, after analytical and coaching content. Added a regression assertion for canonical H2 ordering without changing validator behavior.
+
 - **Preserve generation-time reference freshness during sidecar migration (August 19).** When a fresh v1 sidecar is reparsed because its schema or skill no longer matches, the parser now validates and carries forward its generation-time reference snapshot before rewriting the v2 sidecar. Legacy `reference_freshness` snapshots migrate to `reference_freshness_at_generation`, and the OutputService read path continues computing changes against that preserved snapshot.
 
 - **`full-qual` output-nesting fix + more Windows UTF-8 crashes (August 19).**
