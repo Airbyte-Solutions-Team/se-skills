@@ -117,17 +117,20 @@ class AccountService:
     def load_team(self) -> list[dict]:
         """Configured SE team from team-members.yaml, falling back to .se-config.yaml."""
         if self.team_file.exists():
-            data = yaml.safe_load(self.team_file.read_text()) or {}
+            data = yaml.safe_load(self.team_file.read_text(encoding="utf-8")) or {}
             members = data.get("members", [])
             if members:
                 return members
         if self.se_config_file.exists():
-            cfg = yaml.safe_load(self.se_config_file.read_text()) or {}
+            cfg = yaml.safe_load(self.se_config_file.read_text(encoding="utf-8")) or {}
             return [{"id": "me", "name": cfg.get("name", "Me"), "email": cfg.get("email", "")}]
         return [{"id": "me", "name": "Me", "email": ""}]
 
     def save_team(self, members: list[dict]) -> None:
-        self.team_file.write_text(yaml.safe_dump({"members": members}, sort_keys=False, allow_unicode=True))
+        self.team_file.write_text(
+            yaml.safe_dump({"members": members}, sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
 
     def member_by_id(self, member_id: str) -> dict | None:
         return next((m for m in self.load_team() if m.get("id") == member_id), None)
@@ -168,14 +171,14 @@ class AccountService:
         if not f.exists():
             return {}
         try:
-            return json.loads(f.read_text()) or {}
+            return json.loads(f.read_text(encoding="utf-8")) or {}
         except (json.JSONDecodeError, OSError):
             return {}
 
     def save_member_prefs(self, member_id: str, prefs: dict) -> None:
         f = self._member_prefs_file(member_id)
         f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(json.dumps(prefs, indent=2))
+        f.write_text(json.dumps(prefs, indent=2), encoding="utf-8")
 
     # -----------------------------------------------------------------------
     # Account metadata files
@@ -185,7 +188,7 @@ class AccountService:
 
     def _read_owner(self, account_dir: Path) -> str | None:
         f = self._owner_file(account_dir)
-        return f.read_text().strip() if f.exists() else None
+        return f.read_text(encoding="utf-8").strip() if f.exists() else None
 
     def _archived_file(self, account_dir: Path) -> Path:
         return account_dir / ".archived"
@@ -279,20 +282,21 @@ class AccountService:
         (acc_dir / "outputs").mkdir(parents=True, exist_ok=True)
         (acc_dir / "raw").mkdir(parents=True, exist_ok=True)
         if owner:
-            self._owner_file(acc_dir).write_text(self._safe(owner))
+            self._owner_file(acc_dir).write_text(self._safe(owner), encoding="utf-8")
         if sfdc_name and sfdc_name.strip():
-            (acc_dir / ".sfdc-name").write_text(sfdc_name.strip())
+            (acc_dir / ".sfdc-name").write_text(sfdc_name.strip(), encoding="utf-8")
         return {"name": folder, "created": created, "owner": owner}
 
     def set_owner(self, account: str, owner: str) -> dict:
         acc_dir = self._resolve_account_dir(account)
-        self._owner_file(acc_dir).write_text(self._safe(owner))
+        self._owner_file(acc_dir).write_text(self._safe(owner), encoding="utf-8")
         return {"name": acc_dir.name, "owner": owner}
 
     def archive(self, account: str) -> dict:
         acc_dir = self._resolve_account_dir(account)
         self._archived_file(acc_dir).write_text(
-            datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            encoding="utf-8",
         )
         return {"name": acc_dir.name, "archived": True}
 
@@ -333,7 +337,8 @@ class AccountService:
             try:
                 if action == "archive":
                     self._archived_file(acc_dir).write_text(
-                        datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                        datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        encoding="utf-8",
                     )
                 elif action == "unarchive":
                     f = self._archived_file(acc_dir)
@@ -342,7 +347,7 @@ class AccountService:
                 elif action == "delete":
                     self.delete_account(name)
                 elif action == "set-owner":
-                    self._owner_file(acc_dir).write_text(self._safe(owner))
+                    self._owner_file(acc_dir).write_text(self._safe(owner), encoding="utf-8")
                 results.append({"name": name, "ok": True})
             except AccountError:
                 raise

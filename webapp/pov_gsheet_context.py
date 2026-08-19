@@ -256,7 +256,7 @@ def _salesforce_query(config: dict[str, Any], account_name: str, account_dir: Pa
 
     # Prefer the stored SFDC name if the account folder captured it.
     sfdc_name_path = account_dir / ".sfdc-name"
-    account_like = sfdc_name_path.read_text().strip() if sfdc_name_path.exists() else account_name
+    account_like = sfdc_name_path.read_text(encoding="utf-8").strip() if sfdc_name_path.exists() else account_name
 
     account_like = account_like.replace("'", "\\'")
     # Lightweight query; we intentionally do not query every field to keep the

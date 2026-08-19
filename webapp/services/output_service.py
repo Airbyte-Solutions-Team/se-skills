@@ -209,7 +209,7 @@ class OutputService:
 
     def read_output_content(self, path: str, customers_dir: Path | None = None) -> str:
         target = self._resolve_output(path, customers_dir)
-        return target.read_text()
+        return target.read_text(encoding="utf-8")
 
     def read_output_meta(self, path: str, customers_dir: Path | None = None) -> dict:
         target = self._resolve_output(path, customers_dir)
@@ -236,7 +236,7 @@ class OutputService:
         target = self._resolve_output(path, customers_dir)
         if target.suffix != ".html":
             raise OutputError(400, "Not an HTML output")
-        return target.read_text()
+        return target.read_text(encoding="utf-8")
 
     def delete_output(self, path: str, customers_dir: Path | None = None) -> dict:
         target = self._resolve_output(path, customers_dir)
@@ -271,7 +271,7 @@ class OutputService:
         if target.suffix not in (".md", ".html"):
             raise OutputError(400, "Only .md or .html outputs can be exported to PDF")
         try:
-            text = target.read_text()
+            text = target.read_text(encoding="utf-8")
             if append_md:
                 text = text + append_md
             data = pdf_render.render_html_pdf(text) if target.suffix == ".html" else pdf_render.render_pdf(text)
@@ -293,7 +293,7 @@ class OutputService:
         rel = target.relative_to(customers_dir.resolve())
         customer = rel.parts[0].replace("-", " ") if rel.parts else ""
         try:
-            doc = internal_html.render_internal_html(target.read_text(), customer=customer)
+            doc = internal_html.render_internal_html(target.read_text(encoding="utf-8"), customer=customer)
         except Exception as e:  # best-effort render; surface rather than 500 silently
             raise OutputError(500, security.redact_sensitive(f"Internal HTML render failed: {e}"))
         return doc, target.stem + ".html"
@@ -317,7 +317,7 @@ class OutputService:
         src = self._resolve_output(body.path)
         if src.suffix != ".html":
             raise OutputError(400, "Only .html outputs can be pushed to the internal repo")
-        handoff_html = src.read_text()
+        handoff_html = src.read_text(encoding="utf-8")
 
         # 2. Compute the target path inside the internal repo.
         repo = self._internal_repo()
@@ -349,14 +349,15 @@ class OutputService:
 
         # 4. Write the account page.
         account_dir.mkdir(parents=True, exist_ok=True)
-        index_path.write_text(handoff_html)
+        index_path.write_text(handoff_html, encoding="utf-8")
 
         # 5. Update the member's handover.html card.
         stats = self._parse_handoff_stats(handoff_html)
         meta = body.meta.strip() or self._build_card_meta(stats)
         description = body.description.strip()
         handover_path.write_text(
-            self._upsert_handover_card(handover_path.read_text(), account, account_slug, description, meta)
+            self._upsert_handover_card(handover_path.read_text(encoding="utf-8"), account, account_slug, description, meta),
+            encoding="utf-8",
         )
 
         # 6. Commit, push, open a PR.
@@ -663,7 +664,7 @@ class OutputService:
             return
         d.mkdir(parents=True, exist_ok=True)
         safe_skill = re.sub(r"[^A-Za-z0-9._-]", "-", skill or "freeform")
-        (d / f"{safe_skill}.json").write_text(json.dumps(record))
+        (d / f"{safe_skill}.json").write_text(json.dumps(record), encoding="utf-8")
         self._write_output_sidecar(account, opp_slug, skill)
 
     def latest_run(self, account: str, opp_slug: str | None) -> dict | None:
@@ -675,7 +676,7 @@ class OutputService:
         for f in d.glob("*.json"):
             try:
                 resolve_within(self.customers_dir, str(f.relative_to(self.customers_dir)))
-                rec = json.loads(f.read_text())
+                rec = json.loads(f.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
             except Exception:

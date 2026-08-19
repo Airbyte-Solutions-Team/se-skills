@@ -339,7 +339,7 @@ class SkillRuntimeService:
         }
         if not f:
             return entry
-        fm, body = self._parse_frontmatter(f.read_text())
+        fm, body = self._parse_frontmatter(f.read_text(encoding="utf-8"))
         desc = fm.get("description", "")
         entry["found"] = True
         entry["description"] = desc

@@ -2,10 +2,12 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 19, 2026 — HEAD 0902d4e on `main`. Windows compatibility fixes for the local webapp and worker-analysis skill._
+_Last updated: August 19, 2026 — HEAD 4febed6 on `devin/1787165573-postcall-local-webapp-fixes`. UTF-8 text-boundary audit for the local webapp._
 
 
 ## Built this session (newest first — see `git log`)
+
+- **Explicit UTF-8 at local webapp text boundaries (August 19).** Plain-text reads, writes, YAML/JSON sidecars, subprocess decoding, and generated HTML paths now pass `encoding="utf-8"` explicitly throughout `webapp/` (excluding hosted code), while binary PDF handling remains unchanged. This keeps accented names, smart punctuation, em dashes, and emoji stable regardless of the machine's locale.
 
 - **Windows compatibility fixes for local (non-hosted) usage (August 19).**
   1. **Workspace root no longer hardcoded.** `webapp/config.py` previously hardcoded `WORKSPACE = ~/airbyte-work`, ignoring `.se-config.yaml`'s `workspace_root` — on a machine using the newer `~/.se-skills` default, the webapp silently looked at (and would have written to) a workspace that never existed, showing no accounts and no SFDC sync results with no visible error. `_resolve_workspace()` now follows the same `$SE_WORKSPACE` > `.se-config.yaml: workspace_root` > `~/.se-skills` order the skills already use, with the config file itself looked up at `~/.se-skills/.se-config.yaml` first, then the legacy `~/airbyte-work/.se-config.yaml`. Existing `~/airbyte-work` installs keep their `01-customers`/`02-repos` folder names automatically (only a resolved root outside `~/airbyte-work` gets the newer flat `customers/` name), so this is a no-op for pre-existing setups.

@@ -140,8 +140,8 @@ class JobService:
             )
             job["pid"] = proc.pid
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=_RUN_TIMEOUT_SECONDS)
-            stdout = security.redact_sensitive(stdout.decode(errors="replace"))
-            stderr = security.redact_sensitive(stderr.decode(errors="replace"))
+            stdout = security.redact_sensitive(stdout.decode("utf-8", errors="replace"))
+            stderr = security.redact_sensitive(stderr.decode("utf-8", errors="replace"))
             job.update(
                 status="done",
                 ok=proc.returncode == 0,

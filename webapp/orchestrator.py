@@ -202,7 +202,7 @@ def _load_worker_analysis_config(customers_dir: Path) -> dict[str, Any]:
     for candidate in candidates:
         if candidate.exists() and yaml is not None:
             try:
-                raw = yaml.safe_load(candidate.read_text()) or {}
+                raw = yaml.safe_load(candidate.read_text(encoding="utf-8")) or {}
                 if isinstance(raw, dict):
                     cfg = raw.get("worker_analysis", {}) or {}
                     break

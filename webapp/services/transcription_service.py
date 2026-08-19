@@ -547,7 +547,7 @@ class TranscriptionService:
         while path.exists():
             path = transcripts_dir / f"{base}-v{n}.txt"
             n += 1
-        path.write_text(text)
+        path.write_text(text, encoding="utf-8")
         delete_ok = persistence.delete_session(session_id, self.workspace)
         result: dict[str, Any] = {
             "saved_to": str(path),
@@ -602,7 +602,7 @@ class TranscriptionService:
         path = self._transcript_path(account, name)
         if not path.exists():
             raise TranscriptionError(404, "Transcript not found")
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         parsed = _parse_saved_transcript(text)
         return {
             "name": name,
@@ -632,7 +632,7 @@ class TranscriptionService:
             path = self._transcript_path(account, transcript_name)
             if not path.exists():
                 raise TranscriptionError(404, "Transcript not found")
-            return path.read_text(), self.safe_name(account), opportunity, False
+            return path.read_text(encoding="utf-8"), self.safe_name(account), opportunity, False
 
         sess = self.sessions.get(session_id)
         if not sess:
