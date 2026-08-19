@@ -61,6 +61,14 @@ loaded from `deploy/pins.json`; role defaults and paths are in
   process identity, and phase. Broker-owned `finalize` is the only terminal
   release path; it verifies process/container absence, reconciles journal,
   staging, bundle, workspace, and state records, and removes the journal last.
+  Before publication, finalize validates every output inode through
+  descriptor-based no-follow operations and applies final ownership and modes
+  while the tree remains root-only in staging. It then uses a no-replace
+  atomic rename as the final workspace mutation; an occupied or unsafe
+  destination retains the journal for recovery. The runsc child is held behind
+  a broker-owned start barrier until its PID/PGID/start-time identity is
+  durably journaled; a journal-write failure terminates the blocked child
+  synchronously.
   Input, proxy, and job material is always discarded; output is restored only
   for a journaled successful run, and otherwise discarded to avoid restoring
   untrusted partial output. The stale sweeper invokes the same finalization

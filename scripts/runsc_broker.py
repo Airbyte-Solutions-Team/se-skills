@@ -7,6 +7,8 @@ cannot author a privileged runsc document.
 """
 from __future__ import annotations
 
+import ctypes
+import errno
 import fcntl
 import json
 import math
@@ -30,6 +32,33 @@ REQUEST_OPERATIONS = frozenset({"run", "list", "finalize", "cleanup"})
 _ACTIVE_PROCESS: subprocess.Popen[bytes] | None = None
 _ACTIVE_IDENTITY: dict[str, int] | None = None
 _ACTIVE_TIMEOUT = 1.0
+_AT_FDCWD = -100
+_RENAME_NOREPLACE = 1
+_RENAME_EXCHANGE = 2
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", None)
+_START_BARRIER_SCRIPT = (
+    "import os,sys\n"
+    "release_fd=int(sys.argv[1])\n"
+    "command=sys.argv[2:]\n"
+    "if os.read(release_fd, 1) != b'1':\n"
+    "    raise SystemExit(1)\n"
+    "os.close(release_fd)\n"
+    "os.execv(command[0], command)\n"
+)
+_LIBC = ctypes.CDLL(None, use_errno=True)
+try:
+    _RENAMEAT2 = _LIBC.renameat2
+except AttributeError:
+    _RENAMEAT2 = None
+else:
+    _RENAMEAT2.argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    ]
+    _RENAMEAT2.restype = ctypes.c_int
 
 
 class BrokerError(Exception):
@@ -753,6 +782,49 @@ def _discard_worker_directory(
     os.chown(path, config.worker_uid, config.sandbox_gid)
 
 
+def _rename_without_replacement(source: Path, destination: Path) -> None:
+    if _RENAMEAT2 is None:
+        raise BrokerError("workspace publication is unavailable")
+    result = _RENAMEAT2(
+        _AT_FDCWD,
+        os.fsencode(source),
+        _AT_FDCWD,
+        os.fsencode(destination),
+        _RENAME_NOREPLACE,
+    )
+    if result == 0:
+        return
+    error_number = ctypes.get_errno()
+    if error_number == errno.EEXIST:
+        raise BrokerError("worker output destination is occupied")
+    raise BrokerError("workspace publication failed")
+
+
+def _rename_with_exchange(source: Path, destination: Path) -> None:
+    if _RENAMEAT2 is None:
+        raise BrokerError("workspace publication is unavailable")
+    result = _RENAMEAT2(
+        _AT_FDCWD,
+        os.fsencode(source),
+        _AT_FDCWD,
+        os.fsencode(destination),
+        _RENAME_EXCHANGE,
+    )
+    if result != 0:
+        raise BrokerError("workspace publication failed")
+
+
+def _remove_staging_entry(path: Path) -> None:
+    try:
+        facts = path.lstat()
+    except FileNotFoundError:
+        return
+    if stat.S_ISLNK(facts.st_mode) or not stat.S_ISDIR(facts.st_mode):
+        path.unlink()
+    else:
+        shutil.rmtree(path)
+
+
 def _discard_worker_socket(
     path: Path,
     config: BrokerConfig,
@@ -789,28 +861,80 @@ def _run_command(
     *,
     capture_stdout: bool,
     on_start: object | None = None,
+    start_barrier: bool = False,
 ) -> tuple[int, bytes]:
     global _ACTIVE_PROCESS, _ACTIVE_IDENTITY
+    release_read: int | None = None
+    release_write: int | None = None
     try:
+        child_command = command
+        pass_fds: tuple[int, ...] = ()
+        if start_barrier:
+            release_read, release_write = os.pipe()
+            child_command = [
+                sys.executable,
+                "-I",
+                "-c",
+                _START_BARRIER_SCRIPT,
+                str(release_read),
+                *command,
+            ]
+            pass_fds = (release_read,)
         process = subprocess.Popen(
-            command,
+            child_command,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE if capture_stdout else subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
+            pass_fds=pass_fds,
         )
+        if release_read is not None:
+            os.close(release_read)
+            release_read = None
         identity = _process_identity(process.pid)
         if identity is None:
             if process.poll() is not None:
                 stdout, _ = process.communicate()
+                if release_write is not None:
+                    os.close(release_write)
                 return process.returncode or 0, stdout or b""
+            if release_write is not None:
+                os.close(release_write)
+                release_write = None
+            try:
+                process.kill()
+                process.wait(timeout=1.0)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise BrokerError("broker operation cleanup unverifiable") from exc
+            if process.poll() is None:
+                raise BrokerError("broker operation cleanup unverifiable")
             raise BrokerError("broker operation identity unavailable")
         _ACTIVE_PROCESS = process
         _ACTIVE_IDENTITY = identity
+    except OSError as exc:
+        if release_read is not None:
+            os.close(release_read)
+        if release_write is not None:
+            os.close(release_write)
+        raise BrokerError("broker operation unavailable") from exc
+    try:
         if on_start is not None:
             on_start(identity)
-    except OSError as exc:
-        raise BrokerError("broker operation unavailable") from exc
+        if release_write is not None:
+            os.write(release_write, b"1")
+            os.close(release_write)
+            release_write = None
+    except BaseException as exc:
+        if release_write is not None:
+            os.close(release_write)
+            release_write = None
+        if not _terminate_owned_process(process, identity, 1.0):
+            _ACTIVE_PROCESS = None
+            _ACTIVE_IDENTITY = None
+            raise BrokerError("broker operation cleanup unverifiable") from exc
+        _ACTIVE_PROCESS = None
+        _ACTIVE_IDENTITY = None
+        raise
     try:
         stdout, _ = process.communicate(timeout=config.operation_timeout_seconds)
     except subprocess.TimeoutExpired as exc:
@@ -846,21 +970,70 @@ def _make_tree_read_only(path: Path, config: BrokerConfig) -> None:
     os.chmod(path, 0o555)
 
 
-def _make_output_writable(path: Path, config: BrokerConfig) -> None:
-    for child in path.rglob("*"):
-        if child.is_symlink():
-            raise BrokerError("worker output contains a symlink")
-        facts = child.lstat()
-        if child.is_dir():
-            os.chown(child, config.worker_uid, config.sandbox_gid)
-            os.chmod(child, 0o770)
-        elif child.is_file():
-            os.chown(child, config.worker_uid, config.sandbox_gid)
-            os.chmod(child, 0o660)
+def _prepare_output_directory_fd(
+    directory_fd: int,
+    config: BrokerConfig,
+) -> None:
+    if _O_NOFOLLOW is None:
+        raise BrokerError("worker output no-follow support is unavailable")
+    directory_flags = (
+        os.O_RDONLY
+        | os.O_DIRECTORY
+        | _O_NOFOLLOW
+    )
+    file_flags = (
+        os.O_RDONLY
+        | os.O_NONBLOCK
+        | _O_NOFOLLOW
+    )
+    for name in os.listdir(directory_fd):
+        try:
+            child_fd = os.open(name, directory_flags, dir_fd=directory_fd)
+        except OSError as directory_error:
+            if directory_error.errno not in (errno.ENOTDIR, errno.ELOOP):
+                raise BrokerError("worker output tree is unavailable") from directory_error
+            try:
+                child_fd = os.open(name, file_flags, dir_fd=directory_fd)
+            except OSError as file_error:
+                raise BrokerError("worker output tree is unsafe") from file_error
+            try:
+                facts = os.fstat(child_fd)
+                if not stat.S_ISREG(facts.st_mode):
+                    raise BrokerError("worker output contains a special file")
+                os.fchown(child_fd, config.worker_uid, config.sandbox_gid)
+                os.fchmod(child_fd, 0o660)
+            finally:
+                os.close(child_fd)
         else:
-            raise BrokerError("worker output contains a special file")
-    os.chown(path, config.worker_uid, config.sandbox_gid)
-    os.chmod(path, 0o770)
+            try:
+                _prepare_output_directory_fd(child_fd, config)
+                os.fchown(child_fd, config.worker_uid, config.sandbox_gid)
+                os.fchmod(child_fd, 0o770)
+            finally:
+                os.close(child_fd)
+
+
+def _make_output_writable(path: Path, config: BrokerConfig) -> None:
+    if _O_NOFOLLOW is None:
+        raise BrokerError("worker output no-follow support is unavailable")
+    directory_flags = (
+        os.O_RDONLY
+        | os.O_DIRECTORY
+        | _O_NOFOLLOW
+    )
+    try:
+        directory_fd = os.open(path, directory_flags)
+    except OSError as exc:
+        raise BrokerError("worker output tree is unavailable") from exc
+    try:
+        facts = os.fstat(directory_fd)
+        if not stat.S_ISDIR(facts.st_mode):
+            raise BrokerError("worker output is not a directory")
+        _prepare_output_directory_fd(directory_fd, config)
+        os.fchown(directory_fd, config.worker_uid, config.sandbox_gid)
+        os.fchmod(directory_fd, 0o770)
+    finally:
+        os.close(directory_fd)
 
 
 def _fixed_config(
@@ -1021,9 +1194,6 @@ def _run(config: BrokerConfig, request: RunRequest) -> int:
         facts = staged_path.lstat()
         if stat.S_ISLNK(facts.st_mode) or not stat.S_ISDIR(facts.st_mode):
             raise BrokerError("worker workspace sealing failed")
-    output_dir.mkdir(mode=0o770)
-    os.chmod(output_dir, 0o770)
-    os.chown(output_dir, config.worker_uid, config.sandbox_gid)
     _make_tree_read_only(staged_input, config)
     _make_output_writable(staged_output, config)
     if proxy_uds_path is not None:
@@ -1083,6 +1253,7 @@ def _run(config: BrokerConfig, request: RunRequest) -> int:
             }),
             _write_journal(config, request.container_id, journal),
         ),
+        start_barrier=True,
     )
     journal["phase"] = "run-finished" if returncode == 0 else "run-failed"
     journal["output_terminal"] = "restore" if returncode == 0 else "discard"
@@ -1153,6 +1324,7 @@ def _finalize_container(config: BrokerConfig, container_id: str) -> int:
     _root_directory(config.bundle_root)
     _root_directory(config.staging_root)
     _root_directory(config.journal_root)
+    _worker_workspace_root(config.workspace_root, config.worker_gid)
     _root_executable(config.runsc)
     record = _load_journal(config, container_id)
     pid = record.get("runsc_pid")
@@ -1194,18 +1366,26 @@ def _finalize_container(config: BrokerConfig, container_id: str) -> int:
     output = Path(str(record["output_dir"]))
     proxy_value = record.get("proxy_uds_path")
     proxy_path = Path(proxy_value) if isinstance(proxy_value, str) and proxy_value else None
+    if staging.exists() or staging.is_symlink():
+        _root_directory(staging)
+    else:
+        staging.mkdir(mode=0o700)
+        _root_directory(staging)
     staged_input = staging / "input"
     staged_output = staging / "output"
     staged_proxy = staging / "proxy.sock"
-    if record.get("output_terminal") == "restore" and staged_output.exists():
-        if output.exists():
-            shutil.rmtree(output)
-        os.rename(staged_output, output)
-        _make_output_writable(output, config)
-    else:
-        _discard_worker_directory(output, config, prefix="se-runtime-output-")
+    if staged_output.exists():
+        _make_output_writable(staged_output, config)
+    if record.get("output_terminal") != "restore":
         if staged_output.exists():
             shutil.rmtree(staged_output)
+        staged_output.mkdir(mode=0o770)
+        os.chown(staged_output, config.worker_uid, config.sandbox_gid)
+        os.chmod(staged_output, 0o770)
+    elif not staged_output.exists():
+        staged_output.mkdir(mode=0o770)
+        os.chown(staged_output, config.worker_uid, config.sandbox_gid)
+        os.chmod(staged_output, 0o770)
     _discard_worker_directory(
         input_path, config, prefix="se-runtime-input-", recreate=False
     )
@@ -1215,11 +1395,20 @@ def _finalize_container(config: BrokerConfig, container_id: str) -> int:
         _discard_worker_socket(proxy_path, config)
     if staged_proxy.exists():
         staged_proxy.unlink()
-    if staging.exists():
-        shutil.rmtree(staging)
     if bundle.exists():
         shutil.rmtree(bundle)
-    if state.exists() or staging.exists() or bundle.exists():
+    if state.exists() or bundle.exists():
+        raise BrokerError("sandbox custody reconciliation incomplete")
+    if record.get("phase") in {"prepared", "input-sealed"} and (
+        output.exists() or output.is_symlink()
+    ):
+        _rename_with_exchange(staged_output, output)
+        _remove_staging_entry(staged_output)
+    else:
+        _rename_without_replacement(staged_output, output)
+    if staging.exists():
+        shutil.rmtree(staging)
+    if staging.exists():
         raise BrokerError("sandbox custody reconciliation incomplete")
     _remove_journal(config, container_id)
     return 0

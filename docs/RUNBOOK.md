@@ -105,6 +105,13 @@ broker-owned runsc process group records PID/PGID/start-time identity and is
 terminated or escalated only while ownership remains verifiable. Input, proxy
 sockets, and `job.json` are always destroyed. Output is restored only for a
 durably successful terminal record; all other partial output is discarded.
+Output ownership and modes are finalized through no-follow descriptors while
+the tree remains in root-only staging. Publication is a no-replace atomic
+rename into the worker workspace, with no root mutation of the published tree;
+an occupied destination is a fail-closed custody error and leaves the journal
+for retry. The broker starts runsc behind a pipe barrier, records and fsyncs
+its process identity before releasing the child, and kills the child
+synchronously if that durable record cannot be written.
 
 Image promotion is manual and protected. Build the pinned image, run SBOM and
 vulnerability scans, push it, record the registry manifest digest, generate

@@ -99,6 +99,14 @@ only terminal release path: it verifies absence, reconciles state, bundle,
 staging, workspace, and journal custody, destroys input, proxy, and job
 material, and removes the journal last. It restores output only for a durably
 journaled successful run; partial or unknown output is discarded.
+Finalize prepares output with descriptor-based no-follow traversal and
+ownership/mode changes in root-only staging, then publishes it with a
+no-replace atomic rename as the last workspace mutation. It never walks or
+changes the published worker path; a destination race fails closed and
+retains the journal. The runsc child is initially blocked by a broker-owned
+release pipe. The broker durably records the child PID/PGID/start-time
+identity before releasing that pipe, and synchronously terminates the child
+if journaling or fsync fails.
 
 **Vendor references (2026-08-11):**
 - Anthropic Messages API reference: `https://docs.anthropic.com/en/api/messages`

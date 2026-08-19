@@ -12,7 +12,7 @@ import pytest
 
 ROOT = Path(__file__).parents[2]
 BROKER = ROOT / "scripts/runsc_broker.py"
-EXPECTED_LIFECYCLE_CASES = 27
+EXPECTED_LIFECYCLE_CASES = 29
 
 
 def _lifecycle_command_prefix() -> tuple[str, ...] | None:
@@ -94,6 +94,31 @@ def test_real_runner_normal_success_releases_capability_material(
     _run_real_runner_case(tmp_path, phase=None, signum=None, hung=False)
 
 
+def test_real_runner_rejects_raced_output_publication(
+    tmp_path: Path,
+) -> None:
+    _run_real_runner_case(
+        tmp_path,
+        phase=None,
+        signum=None,
+        hung=False,
+        hostile_output=True,
+        expect_failure=True,
+    )
+
+
+def test_real_runner_aborts_child_when_identity_journal_fails(
+    tmp_path: Path,
+) -> None:
+    _run_real_runner_case(
+        tmp_path,
+        phase=None,
+        signum=None,
+        hung=False,
+        fail_on_start=True,
+    )
+
+
 def test_sigterm_escalates_for_sigterm_ignoring_runsc(tmp_path: Path) -> None:
     _run_real_runner_case(
         tmp_path,
@@ -123,10 +148,21 @@ def _run_real_runner_case(
     phase: str | None,
     signum: int | None,
     hung: bool,
+    hostile_output: bool = False,
+    expect_failure: bool = False,
+    fail_on_start: bool = False,
 ) -> None:
     child = tmp_path / "runner_case.py"
     child.write_text(
-        _runner_case_script(BROKER, phase, signum, hung),
+        _runner_case_script(
+            BROKER,
+            phase,
+            signum,
+            hung,
+            hostile_output=hostile_output,
+            expect_failure=expect_failure,
+            fail_on_start=fail_on_start,
+        ),
         encoding="utf-8",
     )
     assert _LIFECYCLE_COMMAND_PREFIX is not None
@@ -145,9 +181,19 @@ def _runner_case_script(
     phase: str | None,
     signum: int | None,
     hung: bool,
+    *,
+    hostile_output: bool,
+    expect_failure: bool,
+    fail_on_start: bool,
 ) -> str:
     restore_output = phase is None
     kill_block = ""
+    special_setup = ""
+    special_async = ""
+    special_main = ""
+    special_cleanup = "        pass"
+    special_assert = ""
+    normal_assertions = ""
     if phase is not None and signum is not None:
         kill_block = f"""
     deadline = time.time() + 8
@@ -163,8 +209,136 @@ def _runner_case_script(
     else:
         raise AssertionError("custody phase was not reached")
 """
+    if hostile_output:
+        special_setup = """
+sentinel = root / "sentinel.txt"
+sentinel.write_text("sentinel", encoding="utf-8")
+os.chmod(sentinel, 0o640)
+sentinel_before = sentinel.stat()
+attack_stop = root / "attack.stop"
+"""
+        special_async = """
+async def watch_output_phase():
+    deadline = time.time() + 8
+    while time.time() < deadline:
+        journal_paths = list(journal.glob("se-*.json"))
+        if journal_paths:
+            record = json.loads(journal_paths[0].read_text())
+            if record.get("phase") == "output-sealed":
+                attacker_code = (
+                    "import pathlib, shutil, sys, time\\n"
+                    "workspace = pathlib.Path(sys.argv[1])\\n"
+                    "sentinel = pathlib.Path(sys.argv[2])\\n"
+                    "stop = pathlib.Path(sys.argv[3])\\n"
+                    "output = workspace / 'se-runtime-output-attempt'\\n"
+                    "while not stop.exists():\\n"
+                    "    try:\\n"
+                    "        if output.is_symlink():\\n"
+                    "            output.unlink()\\n"
+                    "        elif output.exists():\\n"
+                    "            shutil.rmtree(output)\\n"
+                    "        if time.time_ns() % 2:\\n"
+                    "            output.mkdir()\\n"
+                    "            (output / 'nested').symlink_to(sentinel)\\n"
+                    "        else:\\n"
+                    "            output.symlink_to(sentinel)\\n"
+                    "    except (FileNotFoundError, OSError):\\n"
+                    "        pass\\n"
+                )
+                return subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-c",
+                        attacker_code,
+                        str(workspace),
+                        str(sentinel),
+                        str(attack_stop),
+                    ]
+                )
+        await asyncio.sleep(0.01)
+    raise AssertionError("output sealing phase was not reached")
+"""
+        special_main = """
+    attack_task = asyncio.create_task(watch_output_phase())
+"""
+        special_cleanup = """
+        if not attack_task.done():
+            attack_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await attack_task
+        else:
+            attacker = attack_task.result()
+            attack_stop.write_text("stop", encoding="utf-8")
+            attacker.wait(timeout=5)
+"""
+        special_assert = """
+assert list(journal.glob("se-*.json"))
+sentinel_after = sentinel.stat()
+assert (
+    sentinel_before.st_uid,
+    sentinel_before.st_gid,
+    sentinel_before.st_mode,
+) == (
+    sentinel_after.st_uid,
+    sentinel_after.st_gid,
+    sentinel_after.st_mode,
+)
+"""
+    elif fail_on_start:
+        special_setup = """
+fault_injected = False
+"""
+        special_async = """
+async def fail_identity_journal():
+    global fault_injected
+    deadline = time.time() + 8
+    while time.time() < deadline:
+        journal_paths = list(journal.glob("se-*.json"))
+        if journal_paths:
+            record = json.loads(journal_paths[0].read_text())
+            if record.get("phase") == "configured":
+                journal.chmod(0o500)
+                fault_injected = True
+                await asyncio.sleep(0.25)
+                journal.chmod(0o700)
+                return
+        await asyncio.sleep(0.01)
+    raise AssertionError("configured phase was not reached")
+"""
+        special_main = """
+    fault_task = asyncio.create_task(fail_identity_journal())
+"""
+        special_cleanup = """
+        await fault_task
+"""
+        special_assert = """
+assert fault_injected
+"""
+    if not hostile_output:
+        normal_assertions = f"""
+assert not list(state.iterdir())
+assert not list(bundles.iterdir())
+assert not list(staging.iterdir())
+assert not list(journal.glob("se-*.json"))
+assert not (workspace / "se-runtime-input-attempt").exists()
+assert not (workspace / "se-proxy-attempt").exists()
+assert (workspace / "se-runtime-output-attempt").exists()
+assert (
+    list((workspace / "se-runtime-output-attempt").iterdir())
+    if {restore_output!r}
+    else not list((workspace / "se-runtime-output-attempt").iterdir())
+)
+if marker.exists():
+    try:
+        os.kill(int(marker.read_text()), 0)
+    except ProcessLookupError:
+        pass
+    else:
+        raise AssertionError("fake runsc survived finalization")
+"""
     return f"""
 import asyncio
+import contextlib
 import json
 import os
 import socket
@@ -191,6 +365,7 @@ rootfs = root / "rootfs"
 for path in (state, bundles, staging, journal, workspace, rootfs):
     path.mkdir()
 workspace.chmod(0o730)
+{special_setup}
 runsc = root / "runsc"
 marker = root / "runsc.pid"
 runsc.write_text(
@@ -198,7 +373,7 @@ runsc.write_text(
     "if [ \\"$3\\" = run ]; then "
     + ("trap '' TERM; " if {hung!r} else "")
     + "echo $$ > " + str(marker)
-    + "; sleep {600 if hung else (2 if phase == "running" else 0)}; exit 0; "
+    + "; sleep {600 if hung else (2 if (phase == "running" or hostile_output) else 0)}; exit 0; "
     "elif [ \\"$2\\" = list ]; then printf 'ID\\\\tPID\\\\tSTATUS\\\\n'; "
     "elif [ \\"$2\\" = delete ]; then exit 0; fi\\n",
     encoding="utf-8",
@@ -287,6 +462,8 @@ class NeverCancelled:
     async def wait(self):
         await asyncio.Future()
 
+{special_async}
+
 async def main():
     runner = RunscSandboxRunner(
         runsc_binary=str(runsc),
@@ -304,33 +481,19 @@ async def main():
             proxy_uds_path=proxy_path,
         )
     )
+{special_main}
 {kill_block}
     try:
         await asyncio.wait_for(task, timeout=15)
     except Exception:
-        if {phase is None!r}:
+        if {phase is None!r} and not ({expect_failure!r} or {fail_on_start!r}):
             raise
+    finally:
+{special_cleanup}
 
 asyncio.run(main())
-assert not list(state.iterdir())
-assert not list(bundles.iterdir())
-assert not list(staging.iterdir())
-assert not list(journal.glob("se-*.json"))
-assert not (workspace / "se-runtime-input-attempt").exists()
-assert not (workspace / "se-proxy-attempt").exists()
-assert (workspace / "se-runtime-output-attempt").exists()
-assert (
-    list((workspace / "se-runtime-output-attempt").iterdir())
-    if {restore_output!r}
-    else not list((workspace / "se-runtime-output-attempt").iterdir())
-)
-if marker.exists():
-    try:
-        os.kill(int(marker.read_text()), 0)
-    except ProcessLookupError:
-        pass
-    else:
-        raise AssertionError("fake runsc survived finalization")
+{special_assert}
+{normal_assertions}
 listener.close()
 """
 

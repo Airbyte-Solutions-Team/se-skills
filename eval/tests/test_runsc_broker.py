@@ -117,6 +117,11 @@ def _invoke(
         "chown",
         lambda *args: chown_calls.append(args) if chown_calls is not None else None,
     )
+    monkeypatch.setattr(
+        broker.os,
+        "fchown",
+        lambda *args: chown_calls.append(args) if chown_calls is not None else None,
+    )
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(request)))
     return broker.main()
 
@@ -200,7 +205,46 @@ exit 0
         and call[1:] == (config.sandbox_uid, config.sandbox_gid)
         for call in chown_calls
     )
-    assert (output_dir.stat().st_mode & 0o777) == 0o770
+    assert not output_dir.exists()
+    staged_output = config.staging_root / CONTAINER_ID / "output"
+    assert (staged_output.stat().st_mode & 0o777) == 0o770
+
+
+def test_run_rejects_output_symlink_before_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path)
+    input_dir = config.workspace_root / "se-runtime-input-attempt"
+    output_dir = config.workspace_root / "se-runtime-output-attempt"
+    input_dir.mkdir()
+    output_dir.mkdir()
+    (input_dir / "input.txt").write_text("input", encoding="utf-8")
+    sentinel = tmp_path / "sentinel"
+    sentinel.write_text("sentinel", encoding="utf-8")
+    (output_dir / "link").symlink_to(sentinel)
+
+    with pytest.raises(SystemExit) as error:
+        _invoke(monkeypatch, config, _run_request(input_dir, output_dir))
+
+    assert error.value.code == 64
+    assert sentinel.read_text(encoding="utf-8") == "sentinel"
+
+
+def test_run_rejects_output_special_file_before_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path)
+    input_dir = config.workspace_root / "se-runtime-input-attempt"
+    output_dir = config.workspace_root / "se-runtime-output-attempt"
+    input_dir.mkdir()
+    output_dir.mkdir()
+    (input_dir / "input.txt").write_text("input", encoding="utf-8")
+    os.mkfifo(output_dir / "pipe")
+
+    with pytest.raises(SystemExit) as error:
+        _invoke(monkeypatch, config, _run_request(input_dir, output_dir))
+
+    assert error.value.code == 64
 
 
 @pytest.mark.parametrize(
