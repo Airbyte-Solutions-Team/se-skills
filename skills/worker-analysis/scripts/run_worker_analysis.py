@@ -24,6 +24,12 @@ import os
 import sys
 from pathlib import Path
 
+# Toolkit modules print emoji status markers; on Windows the default console
+# encoding (cp1252) can't encode them, so force UTF-8 stdio.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
 # The toolkit modules live alongside this script under ../worker_analysis/src.
 # Allow both `from src.X` and `from X` import styles used by the original code.
 SCRIPT_DIR = Path(__file__).resolve().parent

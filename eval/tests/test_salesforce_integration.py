@@ -337,7 +337,11 @@ def test_run_query_decodes_json_records(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("asyncio.create_subprocess_exec", fake_exec)
     result = _run(sf._run_query("SELECT Name FROM Account"))
     assert result == [{"Name": "X"}]
-    assert called["args"][:3] == ("sf", "data", "query")
+    # The executable is resolved via shutil.which (e.g. `sf.CMD` on Windows, where
+    # asyncio.create_subprocess_exec can't launch a bare `sf` npm shim directly),
+    # so assert on the resolved binary name rather than a hardcoded literal.
+    assert called["args"][0].lower().endswith(("sf", "sf.cmd", "sf.exe"))
+    assert called["args"][1:3] == ("data", "query")
     assert "--target-org" in called["args"]
     assert "test" in called["args"]
     assert str(tmp_path / "workspace") == called["cwd"]

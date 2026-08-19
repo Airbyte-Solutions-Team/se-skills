@@ -20,19 +20,66 @@ from fastapi import HTTPException
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Paths — everything is relative to the airbyte-work workspace
+# Workspace root resolution (see skills/_se-playbook.md "Workspace Paths").
+#
+# Resolution order: $SE_WORKSPACE env var > .se-config.yaml `workspace_root` >
+# ~/.se-skills (default). The config file itself is looked up at
+# $SE_WORKSPACE/.se-config.yaml, else ~/.se-skills/.se-config.yaml, else the
+# legacy ~/airbyte-work/.se-config.yaml — mirrors the resolution skills use so
+# the webapp and skill invocations agree on where customer data lives.
 # ---------------------------------------------------------------------------
-WORKSPACE = Path(os.path.expanduser("~/airbyte-work"))
-CUSTOMERS_DIR = WORKSPACE / "01-customers"
-SE_CONFIG = WORKSPACE / ".se-config.yaml"
+def _load_yaml(path: Path) -> dict:
+    try:
+        return yaml.safe_load(path.read_text()) or {}
+    except Exception:
+        return {}
+
+
+def _resolve_workspace() -> tuple[Path, Path, dict]:
+    """Return (workspace_root, config_file_path, config_dict)."""
+    env_root = os.environ.get("SE_WORKSPACE")
+    if env_root:
+        root = Path(os.path.expanduser(env_root))
+        cfg_path = root / ".se-config.yaml"
+        cfg = _load_yaml(cfg_path) if cfg_path.exists() else {}
+        declared = cfg.get("workspace_root")
+        return (Path(os.path.expanduser(declared)) if declared else root), cfg_path, cfg
+
+    for default_root in (Path(os.path.expanduser("~/.se-skills")), Path(os.path.expanduser("~/airbyte-work"))):
+        cfg_path = default_root / ".se-config.yaml"
+        if cfg_path.exists():
+            cfg = _load_yaml(cfg_path)
+            declared = cfg.get("workspace_root")
+            resolved = Path(os.path.expanduser(declared)) if declared else default_root
+            return resolved, cfg_path, cfg
+
+    default_root = Path(os.path.expanduser("~/.se-skills"))
+    return default_root, default_root / ".se-config.yaml", {}
+
+
+WORKSPACE, SE_CONFIG, _RESOLVED_SE_CONFIG = _resolve_workspace()
+_LAYOUT = _RESOLVED_SE_CONFIG.get("layout") or {}
+# Existing ~/airbyte-work setups predate the flat `customers/` convention and use
+# the numbered `01-customers/` folder; only workspaces resolving elsewhere (e.g. the
+# newer ~/.se-skills default) get the flat name. An explicit `layout.customers_dir`
+# always wins. This keeps pre-existing installs pointed at their real data.
+_IS_LEGACY_WORKSPACE = WORKSPACE == Path(os.path.expanduser("~/airbyte-work"))
+CUSTOMERS_DIR = (
+    Path(os.path.expanduser(_LAYOUT["customers_dir"]))
+    if _LAYOUT.get("customers_dir")
+    else WORKSPACE / ("01-customers" if _IS_LEGACY_WORKSPACE else "customers")
+)
 WEBAPP_DIR = Path(__file__).resolve().parent
 TEAM_FILE = WEBAPP_DIR / "team-members.yaml"
 DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-6"
 
 # internal.airbyte.ai clone — target for the "Push to repo" coverage-handoff
 # action. Overridable via .se-config.yaml (`internal_repo_path`); see
-# _internal_repo(). Default matches the standard workspace clone location.
-INTERNAL_REPO_DEFAULT = WORKSPACE / "02-repos" / "internal.airbyte.ai"
+# _internal_repo(). Default matches the standard workspace clone location; legacy
+# ~/airbyte-work installs keep their existing 02-repos/ nesting.
+INTERNAL_REPO_DEFAULT = (
+    WORKSPACE / "02-repos" / "internal.airbyte.ai" if _IS_LEGACY_WORKSPACE else WORKSPACE / "internal.airbyte.ai"
+)
 
 # Where the skills live. Prefer the installed location; fall back to the repo
 # copy next to this webapp (skills/ is a sibling of webapp/).
@@ -83,10 +130,7 @@ def _se_config() -> dict:
     cache = getattr(_se_config, "_cache", None)
     if cache is not None:
         return cache
-    if SE_CONFIG.exists():
-        cfg = yaml.safe_load(SE_CONFIG.read_text()) or {}
-    else:
-        cfg = {}
+    cfg = _load_yaml(SE_CONFIG) if SE_CONFIG.exists() else {}
     _se_config._cache = cfg
     return cfg
 

@@ -242,6 +242,7 @@ def test_run_worker_analysis_estimate_subcommand(repo_root: Path) -> None:
         cwd=str(repo_root),
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     # The script interleaves human-readable printouts with the final JSON object.
@@ -288,6 +289,7 @@ def test_run_worker_analysis_oss_export(repo_root: Path, tmp_path: Path) -> None
         cwd=str(repo_root),
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     data = _parse_script_json(result.stdout)
@@ -444,6 +446,7 @@ def test_run_worker_analysis_questionnaire_subcommand(repo_root: Path) -> None:
         cwd=str(repo_root),
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     data = _parse_script_json(result.stdout)
