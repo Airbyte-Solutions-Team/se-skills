@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import re
+import shutil
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
@@ -69,6 +70,16 @@ class SalesforceIntegration:
     def _org_alias(self) -> str:
         return self._config().get("org_alias", "airbyte-prod")
 
+    def _sf_executable(self) -> str:
+        """Resolve the `sf` CLI to its actual executable path.
+
+        On Windows, `sf` installed via npm is a `.cmd` shim; `asyncio.create_subprocess_exec`
+        cannot launch it by the bare name `sf` (no shell involved), so it must be resolved via
+        `shutil.which` first. Falls back to the bare name if not found so the ensuing subprocess
+        call fails with a clear FileNotFoundError instead of masking a resolution bug.
+        """
+        return shutil.which("sf") or "sf"
+
     async def instance_url(self) -> str | None:
         """Return the org's Salesforce base URL (e.g. https://airbyte.my.salesforce.com),
         used to build Lightning record links. Prefers an explicit `instance_url` in the
@@ -85,7 +96,7 @@ class SalesforceIntegration:
         url: str | None = None
         try:
             proc = await asyncio.create_subprocess_exec(
-                "sf", "org", "display", "--target-org", self._org_alias(), "--json",
+                self._sf_executable(), "org", "display", "--target-org", self._org_alias(), "--json",
                 cwd=str(self.workspace),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -153,7 +164,7 @@ class SalesforceIntegration:
         alias = self._org_alias()
         try:
             proc = await asyncio.create_subprocess_exec(
-                "sf", "data", "query", "--query", query, "--target-org", alias, "--json",
+                self._sf_executable(), "data", "query", "--query", query, "--target-org", alias, "--json",
                 cwd=str(self.workspace),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,

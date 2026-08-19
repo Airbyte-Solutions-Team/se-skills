@@ -226,15 +226,20 @@ async def worker_pool(hosted_env: dict[str, str]) -> AsyncGenerator[asyncpg.Pool
 
 
 @pytest.fixture(autouse=True)
-def _hosted_app_mode(request: pytest.FixtureRequest, hosted_env: dict[str, str]) -> None:
+def _hosted_app_mode(request: pytest.FixtureRequest) -> None:
     """Ensure `webapp.app` is imported for the correct mode before any test.
 
     Hosted tests use a freshly imported `webapp.app` with `HOSTED_MODE=1` so the
     session-scoped app fixture and the tests patch the same module objects. Non-hosted
     tests import a local-mode `webapp.app` so filesystem-backed routes are present.
+
+    `hosted_env` (and the Docker/Postgres testcontainer it spins up) is only resolved
+    for tests actually marked `hosted` — resolving it unconditionally here would force
+    every test in this directory, including plain unit tests, to require Docker.
     """
     hosted_marker = request.node.get_closest_marker("hosted")
     if hosted_marker:
+        request.getfixturevalue("hosted_env")
         os.environ["HOSTED_MODE"] = "1"
         modules_to_drop = [
             name

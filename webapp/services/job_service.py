@@ -128,7 +128,6 @@ class JobService:
             prompt,
             "--model",
             model,
-            "--bare",
             "--permission-mode",
             permission_mode,
         ]
