@@ -657,6 +657,7 @@ def write_sidecar(md_path: Path, metadata: OutputMetadata) -> None:
 def read_or_parse_sidecar(md_path: Path, skill: str, mode: Mode | None = None) -> OutputMetadata:
     """Return metadata from the sidecar if fresh, otherwise parse the Markdown and write it."""
     sidecar = md_path.with_suffix(md_path.suffix + ".json")
+    preserved_reference_freshness: list[ReferenceFreshness] | None = None
     if sidecar.exists():
         try:
             md_mtime = md_path.stat().st_mtime
@@ -672,6 +673,19 @@ def read_or_parse_sidecar(md_path: Path, skill: str, mode: Mode | None = None) -
                 # If we are reparsing, trust the sidecar mode unless the caller overrode it.
                 if mode is None:
                     mode = data.get("mode", "full")
+                snapshot = data.get("reference_freshness_at_generation")
+                if not (
+                    isinstance(snapshot, list)
+                    and all(isinstance(item, dict) for item in snapshot)
+                ):
+                    snapshot = data.get("reference_freshness")
+                if isinstance(snapshot, list) and all(isinstance(item, dict) for item in snapshot):
+                    try:
+                        preserved_reference_freshness = [
+                            ReferenceFreshness.model_validate(item) for item in snapshot
+                        ]
+                    except (TypeError, ValueError):
+                        preserved_reference_freshness = None
         except (OSError, ValueError, TypeError):
             logger.warning("Failed to read sidecar %s; reparsing", sidecar)
 
@@ -679,6 +693,8 @@ def read_or_parse_sidecar(md_path: Path, skill: str, mode: Mode | None = None) -
         mode = "full"
     text = md_path.read_text(encoding="utf-8")
     metadata = parse_output(skill, text, mode=mode)
+    if preserved_reference_freshness is not None:
+        metadata.reference_freshness_at_generation = preserved_reference_freshness
     try:
         write_sidecar(md_path, metadata)
     except OSError:
