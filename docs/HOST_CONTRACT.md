@@ -83,8 +83,9 @@ loaded from `deploy/pins.json`; role defaults and paths are in
   user-namespace lifecycle fixtures may set both values to zero because all
   namespace ids map to the invoking test user.
 - `journal_phase_pause_seconds` is a bounded, root-configured diagnostic aid
-  for deterministic lifecycle testing. It is rendered as zero in production,
-  and preflight rejects a non-zero value.
+  for deterministic lifecycle testing, including observing barrier custody and
+  cleanup failure windows. It is rendered as zero in production, and preflight
+  rejects a non-zero value.
 - The sandbox image uses the pinned Python and distroless base digests in
   `deploy/pins.json`. An approved image digest and rootfs digest must be
   populated before production preflight passes. `SANDBOX_IMAGE_DIGEST` is

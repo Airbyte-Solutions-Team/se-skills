@@ -2,10 +2,22 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 19, 2026 — privileged lifecycle publication and start-barrier hardening on `devin/slice5b2b1-deployment-foundation`._
+_Last updated: August 19, 2026 — privileged lifecycle evidence hardening on `devin/slice5b2b1-deployment-foundation`._
 
 
 ## Built this session (newest first — see `git log`)
+
+- **Strengthened privileged lifecycle evidence (August 19).**
+  1. The on-start journal fault now pre-creates the broker's temporary journal
+     path as a directory, forcing a root-independent `EISDIR` write failure.
+     The test proves no `running` phase was journaled, the broker reports the
+     fixed failure, the barrier child is gone, and recovery residue remains.
+  2. Added a real `RunscSandboxRunner` case that observes the broker's blocked
+     barrier child through `/proc/<pid>/task/<pid>/children` before killing the
+     broker, then verifies the child is gone and terminal custody is completed.
+  3. The hostile publication test now proves either a recoverable journal is
+     retained or a safe worker-owned directory was published. The exact
+     lifecycle gate is now 30 cases.
 
 - **Closed privileged lifecycle publication and spawn windows (August 19).**
   1. Finalization now validates and sets output ownership/modes through
@@ -18,7 +30,7 @@ _Last updated: August 19, 2026 — privileged lifecycle publication and start-ba
      failures synchronously terminate the blocked child.
   3. Added real `RunscSandboxRunner` coverage for hostile output publication
      races and identity-journal failure, increasing the exact lifecycle gate
-     to 29 cases.
+     to 29 cases before the follow-up evidence cases.
 
 - **Closed journal-less hosted-worker residue (August 19).**
   1. Extended the root-configured stale sweep beyond journal records to find

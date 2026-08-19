@@ -71,7 +71,7 @@ jobs:
               for case in root.iter("testcase")
               if "test_runsc_broker_lifecycle" in case.attrib.get("classname", "")
           ]
-          expected = 29
+          expected = 30
           executed = [
               case
               for case in cases

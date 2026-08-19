@@ -12,7 +12,7 @@ import pytest
 
 ROOT = Path(__file__).parents[2]
 BROKER = ROOT / "scripts/runsc_broker.py"
-EXPECTED_LIFECYCLE_CASES = 29
+EXPECTED_LIFECYCLE_CASES = 30
 
 
 def _lifecycle_command_prefix() -> tuple[str, ...] | None:
@@ -119,6 +119,18 @@ def test_real_runner_aborts_child_when_identity_journal_fails(
     )
 
 
+def test_real_runner_kills_broker_after_barrier_child_before_running_journal(
+    tmp_path: Path,
+) -> None:
+    _run_real_runner_case(
+        tmp_path,
+        phase=None,
+        signum=None,
+        hung=False,
+        kill_after_barrier_child=True,
+    )
+
+
 def test_sigterm_escalates_for_sigterm_ignoring_runsc(tmp_path: Path) -> None:
     _run_real_runner_case(
         tmp_path,
@@ -151,6 +163,7 @@ def _run_real_runner_case(
     hostile_output: bool = False,
     expect_failure: bool = False,
     fail_on_start: bool = False,
+    kill_after_barrier_child: bool = False,
 ) -> None:
     child = tmp_path / "runner_case.py"
     child.write_text(
@@ -162,6 +175,7 @@ def _run_real_runner_case(
             hostile_output=hostile_output,
             expect_failure=expect_failure,
             fail_on_start=fail_on_start,
+            kill_after_barrier_child=kill_after_barrier_child,
         ),
         encoding="utf-8",
     )
@@ -185,8 +199,11 @@ def _runner_case_script(
     hostile_output: bool,
     expect_failure: bool,
     fail_on_start: bool,
+    kill_after_barrier_child: bool,
 ) -> str:
-    restore_output = phase is None
+    restore_output = phase is None and not (
+        expect_failure or fail_on_start or kill_after_barrier_child
+    )
     kill_block = ""
     special_setup = ""
     special_async = ""
@@ -230,8 +247,11 @@ async def watch_output_phase():
                     "workspace = pathlib.Path(sys.argv[1])\\n"
                     "sentinel = pathlib.Path(sys.argv[2])\\n"
                     "stop = pathlib.Path(sys.argv[3])\\n"
+                    "journal = pathlib.Path(sys.argv[4])\\n"
                     "output = workspace / 'se-runtime-output-attempt'\\n"
                     "while not stop.exists():\\n"
+                    "    if not list(journal.glob('*.json')):\\n"
+                    "        break\\n"
                     "    try:\\n"
                     "        if output.is_symlink():\\n"
                     "            output.unlink()\\n"
@@ -253,6 +273,7 @@ async def watch_output_phase():
                         str(workspace),
                         str(sentinel),
                         str(attack_stop),
+                        str(journal),
                     ]
                 )
         await asyncio.sleep(0.01)
@@ -272,7 +293,7 @@ async def watch_output_phase():
             attacker.wait(timeout=5)
 """
         special_assert = """
-assert list(journal.glob("se-*.json"))
+publication_failed_closed = any(journal.glob("se-*.json"))
 sentinel_after = sentinel.stat()
 assert (
     sentinel_before.st_uid,
@@ -283,25 +304,62 @@ assert (
     sentinel_after.st_gid,
     sentinel_after.st_mode,
 )
+if publication_failed_closed:
+    assert list(journal.glob("se-*.json"))
+else:
+    assert output.is_dir()
+    assert not output.is_symlink()
+    output_facts = output.stat()
+    assert (output_facts.st_uid, output_facts.st_gid) == (0, 0)
+    assert (output_facts.st_mode & 0o777) == 0o770
 """
     elif fail_on_start:
         special_setup = """
 fault_injected = False
+recovery_journal_observed = False
+child_terminated_before_broker_exit = False
+seen_phases = []
+barrier_identities = {}
+broker_identity = None
 """
         special_async = """
 async def fail_identity_journal():
-    global fault_injected
+    global fault_injected, recovery_journal_observed, child_terminated_before_broker_exit
+    global broker_identity
     deadline = time.time() + 8
     while time.time() < deadline:
         journal_paths = list(journal.glob("se-*.json"))
         if journal_paths:
-            record = json.loads(journal_paths[0].read_text())
+            journal_path = journal_paths[0]
+            record = json.loads(journal_path.read_text())
+            seen_phases.append(record.get("phase"))
             if record.get("phase") == "configured":
-                journal.chmod(0o500)
-                fault_injected = True
-                await asyncio.sleep(0.25)
-                journal.chmod(0o700)
-                return
+                temporary = journal_path.with_suffix(".tmp")
+                if not temporary.exists():
+                    temporary.mkdir()
+                    fault_injected = True
+            if fault_injected and record.get("phase") == "configured":
+                recovery_journal_observed = True
+                children = _broker_children()
+                for child_pid in children:
+                    start_ticks = _proc_start_ticks(child_pid)
+                    if start_ticks is not None:
+                        barrier_identities[child_pid] = start_ticks
+                if barrier_identities:
+                    broker_identity = _proc_start_ticks(int(broker_marker.read_text()))
+                    while time.time() < deadline:
+                        if all(
+                            _proc_start_ticks(child_pid) != start_ticks
+                            for child_pid, start_ticks in barrier_identities.items()
+                        ):
+                            if (
+                                broker_identity is not None
+                                and _proc_start_ticks(int(broker_marker.read_text()))
+                                == broker_identity
+                            ):
+                                child_terminated_before_broker_exit = True
+                                return
+                        await asyncio.sleep(0.01)
         await asyncio.sleep(0.01)
     raise AssertionError("configured phase was not reached")
 """
@@ -313,13 +371,64 @@ async def fail_identity_journal():
 """
         special_assert = """
 assert fault_injected
+assert recovery_journal_observed
+assert child_terminated_before_broker_exit
+assert "running" not in seen_phases
+assert task_error == "runsc exited with code 64"
+assert barrier_identities
+for child_pid, start_ticks in barrier_identities.items():
+    assert _proc_start_ticks(child_pid) != start_ticks
+"""
+    elif kill_after_barrier_child:
+        special_setup = """
+barrier_child_seen = False
+seen_configured_before_kill = False
+seen_phases = []
+barrier_identities = {}
+"""
+        special_async = """
+async def kill_after_barrier_child_exists():
+    global barrier_child_seen, seen_configured_before_kill
+    deadline = time.time() + 8
+    while time.time() < deadline:
+        journal_paths = list(journal.glob("se-*.json"))
+        if journal_paths:
+            record = json.loads(journal_paths[0].read_text())
+            seen_phases.append(record.get("phase"))
+            if record.get("phase") == "configured":
+                children = _broker_children()
+                for child_pid in children:
+                    start_ticks = _proc_start_ticks(child_pid)
+                    if start_ticks is not None:
+                        barrier_identities[child_pid] = start_ticks
+                if barrier_identities:
+                    barrier_child_seen = True
+                    seen_configured_before_kill = True
+                    os.kill(int(broker_marker.read_text()), signal.SIGKILL)
+                    return
+        await asyncio.sleep(0.005)
+    raise AssertionError("blocked barrier child was not observed")
+"""
+        special_main = """
+    barrier_task = asyncio.create_task(kill_after_barrier_child_exists())
+"""
+        special_cleanup = """
+        await barrier_task
+"""
+        special_assert = """
+assert barrier_child_seen
+assert seen_configured_before_kill
+assert "running" not in seen_phases
+for child_pid, start_ticks in barrier_identities.items():
+    assert _proc_start_ticks(child_pid) != start_ticks
 """
     if not hostile_output:
         normal_assertions = f"""
 assert not list(state.iterdir())
 assert not list(bundles.iterdir())
 assert not list(staging.iterdir())
-assert not list(journal.glob("se-*.json"))
+assert not list(journal.glob("*.json"))
+assert not list(journal.glob("*.tmp"))
 assert not (workspace / "se-runtime-input-attempt").exists()
 assert not (workspace / "se-proxy-attempt").exists()
 assert (workspace / "se-runtime-output-attempt").exists()
@@ -341,6 +450,7 @@ import asyncio
 import contextlib
 import json
 import os
+import signal
 import socket
 import subprocess
 import time
@@ -368,6 +478,26 @@ workspace.chmod(0o730)
 {special_setup}
 runsc = root / "runsc"
 marker = root / "runsc.pid"
+task_error = None
+
+def _proc_start_ticks(pid):
+    try:
+        contents = Path(f"/proc/{{pid}}/stat").read_text()
+    except (FileNotFoundError, PermissionError):
+        return None
+    fields = contents[contents.rfind(")") + 2 :].split()
+    return int(fields[19])
+
+def _broker_children():
+    try:
+        contents = Path(
+            f"/proc/{{int(broker_marker.read_text())}}/task/"
+            f"{{int(broker_marker.read_text())}}/children"
+        ).read_text()
+    except (FileNotFoundError, PermissionError, ValueError):
+        return []
+    return [int(value) for value in contents.split()]
+
 runsc.write_text(
     "#!/bin/sh\\n"
     "if [ \\"$3\\" = run ]; then "
@@ -395,6 +525,7 @@ hosted_config.RUNSC_BUNDLE_DIR = str(bundles)
 hosted_config.RUNSC_WORKSPACE_ROOT = str(workspace)
 input_dir = workspace / "se-runtime-input-attempt"
 output_dir = workspace / "se-runtime-output-attempt"
+output = output_dir
 input_dir.mkdir(mode=0o770)
 output_dir.mkdir(mode=0o770)
 (input_dir / "transcript.txt").write_text("customer-transcript", encoding="utf-8")
@@ -419,7 +550,7 @@ config_path.write_text(json.dumps({{
     "cleanup_min_age_seconds": 1,
     "operation_timeout_seconds": 2,
     "journal_root": str(journal),
-    "journal_phase_pause_seconds": 0.05,
+    "journal_phase_pause_seconds": {0.2 if (fail_on_start or kill_after_barrier_child) else 0.05},
 }}), encoding="utf-8")
 etc_root = root / "etc"
 etc_root.mkdir()
@@ -465,6 +596,7 @@ class NeverCancelled:
 {special_async}
 
 async def main():
+    global task_error
     runner = RunscSandboxRunner(
         runsc_binary=str(runsc),
         runsc_helper={str(broker)!r},
@@ -485,8 +617,11 @@ async def main():
 {kill_block}
     try:
         await asyncio.wait_for(task, timeout=15)
-    except Exception:
-        if {phase is None!r} and not ({expect_failure!r} or {fail_on_start!r}):
+    except Exception as exc:
+        task_error = str(exc)
+        if {phase is None!r} and not (
+            {expect_failure!r} or {fail_on_start!r} or {kill_after_barrier_child!r}
+        ):
             raise
     finally:
 {special_cleanup}

@@ -597,6 +597,16 @@ def _write_journal(config: BrokerConfig, container_id: str, record: dict[str, ob
 
 
 def _remove_journal(config: BrokerConfig, container_id: str) -> None:
+    temporary = _journal_path(config, container_id).with_suffix(".tmp")
+    try:
+        facts = temporary.lstat()
+    except FileNotFoundError:
+        pass
+    else:
+        if stat.S_ISLNK(facts.st_mode) or not stat.S_ISDIR(facts.st_mode):
+            temporary.unlink()
+        else:
+            shutil.rmtree(temporary)
     try:
         _journal_path(config, container_id).unlink()
     except FileNotFoundError:
@@ -911,6 +921,8 @@ def _run_command(
             raise BrokerError("broker operation identity unavailable")
         _ACTIVE_PROCESS = process
         _ACTIVE_IDENTITY = identity
+        if start_barrier and config.journal_phase_pause_seconds:
+            time.sleep(config.journal_phase_pause_seconds)
     except OSError as exc:
         if release_read is not None:
             os.close(release_read)
@@ -934,6 +946,8 @@ def _run_command(
             raise BrokerError("broker operation cleanup unverifiable") from exc
         _ACTIVE_PROCESS = None
         _ACTIVE_IDENTITY = None
+        if config.journal_phase_pause_seconds:
+            time.sleep(config.journal_phase_pause_seconds)
         raise
     try:
         stdout, _ = process.communicate(timeout=config.operation_timeout_seconds)
