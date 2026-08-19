@@ -68,7 +68,7 @@ async function invokeWithPlan(payload, alreadyConfirmed = false) {
     // ("Expected permissions" panel), so clicking Run IS the approval — no extra
     // native confirm() dialog. The two-pass handshake still satisfies the
     // backend SEC-001 gate, which requires approve_permissions=true.
-    return invokeWithPlan({ ...payload, approve_permissions: true }, alreadyConfirmed);
+    return invokeWithPlan({ ...payload, approve_permissions: true }, true);
   }
   return res;
 }
