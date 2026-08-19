@@ -61,13 +61,14 @@ previously approved image/rootfs digest and restarting; never roll back to a
 mutable tag.
 
 If the worker crashes, do not manually mutate the job ledger. Postgres lease
-expiry and `recover_expired_leases` requeue or dead-letter attempts. If a
-sandbox remains, the cleanup timer runs as `se-worker` and removes only
-verified-dead state.
+expiry and `recover_expired_leases` requeue or dead-letter attempts. The
+worker's terminal path invokes broker-owned `finalize`; the stale sweeper
+reuses that same reconciliation primitive with the root-configured reclaim
+age.
 
 The worker's root-owned Python runsc broker receives typed stdin requests and
 authors the OCI config. It seals input/output/proxy workspaces before binding
-them, and list/delete/stale cleanup all use the same sudo boundary. The
+them, and list/finalize/stale cleanup all use the same sudo boundary. The
 supported list contract is `runsc list --format=text`; an unparseable `ID`
 header is a fail-closed cleanup error. Broker failures expose only fixed
 redacted error classes. Worker workspaces are created beneath
@@ -93,12 +94,14 @@ fail closed.
 
 Crash custody is recorded in the fsynced root-owned
 `/var/lib/se-skills/runsc-journal`. The record is updated through sealing and
-is removed only after state, bundle, staging, and worker paths are reconciled.
-`finally` is only a fast path. The broker-owned runsc process group is
-terminated on cancellation, timeout, or graceful termination; cleanup handles
-SIGKILL recovery. Input, proxy sockets, and `job.json` are always destroyed.
-Output is restored only for a durably successful terminal record; all other
-partial output is discarded.
+is removed only after state, bundle, staging, workspace, and worker paths are
+reconciled. `finally` is only a fast path. Broker-owned `finalize` is the only
+terminal release operation, and the stale sweeper invokes the same
+reconciliation primitive using the root-configured reclaim age. The
+broker-owned runsc process group records PID/PGID/start-time identity and is
+terminated or escalated only while ownership remains verifiable. Input, proxy
+sockets, and `job.json` are always destroyed. Output is restored only for a
+durably successful terminal record; all other partial output is discarded.
 
 Image promotion is manual and protected. Build the pinned image, run SBOM and
 vulnerability scans, push it, record the registry manifest digest, generate

@@ -1,12 +1,10 @@
-"""Real-signal custody tests for the root broker."""
+"""Real-signal custody tests through `RunscSandboxRunner` and the broker."""
 from __future__ import annotations
 
-import os
 import shutil
 import signal
 import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -14,6 +12,7 @@ import pytest
 
 ROOT = Path(__file__).parents[2]
 BROKER = ROOT / "scripts/runsc_broker.py"
+EXPECTED_LIFECYCLE_CASES = 27
 
 
 def _lifecycle_command_prefix() -> tuple[str, ...] | None:
@@ -48,15 +47,17 @@ _LIFECYCLE_COMMAND_PREFIX = _lifecycle_command_prefix()
 
 
 def _skip_reason() -> str:
-    if shutil.which("unshare") is None:
-        namespace_reason = "unshare is unavailable"
-    else:
-        namespace_reason = "unshare --map-root-user --mount user namespace is unavailable"
-    if shutil.which("sudo") is None:
-        sudo_reason = "sudo is unavailable"
-    else:
-        sudo_reason = "passwordless sudo -n root fallback is unavailable"
-    return f"{namespace_reason}; {sudo_reason}"
+    namespace = (
+        "unshare is unavailable"
+        if shutil.which("unshare") is None
+        else "unshare --map-root-user --mount user namespace is unavailable"
+    )
+    sudo = (
+        "sudo is unavailable"
+        if shutil.which("sudo") is None
+        else "passwordless sudo -n root fallback is unavailable"
+    )
+    return f"{namespace}; {sudo}"
 
 
 pytestmark = pytest.mark.skipif(
@@ -65,33 +66,49 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.mark.parametrize("phase", ("prepared", "input-sealed", "output-sealed", "proxy-sealed", "configured", "running"))
+@pytest.mark.parametrize(
+    "phase",
+    (
+        "prepared",
+        "input-sealed",
+        "output-sealed",
+        "proxy-sealed",
+        "configured",
+        "running",
+    ),
+)
 @pytest.mark.parametrize("signum", (signal.SIGTERM, signal.SIGKILL))
 @pytest.mark.parametrize("hung", (False, True))
-def test_real_signal_reconciles_every_custody_phase(
+def test_real_runner_finalizes_after_broker_kill(
     tmp_path: Path,
     phase: str,
     signum: signal.Signals,
     hung: bool,
 ) -> None:
-    child = tmp_path / "lifecycle_child.py"
-    child.write_text(
-        _child_script(
-            BROKER,
-            tmp_path / "lifecycle-runtime",
-            phase,
-            int(signum),
-            hung,
-        ),
-        encoding="utf-8",
+    _run_real_runner_case(tmp_path, phase=phase, signum=int(signum), hung=hung)
+
+
+def test_real_runner_normal_success_releases_capability_material(
+    tmp_path: Path,
+) -> None:
+    _run_real_runner_case(tmp_path, phase=None, signum=None, hung=False)
+
+
+def test_sigterm_escalates_for_sigterm_ignoring_runsc(tmp_path: Path) -> None:
+    _run_real_runner_case(
+        tmp_path,
+        phase="running",
+        signum=signal.SIGTERM,
+        hung=True,
     )
+
+
+def test_pid_reuse_never_signals_unrelated_group(tmp_path: Path) -> None:
+    child = tmp_path / "pid_reuse.py"
+    child.write_text(_pid_reuse_script(BROKER), encoding="utf-8")
     assert _LIFECYCLE_COMMAND_PREFIX is not None
     result = subprocess.run(
-        [
-            *_LIFECYCLE_COMMAND_PREFIX,
-            sys.executable,
-            str(child),
-        ],
+        [*_LIFECYCLE_COMMAND_PREFIX, sys.executable, str(child)],
         capture_output=True,
         text=True,
         check=False,
@@ -100,25 +117,70 @@ def test_real_signal_reconciles_every_custody_phase(
     assert result.returncode == 0, result.stderr
 
 
-def _child_script(
+def _run_real_runner_case(
+    tmp_path: Path,
+    *,
+    phase: str | None,
+    signum: int | None,
+    hung: bool,
+) -> None:
+    child = tmp_path / "runner_case.py"
+    child.write_text(
+        _runner_case_script(BROKER, phase, signum, hung),
+        encoding="utf-8",
+    )
+    assert _LIFECYCLE_COMMAND_PREFIX is not None
+    result = subprocess.run(
+        [*_LIFECYCLE_COMMAND_PREFIX, sys.executable, str(child)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def _runner_case_script(
     broker: Path,
-    runtime_root: Path,
-    phase: str,
-    signum: int,
+    phase: str | None,
+    signum: int | None,
     hung: bool,
 ) -> str:
+    restore_output = phase is None
+    kill_block = ""
+    if phase is not None and signum is not None:
+        kill_block = f"""
+    deadline = time.time() + 8
+    while time.time() < deadline:
+        journal_paths = list(journal.glob("se-*.json"))
+        if journal_paths:
+            journal_path = journal_paths[0]
+            record = json.loads(journal_path.read_text())
+            if record.get("phase") == {phase!r}:
+                os.kill(int(broker_marker.read_text()), {signum})
+                break
+        await asyncio.sleep(0.01)
+    else:
+        raise AssertionError("custody phase was not reached")
+"""
     return f"""
+import asyncio
 import json
 import os
-import signal
 import socket
 import subprocess
-import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-root = Path("/tmp") / ("se-lifecycle-" + str(os.getpid()))
+import sys
+sys.path.insert(0, {str(broker.parent.parent)!r})
+
+from webapp.hosted import config as hosted_config
+from webapp.hosted.runsc_executor import RunscSandboxRunner
+from webapp.hosted.runtime_contract import RuntimeJob
+
+root = Path("/tmp") / ("se-finalize-" + str(os.getpid()))
 root.mkdir()
 state = root / "state"
 bundles = root / "bundles"
@@ -133,24 +195,41 @@ runsc = root / "runsc"
 marker = root / "runsc.pid"
 runsc.write_text(
     "#!/bin/sh\\n"
-    "if [ \\"$3\\" = run ]; then echo $$ > " + str(marker) + "; sleep {600 if hung else 2}; "
+    "if [ \\"$3\\" = run ]; then "
+    + ("trap '' TERM; " if {hung!r} else "")
+    + "echo $$ > " + str(marker)
+    + "; sleep {600 if hung else (2 if phase == "running" else 0)}; exit 0; "
     "elif [ \\"$2\\" = list ]; then printf 'ID\\\\tPID\\\\tSTATUS\\\\n'; "
     "elif [ \\"$2\\" = delete ]; then exit 0; fi\\n",
     encoding="utf-8",
 )
 runsc.chmod(0o755)
-container_id = "se-" + "b" * 12
+sudo = root / "sudo"
+broker_marker = root / "broker.pid"
+sudo.write_text(
+    "#!/bin/sh\\n"
+    "echo $$ > " + str(broker_marker) + "\\n"
+    "shift\\n"
+    "exec \\"$@\\"\\n",
+    encoding="utf-8",
+)
+sudo.chmod(0o755)
+os.environ["PATH"] = str(root) + ":/usr/bin:/bin"
+hosted_config.RUNSC_STATE_DIR = str(state)
+hosted_config.RUNSC_BUNDLE_DIR = str(bundles)
+hosted_config.RUNSC_WORKSPACE_ROOT = str(workspace)
 input_dir = workspace / "se-runtime-input-attempt"
 output_dir = workspace / "se-runtime-output-attempt"
 input_dir.mkdir(mode=0o770)
 output_dir.mkdir(mode=0o770)
 (input_dir / "transcript.txt").write_text("customer-transcript", encoding="utf-8")
+(output_dir / "preexisting.txt").write_text("output", encoding="utf-8")
 proxy_dir = workspace / "se-proxy-attempt"
 proxy_dir.mkdir(mode=0o700)
 proxy_path = proxy_dir / "proxy.sock"
 listener = socket.socket(socket.AF_UNIX)
 listener.bind(str(proxy_path))
-config_path = root / "broker.json"
+config_path = root / "runsc-broker.json"
 config_path.write_text(json.dumps({{
     "runsc": str(runsc),
     "rootfs": str(rootfs),
@@ -162,35 +241,33 @@ config_path.write_text(json.dumps({{
     "worker_gid": 0,
     "sandbox_uid": 0,
     "sandbox_gid": 0,
+    "cleanup_min_age_seconds": 1,
     "operation_timeout_seconds": 2,
     "journal_root": str(journal),
     "journal_phase_pause_seconds": 0.05,
 }}), encoding="utf-8")
 etc_root = root / "etc"
 etc_root.mkdir()
-etc_dir = etc_root / "se-skills"
-etc_dir.mkdir()
-(etc_dir / "runsc-broker.json").write_text(config_path.read_text(), encoding="utf-8")
+(etc_root / "se-skills").mkdir()
+(etc_root / "se-skills" / "runsc-broker.json").write_text(
+    config_path.read_text(), encoding="utf-8"
+)
 subprocess.run(["mount", "--bind", str(etc_root), "/etc"], check=True)
-job = {{
-    "job_id": "job-1",
-    "org_id": "org-1",
-    "account_id": "account-1",
-    "transcript_id": "transcript-1",
-    "requester_id": "requester-1",
-    "opportunity_id": None,
+container_id = "se-" + "b" * 12
+job = RuntimeJob.model_validate({{
+    "job_id": "00000000-0000-0000-0000-000000000001",
+    "org_id": "00000000-0000-0000-0000-000000000002",
+    "account_id": "00000000-0000-0000-0000-000000000003",
+    "transcript_id": "00000000-0000-0000-0000-000000000004",
+    "requester_id": "00000000-0000-0000-0000-000000000005",
     "skill": "post-call",
-    "skill_version": "1.0",
     "requested_model": "claude",
     "requested_runtime_version": "1.0",
-    "mode": "full",
-    "attempt_number": 1,
     "input_manifest": {{
-        "transcript_id": "transcript-1",
+        "transcript_id": "00000000-0000-0000-0000-000000000004",
         "transcript_ref": "ref-1",
-        "account_id": "account-1",
-        "org_id": "org-1",
-        "opportunity_id": None,
+        "account_id": "00000000-0000-0000-0000-000000000003",
+        "org_id": "00000000-0000-0000-0000-000000000002",
         "prior_context_refs": [],
     }},
     "allowlist": {{"tools": [], "network": []}},
@@ -201,71 +278,128 @@ job = {{
     "output_workspace": "/runtime/output",
     "attempt_id": "attempt-1",
     "proxy_token": "capability-secret",
-    "proxy_uds_path": str(proxy_path),
-}}
-request = {{
-    "operation": "run",
-    "container_id": container_id,
-    "input_dir": str(input_dir),
-    "output_dir": str(output_dir),
-    "proxy_uds_path": str(proxy_path),
-    "job": job,
-}}
-broker = [{str(sys.executable)!r}, "-I", {str(broker)!r}]
-proc = subprocess.Popen(
-    broker,
-    stdin=subprocess.PIPE,
-    stdout=subprocess.PIPE,
-    stderr=subprocess.PIPE,
-    env={{"PATH": "/usr/bin:/bin"}},
-)
-proc.stdin.write((json.dumps(request) + "\\n").encode())
-proc.stdin.close()
-journal_path = journal / (container_id + ".json")
-deadline = time.time() + 8
-while time.time() < deadline:
-    if journal_path.exists():
-        record = json.loads(journal_path.read_text())
-        if record.get("phase") == {phase!r}:
-            break
-    time.sleep(0.01)
-else:
-    raise AssertionError(
-        "phase not reached: "
-        + {phase!r}
-        + " stderr="
-        + proc.stderr.read().decode()
+    "proxy_uds_path": "/runtime/proxy.sock",
+}})
+
+class NeverCancelled:
+    def is_cancelled(self):
+        return False
+    async def wait(self):
+        await asyncio.Future()
+
+async def main():
+    runner = RunscSandboxRunner(
+        runsc_binary=str(runsc),
+        runsc_helper={str(broker)!r},
+        rootfs=str(rootfs),
+        rootless=False,
     )
-proc.send_signal({signum})
-proc.wait(timeout=8)
-if proc.returncode is None:
-    raise AssertionError("broker did not terminate")
-record_snapshot = journal_path.read_text() if journal_path.exists() else "missing"
-cleanup_request = json.dumps({{"operation": "cleanup", "minimum_age_seconds": 0}}) + "\\n"
-cleanup = subprocess.run(
-    broker,
-    input=cleanup_request.encode(),
-    stdout=subprocess.PIPE,
-    stderr=subprocess.PIPE,
-    env={{"PATH": "/usr/bin:/bin"}},
-    check=False,
-    timeout=8,
-)
-assert cleanup.returncode == 0, cleanup.stderr.decode()
-assert not journal_path.exists()
+    task = asyncio.create_task(
+        runner.run(
+            job,
+            input_dir,
+            output_dir,
+            output_dir / "result.json",
+            NeverCancelled(),
+            proxy_uds_path=proxy_path,
+        )
+    )
+{kill_block}
+    try:
+        await asyncio.wait_for(task, timeout=15)
+    except Exception:
+        if {phase is None!r}:
+            raise
+
+asyncio.run(main())
 assert not list(state.iterdir())
 assert not list(bundles.iterdir())
 assert not list(staging.iterdir())
-assert not proxy_path.exists()
-assert output_dir.exists() and not list(output_dir.iterdir())
-assert not input_dir.exists(), record_snapshot
+assert not list(journal.glob("se-*.json"))
+assert not (workspace / "se-runtime-input-attempt").exists()
+assert not (workspace / "se-proxy-attempt").exists()
+assert (workspace / "se-runtime-output-attempt").exists()
+assert (
+    list((workspace / "se-runtime-output-attempt").iterdir())
+    if {restore_output!r}
+    else not list((workspace / "se-runtime-output-attempt").iterdir())
+)
 if marker.exists():
-    pid = int(marker.read_text())
     try:
-        os.kill(pid, 0)
+        os.kill(int(marker.read_text()), 0)
     except ProcessLookupError:
         pass
     else:
-        raise AssertionError("fake runsc survived cleanup")
+        raise AssertionError("fake runsc survived finalization")
 listener.close()
+"""
+
+
+def _pid_reuse_script(broker: Path) -> str:
+    return f"""
+import json
+import os
+import signal
+import subprocess
+from pathlib import Path
+
+root = Path("/tmp") / ("se-reuse-" + str(os.getpid()))
+root.mkdir()
+for name in ("state", "bundles", "staging", "journal", "workspace", "rootfs"):
+    (root / name).mkdir()
+workspace = root / "workspace"
+workspace.chmod(0o730)
+runsc = root / "runsc"
+runsc.write_text("#!/bin/sh\\nprintf 'ID\\\\tPID\\\\tSTATUS\\\\n'\\n", encoding="utf-8")
+runsc.chmod(0o755)
+container_id = "se-" + "c" * 12
+input_dir = workspace / "se-runtime-input-attempt"
+output_dir = workspace / "se-runtime-output-attempt"
+input_dir.mkdir()
+output_dir.mkdir()
+(input_dir / "secret").write_text("secret")
+(root / "etc").mkdir()
+(root / "etc" / "se-skills").mkdir()
+config = {{
+    "runsc": str(runsc),
+    "rootfs": str(root / "rootfs"),
+    "state_root": str(root / "state"),
+    "bundle_root": str(root / "bundles"),
+    "staging_root": str(root / "staging"),
+    "workspace_root": str(workspace),
+    "worker_uid": 0,
+    "worker_gid": 0,
+    "sandbox_uid": 0,
+    "sandbox_gid": 0,
+    "cleanup_min_age_seconds": 1,
+    "journal_root": str(root / "journal"),
+}}
+(root / "etc" / "se-skills" / "runsc-broker.json").write_text(json.dumps(config))
+subprocess.run(["mount", "--bind", str(root / "etc"), "/etc"], check=True)
+unrelated = subprocess.Popen(["sleep", "30"], start_new_session=True)
+journal = root / "journal" / (container_id + ".json")
+journal.write_text(json.dumps({{
+    "container_id": container_id,
+    "input_dir": str(input_dir),
+    "output_dir": str(output_dir),
+    "proxy_uds_path": None,
+    "staging_dir": str(root / "staging" / container_id),
+    "state_dir": str(root / "state" / container_id),
+    "bundle_dir": str(root / "bundles" / container_id),
+    "phase": "running",
+    "output_terminal": "discard",
+    "runsc_pid": unrelated.pid,
+    "runsc_pgid": os.getpgid(unrelated.pid),
+    "runsc_start_time_ticks": 0,
+}}))
+subprocess.run(
+    ["/usr/bin/python3", "-I", {str(broker)!r}],
+    input=json.dumps({{"operation": "finalize", "container_id": container_id}}).encode() + b"\\n",
+    env={{"PATH": "/usr/bin:/bin"}},
+    check=False,
+)
+assert unrelated.poll() is None
+assert journal.exists()
+assert (input_dir / "secret").exists()
+os.killpg(os.getpgid(unrelated.pid), signal.SIGKILL)
 """

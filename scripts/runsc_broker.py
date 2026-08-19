@@ -26,8 +26,10 @@ from typing import TextIO
 CONFIG_PATH = Path("/etc/se-skills/runsc-broker.json")
 CONTAINER_ID_PREFIX = "se-"
 CONTAINER_ID_LENGTH = 15
-REQUEST_OPERATIONS = frozenset({"run", "list", "delete", "cleanup"})
-_ACTIVE_PGID: int | None = None
+REQUEST_OPERATIONS = frozenset({"run", "list", "finalize", "cleanup"})
+_ACTIVE_PROCESS: subprocess.Popen[bytes] | None = None
+_ACTIVE_IDENTITY: dict[str, int] | None = None
+_ACTIVE_TIMEOUT = 1.0
 
 
 class BrokerError(Exception):
@@ -56,6 +58,7 @@ class BrokerConfig:
     max_concurrent_operations: int = 4
     max_attempt_duration_seconds: int = 900
     operation_timeout_seconds: float = 30.0
+    cleanup_min_age_seconds: int = 3600
     journal_root: Path = Path("/var/lib/se-skills/journal")
     journal_phase_pause_seconds: float = 0.0
 
@@ -88,6 +91,7 @@ class BrokerConfig:
                 "max_concurrent_operations",
                 "max_attempt_duration_seconds",
                 "operation_timeout_seconds",
+                "cleanup_min_age_seconds",
                 "journal_root",
                 "sandbox_uid",
                 "sandbox_gid",
@@ -104,6 +108,7 @@ class BrokerConfig:
             "max_nesting_depth": 16,
             "max_concurrent_operations": 4,
             "max_attempt_duration_seconds": 900,
+            "cleanup_min_age_seconds": 3600,
         }
         if not all(
             isinstance(raw.get(key, defaults.get(key)), int)
@@ -119,6 +124,7 @@ class BrokerConfig:
                 "max_attempt_duration_seconds",
                 "sandbox_uid",
                 "sandbox_gid",
+                "cleanup_min_age_seconds",
             )
         ) or not isinstance(
             raw.get("request_read_timeout_seconds", 5.0),
@@ -149,6 +155,7 @@ class BrokerConfig:
                 "max_concurrent_operations",
                 "max_attempt_duration_seconds",
                 "operation_timeout_seconds",
+                "cleanup_min_age_seconds",
             )
         ):
             raise BrokerError("broker configuration has invalid limits")
@@ -183,6 +190,7 @@ class BrokerConfig:
             operation_timeout_seconds=float(
                 raw.get("operation_timeout_seconds", 30.0)
             ),
+            cleanup_min_age_seconds=raw.get("cleanup_min_age_seconds", 3600),
             journal_root=Path(raw.get("journal_root", str(path.parent / "runsc-journal"))),
             journal_phase_pause_seconds=float(
                 raw.get("journal_phase_pause_seconds", 0.0)
@@ -214,17 +222,16 @@ class ListRequest:
 
 
 @dataclass(frozen=True)
-class DeleteRequest:
+class FinalizeRequest:
     container_id: str
-    state_dir: str
 
 
 @dataclass(frozen=True)
 class CleanupRequest:
-    minimum_age_seconds: int
+    pass
 
 
-BrokerRequest = RunRequest | ListRequest | DeleteRequest | CleanupRequest
+BrokerRequest = RunRequest | ListRequest | FinalizeRequest | CleanupRequest
 
 
 def _fail() -> None:
@@ -234,11 +241,18 @@ def _fail() -> None:
 
 
 def _handle_signal(signum: int, _frame: object) -> None:
-    if _ACTIVE_PGID is not None:
+    process = _ACTIVE_PROCESS
+    identity = _ACTIVE_IDENTITY
+    if process is not None and identity is not None:
+        _signal_owned_process(identity, signal.SIGTERM)
         try:
-            os.killpg(_ACTIVE_PGID, signal.SIGTERM)
-        except OSError:
-            pass
+            process.wait(timeout=_ACTIVE_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            _signal_owned_process(identity, signal.SIGKILL)
+            try:
+                process.wait(timeout=_ACTIVE_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                pass
     raise SystemExit(128 + signum)
 
 
@@ -395,7 +409,9 @@ def _parse_job(value: object, config: BrokerConfig) -> BrokerJob:
 
 def _parse_deadline(value: str, config: BrokerConfig) -> datetime:
     try:
-        deadline = datetime.fromisoformat(value)
+        deadline = datetime.fromisoformat(
+            value[:-1] + "+00:00" if value.endswith("Z") else value
+        )
     except ValueError as exc:
         raise BrokerError("invalid execution deadline") from exc
     if deadline.tzinfo is None:
@@ -425,21 +441,21 @@ def _load_request(stream: TextIO, config: BrokerConfig) -> BrokerRequest:
             _optional_string(request["proxy_uds_path"], config),
             _parse_job(request["job"], config),
         )
-    if operation in {"list", "delete"}:
+    if operation == "list":
         _exact_fields(request, {"operation", "container_id", "state_dir"})
         container_id = _validate_container_id(
             _string(request["container_id"], config)
         )
         state_dir = _string(request["state_dir"], config)
-        if operation == "list":
-            return ListRequest(container_id, state_dir)
-        return DeleteRequest(container_id, state_dir)
+        return ListRequest(container_id, state_dir)
+    if operation == "finalize":
+        _exact_fields(request, {"operation", "container_id"})
+        return FinalizeRequest(
+            _validate_container_id(_string(request["container_id"], config))
+        )
     if operation == "cleanup":
-        _exact_fields(request, {"operation", "minimum_age_seconds"})
-        age = request["minimum_age_seconds"]
-        if not isinstance(age, int) or isinstance(age, bool) or age < 0:
-            raise BrokerError("request minimum age is invalid")
-        return CleanupRequest(age)
+        _exact_fields(request, {"operation"})
+        return CleanupRequest()
     raise BrokerError("unsupported operation")
 
 
@@ -558,12 +574,155 @@ def _remove_journal(config: BrokerConfig, container_id: str) -> None:
         return
 
 
-def _process_exists(pid: int) -> bool:
+def _process_identity(pid: int) -> dict[str, int] | None:
+    """Read Linux process identity, including `/proc/<pid>/stat` start time.
+
+    Linux documents `starttime` as field 22 of `/proc/<pid>/stat`; because the
+    comm field may contain spaces or closing parentheses, parsing starts after
+    its final closing parenthesis.  The remaining field 3 is therefore index
+    0 and starttime is index 19.
+    """
     try:
-        state = Path(f"/proc/{pid}/stat").read_text(encoding="ascii").split()[2]
-    except (OSError, IndexError):
-        return False
-    return state != "Z"
+        stat_text = Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
+        fields = stat_text[stat_text.rfind(")") + 2 :].split()
+        if len(fields) <= 19:
+            return None
+        state = fields[0]
+        if state == "Z":
+            return None
+        return {
+            "pid": pid,
+            "pgid": int(fields[2]),
+            "start_time_ticks": int(fields[19]),
+        }
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def _process_exists(pid: int) -> bool:
+    return _process_identity(pid) is not None
+
+
+def _identity_matches(
+    identity: dict[str, int],
+    expected: dict[str, int],
+) -> bool:
+    return (
+        identity.get("pid") == expected.get("pid")
+        and identity.get("pgid") == expected.get("pgid")
+        and identity.get("start_time_ticks") == expected.get("start_time_ticks")
+    )
+
+
+def _signal_owned_process(
+    identity: dict[str, int],
+    signum: signal.Signals,
+) -> bool:
+    """Signal only a process group whose leader identity still matches."""
+    current = _process_identity(identity["pid"])
+    if current is not None and _identity_matches(current, identity):
+        try:
+            os.killpg(identity["pgid"], signum)
+            return True
+        except OSError:
+            return False
+    members = identity.get("members")
+    if isinstance(members, dict):
+        signaled = False
+        for pid_text, start_time in members.items():
+            try:
+                pid = int(pid_text)
+                expected = {
+                    "pid": pid,
+                    "pgid": identity["pgid"],
+                    "start_time_ticks": int(start_time),
+                }
+            except (TypeError, ValueError):
+                continue
+            member = _process_identity(pid)
+            if member is not None and _identity_matches(member, expected):
+                try:
+                    os.kill(pid, signum)
+                    signaled = True
+                except OSError:
+                    pass
+        return signaled
+    return False
+
+
+def _group_members(pgid: int) -> list[int]:
+    members: list[int] = []
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        identity = _process_identity(int(entry.name))
+        if identity is not None and identity["pgid"] == pgid:
+            members.append(identity["pid"])
+    return members
+
+
+def _terminate_owned_identity(
+    identity: dict[str, int],
+    timeout: float,
+) -> bool:
+    """Terminate an attempt group only while its recorded identity matches."""
+    current = _process_identity(identity["pid"])
+    if current is None:
+        if not _group_members(identity["pgid"]):
+            return True
+        _signal_owned_process(identity, signal.SIGTERM)
+        deadline = time.monotonic() + timeout
+        while _group_members(identity["pgid"]) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        if not _group_members(identity["pgid"]):
+            return True
+        _signal_owned_process(identity, signal.SIGKILL)
+        deadline = time.monotonic() + timeout
+        while _group_members(identity["pgid"]) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        return not _group_members(identity["pgid"])
+    if not _identity_matches(current, identity):
+        raise BrokerError("sandbox process identity unverifiable")
+    try:
+        os.killpg(identity["pgid"], signal.SIGTERM)
+    except OSError:
+        pass
+    deadline = time.monotonic() + timeout
+    while _group_members(identity["pgid"]) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    if not _group_members(identity["pgid"]):
+        return True
+    current = _process_identity(identity["pid"])
+    if current is None or not _identity_matches(current, identity):
+        raise BrokerError("sandbox process group cleanup unverifiable")
+    try:
+        os.killpg(identity["pgid"], signal.SIGKILL)
+    except OSError:
+        pass
+    deadline = time.monotonic() + timeout
+    while _group_members(identity["pgid"]) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    return not _group_members(identity["pgid"])
+
+
+def _terminate_owned_process(
+    process: subprocess.Popen[bytes],
+    identity: dict[str, int],
+    timeout: float,
+) -> bool:
+    if process.poll() is not None:
+        return True
+    _signal_owned_process(identity, signal.SIGTERM)
+    try:
+        process.wait(timeout=timeout)
+        return not _group_members(identity["pgid"])
+    except subprocess.TimeoutExpired:
+        _signal_owned_process(identity, signal.SIGKILL)
+        try:
+            process.wait(timeout=timeout)
+            return not _group_members(identity["pgid"])
+        except subprocess.TimeoutExpired:
+            return False
 
 
 def _wait_process_exit(pid: int, timeout: float = 1.0) -> bool:
@@ -590,6 +749,7 @@ def _discard_worker_directory(
     if not recreate:
         return
     path.mkdir(mode=0o770)
+    os.chmod(path, 0o770)
     os.chown(path, config.worker_uid, config.sandbox_gid)
 
 
@@ -630,7 +790,7 @@ def _run_command(
     capture_stdout: bool,
     on_start: object | None = None,
 ) -> tuple[int, bytes]:
-    global _ACTIVE_PGID
+    global _ACTIVE_PROCESS, _ACTIVE_IDENTITY
     try:
         process = subprocess.Popen(
             command,
@@ -639,29 +799,34 @@ def _run_command(
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-        _ACTIVE_PGID = process.pid
+        identity = _process_identity(process.pid)
+        if identity is None:
+            if process.poll() is not None:
+                stdout, _ = process.communicate()
+                return process.returncode or 0, stdout or b""
+            raise BrokerError("broker operation identity unavailable")
+        _ACTIVE_PROCESS = process
+        _ACTIVE_IDENTITY = identity
         if on_start is not None:
-            on_start(process.pid)
+            on_start(identity)
     except OSError as exc:
         raise BrokerError("broker operation unavailable") from exc
     try:
         stdout, _ = process.communicate(timeout=config.operation_timeout_seconds)
     except subprocess.TimeoutExpired as exc:
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-            process.wait(timeout=1.0)
-        except (OSError, subprocess.TimeoutExpired):
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except OSError:
-                pass
-            process.wait()
-        _ACTIVE_PGID = None
+        if not _terminate_owned_process(process, identity, 1.0):
+            _ACTIVE_PROCESS = None
+            _ACTIVE_IDENTITY = None
+            raise BrokerError("broker operation cleanup unverifiable") from exc
+        _ACTIVE_PROCESS = None
+        _ACTIVE_IDENTITY = None
         raise BrokerError("broker operation timed out") from exc
     except BaseException:
-        _ACTIVE_PGID = None
+        _ACTIVE_PROCESS = None
+        _ACTIVE_IDENTITY = None
         raise
-    _ACTIVE_PGID = None
+    _ACTIVE_PROCESS = None
+    _ACTIVE_IDENTITY = None
     return process.returncode, stdout or b""
 
 
@@ -846,102 +1011,87 @@ def _run(config: BrokerConfig, request: RunRequest) -> int:
     container_dir.mkdir(mode=0o700)
     bundle_dir.mkdir(mode=0o700)
     state_dir.mkdir(mode=0o700)
-    input_sealed = False
-    output_sealed = False
-    run_finished = False
-    try:
-        os.rename(input_dir, staged_input)
-        input_sealed = True
-        journal["phase"] = "input-sealed"
+    os.rename(input_dir, staged_input)
+    journal["phase"] = "input-sealed"
+    _write_journal(config, request.container_id, journal)
+    os.rename(output_dir, staged_output)
+    journal["phase"] = "output-sealed"
+    _write_journal(config, request.container_id, journal)
+    for staged_path in (staged_input, staged_output):
+        facts = staged_path.lstat()
+        if stat.S_ISLNK(facts.st_mode) or not stat.S_ISDIR(facts.st_mode):
+            raise BrokerError("worker workspace sealing failed")
+    output_dir.mkdir(mode=0o770)
+    os.chmod(output_dir, 0o770)
+    os.chown(output_dir, config.worker_uid, config.sandbox_gid)
+    _make_tree_read_only(staged_input, config)
+    _make_output_writable(staged_output, config)
+    if proxy_uds_path is not None:
+        os.rename(proxy_uds_path, staged_proxy)
+        facts = staged_proxy.lstat()
+        if (
+            stat.S_ISLNK(facts.st_mode)
+            or not stat.S_ISSOCK(facts.st_mode)
+            or facts.st_uid != config.worker_uid
+        ):
+            raise BrokerError("proxy sealing failed")
+        journal["phase"] = "proxy-sealed"
         _write_journal(config, request.container_id, journal)
-        os.rename(output_dir, staged_output)
-        output_sealed = True
-        journal["phase"] = "output-sealed"
-        _write_journal(config, request.container_id, journal)
-        for staged_path in (staged_input, staged_output):
-            facts = staged_path.lstat()
-            if stat.S_ISLNK(facts.st_mode) or not stat.S_ISDIR(facts.st_mode):
-                raise BrokerError("worker workspace sealing failed")
-        os.mkdir(output_dir, 0o770)
-        os.chown(output_dir, config.worker_uid, config.sandbox_gid)
-        _make_tree_read_only(staged_input, config)
-        _make_output_writable(staged_output, config)
-        if proxy_uds_path is not None:
-            os.rename(proxy_uds_path, staged_proxy)
-            facts = staged_proxy.lstat()
-            if (
-                stat.S_ISLNK(facts.st_mode)
-                or not stat.S_ISSOCK(facts.st_mode)
-                or facts.st_uid != config.worker_uid
-            ):
-                raise BrokerError("proxy sealing failed")
-            journal["phase"] = "proxy-sealed"
-            _write_journal(config, request.container_id, journal)
-        job_path.write_text(
-            json.dumps(request.job.values, sort_keys=True, separators=(",", ":")),
-            encoding="utf-8",
-        )
-        os.chown(job_path, config.sandbox_uid, config.sandbox_gid)
-        os.chmod(job_path, 0o444)
-        deadline = _parse_deadline(str(request.job["execution_deadline"]), config)
-        remaining = max((deadline - datetime.now(timezone.utc)).total_seconds(), 1.0)
-        cpu_limit_seconds = max(1, math.ceil(remaining))
-        config_path.write_text(
-            json.dumps(
-                _fixed_config(
-                    config, state_dir, bundle_dir, job_path, staged_input,
-                    staged_output, staged_proxy if proxy_uds_path else None,
-                    request.container_id, cpu_limit_seconds,
-                ),
-                sort_keys=True,
-                separators=(",", ":"),
+    job_path.write_text(
+        json.dumps(request.job.values, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    os.chown(job_path, config.sandbox_uid, config.sandbox_gid)
+    os.chmod(job_path, 0o444)
+    deadline = _parse_deadline(str(request.job["execution_deadline"]), config)
+    remaining = max((deadline - datetime.now(timezone.utc)).total_seconds(), 1.0)
+    cpu_limit_seconds = max(1, math.ceil(remaining))
+    config_path.write_text(
+        json.dumps(
+            _fixed_config(
+                config, state_dir, bundle_dir, job_path, staged_input,
+                staged_output, staged_proxy if proxy_uds_path else None,
+                request.container_id, cpu_limit_seconds,
             ),
-            encoding="utf-8",
-        )
-        os.chown(config_path, 0, 0)
-        os.chmod(config_path, 0o400)
-        journal["phase"] = "configured"
-        _write_journal(config, request.container_id, journal)
-        returncode, _ = _run_command(
-            [
-                str(config.runsc), f"--root={state_dir}", "--network=none",
-                "run", "--bundle", str(bundle_dir), request.container_id,
-            ],
-            config,
-            capture_stdout=False,
-            on_start=lambda pid: (
-                journal.update({"phase": "running", "runsc_pid": pid}),
-                _write_journal(config, request.container_id, journal),
-            ),
-        )
-        run_finished = True
-        journal["phase"] = "run-finished" if returncode == 0 else "run-failed"
-        journal["output_terminal"] = "restore" if returncode == 0 else "discard"
-        _write_journal(config, request.container_id, journal)
-        return returncode
-    finally:
-        if output_sealed and output_dir.exists() and output_dir.is_dir():
-            shutil.rmtree(output_dir, ignore_errors=True)
-        if output_sealed and staged_output.exists() and run_finished:
-            os.rename(staged_output, output_dir)
-            _make_output_writable(output_dir, config)
-        elif output_sealed and staged_output.exists():
-            shutil.rmtree(staged_output, ignore_errors=True)
-            output_dir.mkdir(mode=0o770, exist_ok=True)
-            os.chown(output_dir, config.worker_uid, config.sandbox_gid)
-        if not output_sealed and output_dir.exists() and not output_dir.is_dir():
-            raise BrokerError("worker output compensation failed")
-        if input_sealed and staged_input.exists():
-            shutil.rmtree(staged_input, ignore_errors=True)
-        if staged_proxy.exists():
-            staged_proxy.unlink(missing_ok=True)
-        if run_finished:
-            shutil.rmtree(container_dir, ignore_errors=True)
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+    os.chown(config_path, 0, 0)
+    os.chmod(config_path, 0o400)
+    journal["phase"] = "configured"
+    _write_journal(config, request.container_id, journal)
+    returncode, _ = _run_command(
+        [
+            str(config.runsc), f"--root={state_dir}", "--network=none",
+            "run", "--bundle", str(bundle_dir), request.container_id,
+        ],
+        config,
+        capture_stdout=False,
+        on_start=lambda identity: (
+            journal.update({
+                "phase": "running",
+                "runsc_pid": identity["pid"],
+                "runsc_pgid": identity["pgid"],
+                "runsc_start_time_ticks": identity["start_time_ticks"],
+                "runsc_members": {
+                    str(pid): member["start_time_ticks"]
+                    for pid in _group_members(identity["pgid"])
+                    if (member := _process_identity(pid)) is not None
+                },
+            }),
+            _write_journal(config, request.container_id, journal),
+        ),
+    )
+    journal["phase"] = "run-finished" if returncode == 0 else "run-failed"
+    journal["output_terminal"] = "restore" if returncode == 0 else "discard"
+    _write_journal(config, request.container_id, journal)
+    return returncode
 
 
-def _run_simple(
+def _run_list(
     config: BrokerConfig,
-    operation: str,
     root_dir: Path,
     container_id: str,
 ) -> int:
@@ -952,192 +1102,145 @@ def _run_simple(
         raise BrokerError("state path is outside the approved root")
     if not expected.is_dir() or expected.is_symlink():
         raise BrokerError("state path is unavailable")
-    command = [str(config.runsc), f"--root={expected}", operation]
-    if operation == "list":
-        command.append("--format=text")
-        returncode, stdout = _run_command(command, config, capture_stdout=True)
-        sys.stdout.buffer.write(stdout)
-        return returncode
-    command.extend(["--force", container_id])
-    returncode, _ = _run_command(command, config, capture_stdout=False)
-    if returncode != 0:
-        return returncode
-    listed_code, listed_stdout = _run_command(
-        [str(config.runsc), f"--root={expected}", "list", "--format=text"],
+    command = [str(config.runsc), f"--root={expected}", "list", "--format=text"]
+    returncode, stdout = _run_command(command, config, capture_stdout=True)
+    sys.stdout.buffer.write(stdout)
+    return returncode
+
+
+def _load_journal(config: BrokerConfig, container_id: str) -> dict[str, object]:
+    path = _journal_path(config, container_id)
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise BrokerError("lifecycle journal unavailable") from exc
+    if not isinstance(record, dict):
+        raise BrokerError("lifecycle journal is invalid")
+    if record.get("container_id") != container_id:
+        raise BrokerError("lifecycle journal identity mismatch")
+    expected = {
+        "staging_dir": config.staging_root / container_id,
+        "state_dir": config.state_root / container_id,
+        "bundle_dir": config.bundle_root / container_id,
+    }
+    for field, path in expected.items():
+        if record.get(field) != str(path):
+            raise BrokerError("lifecycle journal path mismatch")
+    return record
+
+
+def _runsc_container_absent(
+    config: BrokerConfig,
+    state_dir: Path,
+    container_id: str,
+) -> bool:
+    if not state_dir.exists():
+        return True
+    code, output = _run_command(
+        [str(config.runsc), f"--root={state_dir}", "list", "--format=text"],
         config,
         capture_stdout=True,
     )
-    if listed_code != 0:
-        return listed_code
-    lines = listed_stdout.decode("utf-8", errors="replace").splitlines()
+    if code != 0:
+        raise BrokerError("sandbox state verification failed")
+    lines = output.decode("utf-8", errors="replace").splitlines()
     if not lines or not lines[0].startswith("ID"):
-        return 65
-    if any(line.split()[:1] == [container_id] for line in lines[1:]):
-        return 66
-    shutil.rmtree(expected)
-    _remove_journal(config, container_id)
-    return 0
+        raise BrokerError("sandbox state verification failed")
+    return not any(line.split()[:1] == [container_id] for line in lines[1:])
 
 
-def _run_cleanup(config: BrokerConfig, minimum_age_seconds: int) -> int:
-    """Reclaim only old terminal or verified-absent broker-owned state."""
+def _finalize_container(config: BrokerConfig, container_id: str) -> int:
+    """Release one attempt only after process and container absence are proven."""
     _root_directory(config.state_root)
     _root_directory(config.bundle_root)
     _root_directory(config.staging_root)
     _root_directory(config.journal_root)
     _root_executable(config.runsc)
-    now = int(time.time())
-    journal_ids: set[str] = set()
+    record = _load_journal(config, container_id)
+    pid = record.get("runsc_pid")
+    start_ticks = record.get("runsc_start_time_ticks")
+    pgid = record.get("runsc_pgid")
+    if (
+        isinstance(pid, int)
+        and isinstance(start_ticks, int)
+        and isinstance(pgid, int)
+    ):
+        identity = {
+            "pid": pid,
+            "pgid": pgid,
+            "start_time_ticks": start_ticks,
+        }
+        members = record.get("runsc_members")
+        if isinstance(members, dict):
+            identity["members"] = members
+        current = _process_identity(pid)
+        if current is not None and _identity_matches(current, identity):
+            if not _terminate_owned_identity(identity, 1.0):
+                raise BrokerError("sandbox process cleanup unverifiable")
+        elif current is not None:
+            raise BrokerError("sandbox process identity unverifiable")
+    state = config.state_root / container_id
+    if state.exists() and not _runsc_container_absent(config, state, container_id):
+        code, _ = _run_command(
+            [str(config.runsc), f"--root={state}", "delete", "--force", container_id],
+            config,
+            capture_stdout=False,
+        )
+        if code != 0 or not _runsc_container_absent(config, state, container_id):
+            raise BrokerError("sandbox remained after finalize")
+    if state.exists():
+        shutil.rmtree(state)
+    staging = config.staging_root / container_id
+    bundle = config.bundle_root / container_id
+    input_path = Path(str(record["input_dir"]))
+    output = Path(str(record["output_dir"]))
+    proxy_value = record.get("proxy_uds_path")
+    proxy_path = Path(proxy_value) if isinstance(proxy_value, str) and proxy_value else None
+    staged_input = staging / "input"
+    staged_output = staging / "output"
+    staged_proxy = staging / "proxy.sock"
+    if record.get("output_terminal") == "restore" and staged_output.exists():
+        if output.exists():
+            shutil.rmtree(output)
+        os.rename(staged_output, output)
+        _make_output_writable(output, config)
+    else:
+        _discard_worker_directory(output, config, prefix="se-runtime-output-")
+        if staged_output.exists():
+            shutil.rmtree(staged_output)
+    _discard_worker_directory(
+        input_path, config, prefix="se-runtime-input-", recreate=False
+    )
+    if staged_input.exists():
+        shutil.rmtree(staged_input)
+    if proxy_path is not None:
+        _discard_worker_socket(proxy_path, config)
+    if staged_proxy.exists():
+        staged_proxy.unlink()
+    if staging.exists():
+        shutil.rmtree(staging)
+    if bundle.exists():
+        shutil.rmtree(bundle)
+    if state.exists() or staging.exists() or bundle.exists():
+        raise BrokerError("sandbox custody reconciliation incomplete")
+    _remove_journal(config, container_id)
+    return 0
+
+
+def _run_cleanup(config: BrokerConfig) -> int:
+    """Reconcile only old attempts through the same finalize primitive."""
+    _root_directory(config.journal_root)
+    now = time.time()
     for journal_path in sorted(config.journal_root.glob("se-*.json")):
-        if (
-            journal_path.is_symlink()
-            or now - int(journal_path.stat().st_mtime) < minimum_age_seconds
-        ):
+        if journal_path.is_symlink():
             continue
         try:
-            record = json.loads(journal_path.read_text(encoding="utf-8"))
-            if not isinstance(record, dict):
+            if now - journal_path.stat().st_mtime < config.cleanup_min_age_seconds:
                 continue
-            container_id = _validate_container_id(record.get("container_id", ""))
-            journal_ids.add(container_id)
-            runsc_pid = record.get("runsc_pid")
-            if (
-                isinstance(runsc_pid, int)
-                and runsc_pid > 1
-                and record.get("phase") in {"configured", "running"}
-            ):
-                try:
-                    os.killpg(runsc_pid, signal.SIGTERM)
-                except OSError:
-                    pass
-                try:
-                    os.killpg(runsc_pid, signal.SIGKILL)
-                except OSError:
-                    pass
-                if not _wait_process_exit(runsc_pid):
-                    continue
-            state = config.state_root / container_id
-            if state.is_dir() and not state.is_symlink():
-                listed_code, listed_stdout = _run_command(
-                    [str(config.runsc), f"--root={state}", "list", "--format=text"],
-                    config,
-                    capture_stdout=True,
-                )
-                if listed_code != 0:
-                    continue
-                lines = listed_stdout.decode("utf-8", errors="replace").splitlines()
-                if not lines or not lines[0].startswith("ID"):
-                    continue
-                if any(line.split()[:1] == [container_id] for line in lines[1:]):
-                    status = next(
-                        (
-                            line.split()[2].lower()
-                            for line in lines[1:]
-                            if line.split()[:1] == [container_id] and len(line.split()) > 2
-                        ),
-                        "running",
-                    )
-                    if status not in {"dead", "stopped", "exited", "failed", "terminated"}:
-                        continue
-                    if _run_simple(config, "delete", state, container_id) != 0:
-                        continue
-                else:
-                    shutil.rmtree(state, ignore_errors=True)
-            staging = Path(str(record.get("staging_dir", "")))
-            bundle = Path(str(record.get("bundle_dir", "")))
-            input_path = Path(str(record.get("input_dir", "")))
-            output = Path(str(record.get("output_dir", "")))
-            proxy = record.get("proxy_uds_path")
-            proxy_path = Path(proxy) if isinstance(proxy, str) and proxy else None
-            phase = record.get("phase")
-            if phase not in {
-                "input-sealed",
-                "output-sealed",
-                "proxy-sealed",
-                "configured",
-                "running",
-                "run-finished",
-                "run-failed",
-            }:
-                _discard_worker_directory(
-                    input_path,
-                    config,
-                    prefix="se-runtime-input-",
-                    recreate=False,
-                )
-            if phase not in {
-                "proxy-sealed",
-                "configured",
-                "running",
-                "run-finished",
-                "run-failed",
-            } and proxy_path is not None:
-                _discard_worker_socket(proxy_path, config)
-            if staging.is_dir() and not staging.is_symlink():
-                shutil.rmtree(staging, ignore_errors=True)
-            if (
-                record.get("output_terminal") == "restore"
-                and output.parent == config.workspace_root
-                and not output.exists()
-            ):
-                output.mkdir(mode=0o770)
-                os.chown(output, config.worker_uid, config.sandbox_gid)
-            elif record.get("output_terminal") != "restore":
-                _discard_worker_directory(
-                    output, config, prefix="se-runtime-output-"
-                )
-            if bundle.is_dir() and not bundle.is_symlink():
-                shutil.rmtree(bundle, ignore_errors=True)
-            if not state.exists() and not staging.exists() and not bundle.exists():
-                _remove_journal(config, container_id)
-        except (BrokerError, OSError, ValueError, TypeError, json.JSONDecodeError):
+            container_id = _validate_container_id(journal_path.stem)
+            _finalize_container(config, container_id)
+        except (BrokerError, OSError, ValueError, TypeError):
             continue
-    for state in sorted(config.state_root.iterdir(), key=lambda path: path.name):
-        if not state.is_dir() or state.is_symlink() or now - int(state.stat().st_mtime) < minimum_age_seconds:
-            continue
-        try:
-            container_id = _validate_container_id(state.name)
-            listed_code, listed_stdout = _run_command(
-                [str(config.runsc), f"--root={state}", "list", "--format=text"],
-                config,
-                capture_stdout=True,
-            )
-            if listed_code != 0:
-                continue
-            lines = listed_stdout.decode("utf-8", errors="replace").splitlines()
-            if not lines or not lines[0].startswith("ID"):
-                continue
-            status = "absent"
-            for line in lines[1:]:
-                parts = line.split()
-                if parts and parts[0] == container_id:
-                    status = parts[2].lower() if len(parts) > 2 else ""
-                    break
-            if status not in {"dead", "stopped", "exited", "failed", "terminated", "absent"}:
-                continue
-            if status != "absent" and _run_simple(config, "delete", state, container_id) != 0:
-                continue
-            if status == "absent":
-                shutil.rmtree(state)
-            bundle = config.bundle_root / container_id
-            if bundle.is_dir() and not bundle.is_symlink():
-                shutil.rmtree(bundle)
-            if container_id not in journal_ids:
-                _remove_journal(config, container_id)
-        except (BrokerError, OSError, ValueError):
-            continue
-    for bundle in sorted(config.bundle_root.iterdir(), key=lambda path: path.name):
-        if (
-            bundle.is_dir()
-            and not bundle.is_symlink()
-            and now - int(bundle.stat().st_mtime) >= minimum_age_seconds
-            and not (config.state_root / bundle.name).exists()
-        ):
-            try:
-                _validate_container_id(bundle.name)
-                shutil.rmtree(bundle)
-            except (BrokerError, OSError):
-                continue
     return 0
 
 
@@ -1154,20 +1257,14 @@ def main() -> int:
             if isinstance(request, RunRequest):
                 return _run(config, request)
             if isinstance(request, CleanupRequest):
-                return _run_cleanup(config, request.minimum_age_seconds)
+                return _run_cleanup(config)
             if isinstance(request, ListRequest):
-                return _run_simple(
+                return _run_list(
                     config,
-                    "list",
                     Path(request.state_dir),
                     request.container_id,
                 )
-            return _run_simple(
-                config,
-                "delete",
-                Path(request.state_dir),
-                request.container_id,
-            )
+            return _finalize_container(config, request.container_id)
         finally:
             lock.close()
     except (

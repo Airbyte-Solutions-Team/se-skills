@@ -127,6 +127,7 @@ class PreflightConfig(BaseModel):
     non_worker_uid: int = 994
     sandbox_uid: int = 65532
     sandbox_gid: int = 65532
+    cleanup_min_age_seconds: int = 3600
     journal_phase_pause_seconds: float = 0.0
     rootfs_path: str = ""
     clock_tolerance_seconds: float = 1.0
@@ -251,6 +252,7 @@ def run_preflight(config: PreflightConfig, probe: HostProbe) -> PreflightReport:
         and f'"workspace_root": "{config.workspace_path}"' in broker_text
         and f'"sandbox_uid": {config.sandbox_uid}' in broker_text
         and f'"sandbox_gid": {config.sandbox_gid}' in broker_text
+        and f'"cleanup_min_age_seconds": {config.cleanup_min_age_seconds}' in broker_text
         and pause_ok
     )
     helper_ok = (

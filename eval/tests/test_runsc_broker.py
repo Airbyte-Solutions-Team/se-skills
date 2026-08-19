@@ -232,68 +232,35 @@ def test_run_entrypoint_rejects_adversarial_requests(
     assert not output_dir.is_symlink()
 
 
-@pytest.mark.parametrize("operation", ["list", "delete"])
-def test_list_and_delete_entrypoints_use_typed_state_path(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+def test_list_entrypoint_uses_typed_state_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = _config(tmp_path)
     state_dir = config.state_root / CONTAINER_ID
     state_dir.mkdir()
-    if operation == "list":
-        config.runsc.write_text(
-            "#!/bin/sh\nprintf 'ID\\tPID\\tSTATUS\\n'\n", encoding="utf-8"
-        )
-    else:
-        config.runsc.write_text(
-            "#!/bin/sh\nif [ \"$2\" = delete ]; then exit 0; fi\nprintf 'ID\\tPID\\tSTATUS\\n'\n",
-            encoding="utf-8",
-        )
+    config.runsc.write_text(
+        "#!/bin/sh\nprintf 'ID\\tPID\\tSTATUS\\n'\n", encoding="utf-8"
+    )
     config.runsc.chmod(0o755)
     request = {
-        "operation": operation,
+        "operation": "list",
         "container_id": CONTAINER_ID,
         "state_dir": str(state_dir),
     }
     assert _invoke(monkeypatch, config, request) == 0
-    if operation == "delete":
-        assert not state_dir.exists()
 
 
-def test_cleanup_entrypoint_reclaims_only_verified_dead_state(
+def test_cleanup_rejects_worker_supplied_age(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = _config(tmp_path)
-    dead = config.state_root / CONTAINER_ID
-    live = config.state_root / ("se-" + "b" * 12)
-    malformed = config.state_root / ("se-" + "c" * 12)
-    for state in (dead, live, malformed):
-        state.mkdir()
-        (config.bundle_root / state.name).mkdir()
-    config.runsc.write_text(
-        """#!/bin/sh
-        if [ "$2" = delete ]; then touch "${1#--root=}/.deleted"; exit 0; fi
-        case "$1" in
-          *aaaaaaaaaaaa*)
-            if [ -e "${1#--root=}/.deleted" ]; then
-              printf 'ID\\tPID\\tSTATUS\\n'
-            else
-              printf 'ID\\tPID\\tSTATUS\\nse-aaaaaaaaaaaa\\t1\\tdead\\n'
-            fi ;;
-          *bbbbbbbbbbbb*) printf 'ID\\tPID\\tSTATUS\\nse-bbbbbbbbbbbb\\t1\\trunning\\n' ;;
-          *) printf 'not a table\\n' ;;
-        esac
-        """,
-        encoding="utf-8",
-    )
-    config.runsc.chmod(0o755)
-    assert _invoke(
-        monkeypatch,
-        config,
-        {"operation": "cleanup", "minimum_age_seconds": 0},
-    ) == 0
-    assert not dead.exists()
-    assert live.exists()
-    assert malformed.exists()
+    with pytest.raises(SystemExit) as exc_info:
+        _invoke(
+            monkeypatch,
+            config,
+            {"operation": "cleanup", "minimum_age_seconds": 0},
+        )
+    assert exc_info.value.code == 64
 
 
 def test_entrypoint_rejects_state_root_swap(

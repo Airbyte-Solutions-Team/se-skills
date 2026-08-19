@@ -34,12 +34,13 @@ loaded from `deploy/pins.json`; role defaults and paths are in
   start.
   Input/output/proxy workspaces are confined to approved worker paths and
   atomically sealed into the root-owned staging parent; input is read-only and
-  output remains worker-readable. List, delete, and stale cleanup use the same
-  broker and `list --format=text` contract with its required `ID` header.
+  output remains worker-readable. List and stale cleanup use the same broker
+  boundary and `list --format=text` contract with its required `ID` header.
   Run requests contain only typed operation-specific fields: `run` carries
-  `container_id`, sealed workspace paths, and `job`; list/delete carry
-  `container_id` and `state_dir`; cleanup carries only
-  `minimum_age_seconds`. Unknown fields and wrong types fail closed with one
+  `container_id`, sealed workspace paths, and `job`; list carries
+  `container_id` and `state_dir`; finalize carries only `container_id`; cleanup
+  carries no fields and uses the root-owned configured reclaim age. Unknown
+  fields and wrong types fail closed with one
   fixed diagnostic. The broker derives `RLIMIT_CPU` from the validated job
   deadline. Worker exit sentinels 65 and 66 become closed cleanup failures.
 - The broker runs as `/usr/bin/python3 -I` and uses only the Python standard
@@ -52,16 +53,18 @@ loaded from `deploy/pins.json`; role defaults and paths are in
   contract and is not used to validate the host broker.
 - Broker admission is root-configured: stdin is capped at 1 MiB and five
   seconds, strings at 8 KiB, collections at 256 items, nesting at 16 levels,
-  and concurrent operations at four. Run/list/delete are bounded by a
+  and concurrent operations at four. Run/list/finalize/cleanup are bounded by a
   30-second broker deadline; execution deadlines must be future and within
   the configured 15-minute attempt horizon.
 - A root-owned journal under `/var/lib/se-skills/runsc-journal` is fsynced
-  before sealing and after every sealing phase. It records custody paths and
-  phase, while the fast-path `finally` only accelerates cleanup. Cleanup
-  reconciles journal, staging, bundle, and state records after verified
-  process absence. Input, proxy, and job material is always discarded;
-  output is restored only for a journaled successful run, and otherwise
-  discarded to avoid restoring untrusted partial output.
+  before sealing and after every sealing phase. It records custody paths,
+  process identity, and phase. Broker-owned `finalize` is the only terminal
+  release path; it verifies process/container absence, reconciles journal,
+  staging, bundle, workspace, and state records, and removes the journal last.
+  Input, proxy, and job material is always discarded; output is restored only
+  for a journaled successful run, and otherwise discarded to avoid restoring
+  untrusted partial output. The stale sweeper invokes the same finalization
+  primitive using the root-configured reclaim age.
 - The broker configuration pins `sandbox_uid: 65532` and `sandbox_gid: 65532`,
   matching the sandbox image's `USER 65532:65532` declaration. Preflight
   verifies these deployed values against the image contract. Test-only

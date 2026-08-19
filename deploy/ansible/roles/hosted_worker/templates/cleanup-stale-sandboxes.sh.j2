@@ -2,8 +2,7 @@
 set -eu
 
 helper="{{ hosted_runsc_helper }}"
-minimum_age_seconds=$(({{ hosted_cleanup_min_age_minutes }} * 60))
 
 exec sudo --non-interactive "$helper" <<EOF
-{"operation":"cleanup","minimum_age_seconds":$minimum_age_seconds}
+{"operation":"cleanup"}
 EOF

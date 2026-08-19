@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 MAX_RESULT_BYTES = 1_000_000
 BROKER_EXIT_FAILURE_MESSAGES = {
     65: "sandbox state verification failed",
-    66: "sandbox remained after delete",
+    66: "sandbox remained after finalize",
 }
 
 
@@ -74,7 +74,7 @@ def _map_runtime_execution_error(exc: Exception) -> RuntimeResult:
             return _redacted_failure("timeout")
         if "cancelled" in msg:
             return _redacted_failure("cancelled")
-        if "state verification" in msg or "remained after delete" in msg:
+        if "state verification" in msg or "remained after finalize" in msg:
             return _redacted_failure("cleanup_error")
         if "cleanup" in msg:
             return _redacted_failure("cleanup_error")
@@ -214,6 +214,7 @@ class RunscSandboxRunner:
 
         container_id = f"se-{uuid.uuid4().hex[:12]}"
         root_dir = Path(config.RUNSC_STATE_DIR) / container_id
+        proc: asyncio.subprocess.Process | None = None
         try:
             request = {
                 "operation": "run",
@@ -238,14 +239,19 @@ class RunscSandboxRunner:
             try:
                 await self._wait_for_sandbox(proc, cancellation, job.execution_deadline)
             finally:
-                with contextlib.suppress(ProcessLookupError, OSError):
-                    proc.send_signal(signal.SIGKILL)
-                with contextlib.suppress(asyncio.TimeoutError):
-                    await asyncio.wait_for(proc.wait(), timeout=10.0)
-                await self._runsc_delete(root_dir, container_id)
+                if proc.returncode is None:
+                    with contextlib.suppress(ProcessLookupError, OSError):
+                        proc.send_signal(signal.SIGTERM)
+                    with contextlib.suppress(asyncio.TimeoutError):
+                        await asyncio.wait_for(proc.wait(), timeout=5.0)
+                    if proc.returncode is None:
+                        with contextlib.suppress(ProcessLookupError, OSError):
+                            proc.kill()
+                        with contextlib.suppress(asyncio.TimeoutError):
+                            await asyncio.wait_for(proc.wait(), timeout=10.0)
         finally:
-            # The broker owns bundle and state cleanup.
-            pass
+            if proc is not None:
+                await self._runsc_finalize(container_id)
 
     def _validate_prerequisites(self) -> None:
         if not self.runsc_binary or not self.runsc_helper:
@@ -461,10 +467,8 @@ class RunscSandboxRunner:
             logger.warning("runsc exited with code %s", proc.returncode)
             raise RuntimeExecutionError(f"runsc exited with code {proc.returncode}")
 
-    def _build_delete_argv(
-        self, root_dir: Path, container_id: str
-    ) -> list[str]:
-        """Build the `runsc delete` argv for the per-attempt root directory."""
+    def _build_finalize_argv(self) -> list[str]:
+        """Build the argument-free broker invocation for finalization."""
         if self.rootless:
             raise RuntimeExecutionError("rootless runsc is not supported")
         return ["sudo", "--non-interactive", self.runsc_helper]
@@ -481,7 +485,7 @@ class RunscSandboxRunner:
         """Return True if gVisor reports the container no longer exists.
 
         `runsc list` is used rather than relying on the filesystem, because the
-        sandbox process can outlive its state directory if delete fails.  The
+        sandbox process can outlive its state directory if finalization fails. The
         command must exit 0; any non-zero exit or unparseable output is treated
         as "not gone" and fails closed.
         """
@@ -524,15 +528,9 @@ class RunscSandboxRunner:
                 return False
         return True
 
-    async def _runsc_delete(
-        self, root_dir: Path, container_id: str
-    ) -> None:
-        """Delete the gVisor container and verify it is gone.
-
-        Uses the same `--root` that was passed to `runsc run`, requires a clean
-        exit, and confirms the container no longer appears in `runsc list`.
-        """
-        argv = self._build_delete_argv(root_dir, container_id)
+    async def _runsc_finalize(self, container_id: str) -> None:
+        """Release all broker custody for one terminal attempt."""
+        argv = self._build_finalize_argv()
         proc = await asyncio.create_subprocess_exec(
             *argv,
             stdin=asyncio.subprocess.PIPE,
@@ -542,9 +540,8 @@ class RunscSandboxRunner:
         await self._send_broker_request(
             proc,
             {
-                "operation": "delete",
+                "operation": "finalize",
                 "container_id": container_id,
-                "state_dir": str(root_dir),
             },
         )
         try:
@@ -555,13 +552,11 @@ class RunscSandboxRunner:
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(proc.wait(), timeout=5.0)
             if proc.returncode is None:
-                raise RuntimeExecutionError(
-                    "runsc delete did not terminate after SIGKILL"
-                )
-            raise RuntimeExecutionError("runsc delete timed out")
+                raise RuntimeExecutionError("runsc finalize did not terminate")
+            raise RuntimeExecutionError("runsc finalize timed out")
 
         if proc.returncode != 0:
-            _raise_for_broker_exit(proc.returncode, "delete")
+            _raise_for_broker_exit(proc.returncode, "finalize")
 
 
 

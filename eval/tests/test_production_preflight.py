@@ -200,6 +200,7 @@ class _Probe:
                 '"bundle_root": "/var/lib/se-skills/bundles", '
                 '"workspace_root": "/var/lib/se-skills/workspaces", '
                 '"sandbox_uid": 65532, "sandbox_gid": 65532, '
+                '"cleanup_min_age_seconds": 3600, '
                 '"journal_phase_pause_seconds": 0}'
             )
         candidate = Path(path)

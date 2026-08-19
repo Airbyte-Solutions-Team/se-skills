@@ -307,7 +307,7 @@ def _render_cleanup_script(
                 if (
                     not state.is_dir()
                     or time.time() - state.stat().st_mtime
-                    < request["minimum_age_seconds"]
+                    < 0
                 ):
                     continue
                 identifier = state.name

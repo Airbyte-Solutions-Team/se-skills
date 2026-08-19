@@ -735,15 +735,15 @@ class _FakeStdin:
 
 
 @pytest.mark.asyncio
-async def test_runsc_sandbox_delete_argv_structure() -> None:
-    """Delete uses only the root-owned broker argv; request details stay on stdin."""
+async def test_runsc_sandbox_finalize_argv_structure() -> None:
+    """Finalize uses only the root-owned broker argv; request details stay on stdin."""
     runner = RunscSandboxRunner(
         runsc_binary="/usr/local/bin/runsc",
         rootfs="/var/lib/runsc/rootfs",
         network="none",
         rootless=False,
     )
-    argv = runner._build_delete_argv(Path("/bundle/root"), "se-abc123")
+    argv = runner._build_finalize_argv()
     assert argv == ["sudo", "--non-interactive", "/usr/local/sbin/se-skills-runsc"]
     for arg in argv:
         assert ";" not in arg
@@ -753,8 +753,8 @@ async def test_runsc_sandbox_delete_argv_structure() -> None:
         assert "$" not in arg
 
 @pytest.mark.asyncio
-async def test_runsc_sandbox_delete_rejects_rootless_mode() -> None:
-    """Delete also rejects the unsupported rootless mode."""
+async def test_runsc_sandbox_finalize_rejects_rootless_mode() -> None:
+    """Finalize also rejects the unsupported rootless mode."""
     runner = RunscSandboxRunner(
         runsc_binary="/usr/local/bin/runsc",
         rootfs="/var/lib/runsc/rootfs",
@@ -762,7 +762,7 @@ async def test_runsc_sandbox_delete_rejects_rootless_mode() -> None:
         rootless=True,
     )
     with pytest.raises(RuntimeExecutionError, match="rootless"):
-        runner._build_delete_argv(Path("/bundle/root"), "se-abc123")
+        runner._build_finalize_argv()
 
 
 @pytest.mark.asyncio
@@ -799,14 +799,14 @@ async def test_runsc_sandbox_list_nonzero_raises(monkeypatch: pytest.MonkeyPatch
 
 @pytest.mark.parametrize(
     ("returncode", "message"),
-    [(65, "state verification"), (66, "remained after delete")],
+    [(65, "state verification"), (66, "sandbox remained after finalize")],
 )
 def test_broker_exit_sentinels_map_to_closed_cleanup_failures(
     returncode: int, message: str
 ) -> None:
     """Broker sentinels never escape as undocumented generic failures."""
     with pytest.raises(RuntimeExecutionError, match=message):
-        _raise_for_broker_exit(returncode, "delete")
+        _raise_for_broker_exit(returncode, "finalize")
     result = _map_runtime_execution_error(
         RuntimeExecutionError(message)
     )
@@ -833,85 +833,6 @@ async def test_runsc_sandbox_list_unparseable_raises(monkeypatch: pytest.MonkeyP
 
 
 @pytest.mark.asyncio
-async def test_runsc_sandbox_delete_uses_root_dir(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`_runsc_delete` invokes `runsc --root=<root_dir> delete --force <id>`."""
-    runner = RunscSandboxRunner(
-        runsc_binary="/usr/local/bin/runsc", rootfs="/var/lib/runsc/rootfs"
-    )
-    root_dir = Path(tempfile.mkdtemp()) / "root"
-    root_dir.mkdir()
-    container_id = "se-test"
-
-    calls: list[list[str]] = []
-
-    async def fake_exec(*args: str, **kwargs: Any) -> _FakeSubprocess:
-        calls.append(list(args))
-        if "delete" in args:
-            return _FakeSubprocess(returncode=0)
-        return _FakeSubprocess(returncode=0, list_stdout=b"ID\tPID\tSTATUS\n")
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-    await runner._runsc_delete(root_dir, container_id)
-    assert calls == [["sudo", "--non-interactive", "/usr/local/sbin/se-skills-runsc"]]
-
-
-@pytest.mark.asyncio
-async def test_runsc_sandbox_delete_nonzero_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`_runsc_delete` raises if `runsc delete` exits non-zero."""
-    runner = RunscSandboxRunner(
-        runsc_binary="/usr/local/bin/runsc", rootfs="/var/lib/runsc/rootfs"
-    )
-    root_dir = Path(tempfile.mkdtemp()) / "root"
-    root_dir.mkdir()
-
-    async def fake_exec(*args: str, **kwargs: Any) -> _FakeSubprocess:
-        return _FakeSubprocess(returncode=1)
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-    with pytest.raises(Exception):
-        await runner._runsc_delete(root_dir, "se-test")
-
-
-@pytest.mark.asyncio
-async def test_runsc_sandbox_delete_timeout_kills(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`_runsc_delete` kills and reports a timeout if `runsc delete` hangs."""
-    runner = RunscSandboxRunner(
-        runsc_binary="/usr/local/bin/runsc", rootfs="/var/lib/runsc/rootfs"
-    )
-    root_dir = Path(tempfile.mkdtemp()) / "root"
-    root_dir.mkdir()
-
-    proc = _FakeSubprocess(returncode=None, wait_delay=60.0)
-
-    async def fake_exec(*args: str, **kwargs: Any) -> _FakeSubprocess:
-        return proc
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-    with pytest.raises(Exception) as exc:
-        await runner._runsc_delete(root_dir, "se-test")
-    assert proc.killed is True
-    assert "timed out" in str(exc.value).lower() or "terminate" in str(exc.value).lower()
-
-
-@pytest.mark.asyncio
-async def test_runsc_sandbox_delete_delegates_verification_to_broker(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The root broker performs list verification before removing state."""
-    runner = RunscSandboxRunner(
-        runsc_binary="/usr/local/bin/runsc", rootfs="/var/lib/runsc/rootfs"
-    )
-    root_dir = Path(tempfile.mkdtemp()) / "root"
-    root_dir.mkdir()
-    container_id = "se-test"
-
-    async def fake_exec(*args: str, **kwargs: Any) -> _FakeSubprocess:
-        return _FakeSubprocess(returncode=0)
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-    await runner._runsc_delete(root_dir, container_id)
-
-
 @pytest.mark.asyncio
 async def test_runsc_sandbox_state_directory_removed(
     monkeypatch: pytest.MonkeyPatch,
@@ -959,7 +880,7 @@ async def test_runsc_sandbox_state_directory_removed(
 
 
 @pytest.mark.asyncio
-async def test_runsc_delete_failure_preserves_state_directory(
+async def test_runsc_finalize_failure_preserves_state_directory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A failed broker cleanup leaves the durable state for investigation."""
@@ -985,10 +906,10 @@ async def test_runsc_delete_failure_preserves_state_directory(
             rootless=False,
         )
 
-        async def fail_delete(root_dir: Path, container_id: str) -> None:
+        async def fail_finalize(container_id: str) -> None:
             raise RuntimeExecutionError("cleanup verification failed")
 
-        monkeypatch.setattr(runner, "_runsc_delete", fail_delete)
+        monkeypatch.setattr(runner, "_runsc_finalize", fail_finalize)
         with pytest.raises(RuntimeExecutionError):
             await runner.run(
                 _make_job(input_dir, output_dir),

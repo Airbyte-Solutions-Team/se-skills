@@ -38,6 +38,7 @@ class ProductionPreflightSettings(BaseModel):
     non_worker_uid: int
     sandbox_uid: int = 65532
     sandbox_gid: int = 65532
+    cleanup_min_age_seconds: int = 3600
     journal_phase_pause_seconds: float = 0.0
     database_url: str
     storage_url: str
@@ -143,6 +144,7 @@ def run_production_preflight(
             non_worker_uid=settings.non_worker_uid,
             sandbox_uid=settings.sandbox_uid,
             sandbox_gid=settings.sandbox_gid,
+            cleanup_min_age_seconds=settings.cleanup_min_age_seconds,
             journal_phase_pause_seconds=settings.journal_phase_pause_seconds,
             pins=settings.pins,
             supply_chain=supply_chain,

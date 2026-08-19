@@ -71,6 +71,7 @@ jobs:
               for case in root.iter("testcase")
               if "test_runsc_broker_lifecycle" in case.attrib.get("classname", "")
           ]
+          expected = 27
           executed = [
               case
               for case in cases
@@ -78,11 +79,15 @@ jobs:
           ]
           if not cases:
               raise SystemExit("broker lifecycle test file collected no tests")
-          if not executed:
+          if len(cases) != expected:
               raise SystemExit(
-                  "broker lifecycle test file collected tests but executed none"
+                  f"broker lifecycle collected {len(cases)} cases; expected {expected}"
               )
-          print(f"broker lifecycle cases: {len(executed)} executed")
+          if len(executed) != expected:
+              raise SystemExit(
+                  f"broker lifecycle executed {len(executed)} cases; expected {expected}"
+              )
+          print(f"broker lifecycle cases: {len(executed)} executed, zero skipped")
           PY
 
       - name: Run mock evaluation suite
