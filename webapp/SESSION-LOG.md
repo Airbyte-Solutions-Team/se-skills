@@ -2,10 +2,16 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 19, 2026 — privileged lifecycle evidence hardening on `devin/slice5b2b1-deployment-foundation`._
+_Last updated: August 19, 2026 — merged `main` at `0b82f46` into `devin/slice5b2b1-deployment-foundation`; privileged lifecycle evidence and Windows compatibility updates._
 
 
 ## Built this session (newest first — see `git log`)
+
+- **`full-qual` output-nesting fix + more Windows UTF-8 crashes (August 19).**
+  1. **`full-qual` saved its two child docs one folder too deep.** `webapp/services/skill_runtime_service.py`'s `_build_prompt` injects a save-path instruction into every skill's prompt, but it only handled the single-skill case (`save under outputs/<skill-name>/`). For the `full-qual` wrapper — which produces two documents (`biz-qual`, `tech-qual`) — that instruction was ambiguous, and outputs landed at `outputs/full-qual/biz-qual/` and `outputs/full-qual/tech-qual/` instead of the documented `outputs/biz-qual/` / `outputs/tech-qual/`. Because `OutputService.walk_account_outputs` and `_output_dir` only look one level under `outputs/` (non-recursive), the extra nesting made both docs invisible to the webapp dashboard and to `orchestrator.py`'s upstream-prerequisite checks. Added a `WRAPPER_CHILD_SKILLS` map and special-cased the prompt for any skill listed in it, so each child now saves to its own sibling folder as if run standalone — generalizes to future wrapper skills without new logic. Also manually relocated one already-generated pair of misplaced Latecoere outputs to the correct paths.
+  2. **More `cp1252` crashes on Windows.** Same root cause as item 4 below, different call sites: `skill_runtime_service.py`'s `/api/skills/help` read `SKILL.md` files with `Path.read_text()` (no encoding), which crashed with `UnicodeDecodeError` on a non-ASCII byte in one skill's frontmatter. `output_service.py` had the same gap on every read/write of generated output docs — content that routinely contains 🟢🟡🔴⚠️ status markers — across `read_output_content`, `read_output_html`, `export_pdf`, `export_internal_html`, and the coverage-handoff `push_to_repo` flow. All now pass `encoding="utf-8"` explicitly; no-op on macOS/Linux where the default locale is already UTF-8.
+  3. **Stale `output_location` regex.** `skill_runtime_service.py`'s help-doc extraction only matched the legacy `~/airbyte-work/01-customers/.../outputs/...` path literal, which no `SKILL.md` has used since the July 2026 migration to the `{customers_dir}` placeholder convention — the field was silently always empty. Regex now matches both forms.
+  4. **Verification:** ran `eval/tests` (non-hosted) before and after on Windows and diffed the failing-test list — identical (75 pre-existing failures, all Linux-only `runsc`/gVisor sandbox tests, NTFS symlink-safety edge cases, or one pre-existing unrelated Windows path-separator bug in `delete_output`'s trash-flattening). Zero new failures.
 
 - **Strengthened privileged lifecycle evidence (August 19).**
   1. The on-start journal fault now pre-creates the broker's temporary journal
