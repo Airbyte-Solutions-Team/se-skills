@@ -1,0 +1,14 @@
+---
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Restart hosted worker
+  ansible.builtin.systemd:
+    name: "{{ hosted_service_unit }}"
+    state: restarted
+
+- name: Restart systemd-journald
+  ansible.builtin.systemd:
+    name: systemd-journald
+    state: restarted

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted — core runtime decision operative for Slices 5B1 and 5B2A; production host provisioning, registry signing, and live Anthropic smoke testing remain Slice 5B2B decisions |
+| **Status** | Accepted — core runtime decision operative for Slices 5B1, 5B2A, and the 5B2B1 deployment foundation; real host provisioning and live Anthropic smoke testing remain Slice 5B2B2 |
 | **Date** | 2026-08-11 |
 | **Deciders** | Devin (implementation), requester (review) |
 | **Applies to** | Slice 5B1 (trusted worker-side orchestration) and Slice 5B2 (gVisor sandbox + production model proxy) |
@@ -43,6 +43,70 @@ The managed container option is treated as a deployment variant of option 1 rath
 | Portability and vendor lock-in | The contract should be provider-neutral enough to swap the sandbox backend later. |
 
 ## Option 1: Manual Anthropic Messages API typed-tool loop + gVisor-backed `runsc` container (recommended)
+
+### 5B2B1 host privilege decision
+
+The deployed worker uses a narrowly privileged root-owned Python broker rather
+than gVisor rootless mode. The worker may sudo only to
+`/usr/local/sbin/se-skills-runsc` with an explicit sudoers empty-argument
+specification; the broker accepts a strict frozen request on
+stdin and authors the complete OCI bundle and config itself. Rootfs, process
+argv/environment, UID/GID, capabilities, devices, namespaces, resource
+limits, and mounts are broker-controlled; worker input is limited to the
+container ID, sealed workspace paths, proxy socket, and typed job fields. This preserves
+the OCI process UID 65532 without provisioning subuid/subgid ranges or
+`newuidmap`/`newgidmap` setuid helpers. gVisor's rootless guide states that
+`--rootless` maps only the caller UID and cannot map another user; the explicit
+mapping path is therefore rejected for this host contract. `NoNewPrivileges`
+is disabled only for this service-to-helper transition; the remaining systemd
+hardening and `RestrictSUIDSGID=yes` remain in force.
+
+The broker's root-owned configuration is rendered from the role's configured
+runsc, rootfs, state, bundle, and staging paths, and preflight verifies the
+helper/config/sudoers pair. It seals worker workspaces by no-follow validation
+and atomic rename into a root-owned staging parent before binding them. It
+accepts and forwards the worker's text-format list request without injecting
+worker flags; list/finalize verification and stale cleanup use this same
+boundary.
+Requests use bounded, operation-specific standard-library dataclasses with
+strict types and closed fields; the broker has no third-party imports. `run`
+carries the job and sealed workspace paths, `list` carries a state path,
+`finalize` carries only a container ID, and `cleanup` carries no fields; its
+reclaim age is root-configured. The broker owns the
+complete OCI document, including the fixed image entrypoint/environment,
+UID/GID, mounts, namespaces, capabilities, devices, read-only rootfs, and
+deadline-derived CPU limit. The worker maps broker sentinels 65 (unverifiable
+list output) and 66 (container still present after delete verification) to
+closed cleanup failures.
+
+The broker executes with `/usr/bin/python3 -I` and only the standard library.
+Preflight runs that isolated interpreter to obtain its actual `sys.path`, then
+checks every resolved component, the broker script, and config for root
+ownership and non-writability. The host Python 3.12 contract is separate from
+the sandbox image's Python 3.11 contract.
+The root-owned broker configuration carries the sandbox process UID/GID, and
+preflight verifies the deployed `65532:65532` values against the image
+contract.
+
+Custody is journaled under the root-owned runsc journal before the first
+workspace rename and fsynced after each sealing phase. The journal, rather
+than `finally`, is the recovery source of truth after broker crash or SIGKILL.
+The broker owns a process group for each runsc child, records PID/PGID/start
+time identity, and terminates/escalates only while ownership remains
+verifiable. A cgroup adds no required guarantee beyond the existing service
+cgroup and explicit process-group ownership. Broker-owned `finalize` is the
+only terminal release path: it verifies absence, reconciles state, bundle,
+staging, workspace, and journal custody, destroys input, proxy, and job
+material, and removes the journal last. It restores output only for a durably
+journaled successful run; partial or unknown output is discarded.
+Finalize prepares output with descriptor-based no-follow traversal and
+ownership/mode changes in root-only staging, then publishes it with a
+no-replace atomic rename as the last workspace mutation. It never walks or
+changes the published worker path; a destination race fails closed and
+retains the journal. The runsc child is initially blocked by a broker-owned
+release pipe. The broker durably records the child PID/PGID/start-time
+identity before releasing that pipe, and synchronously terminates the child
+if journaling or fsync fails.
 
 **Vendor references (2026-08-11):**
 - Anthropic Messages API reference: `https://docs.anthropic.com/en/api/messages`
@@ -200,7 +264,12 @@ A managed service without a gVisor or microVM layer does not provide the job-lev
 
 For the post-call runtime we will use **Option 1: a manual Anthropic Messages API typed-tool loop with a worker-side model proxy, running inside a per-job gVisor-backed `runsc` container.**
 
-The core elements of this decision are now operative for Slice 5B1: the worker builds a `RuntimeJob`, the sandbox only receives a read-only input manifest and temporary output workspace, model calls are mediated through a worker-side proxy, and the worker validates and persists the final artifact outside the sandbox. gVisor/runsc image build, network namespace provisioning, deployment host selection, and the live Anthropic model proxy are explicitly deferred to Slice 5B2.
+The core elements of this decision are operative for Slice 5B1 and Slice 5B2A.
+Slice 5B2B1 now contains the pinned image/release tooling, root-owned evidence
+manifest loading, canonical rootfs verification, durable state paths, Ubuntu
+host contract, Ansible role, and deterministic/gated smoke entry points.
+Applying the role to a real host and running the live Anthropic smoke remain
+Slice 5B2B2.
 
 This gives the highest agent fidelity with the smallest trusted surface area. The design is provider-neutral where possible and can be moved to Firecracker or a managed gVisor service without changing the worker contract.
 

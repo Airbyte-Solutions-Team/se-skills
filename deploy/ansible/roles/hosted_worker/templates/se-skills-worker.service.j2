@@ -1,0 +1,45 @@
+[Unit]
+Description=SE Skills hosted worker
+Requires={{ hosted_firewall_unit }}
+After=network-online.target {{ hosted_firewall_unit }}
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User={{ hosted_worker_user }}
+Group={{ hosted_worker_group }}
+WorkingDirectory={{ hosted_app_dir }}
+EnvironmentFile={{ hosted_env_file }}
+Environment=HOSTED_MODE=1
+Environment=HOSTED_ENV=production
+ExecStart={{ hosted_venv_dir }}/bin/python {{ hosted_app_entrypoint }} --runtime post-call-runsc
+Restart=on-failure
+RestartSec=10
+# sudo is limited to the root-owned, argv-validating runsc launcher.
+NoNewPrivileges=no
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+ReadWritePaths={{ hosted_state_dir }}
+RuntimeDirectory=se-skills
+RuntimeDirectoryMode=0700
+MemoryMax={{ hosted_pins.limits.worker_memory_max_bytes }}
+CPUQuota={{ hosted_pins.limits.worker_cpu_quota_percent }}%
+TasksMax={{ hosted_pins.limits.worker_pid_max }}
+LimitNOFILE={{ hosted_pins.limits.worker_nofile_max }}
+LimitFSIZE={{ hosted_pins.limits.worker_fsize_max_bytes }}
+# ProtectClock and PrivateDevices are omitted because runsc needs host clock
+# and device namespace access to initialize its sandbox.
+
+[Install]
+WantedBy=multi-user.target

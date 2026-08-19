@@ -29,8 +29,21 @@ from eval.tests.hosted_helpers import (
 from hosted import storage as hosted_storage
 from hosted.post_call_orchestrator import OrchestratorContext, PostCallOrchestrator
 from hosted.runtime_contract import RuntimeResult, SkillRuntime
+from hosted import config as hosted_config
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.hosted]
+
+
+@pytest.fixture(autouse=True)
+def worker_workspace_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Provide the provisioned workspace root for deterministic orchestrator tests."""
+    workspace_root = tmp_path / "worker-workspaces"
+    workspace_root.mkdir()
+    monkeypatch.setattr(hosted_config, "RUNSC_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setattr(
+        "hosted.post_call_orchestrator.config.RUNSC_WORKSPACE_ROOT",
+        str(workspace_root),
+    )
 
 
 @pytest.fixture

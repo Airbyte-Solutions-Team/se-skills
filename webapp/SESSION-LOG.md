@@ -2,7 +2,7 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 19, 2026 — HEAD 60c8d8b on `devin/1787165573-postcall-local-webapp-fixes`. Clarified post-call Source Coverage placement._
+_Last updated: August 19, 2026 — HEAD 0e12974 on `devin/1787165573-postcall-local-webapp-fixes`. Merged current `main` and preserved local Source Coverage behavior._
 
 
 ## Built this session (newest first — see `git log`)
@@ -24,6 +24,61 @@ _Last updated: August 19, 2026 — HEAD 60c8d8b on `devin/1787165573-postcall-lo
 - **Post-call planner fallback and strict output validation (August 19).** Post-call prerequisite checks no longer block when no local transcript exists: the planner warns that it will narrow-search Gong for the most recent completed call, persist the transcript, and then analyze it. `.rtf` transcripts are recognized alongside `.txt`/`.md`. Output schema version 2 now treats Markdown links, images, reference links, footnotes, fenced code, and inline code as syntax while still rejecting unresolved placeholders; evidence markers such as `[stated — Name]` and `[inferred - source]` remain valid. Gong fallback wording is aligned across the planner, `skills/post-call/SKILL.md`, and the source-freshness playbook.
 
 - **Explicit UTF-8 at local webapp text boundaries (August 19).** Plain-text reads, writes, YAML/JSON sidecars, subprocess decoding, and generated HTML paths now pass `encoding="utf-8"` explicitly throughout `webapp/` (excluding hosted code), while binary PDF handling remains unchanged. This keeps accented names, smart punctuation, em dashes, and emoji stable regardless of the machine's locale.
+
+- **Strengthened privileged lifecycle evidence (August 19).**
+  1. The on-start journal fault now pre-creates the broker's temporary journal
+     path as a directory, forcing a root-independent `EISDIR` write failure.
+     The test proves no `running` phase was journaled, the broker reports the
+     fixed failure, the barrier child is gone, and recovery residue remains.
+  2. Added a real `RunscSandboxRunner` case that observes the broker's blocked
+     barrier child through `/proc/<pid>/task/<pid>/children` before killing the
+     broker, then verifies the child is gone and terminal custody is completed.
+  3. The hostile publication test now proves either a recoverable journal is
+     retained or a safe worker-owned directory was published. The exact
+     lifecycle gate is now 30 cases.
+
+- **Closed privileged lifecycle publication and spawn windows (August 19).**
+  1. Finalization now validates and sets output ownership/modes through
+     descriptor-based no-follow operations while the tree remains in
+     root-only staging, then uses a no-replace atomic rename as the final
+     workspace mutation. Destination races retain the journal and never
+     follow worker-controlled symlinks.
+  2. Runsc starts behind a broker-owned release barrier; PID/PGID/start-time
+     identity is journaled and fsynced before release, and on-start journal
+     failures synchronously terminate the blocked child.
+  3. Added real `RunscSandboxRunner` coverage for hostile output publication
+     races and identity-journal failure, increasing the exact lifecycle gate
+     to 29 cases before the follow-up evidence cases.
+
+- **Closed journal-less hosted-worker residue (August 19).**
+  1. Extended the root-configured stale sweep beyond journal records to find
+     old state, bundle, and staging residue, while retaining fail-closed
+     behavior for unsafe paths, malformed or mismatched journals, and
+     unverifiable container absence.
+  2. Reclaim deletes capability-bearing bundle material first and removes a
+     stale journal last; the sweep never signals a process without a
+     trustworthy identity record.
+  3. Added deterministic coverage for corrupt journals, mismatched journals,
+     journal-less residue, and retention when `runsc list` cannot prove
+     absence.
+
+- **Productionized finalize-only hosted-worker custody (August 19).**
+  1. Replaced the broker's terminal `delete` request with broker-owned
+     `finalize(container_id)`, which verifies process/container absence and
+     reconciles state, bundle, staging, workspace, worker paths, and the
+     journal before removing the journal last. Cleanup now accepts no
+     worker-supplied age and invokes the same finalization primitive using
+     root-owned configuration.
+  2. Journaled runsc PID/PGID/start-time identity and persisted verified
+     process members so stale cleanup never signals an unverifiable reused
+     process group. Broker SIGTERM handling escalates to SIGKILL within its
+     bounded lifetime.
+  3. Added real `RunscSandboxRunner` subprocess custody coverage for all six
+     sealing phases, SIGTERM/SIGKILL, running and SIGTERM-ignoring fake runsc,
+     normal success, and PID/PGID reuse. The lifecycle file now has an exact
+     27-case execution gate.
+  4. Updated the hosted-worker host contract, runbook, and ADR-005 for the
+     finalize-only boundary and root-configured cleanup age.
 
 - **Windows compatibility fixes for local (non-hosted) usage (August 19).**
   1. **Workspace root no longer hardcoded.** `webapp/config.py` previously hardcoded `WORKSPACE = ~/airbyte-work`, ignoring `.se-config.yaml`'s `workspace_root` — on a machine using the newer `~/.se-skills` default, the webapp silently looked at (and would have written to) a workspace that never existed, showing no accounts and no SFDC sync results with no visible error. `_resolve_workspace()` now follows the same `$SE_WORKSPACE` > `.se-config.yaml: workspace_root` > `~/.se-skills` order the skills already use, with the config file itself looked up at `~/.se-skills/.se-config.yaml` first, then the legacy `~/airbyte-work/.se-config.yaml`. Existing `~/airbyte-work` installs keep their `01-customers`/`02-repos` folder names automatically (only a resolved root outside `~/airbyte-work` gets the newer flat `customers/` name), so this is a no-op for pre-existing setups.

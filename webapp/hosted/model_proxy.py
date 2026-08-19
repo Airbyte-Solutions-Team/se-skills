@@ -126,6 +126,7 @@ class ProxyConfig(BaseModel):
     secret: str
     anthropic_api_key: str
     anthropic_api_url: str = "https://api.anthropic.com"
+    anthropic_proxy_url: str = ""
     anthropic_api_version: str = "2023-06-01"
     max_body_bytes: int = MAX_BODY_BYTES
     max_response_bytes: int = MAX_RESPONSE_BYTES
@@ -674,6 +675,7 @@ def _default_config() -> ProxyConfig:
         secret=secret,
         anthropic_api_key=key,
         anthropic_api_url=config.ANTHROPIC_API_URL,
+        anthropic_proxy_url=config.ANTHROPIC_EGRESS_PROXY_URL,
         anthropic_api_version=config.ANTHROPIC_API_VERSION,
     )
 
@@ -682,6 +684,7 @@ def _default_anthropic_client(cfg: ProxyConfig) -> httpx.AsyncClient:
     """An `httpx` client pointed at the configured Anthropic origin."""
     return httpx.AsyncClient(
         base_url=cfg.anthropic_api_url,
+        proxy=cfg.anthropic_proxy_url or None,
         timeout=httpx.Timeout(MAX_UPSTREAM_TIMEOUT),
     )
 

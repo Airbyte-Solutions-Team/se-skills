@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+
+helper="{{ hosted_runsc_helper }}"
+
+exec sudo --non-interactive "$helper" <<EOF
+{"operation":"cleanup"}
+EOF

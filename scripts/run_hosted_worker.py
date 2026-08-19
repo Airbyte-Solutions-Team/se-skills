@@ -1,11 +1,11 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.11,<3.14"
 # dependencies = [
 #   "asyncpg>=0.30.0",
 #   "pyjwt[crypto]>=2.10.0",
 #   "pydantic>=2.0",
-#   "httpx>=0.25",
+#   "httpx>=0.28.1",
 #   "fastapi>=0.100",
 #   "uvicorn[standard]>=0.30.0",
 # ]
@@ -33,16 +33,26 @@ import os
 import shutil
 import signal
 import sys
+from typing import TYPE_CHECKING
 from pathlib import Path
-from typing import Any
 
 # Make the webapp package importable when running this script directly.
 repo_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(repo_root / "webapp"))
+sys.path.insert(0, str(repo_root))
 
 import config  # noqa: E402
 from hosted import config as hosted_config  # noqa: E402
+from hosted.executor import Executor  # noqa: E402
+from hosted.preflight import LocalHostProbe  # noqa: E402
+from hosted.production_preflight import (  # noqa: E402
+    ProductionPreflightSettings,
+    run_production_preflight,
+)
 from hosted.worker import Worker, create_pool  # noqa: E402
+
+if TYPE_CHECKING:
+    import asyncpg
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO").upper())
 logger = logging.getLogger("run_hosted_worker")
@@ -64,7 +74,7 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _build_executor(runtime: str, pool: asyncpg.Pool) -> Any:
+def _build_executor(runtime: str, pool: "asyncpg.Pool") -> Executor:
     """Build the executor selected by the operator.
 
     The `post-call-runsc` mode fails closed if the model proxy or sandbox
@@ -100,12 +110,72 @@ def _build_executor(runtime: str, pool: asyncpg.Pool) -> Any:
     raise RuntimeError(f"Unknown runtime: {runtime}")
 
 
+def _run_production_preflight() -> bool:
+    names = (
+        "DATABASE_WORKER_URL",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_EGRESS_PROXY_URL",
+        "MODEL_PROXY_SECRET",
+        "RUNSC_ROOTFS",
+        "SANDBOX_IMAGE_DIGEST",
+        "SANDBOX_MANIFEST_PATH",
+    )
+    present = frozenset(
+        name
+        for name in names
+        if os.environ.get(name)
+        or name == "SANDBOX_MANIFEST_PATH"
+    )
+    report = run_production_preflight(
+        ProductionPreflightSettings(
+            runsc_path=hosted_config.RUNSC_BINARY,
+            runsc_helper_path=hosted_config.RUNSC_HELPER_BINARY,
+            rootfs_path=hosted_config.RUNSC_ROOTFS,
+            manifest_path=hosted_config.SANDBOX_MANIFEST_PATH,
+            hosted_env=hosted_config.HOSTED_ENV,
+            runtime="post-call-runsc",
+            worker_user="se-worker",
+            worker_group="se-worker",
+            worker_uid=hosted_config.HOSTED_WORKER_UID,
+            non_worker_uid=hosted_config.HOSTED_NON_WORKER_UID,
+            present_config_names=present,
+            model_proxy_secret=hosted_config.MODEL_PROXY_SECRET,
+            anthropic_api_url=hosted_config.ANTHROPIC_API_URL,
+            anthropic_proxy_url=hosted_config.ANTHROPIC_EGRESS_PROXY_URL,
+            anthropic_proxy_host=hosted_config.ANTHROPIC_EGRESS_PROXY_HOST,
+            anthropic_proxy_port=hosted_config.ANTHROPIC_EGRESS_PROXY_PORT,
+            database_url=hosted_config.DATABASE_WORKER_URL,
+            storage_url=hosted_config.SUPABASE_STORAGE_ENDPOINT,
+            sandbox_image_digest=hosted_config.SANDBOX_IMAGE_DIGEST,
+            approved_https_destinations=hosted_config.APPROVED_HTTPS_DESTINATIONS,
+            approved_management_ssh_cidr=os.environ.get(
+                "HOSTED_OPERATOR_SSH_CIDR", ""
+            ),
+            approved_management_ssh_port=int(
+                os.environ.get("HOSTED_OPERATOR_SSH_PORT", "22")
+            ),
+        ),
+        LocalHostProbe(),
+    )
+    if report.ok:
+        return True
+    for check in report.failed_required():
+        logger.error("Hosted preflight failed: %s — %s", check.check_id, check.detail)
+    return False
+
+
 async def main() -> int:
     args = _parse_args()
 
     if not hosted_config.is_hosted():
         logger.error("HOSTED_MODE is not enabled")
         return 1
+    if hosted_config.HOSTED_ENV == "production":
+        if args.runtime == "echo":
+            logger.error("EchoExecutor is not allowed in production")
+            return 1
+        if not _run_production_preflight():
+            return 1
 
     pool = await create_pool()
     try:

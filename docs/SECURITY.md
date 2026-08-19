@@ -2,6 +2,15 @@
 
 ## Trust boundaries
 
+The hosted worker adds a dedicated host boundary: an untrusted per-attempt
+runsc sandbox, a trusted worker-owned model proxy over a Unix socket, and a
+separate FastAPI/API service. The host firewall is defense in depth; proxy
+mediation and TLS hostname verification remain primary controls for changing
+provider addresses. Live ordered firewall evaluation, root-owned image
+evidence, and canonical rootfs hashing are additional deployment checks. See
+`docs/HOST_CONTRACT.md` and
+`docs/NETWORK_POLICY.md`.
+
 ```
 [Browser / SPA] ──TLS──▶ [FastAPI API] ──TLS/mTLS──▶ [Supabase Auth + Postgres + Storage]
                               │

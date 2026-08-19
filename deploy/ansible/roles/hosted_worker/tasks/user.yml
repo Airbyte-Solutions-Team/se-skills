@@ -1,0 +1,14 @@
+---
+- name: Create dedicated worker group
+  ansible.builtin.group:
+    name: "{{ hosted_worker_group }}"
+    system: true
+
+- name: Create dedicated non-login worker user
+  ansible.builtin.user:
+    name: "{{ hosted_worker_user }}"
+    uid: "{{ hosted_worker_uid }}"
+    group: "{{ hosted_worker_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false

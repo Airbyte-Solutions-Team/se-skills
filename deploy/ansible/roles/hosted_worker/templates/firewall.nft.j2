@@ -1,0 +1,52 @@
+#!/usr/sbin/nft -f
+table inet se_skills {}
+delete table inet se_skills
+table inet se_skills {
+  chain input {
+    type filter hook input priority 0; policy drop;
+    iifname "lo" accept
+    ct state established,related accept
+{% if hosted_operator_ssh_cidr | length > 0 %}
+{% if ':' in hosted_operator_ssh_cidr %}
+    ip6 saddr {{ hosted_operator_ssh_cidr }} tcp dport 22 accept
+{% else %}
+    ip saddr {{ hosted_operator_ssh_cidr }} tcp dport 22 accept
+{% endif %}
+{% endif %}
+  }
+
+  chain output {
+    type filter hook output priority 0; policy drop;
+    oifname "lo" accept
+    ct state established,related accept
+    ip daddr 169.254.169.254 drop
+    ip daddr 169.254.0.0/16 drop
+    ip6 daddr fe80::/10 drop
+{% if hosted_anthropic_proxy_host | length > 0 %}
+    meta skuid {{ hosted_worker_uid }} ip daddr {{ hosted_anthropic_proxy_host }} tcp dport {{ hosted_anthropic_proxy_port }} accept
+{% endif %}
+    ip daddr 10.0.0.0/8 drop
+    ip daddr 172.16.0.0/12 drop
+    ip daddr 192.168.0.0/16 drop
+    ip6 daddr fd00::/8 drop
+    ip6 daddr fc00::/7 drop
+{% for server in hosted_dns_servers %}
+    meta skuid {{ hosted_worker_uid }} ip daddr {{ server }} udp dport 53 accept
+{% endfor %}
+{% for server in hosted_ntp_servers %}
+    meta skuid {{ hosted_worker_uid }} ip daddr {{ server }} udp dport 123 accept
+{% endfor %}
+{% if hosted_database_host | length > 0 %}
+    meta skuid {{ hosted_worker_uid }} ip daddr {{ hosted_database_host }} tcp dport {{ hosted_postgres_port }} accept
+{% endif %}
+{% if hosted_storage_host | length > 0 %}
+    meta skuid {{ hosted_worker_uid }} ip daddr {{ hosted_storage_host }} tcp dport {{ hosted_storage_port }} accept
+{% endif %}
+{% if hosted_registry_host | length > 0 %}
+    meta skuid {{ hosted_worker_uid }} ip daddr {{ hosted_registry_host }} tcp dport {{ hosted_registry_port }} accept
+{% endif %}
+{% if hosted_observability_host | length > 0 %}
+    meta skuid {{ hosted_worker_uid }} ip daddr {{ hosted_observability_host }} tcp dport {{ hosted_observability_port }} accept
+{% endif %}
+  }
+}

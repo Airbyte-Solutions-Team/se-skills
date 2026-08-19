@@ -1,0 +1,108 @@
+---
+- name: Create application and rootfs directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ hosted_app_dir }}", mode: "0755" }
+    - { path: "{{ hosted_rootfs_dir }}", mode: "0755" }
+
+- name: Create worker state directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ hosted_state_dir }}", mode: "0750" }
+    - { path: "{{ hosted_bundle_dir }}", mode: "0700" }
+
+- name: Create runsc state directory
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  loop:
+    - { path: "{{ hosted_runsc_state_dir }}" }
+    - { path: "{{ hosted_runsc_staging_dir }}" }
+    - { path: "{{ hosted_runsc_journal_dir }}" }
+
+- name: Create worker workspace root
+  ansible.builtin.file:
+    path: "{{ hosted_runsc_workspace_dir }}"
+    state: directory
+    owner: root
+    group: "{{ hosted_worker_group }}"
+    mode: "0730"
+
+- name: Create configuration directory
+  ansible.builtin.file:
+    path: /etc/se-skills
+    state: directory
+    owner: root
+    group: "{{ hosted_worker_group }}"
+    mode: "0750"
+
+- name: Create worker virtualenv
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -m
+      - venv
+      - "{{ hosted_venv_dir }}"
+  args:
+    creates: "{{ hosted_venv_dir }}/bin/python"
+  when: not ansible_check_mode
+
+- name: Install pinned worker requirements manifest
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../../requirements-worker.txt"
+    dest: "{{ hosted_worker_requirements }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install pinned worker dependencies
+  ansible.builtin.command:
+    argv:
+      - "{{ hosted_venv_dir }}/bin/pip"
+      - install
+      - --requirement
+      - "{{ hosted_worker_requirements }}"
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Verify broker system interpreter is root-owned
+  ansible.builtin.stat:
+    path: /usr/bin/python3
+  register: hosted_broker_interpreter_stat
+
+- name: Refuse unsafe broker system interpreter
+  ansible.builtin.assert:
+    that:
+      - hosted_broker_interpreter_stat.stat.exists
+      - hosted_broker_interpreter_stat.stat.isreg
+      - hosted_broker_interpreter_stat.stat.pw_name == "root"
+      - hosted_broker_interpreter_stat.stat.gr_name == "root"
+      - hosted_broker_interpreter_stat.stat.mode == "0755"
+    fail_msg: "The broker interpreter must be a root-owned non-writable executable."
+
+- name: Require operator-provisioned environment file
+  ansible.builtin.stat:
+    path: "{{ hosted_env_file }}"
+  register: hosted_env_stat
+
+- name: Refuse missing environment file
+  ansible.builtin.assert:
+    that:
+      - hosted_env_stat.stat.exists
+      - hosted_env_stat.stat.pw_name == "root"
+      - hosted_env_stat.stat.gr_name == hosted_worker_group
+      - hosted_env_stat.stat.mode == "0640"
+    fail_msg: "Provision {{ hosted_env_file }} with root:{{ hosted_worker_group }} mode 0640."

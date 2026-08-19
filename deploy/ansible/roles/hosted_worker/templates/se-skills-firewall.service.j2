@@ -1,0 +1,13 @@
+[Unit]
+Description=SE Skills deny-by-default firewall
+Before={{ hosted_service_unit }}
+After=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/nft -f {{ hosted_firewall_path }}
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

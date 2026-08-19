@@ -35,7 +35,12 @@
                                   └──────────────────┘
 ```
 
-This is a logical view. Concrete technology choices (Supabase, worker framework, sandbox implementation) are working hypotheses and will be decided per roadmap slice.
+This is a logical view. Supabase remains the beta operational hypothesis; the
+worker and runsc implementation are now present in the repository. The
+deployment foundation now also loads root-owned image evidence, hashes the
+materialized rootfs, uses durable worker-owned state paths, and verifies the
+live ordered firewall table. Provider selection and real host provisioning
+remain 5B2B2.
 
 ## FastAPI/SPA boundary
 
@@ -43,6 +48,10 @@ This is a logical view. Concrete technology choices (Supabase, worker framework,
 - FastAPI validates the session, resolves the user's organization from an active membership, and applies organization-scoped authorization on every route. The beta supports a single Airbyte organization; there is no org switcher.
 - Hosted persistence and auth are opt-in via an explicit `HOSTED_MODE=1` environment variable. When `HOSTED_MODE` is unset, the app continues to run the existing local filesystem workflows and does not require `asyncpg`/`pyjwt`.
 - No server-side rendering; the SPA calls JSON/REST endpoints.
+
+The worker deployment foundation is a separate hardened Ubuntu 24.04 x86_64
+host contract. It does not expose a public application port and is configured
+by the Ansible package under `deploy/ansible/`.
 
 ## Auth, database, and storage boundaries
 
@@ -94,7 +103,11 @@ This is a logical view. Concrete technology choices (Supabase, worker framework,
 #### Post-call orchestrator (Slice 5B1)
 
 - `PostCallOrchestrator` resolves the job's transcript and prior-context references from trusted DB state and the signed `source_manifest`, rejects missing/cross-org/cross-account/mismatched-opportunity/duplicated/aliased/unlisted inputs, and fetches transcript bytes through the Storage backend (`transcripts` bucket).
-- It creates host-generated temporary input and output directories under `/tmp`, materializes only manifest-listed inputs read-only, and invokes an injected `SkillRuntime`. No transcript bodies, credentials, signed URLs, JWTs, DB URLs, or browser-supplied paths enter the runtime.
+- It creates host-generated input and output directories beneath the provisioned
+  `/var/lib/se-skills/workspaces` root, materializes only manifest-listed inputs
+  read-only, and invokes an injected `SkillRuntime`. No transcript bodies,
+  credentials, signed URLs, JWTs, DB URLs, or browser-supplied paths enter the
+  runtime.
 - It reads the candidate `output.md` and `sidecar.json` outside the runtime, validates them with `output_schema.parse_output`, and persists only valid artifacts: an `outputs` row with a deterministic `id` derived from `job_id:attempt_number` and a private Storage object at `org_id/account_id/transcript_id/output_id/output.md` in the `outputs` bucket.
 - On any failure, temporary directories are removed. Validation failures produce a fixed, redacted `output_error` category and create no Storage object or `outputs` row. If Storage upload succeeds but the `outputs` row cannot be created, the Storage object is deleted; if the row insert succeeds but Storage upload fails, the unvalidated row is rolled back by the transaction. Retries reuse the same deterministic `output_id` without duplicating evidence.
 - `complete_job` receives the authoritative `result_output_id` and `validation_status`; `fail_job` receives a redacted error category and `validation_status`.
