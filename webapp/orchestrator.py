@@ -53,38 +53,110 @@ class PlanResult(BaseModel):
 # ---------------------------------------------------------------------------
 # Skill prerequisite rules
 # ---------------------------------------------------------------------------
-# These mirror the "Skill Sequencing Rules" in skills/_se-playbook.md. They are
-# intentionally conservative: we only block when the playbook explicitly says a
-# downstream skill needs upstream data, and we always allow an override.
+# These mirror the "Skill Sequencing Rules" in skills/_se-playbook.md. The
+# planner reports deterministic local facts, while source-resolvable conditions
+# remain advisory so the skill can resolve Gong or other sources itself.
 #
 # Legend:
-# - "transcript"  : at least one transcript must exist for the account.
+# - "transcript"  : check for a local transcript and optionally warn about a
+#   skill-level source fallback.
 # - "upstream"    : the listed upstream skills must have a *valid* output.
+# - "advisory_upstream": report upstream status and warn, but never block.
 # - "full-qual" is a convenience wrapper that runs biz-qual + tech-qual, so it
 #   only needs a transcript (it produces the upstream docs itself).
 # ---------------------------------------------------------------------------
 SKILL_PREREQUISITES: dict[str, list[dict]] = {
     "prep-call": [],
     "post-call": [{"kind": "transcript", "fallback": "gong"}],
-    "deployment-model-qual": [{"kind": "transcript"}],
-    "biz-qual": [{"kind": "transcript"}],
-    "deal-assessment": [{"kind": "transcript"}],
-    "tech-qual": [
-        {"kind": "transcript"},
-        {"kind": "upstream", "skills": ["biz-qual"], "require": "valid"},
-    ],
-    "connector-feasibility": [
-        {"kind": "upstream", "skills": ["tech-qual"], "require": "valid"},
-    ],
+    "deployment-model-qual": [{
+        "kind": "transcript",
+        "warning": (
+            "No local transcript found. Deployment Model Qual will check Gong for "
+            "customer calls; it needs customer answers to the 5 deployment "
+            "questions (or answers you provide directly) and will stop if none are available."
+        ),
+    }],
+    "biz-qual": [{
+        "kind": "transcript",
+        "warning": (
+            "No local transcript found. Biz Qual will check Gong for customer "
+            "calls before qualification and will stop if no customer voice is available."
+        ),
+    }],
+    "deal-assessment": [{"kind": "local_evidence"}],
+    "tech-qual": [{
+        "kind": "transcript",
+        "warning": (
+            "No local transcript found. Tech Qual will check Gong for calls with "
+            "technical discovery and will stop if no technical discovery is available."
+        ),
+    }],
+    "connector-feasibility": [],
     "poc-plan": [
-        {"kind": "upstream", "skills": ["biz-qual", "tech-qual"], "require": "valid"},
+        {
+            "kind": "transcript",
+            "warning": (
+                "No local transcript found. POC Plan will check Gong; it refuses "
+                "only if no customer voice exists in any source."
+            ),
+        },
+        {
+            "kind": "advisory_upstream",
+            "skills": ["biz-qual", "tech-qual"],
+            "require": "valid",
+            "warning_prefix": "Missing qualification doc(s):",
+            "warning_suffix": (
+                "POC Plan will offer to run them first, or proceed with a "
+                "scope-drift warning if you skip."
+            ),
+        },
     ],
-    "full-qual": [{"kind": "transcript"}],
+    "full-qual": [{
+        "kind": "transcript",
+        "warning": (
+            "No local transcript found. Full Qual will check Gong; biz-qual and "
+            "tech-qual each apply their own source requirements and report partial "
+            "completion if one refuses."
+        ),
+    }],
     "roi-business-case": [
-        {"kind": "upstream", "skills": ["poc-plan"], "require": "valid"},
+        {
+            "kind": "transcript",
+            "warning": (
+                "No local transcript found. ROI Business Case will check Gong; it "
+                "requires customer-stated inputs and will stop if none exist."
+            ),
+        },
+        {
+            "kind": "advisory_upstream",
+            "skills": ["biz-qual"],
+            "require": "valid",
+            "warn_if": "missing",
+            "warning": (
+                "No biz-qual found — its Metrics are the inputs to the ROI case; "
+                "the skill will offer to run it first."
+            ),
+        },
     ],
     "mutual-close-plan": [
-        {"kind": "upstream", "skills": ["roi-business-case"], "require": "valid"},
+        {
+            "kind": "transcript",
+            "warning": (
+                "No local transcript found. Mutual Close Plan will check Gong; it "
+                "requires the customer's actual buying process and will stop if no "
+                "customer voice exists."
+            ),
+        },
+        {
+            "kind": "advisory_upstream",
+            "skills": ["biz-qual"],
+            "require": "valid",
+            "warn_if": "missing",
+            "warning": (
+                "No biz-qual found — its Paper Process and Economic Buyer sections "
+                "are the backbone of a close plan; the skill will offer to run it first."
+            ),
+        },
     ],
     # Anytime / router skills have no hard prerequisites.
     "account-refresher": [],
@@ -148,6 +220,27 @@ def _has_transcript(customers_dir: Path, account: str) -> bool:
     return False
 
 
+def _has_qualification_doc(
+    customers_dir: Path,
+    account: str,
+    opp_slug: str | None,
+) -> bool:
+    """Return whether any local biz-qual or tech-qual Markdown exists."""
+    roots = [customers_dir / account / "outputs"]
+    account_dir = customers_dir / account / "opportunities"
+    if account_dir.exists():
+        roots.extend(account_dir.glob("*/outputs"))
+    if opp_slug:
+        roots.insert(0, customers_dir / account / "opportunities" / opp_slug / "outputs")
+
+    for root in roots:
+        for skill in ("biz-qual", "tech-qual"):
+            skill_dir = root / skill
+            if skill_dir.exists() and any(skill_dir.glob("*.md")):
+                return True
+    return False
+
+
 def _check_upstream(
     customers_dir: Path,
     account: str,
@@ -162,7 +255,11 @@ def _check_upstream(
     """
     latest, meta = _latest_output(customers_dir, account, skill, opp_slug)
     if meta is None:
-        return False, [f"Missing upstream `{skill}` output."], None
+        return (
+            False,
+            [f"Missing upstream `{skill}` output."],
+            UpstreamStatus(skill=skill),
+        )
 
     status = UpstreamStatus(
         skill=skill,
@@ -280,13 +377,29 @@ def check_prerequisites(
         kind = rule["kind"]
         if kind == "transcript":
             if not _has_transcript(customers_dir, account):
-                if rule.get("fallback") == "gong":
+                if rule.get("warning"):
+                    warnings.append(rule["warning"])
+                elif rule.get("fallback") == "gong":
                     warnings.append(
                         "No local transcript found for this account — post-call will search Gong "
                         "for the most recent completed call and save it to _transcripts/ before analysis."
                     )
                 else:
                     missing.append("At least one customer transcript is required.")
+        elif kind == "local_evidence":
+            has_transcript = _has_transcript(customers_dir, account)
+            has_qualification_doc = _has_qualification_doc(customers_dir, account, opp_slug)
+            if not has_transcript:
+                warnings.append(
+                    "No local transcript found; using prior qualification doc(s) as source. "
+                    "Deal Assessment will flag thin sources."
+                    if has_qualification_doc
+                    else (
+                        "No local transcript or qualification doc found. Deal Assessment will "
+                        "check Gong for customer calls before assessing and will stop if no "
+                        "customer evidence is available."
+                    )
+                )
         elif kind == "worker_config":
             modes = _check_worker_analysis_modes(customers_dir)
             if modes:
@@ -305,6 +418,29 @@ def check_prerequisites(
                     upstream[uskill] = status
                 if not ok:
                     missing.extend(msgs)
+        elif kind == "advisory_upstream":
+            missing_skills: list[str] = []
+            for uskill in rule.get("skills", []):
+                ok, _msgs, status = _check_upstream(
+                    customers_dir, account, opp_slug, uskill, rule.get("require", "valid")
+                )
+                if status:
+                    upstream[uskill] = status
+                if not ok and (
+                    rule.get("warn_if", "missing_or_invalid") == "missing_or_invalid"
+                    or status is None
+                    or status.status == "missing"
+                ):
+                    missing_skills.append(uskill)
+            if missing_skills:
+                if rule.get("warning"):
+                    warnings.append(rule["warning"])
+                else:
+                    names = ", ".join(missing_skills)
+                    warnings.append(
+                        f"{rule.get('warning_prefix', 'Missing upstream output(s):')} "
+                        f"{names}. {rule.get('warning_suffix', '')}".strip()
+                    )
 
     ready = not missing
     return PlanResult(
