@@ -90,6 +90,25 @@ def test_check_prerequisites_biz_qual_requires_transcript(tmp_path: Path) -> Non
     assert any("transcript" in m.lower() for m in plan.missing)
 
 
+def test_check_prerequisites_post_call_without_transcript_warns_about_gong(tmp_path: Path) -> None:
+    customers = tmp_path / "customers"
+    plan = orchestrator.check_prerequisites("post-call", "Acme", None, customers)
+    assert plan.ready is True
+    assert not plan.missing
+    assert any("search Gong" in warning for warning in plan.warnings)
+
+
+@pytest.mark.parametrize("extension", [".txt", ".rtf"])
+def test_check_prerequisites_post_call_accepts_local_transcript_extensions(
+    tmp_path: Path, extension: str,
+) -> None:
+    customers = tmp_path / "customers"
+    _write_transcript(customers, "Acme", f"Acme-07.14.26{extension}", "call")
+    plan = orchestrator.check_prerequisites("post-call", "Acme", None, customers)
+    assert plan.ready is True
+    assert not plan.warnings
+
+
 def test_check_prerequisites_biz_qual_ready_with_transcript(tmp_path: Path) -> None:
     customers = tmp_path / "customers"
     _write_transcript(customers, "Acme", "Acme-07.14.26.txt", "call")

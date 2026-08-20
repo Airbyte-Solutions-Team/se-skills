@@ -140,7 +140,7 @@ class SalesforceIntegration:
         except ValueError:
             return None
         f = self._sfdc_name_file(account_dir)
-        return f.read_text().strip() if f.exists() else None
+        return f.read_text(encoding="utf-8").strip() if f.exists() else None
 
     def _sfdc_like_prefix(self, account: str) -> str:
         """A SOQL-LIKE-safe prefix for matching this account's opportunities.

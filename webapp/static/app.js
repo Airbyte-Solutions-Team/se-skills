@@ -22,6 +22,18 @@ const api = async (path, opts = {}) => {
 const esc = (s) => (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 let outputMeta = {};
 
+function normalizeOutputMeta(o) {
+  o = o || {};
+  return {
+    valid: o.valid,
+    validation_status: o.validation_status || (o.valid === false ? "invalid" : "unvalidated"),
+    validation_errors: o.validation_errors || [],
+    missing_sections: o.missing_sections || [],
+    reference_freshness_at_generation: o.reference_freshness_at_generation,
+    reference_changed_since_generation: o.reference_changed_since_generation || [],
+  };
+}
+
 // Ask the planner whether a skill invocation is ready. If it is not, show a
 // browser confirm dialog with the missing prerequisites and a "Run anyway" path.
 // Free-form instructions bypass the planner entirely.
@@ -38,6 +50,9 @@ async function invokeWithPlan(payload, alreadyConfirmed = false) {
         }
         return invokeWithPlan({ ...payload, override_prerequisites: true }, true);
       }
+      if (plan.warnings && plan.warnings.length) {
+        plan.warnings.forEach((w) => showToast(w, "warn"));
+      }
     } catch (e) {
       if (e.message === "Cancelled") throw e;
       // Planner unavailable — proceed to invoke so a local/network glitch doesn't
@@ -53,7 +68,7 @@ async function invokeWithPlan(payload, alreadyConfirmed = false) {
     // ("Expected permissions" panel), so clicking Run IS the approval — no extra
     // native confirm() dialog. The two-pass handshake still satisfies the
     // backend SEC-001 gate, which requires approve_permissions=true.
-    return invokeWithPlan({ ...payload, approve_permissions: true }, alreadyConfirmed);
+    return invokeWithPlan({ ...payload, approve_permissions: true }, true);
   }
   return res;
 }
@@ -501,9 +516,9 @@ function showToast(message, kind = "ok") {
   const wrap = document.getElementById("toast-container");
   if (!wrap) return;
   const el = document.createElement("div");
-  el.className = `toast ${kind === "err" ? "err" : "ok"}`;
+  el.className = `toast ${kind === "err" ? "err" : kind === "warn" ? "warn" : "ok"}`;
   el.innerHTML =
-    `<span class="toast-icon">${kind === "err" ? "✕" : "✓"}</span>`
+    `<span class="toast-icon">${kind === "err" ? "✕" : kind === "warn" ? "⚠" : "✓"}</span>`
     + `<div class="toast-body"><div class="toast-title">${esc(message)}</div></div>`
     + `<button class="toast-x" aria-label="Dismiss">✕</button>`;
   wrap.appendChild(el);
@@ -1787,7 +1802,7 @@ function showPushError(account, message) {
 async function pageOpportunity(account, slug, oppName) {
   setCrumbs([...(await accountCrumbs(account)), { label: account, href: `#/account/${encodeURIComponent(account)}` }, { label: oppName }]);
   const outputs = await api(`/api/accounts/${encodeURIComponent(account)}/outputs?opp=${encodeURIComponent(slug)}`);
-  outputMeta = Object.fromEntries(outputs.map((o) => [o.path, { valid: o.valid, validation_status: o.validation_status || (o.valid === false ? "invalid" : "unvalidated"), validation_errors: o.validation_errors || [], missing_sections: o.missing_sections || [], reference_freshness_at_generation: o.reference_freshness_at_generation, reference_changed_since_generation: o.reference_changed_since_generation || [] }]));
+  outputMeta = Object.fromEntries(outputs.map((o) => [o.path, normalizeOutputMeta(o)]));
   // Resolve the owning member's display name (for the handoff repo-path). Owner
   // is a member id on the account; map to its name. Empty is fine (endpoint
   // falls back to a placeholder slug).
@@ -1836,7 +1851,7 @@ async function pageOpportunity(account, slug, oppName) {
   // Re-fetch the Generated Outputs list (after a run produces a new file).
   const refreshOutputs = async () => {
     const outs = await api(`/api/accounts/${encodeURIComponent(account)}/outputs?opp=${encodeURIComponent(slug)}`).catch(() => []);
-    outputMeta = Object.fromEntries(outs.map((o) => [o.path, { valid: o.valid, validation_errors: o.validation_errors || [], missing_sections: o.missing_sections || [], reference_freshness_at_generation: o.reference_freshness_at_generation, reference_changed_since_generation: o.reference_changed_since_generation || [] }]));
+    outputMeta = Object.fromEntries(outs.map((o) => [o.path, normalizeOutputMeta(o)]));
     const el = document.getElementById("outputs");
     if (!el) return;
     el.innerHTML = outs.length ? renderOutputGroups(outs) : emptyBox({ icon: "⊘", title: "No outputs yet", body: "Invoke a skill to generate the first output for this opportunity.", actions: `<button class="primary small empty-invoke">Invoke Skill</button>` });
@@ -2238,7 +2253,8 @@ function navOpenOutput(path, title, ctx) {
 
 async function openOutput(path, title, ctx) {
   const decodedPath = decodeURIComponent(path);
-  const meta = outputMeta[decodedPath] || await api("/api/output/meta?path=" + encodeURIComponent(decodedPath)).catch(() => null);
+  const rawMeta = outputMeta[decodedPath] || await api("/api/output/meta?path=" + encodeURIComponent(decodedPath)).catch(() => null);
+  const meta = rawMeta ? normalizeOutputMeta(rawMeta) : null;
   if (meta) outputMeta[decodedPath] = meta;
   const text = await api("/api/output?path=" + encodeURIComponent(decodedPath));
   const toc = [];

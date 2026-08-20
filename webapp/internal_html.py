@@ -40,7 +40,7 @@ def _style_block() -> str:
     """The rs-group <style>…</style> block, verbatim from the shared template.
     Falls back to a minimal style if the template is missing."""
     try:
-        text = _TEMPLATE.read_text()
+        text = _TEMPLATE.read_text(encoding="utf-8")
     except OSError:
         return "<style>body{font-family:-apple-system,sans-serif;max-width:900px;margin:0 auto;padding:24px;}</style>"
     # The template's HTML comment mentions "<style> block" in prose, so a naive

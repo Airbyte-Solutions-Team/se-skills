@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
 
 import output_schema
+import services.output_service as output_service_module
+from services.output_service import OutputService
 
 
 def _load_fixture(repo_root: Path, filename: str) -> str:
@@ -19,6 +22,7 @@ def _load_fixture(repo_root: Path, filename: str) -> str:
     [
         pytest.param("post-call-full.md", "full", id="valid-full"),
         pytest.param("post-call-brief.md", "brief", id="valid-brief"),
+        pytest.param("post-call-canonical.md", "full", id="valid-canonical"),
     ],
 )
 def test_post_call_valid_fixtures(filename: str, mode: str, repo_root: Path) -> None:
@@ -70,6 +74,173 @@ def test_post_call_action_item_owner_placeholder(repo_root: Path) -> None:
     assert meta.valid is False
     assert meta.validation_status == "invalid"
     assert any("[Owner]" in e for e in meta.validation_errors)
+
+
+@pytest.mark.parametrize("placeholder", ["[action]", "[Customer Name]", "[Owner]"])
+def test_post_call_rejects_unresolved_placeholder(placeholder: str, repo_root: Path) -> None:
+    text = _load_fixture(repo_root, "post-call-canonical.md").replace(
+        "The team needs a managed deployment before renewal.",
+        f"The team needs {placeholder} before renewal.",
+    )
+    meta = output_schema.parse_output("post-call", text, mode="full")
+    assert meta.valid is False
+    assert any(placeholder in e for e in meta.validation_errors)
+
+
+def test_post_call_markdown_syntax_brackets_are_not_placeholders(repo_root: Path) -> None:
+    text = _load_fixture(repo_root, "post-call-canonical.md")
+    meta = output_schema.parse_output("post-call", text, mode="full")
+    assert meta.valid is True
+    assert not any("Jump to" in e for e in meta.validation_errors)
+
+
+def test_post_call_canonical_fixture_keeps_source_coverage_last(repo_root: Path) -> None:
+    text = _load_fixture(repo_root, "post-call-canonical.md")
+    headings = re.findall(r"^## (.+)$", text, re.MULTILINE)
+    assert headings[-1] == "Source Coverage"
+    assert headings.index("Coaching Observations") < headings.index("Source Coverage")
+
+    meta = output_schema.parse_output("post-call", text, mode="full")
+    assert meta.valid is True
+    assert meta.validation_errors == []
+
+
+def test_post_call_source_coverage_without_line_counts_is_invalid(repo_root: Path) -> None:
+    text = _load_fixture(repo_root, "post-call-canonical.md").replace(
+        "(612 / 612 lines)", "Transcript was reviewed.",
+    )
+    meta = output_schema.parse_output("post-call", text, mode="full")
+    assert meta.valid is False
+    assert any("line counts" in e for e in meta.validation_errors)
+
+
+def test_sidecar_schema_version_change_reparses_and_rewrites(tmp_path: Path, repo_root: Path) -> None:
+    md_path = tmp_path / "post-call.md"
+    md_path.write_text(
+        _load_fixture(repo_root, "post-call-canonical.md"),
+        encoding="utf-8",
+    )
+    sidecar = md_path.with_suffix(".md.json")
+    sidecar.write_text(
+        json.dumps({
+            "schema_version": 1,
+            "skill": "post-call",
+            "valid": True,
+            "validation_status": "valid",
+        }),
+        encoding="utf-8",
+    )
+
+    meta = output_schema.read_or_parse_sidecar(md_path, "post-call")
+
+    assert meta.valid is True
+    rewritten = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert rewritten["schema_version"] == 2
+    assert rewritten["validation_status"] == "valid"
+
+
+def _reference_snapshot() -> list[dict[str, object]]:
+    return [
+        {
+            "source": "registry",
+            "label": "Connector registry cache",
+            "status": "fresh",
+            "date": "2026-08-19",
+            "age_days": 1,
+            "fresh": True,
+            "threshold_days": 7,
+            "path": "/workspace/registry.json",
+        }
+    ]
+
+
+def _write_v1_sidecar(md_path: Path, snapshot_key: str, snapshot: list[dict[str, object]]) -> Path:
+    sidecar = md_path.with_suffix(md_path.suffix + ".json")
+    sidecar.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "skill": "post-call",
+                "valid": False,
+                "validation_status": "invalid",
+                snapshot_key: snapshot,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return sidecar
+
+
+def test_v1_snapshot_survives_reparse_and_output_service_read(
+    tmp_path: Path, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    md_path = tmp_path / "Acme" / "outputs" / "post-call" / "post-call.md"
+    md_path.parent.mkdir(parents=True, exist_ok=True)
+    md_path.write_text(_load_fixture(repo_root, "post-call-canonical.md"), encoding="utf-8")
+    snapshot = _reference_snapshot()
+    sidecar = _write_v1_sidecar(md_path, "reference_freshness_at_generation", snapshot)
+
+    metadata = output_schema.read_or_parse_sidecar(md_path, "post-call")
+
+    assert metadata.valid is True
+    assert metadata.validation_status == "valid"
+    rewritten = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert rewritten["schema_version"] == 2
+    assert json.dumps(
+        rewritten["reference_freshness_at_generation"], separators=(",", ":")
+    ) == json.dumps(snapshot, separators=(",", ":"))
+
+    current = output_schema.ReferenceFreshness.model_validate(snapshot[0])
+    changed = output_schema.ReferenceChange(
+        source="registry",
+        label="Connector registry cache",
+        old_date="2026-08-19",
+        new_date="2026-08-20",
+        old_status="fresh",
+        new_status="stale",
+    )
+    seen: dict[str, object] = {}
+
+    def fake_compute(*args, **kwargs):
+        return [current]
+
+    def fake_compare(current_entries, generation_entries):
+        seen["generation"] = generation_entries
+        return [changed]
+
+    monkeypatch.setattr(output_service_module.reference_freshness, "compute_reference_freshness", fake_compute)
+    monkeypatch.setattr(output_service_module.reference_freshness, "compare_to_generation", fake_compare)
+    service = OutputService(
+        customers_dir=tmp_path,
+        workspace=tmp_path,
+        repo_root=tmp_path,
+        se_config=lambda: {},
+        safe_name=lambda value: value,
+        slug=lambda value: value.replace(" ", "-").lower(),
+    )
+
+    read_metadata = service.read_output_meta("Acme/outputs/post-call/post-call.md")
+
+    assert seen["generation"] == [current]
+    assert read_metadata["reference_freshness_at_generation"] == snapshot
+    assert read_metadata["reference_changed_since_generation"] == [changed.model_dump()]
+
+
+def test_legacy_v1_snapshot_migrates_during_reparse(tmp_path: Path, repo_root: Path) -> None:
+    md_path = tmp_path / "post-call.md"
+    md_path.write_text(_load_fixture(repo_root, "post-call-canonical.md"), encoding="utf-8")
+    snapshot = _reference_snapshot()
+    sidecar = _write_v1_sidecar(md_path, "reference_freshness", snapshot)
+
+    metadata = output_schema.read_or_parse_sidecar(md_path, "post-call")
+    rewritten = json.loads(sidecar.read_text(encoding="utf-8"))
+
+    assert metadata.valid is True
+    assert rewritten["schema_version"] == 2
+    assert json.dumps(
+        rewritten["reference_freshness_at_generation"], separators=(",", ":")
+    ) == json.dumps(snapshot, separators=(",", ":"))
+    assert "reference_freshness" not in rewritten
 
 
 def _remove_section(text: str, heading: str) -> str:

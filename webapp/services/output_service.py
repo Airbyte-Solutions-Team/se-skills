@@ -666,7 +666,7 @@ class OutputService:
             return
         d.mkdir(parents=True, exist_ok=True)
         safe_skill = re.sub(r"[^A-Za-z0-9._-]", "-", skill or "freeform")
-        (d / f"{safe_skill}.json").write_text(json.dumps(record))
+        (d / f"{safe_skill}.json").write_text(json.dumps(record), encoding="utf-8")
         self._write_output_sidecar(account, opp_slug, skill)
 
     def latest_run(self, account: str, opp_slug: str | None) -> dict | None:
@@ -678,7 +678,7 @@ class OutputService:
         for f in d.glob("*.json"):
             try:
                 resolve_within(self.customers_dir, str(f.relative_to(self.customers_dir)))
-                rec = json.loads(f.read_text())
+                rec = json.loads(f.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
             except Exception:

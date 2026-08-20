@@ -145,7 +145,7 @@ def render_html_pdf(html_doc: str) -> bytes:
     with tempfile.TemporaryDirectory() as td:
         html_path = os.path.join(td, "doc.html")
         pdf_path = os.path.join(td, "doc.pdf")
-        with open(html_path, "w") as f:
+        with open(html_path, "w", encoding="utf-8") as f:
             f.write(html_doc)
         subprocess.run(
             [
