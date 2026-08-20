@@ -206,7 +206,7 @@ The SE skills are designed to compose in a specific order. Skipping ahead produc
 
 ### Hard prerequisite: call data before qualification
 
-**`biz-qual` requires at least one customer transcript, local or from Gong.** **`deal-assessment` requires at least one customer transcript or one real biz-qual/tech-qual qualification document.** The skill/agent performs the final source-sufficiency check; the deterministic webapp planner reports local facts and advisory source-resolution warnings.
+**`biz-qual` requires at least one customer transcript, local or from Gong.** **`deal-assessment` requires at least one customer transcript or one real biz-qual, tech-qual, or deployment qualification document.** The skill/agent performs the final source-sufficiency check; the deterministic webapp planner reports local facts and advisory source-resolution warnings.
 
 For a brand-new prospect with **zero locally available transcripts**:
 - ✅ Run `prep-call` to plan the first call
