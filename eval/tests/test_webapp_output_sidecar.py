@@ -151,6 +151,20 @@ def test_tech_qual_runtime_metadata_tracks_references(tmp_path: Path) -> None:
     assert data["reference_sources_tracked"] is True
 
 
+def test_roi_business_case_runtime_metadata_tracks_objection_reference(tmp_path: Path) -> None:
+    svc = _svc(tmp_path)
+    md = _write_md(tmp_path, "Acme", "intro", "roi-business-case", "roi.md", "# ROI\n")
+    data = svc.read_output_meta(str(md.relative_to(tmp_path)))
+    assert data["reference_sources_tracked"] is True
+
+
+def test_roi_business_case_runtime_metadata_tracks_objection_reference(tmp_path: Path) -> None:
+    svc = _svc(tmp_path)
+    md = _write_md(tmp_path, "Acme", "intro", "roi-business-case", "roi.md", "# ROI\n")
+    data = svc.read_output_meta(str(md.relative_to(tmp_path)))
+    assert data["reference_sources_tracked"] is True
+
+
 def test_legacy_tech_qual_is_unvalidated_but_supported(tmp_path: Path) -> None:
     svc = _svc(tmp_path)
     md = _write_md(tmp_path, "Acme", "intro", "tech-qual", "legacy.md", "# Legacy technical notes\n\nOld format.\n")

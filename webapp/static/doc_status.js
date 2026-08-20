@@ -3,6 +3,16 @@
   if (root) root.docStatus = docStatus;
   if (typeof module !== "undefined" && module.exports) module.exports = docStatus;
 })(typeof window !== "undefined" ? window : globalThis, function () {
+  function escapeHtml(value) {
+    return String(value ?? "").replace(/[&<>"']/g, (character) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    }[character]));
+  }
+
   function docStatus(meta) {
     const issues = [];
     let severity = "ok";
@@ -14,7 +24,7 @@
       const vstatus = meta.validation_status || "unvalidated";
       if (vstatus === "invalid") {
         issues.push({
-          text: "Output contract issues: " + (meta.validation_errors || []).slice(0, 3).join("; "),
+          text: "Automatic checks found: " + (meta.validation_errors || []).slice(0, 3).join("; "),
           type: "error",
         });
         severity = "error";
@@ -75,5 +85,6 @@
     };
   }
 
+  docStatus.escapeHtml = escapeHtml;
   return docStatus;
 });

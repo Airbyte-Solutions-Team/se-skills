@@ -44,7 +44,7 @@ console.log(JSON.stringify(cases));
 
     assert cases["invalid"]["severity"] == "error"
     assert cases["invalid"]["issues"][0]["text"] == (
-        "Output contract issues: Missing Source Coverage"
+        "Automatic checks found: Missing Source Coverage"
     )
     assert "Missing Source Coverage" in cases["invalid"]["issues"][0]["text"]
     assert cases["unsupported"]["severity"] == "ok"
@@ -67,3 +67,28 @@ console.log(JSON.stringify(cases));
     assert not any("Reference snapshot" in issue["text"] for issue in cases["untrackedLegacy"]["issues"])
     assert cases["stale"]["severity"] == "warn"
     assert "Reference data was stale/missing when generated" in cases["stale"]["issues"][0]["text"]
+
+
+def test_doc_status_escape_html_handles_generated_validation_text(repo_root: Path) -> None:
+    """Generated validation details must stay data inside output-list tooltips."""
+    helper = repo_root / "webapp" / "static" / "doc_status.js"
+    app_js = (repo_root / "webapp" / "static" / "app.js").read_text(encoding="utf-8")
+    script = f"""
+const docStatus = require({str(helper)!r});
+const raw = '\\"><img src=x onerror=alert(1)>&amp; \\'quoted\\' </span>';
+const result = docStatus({{validation_status: "invalid", validation_errors: [raw]}});
+console.log(JSON.stringify({{issue: result.issues[0].text, escaped: docStatus.escapeHtml(result.issues[0].text)}}));
+"""
+    result = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+    data = json.loads(result.stdout)
+    assert "<" not in data["escaped"]
+    assert ">" not in data["escaped"]
+    assert '"' not in data["escaped"]
+    assert "&lt;img" in data["escaped"]
+    assert "&quot;" in data["escaped"]
+    assert "&amp;" in data["escaped"]
+    assert "&#39;" in data["escaped"]
+    assert "&lt;/span&gt;" in data["escaped"]
+    assert "window.docStatus.escapeHtml(warnTitle)" in app_js
+    assert 'title="${warnTitle}' not in app_js
+    assert app_js.count("safeWarnTitle") >= 4

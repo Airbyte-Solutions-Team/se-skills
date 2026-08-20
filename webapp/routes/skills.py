@@ -19,6 +19,7 @@ class InvokeBody(BaseModel):
     freeform: str | None = Field(default=None, max_length=20_000)
     override_prerequisites: bool = Field(default=False)
     approve_permissions: bool = Field(default=False)
+    acknowledged_choices: list[str] | None = Field(default=None)
 
 
 def _get_skill_runtime_service(request: Request) -> SkillRuntimeService:
@@ -63,6 +64,7 @@ async def api_invoke(body: InvokeBody, request: Request):
             freeform=body.freeform,
             override_prerequisites=body.override_prerequisites,
             approve_permissions=body.approve_permissions,
+            acknowledged_choices=body.acknowledged_choices,
         )
     except SkillRuntimeError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from e

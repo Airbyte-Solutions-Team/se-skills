@@ -182,9 +182,12 @@ def test_check_prerequisites_poc_plan_advises_on_invalid_upstream(tmp_path: Path
     assert plan.ready is True
     assert plan.missing == []
     assert plan.upstream["tech-qual"].status == "invalid"
-    assert plan.warnings == [
-        "Missing qualification doc(s): tech-qual. POC Plan will offer to run them first, or proceed with a scope-drift warning if you skip."
-    ]
+    assert plan.warnings == []
+    assert plan.choices == [{
+        "id": "run-quals:tech-qual",
+        "skills": ["tech-qual"],
+        "message": "Missing qualification doc(s): tech-qual. POC Plan will offer to run them first, or proceed with a scope-drift warning if you skip.",
+    }]
 
 
 def test_check_prerequisites_deal_assessment_uses_qualification_doc(tmp_path: Path) -> None:
@@ -224,13 +227,53 @@ def test_check_prerequisites_roi_and_close_are_source_resolvable(tmp_path: Path)
     assert roi.missing == []
     assert roi.warnings == [
         "No local transcript found. ROI Business Case will check Gong; it requires customer-stated inputs and will stop if none exist.",
-        "No biz-qual found — its Metrics are the inputs to the ROI case; the skill will offer to run it first.",
     ]
+    assert roi.choices == [{
+        "id": "run-quals:biz-qual",
+        "skills": ["biz-qual"],
+        "message": "No biz-qual found — its Metrics are the inputs to the ROI case; the skill will offer to run it first.",
+    }]
     assert close.ready is True
     assert close.missing == []
     assert close.warnings == [
         "No local transcript found. Mutual Close Plan will check Gong; it requires the customer's actual buying process and will stop if no customer voice exists.",
-        "No biz-qual found — its Paper Process and Economic Buyer sections are the backbone of a close plan; the skill will offer to run it first.",
+    ]
+    assert close.choices == [{
+        "id": "run-quals:biz-qual",
+        "skills": ["biz-qual"],
+        "message": "No biz-qual found — its Paper Process and Economic Buyer sections are the backbone of a close plan; the skill will offer to run it first.",
+    }]
+
+
+@pytest.mark.parametrize("text", ["", " \n\t ", "plain text without a heading"])
+def test_deal_assessment_ignores_unusable_qualification_docs(
+    tmp_path: Path, text: str,
+) -> None:
+    customers = tmp_path / "customers"
+    _write_output(customers, "Acme", None, "biz-qual", "prior.md", text)
+    plan = orchestrator.check_prerequisites("deal-assessment", "Acme", None, customers)
+    assert "No local transcript or qualification doc found." in plan.warnings[0]
+
+
+def test_deal_assessment_scopes_qualification_docs_to_selected_opportunity(tmp_path: Path) -> None:
+    customers = tmp_path / "customers"
+    _write_output(customers, "Acme", "other", "biz-qual", "prior.md", VALID_BIZ_QUAL)
+    plan = orchestrator.check_prerequisites("deal-assessment", "Acme", "intro", customers)
+    assert "No local transcript or qualification doc found." in plan.warnings[0]
+
+
+@pytest.mark.parametrize("skill_dir", ["deployment-qual", "deployment-model-qual"])
+def test_deal_assessment_accepts_deployment_qualification_doc(
+    tmp_path: Path, skill_dir: str,
+) -> None:
+    customers = tmp_path / "customers"
+    _write_output(
+        customers, "Acme", "intro", skill_dir, "prior.md",
+        "# Deployment Qual\n\nUsable.",
+    )
+    plan = orchestrator.check_prerequisites("deal-assessment", "Acme", "intro", customers)
+    assert plan.warnings == [
+        "No local transcript found; using prior qualification doc(s) as source. Deal Assessment will flag thin sources."
     ]
 
 
@@ -302,8 +345,12 @@ def test_api_plan_advises_poc_plan_without_upstream(monkeypatch, tmp_path: Path)
     assert data["missing"] == []
     assert data["warnings"] == [
         "No local transcript found. POC Plan will check Gong; it refuses only if no customer voice exists in any source.",
-        "Missing qualification doc(s): biz-qual, tech-qual. POC Plan will offer to run them first, or proceed with a scope-drift warning if you skip.",
     ]
+    assert data["choices"] == [{
+        "id": "run-quals:biz-qual,tech-qual",
+        "skills": ["biz-qual", "tech-qual"],
+        "message": "Missing qualification doc(s): biz-qual, tech-qual. POC Plan will offer to run them first, or proceed with a scope-drift warning if you skip.",
+    }]
 
 
 def test_api_invoke_biz_qual_launches_without_prerequisite_override(monkeypatch, tmp_path: Path) -> None:
@@ -321,6 +368,92 @@ def test_api_invoke_biz_qual_launches_without_prerequisite_override(monkeypatch,
     ))
     assert result.get("job_id")
     assert "blocked" not in result
+
+
+def test_api_invoke_poc_plan_requires_choice_before_launch(monkeypatch, tmp_path: Path) -> None:
+    svc, job_svc = _runtime_svc(tmp_path)
+    _write_transcript(tmp_path / "customers", "Acme", "Acme-07.14.26.txt", "call")
+
+    result = asyncio.run(svc.invoke(
+        account="Acme",
+        skill="poc-plan",
+        opportunity="intro",
+        opp_slug="intro",
+        extra=None,
+        freeform=None,
+        override_prerequisites=False,
+        approve_permissions=True,
+    ))
+    assert result["blocked"] is True
+    assert result["choices"][0]["id"] == "run-quals:biz-qual,tech-qual"
+    assert job_svc.launch_calls == []
+
+
+def test_api_invoke_poc_plan_records_acknowledged_choice(monkeypatch, tmp_path: Path) -> None:
+    svc, job_svc = _runtime_svc(tmp_path)
+    _write_transcript(tmp_path / "customers", "Acme", "Acme-07.14.26.txt", "call")
+    choice_id = "run-quals:biz-qual,tech-qual"
+
+    result = asyncio.run(svc.invoke(
+        account="Acme",
+        skill="poc-plan",
+        opportunity="intro",
+        opp_slug="intro",
+        extra=None,
+        freeform=None,
+        override_prerequisites=False,
+        approve_permissions=True,
+        acknowledged_choices=[choice_id],
+    ))
+    assert result.get("job_id")
+    assert len(job_svc.launch_calls) == 1
+    assert (
+        "The SE explicitly chose to skip running the missing upstream skill(s) "
+        "(biz-qual, tech-qual) first."
+    ) in job_svc.launch_calls[0]["prompt"]
+    assert job_svc.launch_calls[0]["meta"]["acknowledged_choices"] == [choice_id]
+
+
+@pytest.mark.parametrize(
+    ("skill", "choice_id"),
+    [
+        ("roi-business-case", "run-quals:biz-qual"),
+        ("mutual-close-plan", "run-quals:biz-qual"),
+    ],
+)
+def test_api_invoke_late_stage_skills_require_and_accept_choice(
+    tmp_path: Path, skill: str, choice_id: str,
+) -> None:
+    svc, job_svc = _runtime_svc(tmp_path)
+    _write_transcript(tmp_path / "customers", "Acme", "Acme-07.14.26.txt", "call")
+
+    blocked = asyncio.run(svc.invoke(
+        account="Acme",
+        skill=skill,
+        opportunity="intro",
+        opp_slug="intro",
+        extra=None,
+        freeform=None,
+        override_prerequisites=False,
+        approve_permissions=True,
+    ))
+    assert blocked["blocked"] is True
+    assert blocked["choices"][0]["id"] == choice_id
+    assert job_svc.launch_calls == []
+
+    launched = asyncio.run(svc.invoke(
+        account="Acme",
+        skill=skill,
+        opportunity="intro",
+        opp_slug="intro",
+        extra=None,
+        freeform=None,
+        override_prerequisites=False,
+        approve_permissions=True,
+        acknowledged_choices=[choice_id],
+    ))
+    assert launched.get("job_id")
+    assert job_svc.launch_calls[-1]["meta"]["acknowledged_choices"] == [choice_id]
 
 
 def test_api_invoke_allows_override(monkeypatch, tmp_path: Path) -> None:

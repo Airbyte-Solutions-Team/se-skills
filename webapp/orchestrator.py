@@ -46,6 +46,7 @@ class PlanResult(BaseModel):
     can_override: bool = True
     missing: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    choices: list[dict[str, Any]] = Field(default_factory=list)
     upstream: dict[str, UpstreamStatus] = Field(default_factory=dict)
     modes: dict[str, Any] | None = None
 
@@ -131,7 +132,6 @@ SKILL_PREREQUISITES: dict[str, list[dict]] = {
             "kind": "advisory_upstream",
             "skills": ["biz-qual"],
             "require": "valid",
-            "warn_if": "missing",
             "warning": (
                 "No biz-qual found — its Metrics are the inputs to the ROI case; "
                 "the skill will offer to run it first."
@@ -151,7 +151,6 @@ SKILL_PREREQUISITES: dict[str, list[dict]] = {
             "kind": "advisory_upstream",
             "skills": ["biz-qual"],
             "require": "valid",
-            "warn_if": "missing",
             "warning": (
                 "No biz-qual found — its Paper Process and Economic Buyer sections "
                 "are the backbone of a close plan; the skill will offer to run it first."
@@ -225,20 +224,29 @@ def _has_qualification_doc(
     account: str,
     opp_slug: str | None,
 ) -> bool:
-    """Return whether any local biz-qual or tech-qual Markdown exists."""
+    """Return whether selected/account-level qualification evidence is usable."""
     roots = [customers_dir / account / "outputs"]
-    account_dir = customers_dir / account / "opportunities"
-    if account_dir.exists():
-        roots.extend(account_dir.glob("*/outputs"))
     if opp_slug:
         roots.insert(0, customers_dir / account / "opportunities" / opp_slug / "outputs")
 
     for root in roots:
-        for skill in ("biz-qual", "tech-qual"):
+        for skill in ("biz-qual", "tech-qual", "deployment-qual", "deployment-model-qual"):
             skill_dir = root / skill
-            if skill_dir.exists() and any(skill_dir.glob("*.md")):
-                return True
+            if not skill_dir.is_dir():
+                continue
+            for path in skill_dir.glob("*.md"):
+                if _qualification_doc_usable(path):
+                    return True
     return False
+
+
+def _qualification_doc_usable(path: Path) -> bool:
+    """Return whether a qualification Markdown file has usable document shape."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return bool(text.strip()) and any(line.startswith("#") for line in text.splitlines())
 
 
 def _check_upstream(
@@ -370,6 +378,7 @@ def check_prerequisites(
     rules = SKILL_PREREQUISITES.get(skill, [])
     missing: list[str] = []
     warnings: list[str] = []
+    choices: list[dict[str, Any]] = []
     upstream: dict[str, UpstreamStatus] = {}
 
     modes: dict[str, Any] | None = None
@@ -434,13 +443,19 @@ def check_prerequisites(
                     missing_skills.append(uskill)
             if missing_skills:
                 if rule.get("warning"):
-                    warnings.append(rule["warning"])
+                    message = rule["warning"]
                 else:
-                    names = ", ".join(missing_skills)
-                    warnings.append(
+                    names = ", ".join(sorted(missing_skills))
+                    message = (
                         f"{rule.get('warning_prefix', 'Missing upstream output(s):')} "
                         f"{names}. {rule.get('warning_suffix', '')}".strip()
                     )
+                ordered_skills = sorted(missing_skills)
+                choices.append({
+                    "id": "run-quals:" + ",".join(ordered_skills),
+                    "skills": ordered_skills,
+                    "message": message,
+                })
 
     ready = not missing
     return PlanResult(
@@ -449,6 +464,7 @@ def check_prerequisites(
         can_override=True,
         missing=missing,
         warnings=warnings,
+        choices=choices,
         upstream=upstream,
         modes=modes,
     )

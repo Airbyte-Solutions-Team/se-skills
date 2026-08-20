@@ -397,6 +397,7 @@ class SkillRuntimeService:
         opportunity: str | None,
         extra: str | None,
         out_dir: Path | None,
+        acknowledged_choices: list[dict[str, Any]] | None = None,
     ) -> str:
         if freeform:
             prompt = freeform.strip() + f" (for the account {account}"
@@ -425,6 +426,13 @@ class SkillRuntimeService:
                     f" IMPORTANT: save any output file under {out_dir}/<skill-name>/ "
                     f"instead of the default account outputs folder."
                 )
+        for choice in acknowledged_choices or []:
+            skills = ", ".join(choice.get("skills", []))
+            prompt += (
+                " The SE explicitly chose to skip running the missing upstream skill(s) "
+                f"({skills}) first. Follow your contract's skip path and flag the "
+                "scope-drift risk in the output."
+            )
         return prompt
 
     async def invoke(
@@ -438,6 +446,7 @@ class SkillRuntimeService:
         freeform: str | None,
         override_prerequisites: bool,
         approve_permissions: bool,
+        acknowledged_choices: list[str] | None = None,
     ) -> dict:
         safe_account = self._safe(account)
         safe_opp = self._safe(opp_slug)
@@ -460,6 +469,21 @@ class SkillRuntimeService:
             plan = orchestrator.check_prerequisites(skill, safe_account, safe_opp, self.customers_dir)
             if not plan.ready:
                 return {"prerequisites": plan.model_dump(), "blocked": True}
+            acknowledged = set(acknowledged_choices or [])
+            pending_choices = [
+                choice for choice in plan.choices if choice["id"] not in acknowledged
+            ]
+            if pending_choices:
+                return {
+                    "prerequisites": plan.model_dump(),
+                    "blocked": True,
+                    "choices": pending_choices,
+                }
+            acknowledged_choice_details = [
+                choice for choice in plan.choices if choice["id"] in acknowledged
+            ]
+        else:
+            acknowledged_choice_details = []
 
         # Permission approval check.
         profile = self._permission_profile(skill, freeform=bool(freeform))
@@ -473,6 +497,7 @@ class SkillRuntimeService:
             opportunity=opportunity,
             extra=extra,
             out_dir=out_dir,
+            acknowledged_choices=acknowledged_choice_details,
         )
 
         sig: Any = (safe_account, safe_opp, skill or "freeform", (freeform or extra or "")[:80])
@@ -499,6 +524,7 @@ class SkillRuntimeService:
                     "skill": skill_id,
                     "opportunity": opportunity,
                     "permission_mode": profile.permission_mode,
+                    "acknowledged_choices": acknowledged_choices or [],
                 },
             )
         except HTTPException as exc:

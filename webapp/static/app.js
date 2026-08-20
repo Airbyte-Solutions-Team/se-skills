@@ -55,6 +55,17 @@ async function invokeWithPlan(payload, alreadyConfirmed = false) {
       if (plan.warnings && plan.warnings.length) {
         plan.warnings.forEach((w) => showToast(w, "warn"));
       }
+      const acknowledged = new Set(payload.acknowledged_choices || []);
+      const pendingChoices = (plan.choices || []).filter((choice) => !acknowledged.has(choice.id));
+      if (pendingChoices.length) {
+        const message = pendingChoices.map((choice) => choice.message).join("\n") +
+          "\n\nOK = skip and proceed now (the skill will flag the risk). Cancel = don't run yet — run the missing skill(s) first from the command bar.";
+        if (!confirm(message)) throw new Error("Cancelled");
+        const acknowledgedChoices = [
+          ...new Set([...(payload.acknowledged_choices || []), ...pendingChoices.map((choice) => choice.id)]),
+        ];
+        return invokeWithPlan({ ...payload, acknowledged_choices: acknowledgedChoices }, true);
+      }
     } catch (e) {
       if (e.message === "Cancelled") throw e;
       // Planner unavailable — proceed to invoke so a local/network glitch doesn't
@@ -65,6 +76,19 @@ async function invokeWithPlan(payload, alreadyConfirmed = false) {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
   });
+  if (res.blocked && res.choices) {
+    const acknowledged = new Set(payload.acknowledged_choices || []);
+    const pendingChoices = res.choices.filter((choice) => !acknowledged.has(choice.id));
+    if (pendingChoices.length) {
+      const message = pendingChoices.map((choice) => choice.message).join("\n") +
+        "\n\nOK = skip and proceed now (the skill will flag the risk). Cancel = don't run yet — run the missing skill(s) first from the command bar.";
+      if (!confirm(message)) throw new Error("Cancelled");
+      const acknowledgedChoices = [
+        ...new Set([...(payload.acknowledged_choices || []), ...pendingChoices.map((choice) => choice.id)]),
+      ];
+      return invokeWithPlan({ ...payload, acknowledged_choices: acknowledgedChoices }, true);
+    }
+  }
   if (res.blocked && res.permissions) {
     // Auto-approve: the Invoke modal already discloses the required permissions
     // ("Expected permissions" panel), so clicking Run IS the approval — no extra
@@ -1528,14 +1552,15 @@ function renderOutputGroups(outputs) {
           const staleAtGen = atGen != null && atGen.some((r) => !r.fresh);
           const changedSince = (o.reference_changed_since_generation || []).length > 0;
           const warnTitle = decision.issues.map((i) => i.text).join(" | ");
+          const safeWarnTitle = window.docStatus.escapeHtml(warnTitle);
           let statusBadge = "";
           if (invalid) {
-            statusBadge = `<span class="out-status out-status--error" title="${warnTitle}">Incomplete</span>`;
+            statusBadge = `<span class="out-status out-status--error" title="${safeWarnTitle}">Incomplete</span>`;
           } else if (refWarn) {
             const label = changedSince ? "Source changed" : (staleAtGen ? "Stale source" : "Review sources");
-            statusBadge = `<span class="out-status out-status--warn" title="${warnTitle}">${esc(label)}</span>`;
+            statusBadge = `<span class="out-status out-status--warn" title="${safeWarnTitle}">${esc(label)}</span>`;
           } else if (decision.severity === "info") {
-            statusBadge = `<span class="out-status out-status--info" title="${warnTitle}">${esc(decision.label)}</span>`;
+            statusBadge = `<span class="out-status out-status--info" title="${safeWarnTitle}">${esc(decision.label)}</span>`;
           }
           return `
           <div class="out-item${isHtml ? " is-html" : ""}" data-path="${encodeURIComponent(o.path)}" data-ext="${esc(o.ext || "md")}" data-title="${esc(prettySkill(o.skill))} — ${esc(o.filename)}">
