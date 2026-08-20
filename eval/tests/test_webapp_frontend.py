@@ -43,6 +43,9 @@ console.log(JSON.stringify(cases));
     cases = json.loads(result.stdout)
 
     assert cases["invalid"]["severity"] == "error"
+    assert cases["invalid"]["issues"][0]["text"] == (
+        "Output contract issues: Missing Source Coverage"
+    )
     assert "Missing Source Coverage" in cases["invalid"]["issues"][0]["text"]
     assert cases["unsupported"]["severity"] == "ok"
     assert cases["unsupported"]["issues"][0]["text"] == (

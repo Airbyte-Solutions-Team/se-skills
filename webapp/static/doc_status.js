@@ -14,7 +14,7 @@
       const vstatus = meta.validation_status || "unvalidated";
       if (vstatus === "invalid") {
         issues.push({
-          text: "This output is missing required sections: " + (meta.validation_errors || []).slice(0, 3).join("; ") + ".",
+          text: "Output contract issues: " + (meta.validation_errors || []).slice(0, 3).join("; "),
           type: "error",
         });
         severity = "error";
