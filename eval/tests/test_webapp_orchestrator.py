@@ -56,6 +56,10 @@ VALID_BIZ_QUAL = """# Acme — biz-qual: viable
 
 ## Source Coverage
 - synthetic
+
+Customer stakeholders described the current process, measurable pain, decision
+criteria, timeline, budget context, implementation risks, and the agreed next
+steps for validating these assumptions with the buying team.
 """
 
 
@@ -245,7 +249,10 @@ def test_check_prerequisites_roi_and_close_are_source_resolvable(tmp_path: Path)
     }]
 
 
-@pytest.mark.parametrize("text", ["", " \n\t ", "plain text without a heading"])
+@pytest.mark.parametrize(
+    "text",
+    ["", " \n\t ", "plain text without a heading", "# Notes\njunk"],
+)
 def test_deal_assessment_ignores_unusable_qualification_docs(
     tmp_path: Path, text: str,
 ) -> None:
@@ -253,6 +260,34 @@ def test_deal_assessment_ignores_unusable_qualification_docs(
     _write_output(customers, "Acme", None, "biz-qual", "prior.md", text)
     plan = orchestrator.check_prerequisites("deal-assessment", "Acme", None, customers)
     assert "No local transcript or qualification doc found." in plan.warnings[0]
+
+
+def test_deal_assessment_rejects_invalid_utf8_qualification_doc(tmp_path: Path) -> None:
+    customers = tmp_path / "customers"
+    path = customers / "Acme" / "outputs" / "biz-qual" / "invalid.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"# Notes\n" + b"\xff\xfe")
+    plan = orchestrator.check_prerequisites("deal-assessment", "Acme", None, customers)
+    assert "No local transcript or qualification doc found." in plan.warnings[0]
+
+
+def test_deal_assessment_accepts_realistic_legacy_qualification_doc(tmp_path: Path) -> None:
+    customers = tmp_path / "customers"
+    body = "\n".join(
+        [
+            "# Legacy Business Qualification",
+            "",
+            "Customer stakeholders described the current process, measurable pain, "
+            "decision criteria, timeline, budget context, and implementation risks. " * 4,
+            "",
+            "## Metrics",
+            "The team reported recurring manual work and agreed to validate the baseline "
+            "during the next discovery session. " * 3,
+        ]
+    )
+    _write_output(customers, "Acme", None, "biz-qual", "legacy.md", body)
+    plan = orchestrator.check_prerequisites("deal-assessment", "Acme", None, customers)
+    assert "using prior qualification doc(s) as source" in plan.warnings[0]
 
 
 def test_deal_assessment_scopes_qualification_docs_to_selected_opportunity(tmp_path: Path) -> None:
@@ -267,9 +302,14 @@ def test_deal_assessment_accepts_deployment_qualification_doc(
     tmp_path: Path, skill_dir: str,
 ) -> None:
     customers = tmp_path / "customers"
+    body = (
+        "# Deployment Qual\n\n"
+        "The customer described deployment ownership, networking constraints, "
+        "security review, environments, operational support, and rollout timing. " * 5
+    )
     _write_output(
         customers, "Acme", "intro", skill_dir, "prior.md",
-        "# Deployment Qual\n\nUsable.",
+        body,
     )
     plan = orchestrator.check_prerequisites("deal-assessment", "Acme", "intro", customers)
     assert plan.warnings == [
@@ -293,6 +333,9 @@ class _FakeJobService:
         self.launch_calls = []
 
     def find_reused_job(self, sig):
+        for call in self.launch_calls:
+            if call["sig"] == sig:
+                return "job-123", call
         return None
 
     async def launch(self, *, account, opp_slug, skill, opportunity, sig, prompt, meta):
@@ -456,10 +499,55 @@ def test_api_invoke_late_stage_skills_require_and_accept_choice(
     assert job_svc.launch_calls[-1]["meta"]["acknowledged_choices"] == [choice_id]
 
 
-def test_api_invoke_allows_override(monkeypatch, tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("skill", "choice_id"),
+    [
+        ("poc-plan", "run-quals:biz-qual,tech-qual"),
+        ("roi-business-case", "run-quals:biz-qual"),
+        ("mutual-close-plan", "run-quals:biz-qual"),
+    ],
+)
+def test_api_invoke_override_does_not_bypass_choice(
+    tmp_path: Path, skill: str, choice_id: str,
+) -> None:
     svc, job_svc = _runtime_svc(tmp_path)
 
     result = asyncio.run(svc.invoke(
+        account="Acme",
+        skill=skill,
+        opportunity="intro",
+        opp_slug="intro",
+        extra=None,
+        freeform=None,
+        override_prerequisites=True,
+        approve_permissions=True,
+    ))
+    assert result["blocked"] is True
+    assert result["choices"][0]["id"] == choice_id
+    assert job_svc.launch_calls == []
+
+    acknowledged = asyncio.run(svc.invoke(
+        account="Acme",
+        skill=skill,
+        opportunity="intro",
+        opp_slug="intro",
+        extra=None,
+        freeform=None,
+        override_prerequisites=True,
+        approve_permissions=True,
+        acknowledged_choices=[choice_id],
+    ))
+    assert acknowledged.get("job_id")
+    assert len(job_svc.launch_calls) == 1
+    assert job_svc.launch_calls[0]["meta"]["acknowledged_choices"] == [choice_id]
+
+
+def test_api_invoke_ignores_forged_choice_ids(tmp_path: Path) -> None:
+    svc, job_svc = _runtime_svc(tmp_path)
+    valid_id = "run-quals:biz-qual,tech-qual"
+    forged_id = "run-quals:bogus"
+
+    blocked = asyncio.run(svc.invoke(
         account="Acme",
         skill="poc-plan",
         opportunity="intro",
@@ -468,8 +556,76 @@ def test_api_invoke_allows_override(monkeypatch, tmp_path: Path) -> None:
         freeform=None,
         override_prerequisites=True,
         approve_permissions=True,
+        acknowledged_choices=[forged_id],
     ))
-    assert result.get("job_id")
-    assert "blocked" not in result
-    assert len(job_svc.launch_calls) == 1
-    assert job_svc.launch_calls[0]["skill"] == "poc-plan"
+    assert blocked["blocked"] is True
+    assert blocked["choices"][0]["id"] == valid_id
+    assert job_svc.launch_calls == []
+
+    launched = asyncio.run(svc.invoke(
+        account="Acme",
+        skill="poc-plan",
+        opportunity="intro",
+        opp_slug="intro",
+        extra=None,
+        freeform=None,
+        override_prerequisites=True,
+        approve_permissions=True,
+        acknowledged_choices=[valid_id, forged_id],
+    ))
+    assert launched.get("job_id")
+    call = job_svc.launch_calls[-1]
+    assert call["meta"]["acknowledged_choices"] == [valid_id]
+    assert forged_id not in call["prompt"]
+
+
+def test_api_invoke_signature_includes_accepted_choice_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    svc, job_svc = _runtime_svc(tmp_path)
+    first_id = "run-quals:biz-qual"
+    second_id = "run-quals:tech-qual"
+    plans = iter([
+        orchestrator.PlanResult(
+            skill="poc-plan",
+            ready=True,
+            choices=[{"id": first_id, "skills": ["biz-qual"], "message": "skip biz"}],
+        ),
+        orchestrator.PlanResult(
+            skill="poc-plan",
+            ready=True,
+            choices=[
+                {"id": first_id, "skills": ["biz-qual"], "message": "skip biz"},
+                {"id": second_id, "skills": ["tech-qual"], "message": "skip tech"},
+            ],
+        ),
+        orchestrator.PlanResult(
+            skill="poc-plan",
+            ready=True,
+            choices=[
+                {"id": first_id, "skills": ["biz-qual"], "message": "skip biz"},
+                {"id": second_id, "skills": ["tech-qual"], "message": "skip tech"},
+            ],
+        ),
+    ])
+    monkeypatch.setattr(orchestrator, "check_prerequisites", lambda *args: next(plans))
+    first = asyncio.run(svc.invoke(
+        account="Acme", skill="poc-plan", opportunity="intro", opp_slug="intro",
+        extra=None, freeform=None, override_prerequisites=True, approve_permissions=True,
+        acknowledged_choices=[first_id],
+    ))
+    assert first.get("job_id")
+    second = asyncio.run(svc.invoke(
+        account="Acme", skill="poc-plan", opportunity="intro", opp_slug="intro",
+        extra=None, freeform=None, override_prerequisites=True, approve_permissions=True,
+        acknowledged_choices=[first_id, second_id],
+    ))
+    assert second.get("job_id")
+    assert len(job_svc.launch_calls) == 2
+    third = asyncio.run(svc.invoke(
+        account="Acme", skill="poc-plan", opportunity="intro", opp_slug="intro",
+        extra=None, freeform=None, override_prerequisites=True, approve_permissions=True,
+        acknowledged_choices=[second_id, first_id],
+    ))
+    assert third["reused"] is True
+    assert len(job_svc.launch_calls) == 2

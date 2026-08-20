@@ -243,10 +243,14 @@ def _has_qualification_doc(
 def _qualification_doc_usable(path: Path) -> bool:
     """Return whether a qualification Markdown file has usable document shape."""
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
         return False
-    return bool(text.strip()) and any(line.startswith("#") for line in text.splitlines())
+    lines = text.splitlines()
+    if not any(line.startswith("#") for line in lines):
+        return False
+    body = "".join(line for line in lines if not line.startswith("#"))
+    return len("".join(body.split())) >= 200
 
 
 def _check_upstream(

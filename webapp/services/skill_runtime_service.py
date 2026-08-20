@@ -463,12 +463,12 @@ class SkillRuntimeService:
             out_dir = self.customers_dir / safe_account / "outputs"
             out_dir.mkdir(parents=True, exist_ok=True)
 
-        # Deterministic prerequisite check. Free-form instructions and explicit
-        # overrides skip the planner.
-        if not freeform and not override_prerequisites and skill in self.skill_ids:
+        accepted_ids: list[str] = []
+        acknowledged_choice_details: list[dict[str, Any]] = []
+        # Deterministic prerequisite check. Free-form instructions skip the
+        # planner; overrides waive only deterministic local blockers.
+        if not freeform and skill in self.skill_ids:
             plan = orchestrator.check_prerequisites(skill, safe_account, safe_opp, self.customers_dir)
-            if not plan.ready:
-                return {"prerequisites": plan.model_dump(), "blocked": True}
             acknowledged = set(acknowledged_choices or [])
             pending_choices = [
                 choice for choice in plan.choices if choice["id"] not in acknowledged
@@ -479,11 +479,14 @@ class SkillRuntimeService:
                     "blocked": True,
                     "choices": pending_choices,
                 }
+            accepted_ids = sorted(
+                choice["id"] for choice in plan.choices if choice["id"] in acknowledged
+            )
             acknowledged_choice_details = [
-                choice for choice in plan.choices if choice["id"] in acknowledged
+                choice for choice in plan.choices if choice["id"] in accepted_ids
             ]
-        else:
-            acknowledged_choice_details = []
+            if not plan.ready and not override_prerequisites:
+                return {"prerequisites": plan.model_dump(), "blocked": True}
 
         # Permission approval check.
         profile = self._permission_profile(skill, freeform=bool(freeform))
@@ -500,7 +503,13 @@ class SkillRuntimeService:
             acknowledged_choices=acknowledged_choice_details,
         )
 
-        sig: Any = (safe_account, safe_opp, skill or "freeform", (freeform or extra or "")[:80])
+        sig: Any = (
+            safe_account,
+            safe_opp,
+            skill or "freeform",
+            (freeform or extra or "")[:80],
+            tuple(accepted_ids),
+        )
         reused = self.job_service.find_reused_job(sig)
         if reused:
             jid, j = reused
@@ -524,7 +533,7 @@ class SkillRuntimeService:
                     "skill": skill_id,
                     "opportunity": opportunity,
                     "permission_mode": profile.permission_mode,
-                    "acknowledged_choices": acknowledged_choices or [],
+                    "acknowledged_choices": accepted_ids,
                 },
             )
         except HTTPException as exc:
