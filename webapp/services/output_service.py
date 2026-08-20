@@ -123,6 +123,8 @@ class OutputService:
             if not skill_dir.is_dir() or skill_dir.name.startswith("."):
                 continue
             skill = skill_dir.name
+            validation_supported = output_schema.skill_has_schema(skill)
+            reference_sources_tracked = bool(reference_freshness.get_relevant_sources(skill))
             for f in sorted([*skill_dir.glob("*.md"), *skill_dir.glob("*.html")]):
                 try:
                     rel = str(f.relative_to(customers_dir))
@@ -138,6 +140,8 @@ class OutputService:
                     "mtime": st.st_mtime,
                     "modified": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).strftime("%Y-%m-%d %H:%M"),
                     "size": st.st_size,
+                    "validation_supported": validation_supported,
+                    "reference_sources_tracked": reference_sources_tracked,
                 }
                 if f.suffix == ".md":
                     try:
@@ -228,7 +232,12 @@ class OutputService:
                 )
             else:
                 meta.reference_changed_since_generation = []
-            return meta.model_dump()
+            data = meta.model_dump()
+            data["validation_supported"] = output_schema.skill_has_schema(skill)
+            data["reference_sources_tracked"] = bool(
+                reference_freshness.get_relevant_sources(skill)
+            )
+            return data
         except (OSError, ValueError, TypeError) as e:
             raise OutputError(500, f"Could not parse output metadata: {e}")
 
