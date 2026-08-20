@@ -10,7 +10,7 @@ _Last updated: August 20, 2026 — HEAD a794812 on `devin/1787243567-source-poli
 - **Structured advisory choices and safe qualification evidence detection (August 20).** Missing upstream qualification outputs now require explicit acknowledgement before launch, with the skip decision recorded in the run metadata and prompt. Deal Assessment only considers usable qualification Markdown from the account or selected opportunity, and accepts both `deployment-qual` and `deployment-model-qual` directories. ROI Business Case now tracks objection-reference freshness, and generated status tooltip text is HTML-escaped.
 
 - **Source-aware prerequisite planning and validation-state semantics (August 20).** The deterministic planner now reports local transcript and qualification-document facts while leaving Gong/source sufficiency to each skill, so source-resolvable conditions remain `ready` with advisory warnings. Output metadata exposes runtime-only `validation_supported` and `reference_sources_tracked` flags, and the pure frontend document-status helper distinguishes invalid, unsupported, legacy-unvalidated, valid, and freshness-warning states without changing the sidecar schema.
-  Invalid document status details now use the concise `Output contract issues:` prefix without duplicated punctuation.
+  Invalid document status details now use a concise prefix without duplicated punctuation (since reworded to `Automatic checks found:`).
 
 - **Clarify post-call Source Coverage placement (August 19).** The post-call skill, canonical fixture, and shared playbook now consistently place `## Source Coverage` as the final output section, after analytical and coaching content. Added a regression assertion for canonical H2 ordering without changing validator behavior.
 
