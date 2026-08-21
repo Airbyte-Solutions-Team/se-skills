@@ -13,11 +13,10 @@
 - Security review may add two weeks [inferred]
 - POC must start by July 1 to hit renewal [inferred]
 
-## Action Items
+## Actions & Next Step
 - [ ] **SE** — Schedule technical deep-dive with security lead by June 14
 - [ ] **Champion** — Introduce SE to the security reviewer
 
-## Next Step
 Schedule technical deep-dive with the security lead for June 18.
 
 ## Source Coverage

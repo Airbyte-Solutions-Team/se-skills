@@ -71,6 +71,19 @@ If user signals brief mode (`--brief`, `quick prep`, `bullet points only`): prod
 
 ## Output Format — Varies by Meeting Type
 
+
+> [!info] Canonical output architecture for `internal-prep`
+> This skill follows the shared content-architecture contract. Produce the H2 sections below in this exact order; use H3 (`###`) for the listed sub-topics.
+>
+> **Canonical H2 order:**
+> 1. `Relevant Deal Context`
+> 2. `Alignment And Asks`
+> 3. `Decisions Required`
+> 4. `Source Coverage`
+>
+> Source Coverage must be the **final H2**. The `At a Glance` block is an H3 under the title block (not a navigable section).
+>
+
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference — applied per mode template below. In every template, write the `[Date]` in the title/headers and any prose dates in long form per `_se-playbook.md`, e.g. June 11, 2026 — not 2026-06-11. (Filenames keep the numeric `YYYY-MM-DD` prefix.)
 
 ### Type: `ae-sync`

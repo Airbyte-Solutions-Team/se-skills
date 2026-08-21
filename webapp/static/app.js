@@ -2148,18 +2148,6 @@ function buildDocStatus(meta) {
   </div>`;
 }
 
-// Map a (concise) section title to a sidebar intent group. Order of groups is
-// fixed; anything unmatched falls into "Context" so nothing is dropped. Covers
-// both the analytical skills (deal-assessment, tech-qual, …) and account-refresher
-// ("Who's Who", "The Story So Far", "Watch-outs", …).
-function tocGroup(title) {
-  const t = (title || "").toLowerCase();
-  if (/at a glance|10-second|bottom line|current read|what would close|what would lose|deal blocker|where things stand|what changed|recommendation|fit verdict|verdict/.test(t)) return "Decision";
-  if (/next action|next step|next move|coaching|recommended|what'?s open|open question|watch-?out|risk|action|email|poc|plan|workshop|agenda/.test(t)) return "Execution";
-  return "Context";
-}
-const TOC_GROUP_ORDER = ["Decision", "Context", "Execution"];
-
 // Sections collapsed by default (audit / supporting detail). Matched on the H2.
 const COLLAPSE_DEFAULT = /source coverage|activity trajectory|meddpicc|coaching|appendix|raw|evidence reviewed/i;
 
@@ -2510,23 +2498,16 @@ async function openOutput(path, title, ctx) {
 
   const sheetHtml = sections.map((s) => s.outerHTML).join("");
 
-  // Sidebar index — H2/H3 only, concise labels, grouped by intent. H3s stay with
-  // their preceding H2's group. Empty groups are omitted; order is fixed.
+  // Sidebar index — H2/H3 only, concise labels, in document order. The sidebar
+  // mirrors the Markdown source exactly; H2s are primary navigation and immediately
+  // following H3s are indented beneath them. Grouping by intent (Decision / Context
+  // / Execution) is removed so the reader never contradicts the document order.
   // Drop the At-a-Glance entry from the index once it's promoted to the exec card
   // (its in-sheet anchor no longer exists). Keep it otherwise (backward compat).
   const tocEntries = toc.filter((t) => (t.level === 2 || t.level === 3)
     && !(glancePromoted && /at a glance|\d+-second|current read|in (a )?nutshell/i.test(t.text)));
-  let lastH2Group = "Context";
-  const grouped = { Decision: [], Context: [], Execution: [] };
-  tocEntries.forEach((t) => {
-    const label = conciseLabel(t.text);
-    if (t.level === 2) lastH2Group = tocGroup(label);
-    const g = grouped[lastH2Group] || grouped["Context"];
-    g.push(`<a href="#toc-${t.id}" class="doc-toc-link lvl${t.level}">${esc(label)}</a>`);
-  });
-  const tocHtml = TOC_GROUP_ORDER
-    .filter((g) => grouped[g].length)
-    .map((g) => `<div class="doc-toc-group">${g}</div>${grouped[g].join("")}`)
+  const tocHtml = tocEntries
+    .map((t) => `<a href="#toc-${t.id}" class="doc-toc-link lvl${t.level}">${esc(conciseLabel(t.text))}</a>`)
     .join("");
 
   const backHref = ctx

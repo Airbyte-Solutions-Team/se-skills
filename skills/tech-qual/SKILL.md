@@ -39,6 +39,26 @@ If user signals brief mode (`--brief`, `quick tech qual`, `tech summary`): produ
 
 ## Output Format
 
+
+> [!info] Canonical output architecture for `tech-qual`
+> This skill follows the shared content-architecture contract. Produce the H2 sections below in this exact order; use H3 (`###`) for the listed sub-topics.
+>
+> **Canonical H2 order:**
+> 1. `Technical Fit Summary`
+> 2. `Requirements And Architecture`
+> 3. `Implementation Readiness`
+> 4. `Risks And Open Items`
+> 5. `Recommended Next Actions`
+> 6. `Source Coverage`
+>
+> **H3 subtopics (when used):**
+> - under `Requirements And Architecture`: `Source And Destination Landscape`, `Data Volume Latency Frequency`, `Networking Security`, `Transformation Orchestration`, `Operational Expectations`, `Current Stack And Integration Context`
+> - under `Implementation Readiness`: `Team And Implementation Readiness`, `Deployment Entitlement`
+> - under `Risks And Open Items`: `Technical Risks And Open Items`, `Questions Still Needed`
+>
+> Source Coverage must be the **final H2**. The `At a Glance` block is an H3 under the title block (not a navigable section).
+>
+
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---

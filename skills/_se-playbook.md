@@ -467,6 +467,45 @@ Every saving skill produces a markdown document that is read both in the raw `.m
 - **At a Glance** is a short labeled key/value list (3–6 lines) — the single most decision-relevant facts. It is NOT a table or a card; just bold `**Label:**` pairs, each as its own `- ` bullet (list items render as discrete rows; loose lines do not). Don't repeat the header's facts here — the meta line and At-a-Glance are complementary, not duplicative.
 - **Jump to** is a one-line list of links to the document's `##` sections. The web app also auto-builds a sidebar from the headings, but the inline Jump-to keeps the raw `.md` navigable. Anchor slugs are lowercase, non-alphanumeric → `-` (e.g. `## Fit Verdict` → `#fit-verdict`).
 
+### Canonical content architecture (source of truth)
+
+The canonical H2/H3 structure for every saving skill is declared in `webapp/architecture.py`. The validator, the web-reader sidebar, and the skill prompts all consume that single source of truth. Skill output should follow this order:
+
+- **One H1** is the document title, followed by a single `**Date:** ...` meta line.
+- `### At a Glance` (or the profile-specific top-summary name) is an H3 decision card under the title block — it is not a navigable H2.
+- `**Jump to:**` lists every H2 in document order, with `Source Coverage` last.
+- **H2 = major thought.** Every primary section is an H2. H3 (`###`) is used for sub-parts inside an H2.
+- **Source Coverage is always the final H2.** It is the audit trail, not the lead.
+- **Methodology terms** (MEDDPICC, the five questions, scorecard dimensions) belong inside a narrative H2, not as top-level sections.
+- **Consolidate related topics.** Closely related sub-topics become H3s under one H2 rather than separate H2s.
+- **The sidebar mirrors the Markdown source order exactly.** The reader no longer groups headings by intent (`Decision / Context / Execution`) and no longer reorders them.
+
+Per-skill canonical H2 order:
+
+| Skill | Canonical H2 order | Notes |
+|-------|--------------------|-------|
+| prep-call | Meeting Snapshot → Call Objectives → Discovery Agenda → Attendees & Roles → Success Criteria → Logistics & Materials → Risks & Contingencies → Source Coverage | Call plan, not a report. |
+| post-call | Call Snapshot → Key Takeaways → Scope & Technical Changes → Deal Impact → Objections & Open Questions → Actions & Next Step → Coaching Observations → Source Coverage | brief mode skips Coaching and MEDDPICC. |
+| biz-qual | MEDDPICC Scorecard → Qualification Narrative → Movement & Deal Risks → Recommended Next Actions → Source Coverage | H3s under Qualification Narrative: Metrics, Economic Buyer, Decision Criteria, Decision Process, Paper Process, Identify Pain, Champion, Stakeholder Map, Competition. |
+| tech-qual | Technical Fit Summary → System-by-System Deep Dive → Risks & Constraints → Validation Questions → Recommended Next Steps → Source Coverage | |
+| deployment-model-qual | Deployment Verdict → The Five Questions → Implications by Answer → Recommended Motion → Source Coverage | |
+| connector-feasibility | System-by-System Fit → Coverage Gaps & Custom Work → Risks & Constraints → Validation Questions → Recommended Next Steps → Source Coverage | |
+| deal-assessment | Trajectory & What Changed → Deal Thesis → Stakeholders & Qualification → Close Path, Blockers & Loss Risks → Recommended Actions & Coaching → Source Coverage | |
+| poc-plan | POC Objective → Success Criteria → Scope & Architecture → Mutual Commitments & Roles → Timeline & Milestones → Access & Prerequisites → Risks & Mitigations → Exit / Results Review → Source Coverage | |
+| roi-business-case | ROI Summary → Value Drivers → Cost Inputs → Sourced Math → Sensitivity & Risk → Recommended Actions → Source Coverage | |
+| mutual-close-plan | Mutual Close Summary → Mutual Commitments → Close Path → Risks & Blockers → Recommended Next Steps → Source Coverage | |
+| account-refresher | Account Snapshot → What's Changed → Stakeholder Map → Open Risks & Watch-Outs → Recommended Next Steps → Source Coverage | |
+| next-move | Current Read → Why This Move → Ranked Next Moves → Don't Do Yet → Workflow State → Context Inventory → Gaps → External Actions → Source Coverage | Router skill. |
+| internal-prep | depends on meeting type; each sub-template leads with an H3 decision card, then Source Coverage | |
+| coverage-handoff | Handoff Snapshot → What Was Covered → What's Still Open → Recommended Next Actions → Source Coverage | |
+| objection-handler | Objection Snapshot → Reframe & Validation → Recommended Response → Source Coverage | |
+| pov-gsheet | Receipt → Source Coverage | Lightweight sheet artifact. |
+| follow-up-email | *specialized email artifact — exempt from report architecture* | |
+| full-qual | *orchestration wrapper — no standalone Markdown report; inherits child skill outputs* | |
+| worker-analysis | *specialized report with its own page architecture* | |
+
+Legacy headings are preserved through the `aliases` map in `webapp/architecture.py`. Older outputs that use those headings remain openable and are not reclassified as corrupt; they are flagged as `is_legacy` and skip the strict Source-Coverage-must-be-last rule.
+
 ### Decision-First Layout (analytical skills)
 
 The **analytical skills** — `tech-qual`, `biz-qual`, `deal-assessment`, `deployment-model-qual`, `connector-feasibility`, `poc-plan` — produce reports a busy SE or leader reads to make a call. Structure them so the doc answers, **in this order**: *(1) Should we proceed? (2) Why? (3) What could block us? (4) What do we do next? (5) What's the evidence?* The reader should get the answer in ~10 seconds and only descend for detail. This is a layer ON TOP of the top-of-document structure above — it does not replace each skill's signature sections, it standardizes the **head** and the **high-value tables**.

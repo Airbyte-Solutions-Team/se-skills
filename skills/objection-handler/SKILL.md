@@ -41,6 +41,19 @@ If user signals brief mode (`--brief`, `quick talk track`, `just the talk track`
 
 ## Output Format
 
+
+> [!info] Canonical output architecture for `objection-handler`
+> This skill follows the shared content-architecture contract. Produce the H2 sections below in this exact order; use H3 (`###`) for the listed sub-topics.
+>
+> **Canonical H2 order:**
+> 1. `Whats True`
+> 2. `Talk Track`
+> 3. `Follow Up Questions`
+> 4. `Fit And Route Boundary`
+>
+> Source Coverage must be the **final H2**. The `At a Glance` block is an H3 under the title block (not a navigable section).
+>
+
 This skill is **light-touch** under `_se-playbook.md` → Output Document Format (no At-a-Glance, no Jump-to — it's already short and scannable). The one required callout is the severity indicator at the top.
 
 ---

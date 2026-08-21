@@ -86,15 +86,15 @@ def test_output_diff_returns_semantic_summary(tmp_path: Path) -> None:
     (tmp_path / left_rel).write_text(
         "# Acme Deal Assessment\n\n**Date:** 2026-07-10 · **Skill:** deal-assessment\n\n"
         "## At a Glance\n- **Verdict:** 🟡 stalled\n- **Confidence:** Medium\n\n"
-        "## Deal Blocker\n- No economic buyer identified\n\n"
-        "## What Would Close It\n- Exec demo with CDO\n",
+        "## Close Path, Blockers, and Loss Risks\n- No economic buyer identified\n\n"
+        "## Recommended Actions and Coaching\n- Exec demo with CDO\n",
         encoding="utf-8",
     )
     (tmp_path / right_rel).write_text(
         "# Acme Deal Assessment\n\n**Date:** 2026-07-14 · **Skill:** deal-assessment\n\n"
         "## At a Glance\n- **Verdict:** 🟡 stalled\n- **Confidence:** Low\n\n"
-        "## Deal Blocker\n- No economic buyer identified\n- Budget cut in Q3\n\n"
-        "## What Would Close It\n- Exec demo with CDO\n- Pricing concession\n",
+        "## Close Path, Blockers, and Loss Risks\n- No economic buyer identified\n- Budget cut in Q3\n\n"
+        "## Recommended Actions and Coaching\n- Exec demo with CDO\n- Pricing concession\n",
         encoding="utf-8",
     )
 

@@ -563,6 +563,9 @@ def _extract_business_objectives(meta: output_schema.OutputMetadata, path: Path,
     headings = [
         r"business\s*objective",
         r"objectives",
+        r"deal.thesis",
+        r"trajectory",
+        r"stakeholder",
         r"driver",
         r"need",
         r"urgency",
@@ -605,6 +608,18 @@ def _extract_technical_scope(meta: output_schema.OutputMetadata, path: Path, cus
         "destination systems", "sources and destinations", "connectors",
         "architecture", "security", "cdc", "schema", "performance", "capacity", "throughput",
         "need", "what would close", "what would lose",
+        # Canonical architecture H2 names (spaces) produced by output_schema.
+        "deal thesis",
+        "close path",
+        "system by system",
+        "coverage gaps",
+        "risks and constraints",
+        "validation questions",
+        "recommended next steps",
+        "requirements and architecture",
+        "implementation readiness",
+        "risks and open items",
+        "technical fit",
     }
     excluded = {"source coverage", "sources used", "source-coverage", "sources-used"}
 
@@ -645,8 +660,12 @@ def _extract_success_criteria(meta: output_schema.OutputMetadata, path: Path, cu
     headings = [
         r"success\s*criteria",
         r"success",
+        r"close.path",
+        r"loss.risks",
         r"what\s*would\s*close",
         r"close\s*criteria",
+        r"recommended.actions",
+        r"coaching",
         r"validation",
     ]
     seen: set[str] = set()

@@ -20,6 +20,7 @@ from typing import Any, ClassVar, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from reference_freshness import ReferenceChange, ReferenceFreshness, compute_reference_freshness
+from architecture import CANONICAL_ARCHITECTURE, get_architecture
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,8 @@ class SkillOutputSchema(BaseModel):
     brief_required_sections: list[str] | None = None
     brief_required_at_a_glance_labels: list[str] | None = None
     conditional_sections: list[str] = Field(default_factory=list)
+    canonical_h2_order: list[str] = Field(default_factory=list)
+    aliases: dict[str, str] = Field(default_factory=dict)
     source_coverage_required: bool = False
     forbid_placeholders: bool = False
     strict_at_a_glance: bool = False
@@ -59,6 +62,7 @@ class OutputMetadata(BaseModel):
     valid: bool = True
     schema_version: int = SCHEMA_VERSION
     validation_status: str = "unvalidated"  # "valid" | "invalid" | "unvalidated"
+    is_legacy: bool = False
     reference_freshness_at_generation: list[ReferenceFreshness] | None = None
     reference_changed_since_generation: list[ReferenceChange] | None = None
 
@@ -76,95 +80,93 @@ class OutputMetadata(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Per-skill required sections (normalized H2 heading keys).
-# These mirror the "Jump to" indices in each skill's SKILL.md.
+# Per-skill schemas.
+#
+# `CANONICAL_ARCHITECTURE` provides canonical H2 order, legacy heading aliases,
+# and Source Coverage rules for every report-style skill. The overrides below
+# preserve per-skill At-a-Glance labels, conditional sections, and strictness
+# flags. The canonical H2 order is used for sidebar ordering and the
+# Source- Coverage-last invariant; `required_sections` is derived from it but
+# may exclude optional/conditional H2s.
 # ---------------------------------------------------------------------------
 
-_SKILL_SCHEMAS: dict[str, SkillOutputSchema] = {
-    # Core = the decision-critical sections and At a Glance labels that must be
-    # present even in brief mode. Extended sections are still parsed and stored,
-    # but missing them does not fail validation.
-    "biz-qual": SkillOutputSchema(
-        skill="biz-qual",
-        required_sections=["meddpicc-scorecard", "source-coverage"],
-        required_at_a_glance_labels=["overall", "recommended-motion"],
-    ),
-    "tech-qual": SkillOutputSchema(
-        skill="tech-qual",
-        required_sections=["technical-fit-summary", "source-coverage"],
-        required_at_a_glance_labels=["technical-fit", "primary-risk"],
-    ),
-    "deployment-model-qual": SkillOutputSchema(
-        skill="deployment-model-qual",
-        required_sections=["verdict", "source-coverage"],
-        required_at_a_glance_labels=["verdict", "recommended-motion"],
-    ),
-    "poc-plan": SkillOutputSchema(
-        skill="poc-plan",
-        required_sections=["success-criteria", "source-coverage"],
-        required_at_a_glance_labels=["poc-proves", "timeline", "success-criteria"],
-    ),
-    "connector-feasibility": SkillOutputSchema(
-        skill="connector-feasibility",
-        required_sections=["fit-verdict", "source-coverage"],
-        required_at_a_glance_labels=["feasibility", "recommended-motion"],
-    ),
-    "pov-gsheet": SkillOutputSchema(
-        skill="pov-gsheet",
-        required_sections=["receipt", "source-coverage"],
-        required_at_a_glance_labels=["google-sheet-url", "status"],
-    ),
-    "post-call": SkillOutputSchema(
-        skill="post-call",
-        required_sections=[
+_SKILL_SCHEMA_OVERRIDES: dict[str, dict[str, Any]] = {
+    "post-call": {
+        "required_sections": [
             "key-takeaways",
-            "deal-health-signals",
-            "new-objections-concerns-surfaced",
+            "deal-impact",
+            "objections-and-open-questions",
+            "actions-and-next-step",
+            "source-coverage",
+        ],
+        "required_at_a_glance_labels": [
+            "call-type",
+            "call-date",
+            "attendees",
             "action-items",
             "next-step",
+            "deal-assessment-update-needed",
+        ],
+        "brief_required_sections": [
+            "key-takeaways",
+            "actions-and-next-step",
             "source-coverage",
+        ],
+        "brief_required_at_a_glance_labels": [
+            "call-type",
+            "call-date",
             "attendees",
+            "action-items",
+            "next-step",
+            "deal-assessment-update-needed",
+        ],
+        # Transcript-entity triggers add these to the required list when the
+        # transcript contains matching content. If present, they must be
+        # non-empty.
+        "conditional_sections": [
+            "scope-and-technical-changes",
             "coaching-observations",
         ],
-        required_at_a_glance_labels=[
-            "call-type",
-            "call-date",
-            "attendees",
-            "action-items",
-            "next-step",
-            "deal-assessment-update-needed",
-        ],
-        brief_required_sections=[
-            "key-takeaways",
-            "action-items",
-            "next-step",
-            "source-coverage",
-        ],
-        brief_required_at_a_glance_labels=[
-            "call-type",
-            "call-date",
-            "attendees",
-            "action-items",
-            "next-step",
-            "deal-assessment-update-needed",
-        ],
-        # Conditional sections may be absent; if present, they must be non-empty.
-        # Slice 5B may add transcript-entity triggers (e.g. "Sources & Destinations"
-        # required when the transcript names a system) for now a present heading is
-        # treated as the model's decision to include that conditional section.
-        conditional_sections=[
-            "sources-destinations",
-            "technical-notes",
-            "meddpicc-quick-pass",
-            "open-questions-follow-ups",
-        ],
-        source_coverage_required=True,
-        forbid_placeholders=True,
-        strict_at_a_glance=True,
-        strict_sections=True,
-        strict=True,
-    ),
+        "source_coverage_required": True,
+        "forbid_placeholders": True,
+        "strict_at_a_glance": True,
+        "strict_sections": True,
+        "strict": True,
+    },
+    "biz-qual": {
+        "required_at_a_glance_labels": ["overall", "recommended-motion"],
+    },
+    "tech-qual": {
+        "required_at_a_glance_labels": ["technical-fit", "primary-risk"],
+    },
+    "deployment-model-qual": {
+        "required_at_a_glance_labels": ["verdict", "recommended-motion"],
+    },
+    "poc-plan": {
+        "required_at_a_glance_labels": ["poc-proves", "timeline", "success-criteria"],
+    },
+    "connector-feasibility": {
+        "required_at_a_glance_labels": ["feasibility", "recommended-motion"],
+    },
+    "pov-gsheet": {
+        "required_at_a_glance_labels": ["google-sheet-url", "status"],
+    },
 }
+
+_SKILL_SCHEMAS: dict[str, SkillOutputSchema] = {}
+for _arch in CANONICAL_ARCHITECTURE.values():
+    if _arch.structured_exception:
+        continue
+    _overrides = _SKILL_SCHEMA_OVERRIDES.get(_arch.skill, {})
+    _kwargs = {
+        "skill": _arch.skill,
+        "required_sections": _arch.canonical_h2_order,
+        "canonical_h2_order": _arch.canonical_h2_order,
+        "aliases": _arch.aliases,
+        "source_coverage_required": _arch.source_coverage_required,
+    }
+    _kwargs.update(_overrides)
+    _SKILL_SCHEMAS[_arch.skill] = SkillOutputSchema(**_kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -231,14 +233,23 @@ def _split_meta_chunks(line: str) -> list[tuple[str, str]]:
     return chunks
 
 
-def _extract_at_a_glance(text: str) -> dict[str, str]:
-    """Find the `## At a Glance` or `### At a Glance` block and parse `- **Label:** value` lines."""
+def _extract_at_a_glance(text: str, summary_heading: str | None = None) -> dict[str, str]:
+    """Find the top summary block (`At a Glance` or a profile-specific name).
+
+    Accepts the profile summary heading (e.g. `Call Snapshot`, `Decision Summary`)
+    in addition to `At a Glance` so newer outputs with deliberate summary names
+    are still parsed without hard-coding every variant.
+    """
     out: dict[str, str] = {}
     lines = text.splitlines()
     start_idx: int | None = None
     start_level = 3
+    headings = ["At a Glance"]
+    if summary_heading:
+        headings.append(summary_heading)
+    pattern = r"^(#{2,3})\s+(?:" + "|".join(re.escape(h) for h in headings) + r")\s*$"
     for i, line in enumerate(lines):
-        match = re.match(r"^(#{2,3})\s+At a Glance\s*$", line, re.IGNORECASE)
+        match = re.match(pattern, line, re.IGNORECASE)
         if match:
             start_idx = i
             start_level = len(match.group(1))
@@ -300,6 +311,42 @@ def _extract_sections(text: str) -> dict[str, str]:
         _set_body(current_key, current_lines)
 
     return sections
+
+
+def _canonicalize_sections(
+    sections: dict[str, str], arch: Any | None
+) -> tuple[dict[str, str], set[str]]:
+    """Map legacy H2 headings to canonical keys, preserving source order.
+
+    Returns the canonicalized section dict and the set of original keys that
+    were legacy-only (used to avoid reclassifying old outputs as corrupt).
+    """
+    if arch is None:
+        return sections, set()
+
+    canonical: dict[str, str] = {}
+    legacy_seen: set[str] = set()
+    for original_key, body in sections.items():
+        canonical_key = original_key
+        if original_key in arch.aliases:
+            canonical_key = arch.aliases[original_key]
+            if original_key not in arch.canonical_h2_order:
+                legacy_seen.add(original_key)
+        elif original_key not in arch.canonical_h2_order:
+            # Unknown headings are kept as-is; they may be expansions that the
+            # token-subset resolver later matches.
+            pass
+
+        if canonical_key in canonical:
+            # If several legacy headings map to the same canonical H2, merge
+            # their bodies. This preserves older outputs that split content
+            # across now-consolidated sections.
+            existing = canonical[canonical_key]
+            if body.strip():
+                canonical[canonical_key] = existing + "\n\n" + body if existing.strip() else body
+        else:
+            canonical[canonical_key] = body
+    return canonical, legacy_seen
 
 
 # ---------------------------------------------------------------------------
@@ -392,12 +439,14 @@ def _validate_source_coverage_post_call(body: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def _transcript_triggered_conditionals(transcript_text: str | None) -> set[str]:
-    """Return the conditional post-call sections required by transcript evidence.
+    """Return the conditional post-call H2 sections required by transcript evidence.
 
     These rules are deterministic and require no LLM. They scan the transcript for
     entity and intent markers that make a conditional section decision-critical.
     Token/phrase boundaries are used so incidental substrings (e.g. "ae" inside
     "aeroplane" or "api" inside "rapid") do not trigger sections incorrectly.
+
+    The returned keys are canonical H2 keys from `CANONICAL_ARCHITECTURE["post-call"]`.
     """
     triggered: set[str] = set()
     if not transcript_text:
@@ -405,15 +454,15 @@ def _transcript_triggered_conditionals(transcript_text: str | None) -> set[str]:
 
     lowered = transcript_text.lower()
 
-    # Sources & Destinations is required when the call discusses connectors, systems,
-    # integrations, platforms, or APIs.
+    # Scope & Technical Changes is required when the call discusses connectors,
+    # systems, integrations, platforms, or APIs.
     if re.search(
         r"\b(?:connector|connectors|source|sources|destination|destinations|"
         r"integration|integrations|system|systems|platform|platforms|api|apis|"
         r"data source|data sources|data warehouse)\b",
         lowered,
     ):
-        triggered.add("sources-destinations")
+        triggered.add("scope-and-technical-changes")
 
     # Technical Notes is required when technical scope is discussed.
     if re.search(
@@ -423,25 +472,7 @@ def _transcript_triggered_conditionals(transcript_text: str | None) -> set[str]:
         r"custom connector|build|building|code|script|scripts)\b",
         lowered,
     ):
-        triggered.add("technical-notes")
-
-    # MEDDPICC Quick Pass is required when the transcript is attributable to an
-    # AE-led discovery or qualification call. Both an AE-role marker and a
-    # discovery/qualification attribution must be present.
-    ae_role = re.search(
-        r"\b(?:ae|account executive|sales rep|sales representative|sdr|"
-        r"sales development rep|business development rep)\b",
-        lowered,
-    )
-    discovery = re.search(
-        r"\b(?:discovery call|discovery meeting|discovery session|intro call|"
-        r"initial call|first call|qualification call|qualifying call|qual call|"
-        r"meddpicc|metrics|economic buyer|decision criteria|decision process|"
-        r"identify pain|champion|competition)\b",
-        lowered,
-    )
-    if ae_role and discovery:
-        triggered.add("meddpicc-quick-pass")
+        triggered.add("scope-and-technical-changes")
 
     return triggered
 
@@ -467,14 +498,17 @@ def parse_output(
     unrecognized skill outputs that lack enough current-format markers.
 
     `transcript_text` is used by the `post-call` schema to deterministically
-    trigger conditional sections (Sources & Destinations, Technical Notes,
-    MEDDPICC Quick Pass). It never uses an LLM.
+    trigger conditional sections (e.g. Scope & Technical Changes). It never
+    uses an LLM.
     """
+    arch = get_architecture(skill)
     schema = _SKILL_SCHEMAS.get(skill)
     title = _extract_title(text)
     date = _extract_date(text)
-    at_a_glance = _extract_at_a_glance(text)
+    at_a_glance = _extract_at_a_glance(text, arch.top_summary_name if arch else None)
     sections = _extract_sections(text)
+    sections, legacy_seen = _canonicalize_sections(sections, arch)
+    is_legacy = bool(legacy_seen)
 
     required: list[str] = list(schema.required_sections) if schema else []
     required_at_a_glance: list[str] = list(schema.required_at_a_glance_labels) if schema else []
@@ -532,6 +566,7 @@ def parse_output(
             valid=True,
             schema_version=SCHEMA_VERSION,
             validation_status="unvalidated",
+            is_legacy=False,
             reference_freshness_at_generation=reference_freshness_at_generation,
         )
 
@@ -548,11 +583,10 @@ def parse_output(
 
     # A document must have enough current-format markers for us to confidently
     # say it is incomplete. Legacy outputs may use older headings; without a
-    # title, At a Glance block, and at least one non-source-coverage required
-    # section, we treat the result as "unvalidated" rather than "invalid".
-    non_source_required = [s for s in required if s != "source-coverage"]
-    has_non_source_required = any(section_check(s) for s in non_source_required)
-    has_current_markers = bool(title and at_a_glance and has_non_source_required)
+    # title and At a Glance block, we treat the result as "unvalidated" rather
+    # than "invalid". Missing **Date:** on an otherwise current-format document
+    # is then reported as a validation error.
+    has_current_markers = bool(title and at_a_glance)
 
     # Strict schemas must always resolve to valid/invalid, never unvalidated.
     if not has_current_markers and not strict:
@@ -569,6 +603,7 @@ def parse_output(
             valid=True,
             schema_version=SCHEMA_VERSION,
             validation_status="unvalidated",
+            is_legacy=False,
             reference_freshness_at_generation=reference_freshness_at_generation,
         )
 
@@ -607,10 +642,16 @@ def parse_output(
                 if not body:
                     errors.append(f"Conditional section '{conditional_key}' is empty.")
 
+    section_order = list(sections.keys())
     if "source-coverage" not in sections:
         errors.append("Missing Source Coverage section.")
     elif schema and schema.source_coverage_required:
-        errors.extend(_validate_source_coverage_post_call(sections["source-coverage"]))
+        if not is_legacy and section_order.index("source-coverage") != len(section_order) - 1:
+            errors.append("Source Coverage must be the final H2 section.")
+        if skill == "post-call":
+            errors.extend(_validate_source_coverage_post_call(sections["source-coverage"]))
+        elif not sections["source-coverage"].strip():
+            errors.append("Source Coverage section is empty.")
 
     # Strict outputs must not ship with unfilled template placeholders anywhere.
     if schema and schema.forbid_placeholders:
@@ -644,6 +685,7 @@ def parse_output(
         valid=valid,
         schema_version=SCHEMA_VERSION,
         validation_status=validation_status,
+        is_legacy=is_legacy,
         reference_freshness_at_generation=reference_freshness_at_generation,
     )
 

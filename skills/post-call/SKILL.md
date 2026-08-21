@@ -52,6 +52,29 @@ If the user signals brief mode (`--brief`, `quick summary`, `just the takeaways`
 
 ## What to Produce
 
+
+> [!info] Canonical output architecture for `post-call`
+> This skill follows the shared content-architecture contract. Produce the H2 sections below in this exact order; use H3 (`###`) for the listed sub-topics.
+>
+> **Canonical H2 order:**
+> 1. `Key Takeaways`
+> 2. `Scope And Technical Changes`
+> 3. `Deal Impact`
+> 4. `Objections And Open Questions`
+> 5. `Actions And Next Step`
+> 6. `Coaching Observations`
+> 7. `Source Coverage`
+>
+> **H3 subtopics (when used):**
+> - under `Call Snapshot`: `Date`, `Call Type`, `Customer Attendees`, `Airbyte Attendees`, `One Line Deal Impact`
+> - under `Scope And Technical Changes`: `Sources And Destinations`, `Technical Notes`, `Architecture`, `Requirements`
+> - under `Deal Impact`: `Movement`, `Deal Health`, `Meddpicc Changes`
+> - under `Objections And Open Questions`: `New Objections Concerns Surfaced`, `Open Questions Follow Ups`
+> - under `Actions And Next Step`: `Action Items`, `Next Step`
+>
+> Source Coverage must be the **final H2**. The `At a Glance` block is an H3 under the title block (not a navigable section).
+>
+
 Generate a structured summary with these sections. **Local auto-save is ON** (see After Generating). Only **Notion and memory writes are ask-first** — never auto-write those without confirmation.
 
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.

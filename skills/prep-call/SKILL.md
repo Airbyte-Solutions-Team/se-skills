@@ -57,6 +57,28 @@ If user signals brief mode (`--brief`, `quick prep`, `1-pager`, `short version`)
 
 ## Output Format
 
+
+> [!info] Canonical output architecture for `prep-call`
+> This skill follows the shared content-architecture contract. Produce the H2 sections below in this exact order; use H3 (`###`) for the listed sub-topics.
+>
+> **Canonical H2 order:**
+> 1. `Account Context`
+> 2. `Call Strategy`
+> 3. `Discovery Plan`
+> 4. `Agenda`
+> 5. `Watch Outs`
+> 6. `Desired Next Step`
+> 7. `Source Coverage`
+>
+> **H3 subtopics (when used):**
+> - under `Meeting Snapshot`: `Date Time Duration`, `Primary Contact`, `Attendees`, `Call Objective`, `Key Unknown`
+> - under `Account Context`: `Company Snapshot`, `Why Airbyte`, `Prior Call Context`, `What We Already Know`, `Open Threads From Prior Calls`
+> - under `Call Strategy`: `Point Of View To Test`, `Suggested Opener`
+> - under `Discovery Plan`: `Must Ask Questions`, `Implication Depth Questions`, `Persona Specific Questions`
+>
+> Source Coverage must be the **final H2**. The `At a Glance` block is an H3 under the title block (not a navigable section).
+>
+
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference. Produce a structured call prep brief with the following sections:
 
 ---

@@ -66,6 +66,20 @@ If there's **no** compelling event, say so plainly: the plan is then Airbyte-pac
 
 ## Output Format
 
+
+> [!info] Canonical output architecture for `mutual-close-plan`
+> This skill follows the shared content-architecture contract. Produce the H2 sections below in this exact order; use H3 (`###`) for the listed sub-topics.
+>
+> **Canonical H2 order:**
+> 1. `Path To Signature`
+> 2. `Two Sided Responsibilities`
+> 3. `Critical Path And Risks`
+> 4. `Mutual Agreement Ask`
+> 5. `Source Coverage`
+>
+> Source Coverage must be the **final H2**. The `At a Glance` block is an H3 under the title block (not a navigable section).
+>
+
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---

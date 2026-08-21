@@ -6,6 +6,12 @@ description: >
   "reduce worker usage", or "queue risk".
 ---
 
+> [!info] `worker-analysis` output architecture
+> This is a specialized artifact — it does not follow the normal report H2/H3 architecture.
+> Worker analysis is a specialized report with its own page architecture.
+>
+
+
 # Airbyte Worker Analysis
 
 Analyze, estimate, and optimize Airbyte Data Worker usage.

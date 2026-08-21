@@ -37,6 +37,24 @@ If user signals brief mode (`--brief`, `quick qual`, `qual summary`): produce ju
 
 ## Output Format
 
+
+> [!info] Canonical output architecture for `biz-qual`
+> This skill follows the shared content-architecture contract. Produce the H2 sections below in this exact order; use H3 (`###`) for the listed sub-topics.
+>
+> **Canonical H2 order:**
+> 1. `Meddpicc Scorecard`
+> 2. `Qualification Narrative`
+> 3. `Movement And Deal Risks`
+> 4. `Recommended Next Actions`
+> 5. `Source Coverage`
+>
+> **H3 subtopics (when used):**
+> - under `Qualification Narrative`: `Metrics`, `Economic Buyer`, `Decision Criteria`, `Decision Process`, `Paper Process`, `Identify Pain`, `Champion`, `Stakeholder Map`, `Competition`
+> - under `Movement And Deal Risks`: `Movement Since Last Qualification`, `Deal Risks`, `Reasons To Walk Or Deprioritize`
+>
+> Source Coverage must be the **final H2**. The `At a Glance` block is an H3 under the title block (not a navigable section).
+>
+
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---

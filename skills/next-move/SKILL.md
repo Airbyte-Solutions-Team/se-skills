@@ -164,6 +164,21 @@ Any stage + objection raised on most recent call
 
 ## Output Format
 
+
+> [!info] Canonical output architecture for `next-move`
+> This skill follows the shared content-architecture contract. Produce the H2 sections below in this exact order; use H3 (`###`) for the listed sub-topics.
+>
+> **Canonical H2 order:**
+> 1. `Why This Move`
+> 2. `Ranked Next Moves`
+> 3. `Dont Do Yet`
+> 4. `Workflow State`
+> 5. `Evidence Gaps And External Actions`
+> 6. `Source Coverage`
+>
+> Source Coverage must be the **final H2**. The `At a Glance` block is an H3 under the title block (not a navigable section).
+>
+
 *Lead with an H1 title (the web app reader uses the H1 as the page title), then a lightweight **At-a-Glance decision card**. next-move is **decision-first**: the recommendation is the lead, the audit trail is the tail. The web-app reader promotes the At-a-Glance block into a prominent hero card above the body, so the labels below are chosen to render as decision tiles — keep the wording.*
 
 ---

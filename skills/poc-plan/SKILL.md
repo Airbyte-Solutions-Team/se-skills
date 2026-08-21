@@ -63,6 +63,28 @@ If user signals brief mode (`--brief`, `quick POC plan`, `POC summary`): produce
 
 ## Output Format
 
+
+> [!info] Canonical output architecture for `poc-plan`
+> This skill follows the shared content-architecture contract. Produce the H2 sections below in this exact order; use H3 (`###`) for the listed sub-topics.
+>
+> **Canonical H2 order:**
+> 1. `Poc Objective`
+> 2. `Success Criteria`
+> 3. `Scope And Architecture`
+> 4. `Mutual Commitments And Roles`
+> 5. `Timeline And Milestones`
+> 6. `Access And Prerequisites`
+> 7. `Risks And Mitigations`
+> 8. `Exit Results Review`
+> 9. `Open Items`
+> 10. `Source Coverage`
+>
+> **H3 subtopics (when used):**
+> - under `Scope And Architecture`: `Sources And Destinations`, `Technical Notes`, `Poc Architecture`
+>
+> Source Coverage must be the **final H2**. The `At a Glance` block is an H3 under the title block (not a navigable section).
+>
+
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---

@@ -119,6 +119,24 @@ Only surface questions for items **not already answered** in the transcripts/SFD
 
 ## Output Format
 
+
+> [!info] Canonical output architecture for `connector-feasibility`
+> This skill follows the shared content-architecture contract. Produce the H2 sections below in this exact order; use H3 (`###`) for the listed sub-topics.
+>
+> **Canonical H2 order:**
+> 1. `System By System Fit`
+> 2. `Coverage Gaps And Custom Work`
+> 3. `Risks And Constraints`
+> 4. `Validation Questions`
+> 5. `Recommended Next Steps`
+> 6. `Source Coverage`
+>
+> **H3 subtopics (when used):**
+> - under `System By System Fit`: `System`, `Connector`, `Exists`, `Availability`, `Use Case Fit`, `Confidence`, `Top Risk`
+>
+> Source Coverage must be the **final H2**. The `At a Glance` block is an H3 under the title block (not a navigable section).
+>
+
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---

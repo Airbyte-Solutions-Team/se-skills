@@ -53,11 +53,11 @@ def test_post_call_partial_transcript_coverage(repo_root: Path) -> None:
 
 
 def test_post_call_missing_critical_section(repo_root: Path) -> None:
-    text = _load_fixture(repo_root, "post-call-brief.md").replace("## Action Items", "## Removed")
+    text = _load_fixture(repo_root, "post-call-brief.md").replace("## Actions & Next Step", "## Removed")
     meta = output_schema.parse_output("post-call", text, mode="brief")
     assert meta.valid is False
     assert meta.validation_status == "invalid"
-    assert any("action-items" in e for e in meta.validation_errors)
+    assert any("actions-and-next-step" in e for e in meta.validation_errors)
 
 
 def test_post_call_unresolved_template_placeholders(repo_root: Path) -> None:
@@ -253,13 +253,11 @@ def _remove_section(text: str, heading: str) -> str:
 
 def test_post_call_conditional_sections_absent_legitimately(repo_root: Path) -> None:
     # Remove all conditional sections from the full fixture; the remaining required
-    # sections (including attendees and coaching observations) should still validate.
+    # sections should still validate.
     text = _load_fixture(repo_root, "post-call-full.md")
     for heading in [
-        "## Sources & Destinations",
-        "## Technical Notes",
-        "## MEDDPICC Quick Pass",
-        "## Open Questions / Follow-ups",
+        "## Scope & Technical Changes",
+        "## Coaching Observations",
     ]:
         text = _remove_section(text, heading)
     meta = output_schema.parse_output("post-call", text, mode="full")
@@ -269,27 +267,30 @@ def test_post_call_conditional_sections_absent_legitimately(repo_root: Path) -> 
 
 def test_post_call_conditional_section_present_but_empty_is_invalid(repo_root: Path) -> None:
     text = _load_fixture(repo_root, "post-call-full.md").replace(
-        "## Technical Notes\n- **Volume / scale / frequency:** 10M rows/day [stated]\n- **Deployment / infra / security:** VPC residency required",
-        "## Technical Notes",
+        "## Scope & Technical Changes",
+        "## Scope & Technical Changes\n",
+    )
+    # Replace the multi-line body up to the next H2 with an empty body.
+    text = re.sub(
+        r"## Scope & Technical Changes\n.*?^(?=## |\Z)",
+        "## Scope & Technical Changes\n\n",
+        text,
+        count=1,
+        flags=re.MULTILINE | re.DOTALL,
     )
     meta = output_schema.parse_output("post-call", text, mode="full")
     assert meta.valid is False
     assert meta.validation_status == "invalid"
-    assert any("technical-notes" in e.lower() for e in meta.validation_errors)
+    assert any("scope" in e.lower() for e in meta.validation_errors)
 
 
 def test_post_call_empty_expanded_heading_is_invalid(repo_root: Path) -> None:
-    text = _load_fixture(repo_root, "post-call-brief.md").replace(
-        "## Action Items",
-        "## Action Items and Decisions",
-    ).replace(
-        "- [ ] **SE** — Schedule technical deep-dive with security lead by June 14\n- [ ] **Champion** — Introduce SE to the security reviewer",
-        "",
-    )
+    text = _remove_section(_load_fixture(repo_root, "post-call-brief.md"), "## Actions & Next Step")
+    text = text.replace("## Source Coverage", "## Actions & Next Step — Final\n\n## Source Coverage")
     meta = output_schema.parse_output("post-call", text, mode="brief")
     assert meta.valid is False
     assert meta.validation_status == "invalid"
-    assert any("action-items" in e.lower() for e in meta.validation_errors)
+    assert any("actions" in e.lower() for e in meta.validation_errors)
 
 
 def test_post_call_malformed_sidecar_skill_mismatch(tmp_path: Path, repo_root: Path) -> None:
@@ -328,14 +329,12 @@ def test_post_call_missing_at_a_glance(repo_root: Path) -> None:
 
 
 def test_post_call_empty_required_section(repo_root: Path) -> None:
-    text = _load_fixture(repo_root, "post-call-brief.md").replace(
-        "## Action Items\n- [ ] **SE** — Schedule technical deep-dive with security lead by June 14\n- [ ] **Champion** — Introduce SE to the security reviewer\n",
-        "## Action Items\n",
-    )
+    text = _remove_section(_load_fixture(repo_root, "post-call-brief.md"), "## Actions & Next Step")
+    text = text.replace("## Source Coverage", "## Actions & Next Step\n\n## Source Coverage")
     meta = output_schema.parse_output("post-call", text, mode="brief")
     assert meta.valid is False
     assert meta.validation_status == "invalid"
-    assert any("action-items" in e.lower() for e in meta.validation_errors)
+    assert any("actions" in e.lower() for e in meta.validation_errors)
 
 
 def test_post_call_zero_source_coverage(repo_root: Path) -> None:

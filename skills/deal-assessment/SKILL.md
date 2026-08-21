@@ -62,6 +62,27 @@ If user signals brief mode (`--brief`, `quick assessment`, `deal health summary`
 
 ## Output Format
 
+
+> [!info] Canonical output architecture for `deal-assessment`
+> This skill follows the shared content-architecture contract. Produce the H2 sections below in this exact order; use H3 (`###`) for the listed sub-topics.
+>
+> **Canonical H2 order:**
+> 1. `Trajectory And What Changed`
+> 2. `Deal Thesis`
+> 3. `Stakeholders And Qualification`
+> 4. `Close Path Blockers And Loss Risks`
+> 5. `Recommended Actions And Coaching`
+> 6. `Source Coverage`
+>
+> **H3 subtopics (when used):**
+> - under `Trajectory And What Changed`: `Activity Trajectory`, `What Changed Since Last Assessment`
+> - under `Deal Thesis`: `Driver`, `Need`, `Urgency`
+> - under `Stakeholders And Qualification`: `Stakeholder Read`, `Meddpicc Read`
+> - under `Close Path Blockers And Loss Risks`: `What Would Close It`, `Deal Blocker`, `Loss Risks`
+>
+> Source Coverage must be the **final H2**. The `At a Glance` block is an H3 under the title block (not a navigable section).
+>
+
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 Title format: `<Customer> — Deal Assessment: <short punchy verdict>`

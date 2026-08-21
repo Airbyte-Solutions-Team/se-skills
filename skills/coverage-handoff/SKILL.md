@@ -39,6 +39,24 @@ Copy these straight from the SFDC query into the page; IDs and numbers must be e
 
 ## Output Format — HTML in the rs-group design system
 
+
+> [!info] Canonical output architecture for `coverage-handoff`
+> This skill follows the shared content-architecture contract. Produce the H2 sections below in this exact order; use H3 (`###`) for the listed sub-topics.
+>
+> **Canonical H2 order:**
+> 1. `Deal Snapshot`
+> 2. `Whos Who`
+> 3. `Story So Far`
+> 4. `Current State`
+> 5. `In Flight Commitments`
+> 6. `Open Items`
+> 7. `Technical Threads`
+> 8. `Access And Escalation`
+> 9. `Source Coverage`
+>
+> Source Coverage must be the **final H2**. The `At a Glance` block is an H3 under the title block (not a navigable section).
+>
+
 **Produce one self-contained HTML file.** Use `template.html` in this skill's own directory (the installed skill lives at `~/.claude/skills/coverage-handoff/`, so read `~/.claude/skills/coverage-handoff/template.html`) as the exact skeleton:
 
 - Copy its `<style>` block **verbatim** (no external CSS — the file must render standalone and inside the internal repo).

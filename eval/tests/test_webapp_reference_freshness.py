@@ -53,11 +53,24 @@ VALID_CONNECTOR_FEASIBILITY = """# Acme — connector-feasibility: viable
 
 ## At a Glance
 - **Feasibility:** viable
+- **Recommended Motion:** run poc-plan
 
-## Fit Verdict
-| Connector | Status |
-|---|---|
-| source | green |
+## System-by-System Fit
+| System | Connector | Status |
+|---|---|---|
+| source | green | ok |
+
+## Coverage Gaps and Custom Work
+ok
+
+## Risks and Constraints
+ok
+
+## Validation Questions
+ok
+
+## Recommended Next Steps
+- run poc-plan
 
 ## Source Coverage
 - synthetic
@@ -68,12 +81,22 @@ VALID_BIZ_QUAL = """# Acme — biz-qual: viable
 **Date:** 2026-07-01 · **Skill:** biz-qual
 
 ## At a Glance
-- **Verdict:** viable
+- **Overall:** viable
+- **Recommended Motion:** run tech-qual
 
 ## MEDDPICC Scorecard
 | Letter | Status |
 |---|---|
 | M | green |
+
+## Qualification Narrative
+ok
+
+## Movement and Deal Risks
+ok
+
+## Recommended Next Actions
+- run tech-qual
 
 ## Source Coverage
 - synthetic

@@ -70,6 +70,24 @@ If ≥3 of these are unknown, say so prominently — the case will be directiona
 
 ## Output Format
 
+
+> [!info] Canonical output architecture for `roi-business-case`
+> This skill follows the shared content-architecture contract. Produce the H2 sections below in this exact order; use H3 (`###`) for the listed sub-topics.
+>
+> **Canonical H2 order:**
+> 1. `One Slide Eb View`
+> 2. `Current State Baseline`
+> 3. `Airbyte Cost Projection`
+> 4. `Payback And Sensitivity`
+> 5. `Assumptions And Confirms`
+> 6. `Source Coverage`
+>
+> **H3 subtopics (when used):**
+> - under `Airbyte Cost Projection`: `3 Year Tco Comparison`, `Tco Comparison`
+>
+> Source Coverage must be the **final H2**. The `At a Glance` block is an H3 under the title block (not a navigable section).
+>
+
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---

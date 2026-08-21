@@ -8,34 +8,36 @@
 - **Action items:** ==[2]== · **Next step:** Confirm the technical workshop date
 - **Deal-assessment update needed?** yes — the evaluation timeline changed
 
-**Jump to:** [At a Glance](#at-a-glance) · [Key Takeaways](#key-takeaways) · [Deal Health Signals](#deal-health-signals) · [New Objections / Concerns Surfaced](#new-objections--concerns-surfaced) · [Action Items](#action-items) · [Attendees](#attendees) · [Next Step](#next-step) · [Coaching Observations](#coaching-observations) · [Source Coverage](#source-coverage)
+**Jump to:** [At a Glance](#at-a-glance) · [Key Takeaways](#key-takeaways) · [Scope & Technical Changes](#scope--technical-changes) · [Deal Impact](#deal-impact) · [Objections & Open Questions](#objections--open-questions) · [Actions & Next Step](#actions--next-step) · [Coaching Observations](#coaching-observations) · [Source Coverage](#source-coverage)
 
 ## Key Takeaways
 - [stated — Patrice Puntis] The team needs a managed deployment before renewal.
 - [inferred — pricing page] The revised timeline increases evaluation urgency.
 
-## Deal Health Signals
+## Scope & Technical Changes
+- **Sources & Destinations:** Salesforce source, Snowflake destination.
+- **Technical Notes:** VPC residency requirement surfaced.
+
+> [!info] Feeds connector-feasibility & tech-qual
+> Run or update connector-feasibility to check Airbyte coverage for these systems.
+
+## Deal Impact
 - **Positive signals:** [stated — Nai Chao] The champion confirmed the workshop attendees.
 - **Negative signals:** [inferred — pricing page] Procurement timing remains uncertain.
 
 > [!verdict] Workshop has executive sponsorship
 > The champion committed the right stakeholders to the next meeting.
 
-## New Objections / Concerns Surfaced
+## Objections & Open Questions
 - [stated — Nai Chao] Security requested a review of network controls.
 
 > [!risk] Network controls
 > Security needs the deployment boundary documented.
 
-## Action Items
+## Actions & Next Step
 - [ ] **SE** — Send the deployment overview before the workshop.
 - [x] **Champion** — Confirm the security reviewer.
 
-## Attendees
-- **Airbyte:** Patrice Puntis (SE)
-- **Customer:** Nai Chao (Engineering)
-
-## Next Step
 Confirm the technical workshop date with the security reviewer.
 
 ## Coaching Observations
