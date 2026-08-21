@@ -286,7 +286,6 @@ Pre-stage 2-3 narrative beats you'll be able to tell if the POC succeeds:
 2. [Narrative beat tied to a Must-Have criterion]
 3. [Narrative beat tied to a Need-Payoff moment]
 ## Open Items
-Capture only unresolved dependencies, owner/date gaps, or decisions that must be made before kickoff.
 ### Notes / Open Items
 - [ ] [Any open question or dependency before POC can be confirmed]
 
