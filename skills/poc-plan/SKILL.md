@@ -179,10 +179,6 @@ Capture latency, volume, freshness, schema, transformation, networking, security
 - **Approximate data volume for POC:** [estimate]
 
 ## Mutual Commitments & Roles
-Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.
-
-
-
 ### Mutual Commitments
 **Required for any POC. A POC without a written upfront contract drifts.**
 
@@ -241,14 +237,6 @@ Record decision-relevant evidence, label each point as stated or inferred, and c
 **Mid-POC checkpoint is an explicit go/no-go gate, not a status call.** State it as: "By [mid-date] we should have [specific must-have working]; if not, we pause and diagnose rather than pushing to the end date." Name who declares go/no-go (the SE + the customer's POC owner). A POC that's clearly off-track at the midpoint is cheaper to reset than to let drift to the end.
 
 ## Access & Prerequisites
-Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.
-
-
-
-
-
-
-
 ### Access & Prerequisites Checklist
 Before the POC can begin, the following must be in place. *Access delays are the #1 POC killer — name an owner and a date for each. Render `TBD` when unassigned; never invent.*
 
@@ -297,20 +285,8 @@ Pre-stage 2-3 narrative beats you'll be able to tell if the POC succeeds:
 1. [Narrative beat tied to a Must-Have criterion]
 2. [Narrative beat tied to a Must-Have criterion]
 3. [Narrative beat tied to a Need-Payoff moment]
-
-Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.
-
-
 ## Open Items
-
-Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.
-
-
-
-
-
-
-
+Capture only unresolved dependencies, owner/date gaps, or decisions that must be made before kickoff.
 ### Notes / Open Items
 - [ ] [Any open question or dependency before POC can be confirmed]
 

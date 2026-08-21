@@ -232,10 +232,6 @@ For each missing connector, provide:
 ---
 
 ## Risks & Constraints
-Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.
-
-
-
 ### Constraints & Edge Cases
 *The gotchas that matter for THIS use case — not generic. Placed after coverage + gaps: it qualifies HOW the connectors behave in their environment.*
 - [e.g., "14 Shopify instances → per-store API rate limits; parallelism + scheduling matter for the 15-min target"]
@@ -245,11 +241,6 @@ Record decision-relevant evidence, label each point as stated or inferred, and c
 ---
 
 ## Validation Questions
-
-Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.
-
-
-
 ### Questions to Ask
 *The highest-value output. Per connector, only the items NOT yet answered in the transcripts/SFDC. These are what the SE should raise to confirm the connector actually solves the use case. Be specific and explain why each matters.* Wrap the per-connector questions in a `[!info]` callout:
 
@@ -280,7 +271,7 @@ Record decision-relevant evidence, label each point as stated or inferred, and c
 
 ## Source Coverage
 
-Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.<!-- output-template:end -->
+Audit trail: list each transcript read (lines read / total where available), prior qualification document, memory file, Salesforce field or record, and connector-registry or repository reference consulted. Record source dates, distinguish a full read from metadata-only inventory, identify which connector/system claims were verified, and note requested but unavailable evidence.<!-- output-template:end -->
 
 ## Style
 

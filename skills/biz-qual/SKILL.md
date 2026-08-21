@@ -302,7 +302,7 @@ If none hold → say "no disqualifying signals; proceed." If one+ hold → state
 
 ## Source Coverage
 
-Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.<!-- output-template:end -->
+Audit trail: list each transcript read (lines read / total where available), qualification document, memory file, and Salesforce field or record used for the MEDDPICC scorecard. Include source dates, label customer-stated versus inferred evidence, distinguish full reads from metadata-only inventory, and note anything requested but unavailable.<!-- output-template:end -->
 
 ## Style
 

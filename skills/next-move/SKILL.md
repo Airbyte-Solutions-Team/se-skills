@@ -225,7 +225,7 @@ Summarize the current deal state and the concrete evidence supporting the recomm
 ---
 
 ## Don't Do Yet
-Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.
+List actions deliberately deferred, why acting now would be premature, and the concrete evidence or event that would unpark each action. Keep this separate from the recommended moves; do not disguise uncertainty as a next step.
 
 
 

@@ -261,7 +261,15 @@ def test_producer_content_contracts_are_not_empty_shells(repo_root: Path) -> Non
     assert "**Source Coverage:**" not in account.split("### Account Snapshot", 1)[0]
 
     filler = "Capture the applicable facts, analysis, and recommendations here"
+    replacement_filler = (
+        "Record decision-relevant evidence, label each point as stated or inferred, "
+        "and close with the recommendation, owner, and due date when action is required."
+    )
     assert not any(filler in path.read_text(encoding="utf-8") for path in (repo_root / "skills").glob("*/SKILL.md"))
+    assert not any(
+        replacement_filler in path.read_text(encoding="utf-8")
+        for path in (repo_root / "skills").glob("*/SKILL.md")
+    )
 
 
 def test_playbook_architecture_table_matches_registry(repo_root: Path) -> None:

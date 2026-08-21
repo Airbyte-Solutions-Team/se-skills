@@ -2,10 +2,12 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 21, 2026 — HEAD `dd0f901` on `devin/1787273787-ux010-content-architecture`.
+_Last updated: August 21, 2026 — HEAD `(pending)` on `devin/1787273787-ux010-content-architecture`.
 
 
 ## Built this session (newest first — see `git log`)
+
+- **Skill-specific producer audit contracts (August 21).** Replaced the repeated decision-evidence sentence with source-specific Source Coverage audit trails, removed it where real POC/account/connector contracts already follow, and added genuine coaching, desired-next-step, and deferred-action guidance. Extended the architecture regression to reject the replacement filler.
 
 - **Round-2 content architecture corrections (August 21).** Profile-specific summaries now lead every Markdown producer with parser-readable labeled rows, and the reader recognizes/promotes each current profile name while preserving legacy `At a Glance`. POC, deal-assessment, account-refresher, and Coverage Handoff contracts now keep content under its semantic owner; the real Coverage Handoff HTML template is tested against the registry. POV context extraction now preserves H2/H3 ownership and restricts objectives, technical scope, and success criteria to their intended subsections, with canonical and legacy regression fixtures.
 

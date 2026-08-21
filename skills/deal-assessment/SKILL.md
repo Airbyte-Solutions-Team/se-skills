@@ -230,7 +230,7 @@ Keep candid. This is the part of the assessment the SE can act on personally.
 
 ## Source Coverage
 
-Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.<!-- output-template:end -->
+Audit trail: list each transcript read (lines read / total where available), prior qualification document, memory file, and Salesforce field or record consulted for the deal thesis, trajectory, and scorecard. Include source dates, label stated versus inferred evidence, distinguish full reads from metadata-only inventory, and note anything requested but unavailable.<!-- output-template:end -->
 
 ## Style
 

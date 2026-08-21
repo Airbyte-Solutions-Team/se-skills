@@ -265,7 +265,7 @@ Why this reframe for this customer: [brief rationale based on their stack/indust
 
 ## Desired Next Step
 
-Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.
+Name the specific calendar-able mutual commitment to ask for at the end of the call: meeting date, attendees, purpose, and owner. Add the fallback ask to use if the primary commitment stalls, and state the trigger for switching to it.
 
 
 

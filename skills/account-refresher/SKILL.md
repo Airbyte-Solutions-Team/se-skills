@@ -91,13 +91,6 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 - **Use case / what they want:** [1-2 lines]
 
 ## Open Items
-Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.
-
-
-
-
-
-
 - [ ] [Open item / unanswered question / pending action — who owns it]
 - [ ] [...]
 
@@ -114,7 +107,7 @@ Record decision-relevant evidence, label each point as stated or inferred, and c
 
 ## Source Coverage
 
-Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.
+Audit trail: name every transcript or call summary read (lines read / total where available), qualification document, memory file, and Salesforce field or record consulted. Distinguish content read in full from metadata-only inventory, include source dates, and note anything requested but unavailable.
 <!-- output-template:end -->
 
 ## Style

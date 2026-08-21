@@ -218,7 +218,7 @@ ONE of:
 
 ## Source Coverage
 
-Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.<!-- output-template:end -->
+Audit trail: list each transcript read (lines read / total where available), qualification document, memory file, Salesforce field or record, and product/reference source consulted for the deployment verdict. Include source dates, distinguish full reads from metadata-only inventory, and note requested but unavailable evidence or unverified entitlement claims.<!-- output-template:end -->
 
 ## Style
 

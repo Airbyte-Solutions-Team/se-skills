@@ -172,12 +172,12 @@ The single most important next action. Be specific — "send POC proposal by Fri
 
 ## Coaching Observations
 
-Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.
+Write 2–4 candid, personally actionable observations about how the SE/AE ran the call: what worked and what to change next time in the talk track, discovery technique, or demo pacing. Label each observation **[stated]** or **[inferred]**, and tie it to a concrete moment or behavior rather than grading the deal.
 
 ## Source Coverage
 
 
-*Audit trail — final content section, after all analytical and coaching content (progressive disclosure per `_se-playbook.md`).* [Transcript read in full (lines read / total), attribution determination, prior transcripts/summaries cross-referenced, memory files.]
+Audit trail — final content section, after all analytical and coaching content (progressive disclosure per `_se-playbook.md`). List each transcript read (lines read / total), attribution determination, prior transcript or summary cross-referenced, memory file, Salesforce field or record, and any source requested but unavailable. Distinguish a full read from metadata-only inventory.
 <!-- output-template:end -->
 
 ## After Generating the Summary
