@@ -88,13 +88,15 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 <!-- output-template:start -->
 # Call Prep: [Company Name]
 **Date:** [prep date, long form, e.g. June 11, 2026] · **Call:** [day + date + time w/ tz, e.g. Mon, June 29, 2026 · 11:00am ET / 8:00am PT] · **SE:** [SE name]
-
 ### Meeting Snapshot
-- **Meeting type:** [tech discovery / exec / POC kickoff] · **Duration:** ==[e.g., 30 min]==
+- **Date:** [prep date, long form]
+- **Time:** [call time and time zone]
+- **Duration:** [e.g., 30 min]
 - **Primary contact:** [name / title]
-- **Attendees:** [names + roles if known, else "TBC"]
-- **Reframe hypothesis (1 line):** [the counterintuitive point of view you'll lead with]
-- **Top goal for this call:** [the one thing this call must accomplish]
+- **Attendees:** [names + roles if known, else TBC]
+- **Call objective:** [the one thing this call must accomplish]
+- **Key unknown:** [the most important unanswered question to resolve]
+
 **Jump to:** [Account Context](#account-context) · [Call Strategy](#call-strategy) · [Discovery Plan](#discovery-plan) · [Agenda](#agenda) · [Watch Outs](#watch-outs) · [Desired Next Step](#desired-next-step) · [Source Coverage](#source-coverage)
 
 *(Use the canonical sections below; retain all facts, tables, and reasoning while nesting sub-topics under the relevant H2.)*
@@ -263,7 +265,7 @@ Why this reframe for this customer: [brief rationale based on their stack/indust
 
 ## Desired Next Step
 
-Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
+Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.
 
 
 

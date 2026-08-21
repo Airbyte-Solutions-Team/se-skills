@@ -96,15 +96,16 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 **Date:** [today, long form] · **SE owner:** [SE name] · **AE:** [AE name] · **For:** [EB name/role if known]
 
 
-*Decision card — lead with the number (see `_se-playbook.md` → Decision-First Layout).*
+### Business-Case Summary
 - **3-yr TCO — Airbyte vs. status quo:** ==$[X]== saved / ==[Y]%== lower
 - **Payback period:** ==[N] months==
 - **The one number for the EB:** [e.g. "$480K of data-engineering capacity reclaimed over 3 years"]
 - **Confidence:** [Decision-grade / Directional — depends on how many inputs are customer-confirmed vs. [confirm]]
 - **Deployment model priced:** [Cloud Pro (capacity) / Flex (capacity)]
 - **Source confidence:** [one line — biz-qual Metrics + transcripts; "see Source Coverage"]
-### Business-Case Summary
-- [One-line judgment or status for this artifact]
+
+
+*Decision card — lead with the number (see `_se-playbook.md` → Decision-First Layout).*
 
 **Jump to:** [One-Slide EB View](#one-slide-eb-view) · [Current-State Baseline](#current-state-baseline) · [Airbyte Cost Projection](#airbyte-cost-projection) · [Payback & Sensitivity](#payback-sensitivity) · [Assumptions & Confirms](#assumptions-confirms) · [Source Coverage](#source-coverage)
 
@@ -178,8 +179,7 @@ Be honest about Airbyte's own costs (migration, ramp) — a case that shows zero
 ## Source Coverage
 
 
-[biz-qual Metrics read, transcripts referenced (line counts), which discovery inputs are customer-confirmed vs. [confirm].]
-<!-- output-template:end -->
+[biz-qual Metrics read, transcripts referenced (line counts), which discovery inputs are customer-confirmed vs. [confirm].]<!-- output-template:end -->
 
 ## Style
 

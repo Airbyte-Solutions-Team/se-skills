@@ -86,7 +86,6 @@ _PRODUCER_SKILLS = (
     "account-refresher",
     "next-move",
     "internal-prep",
-    "coverage-handoff",
     "objection-handler",
 )
 
@@ -118,11 +117,18 @@ def test_producer_templates_follow_canonical_architecture(
     assert jump_to, f"{skill}: missing canonical Jump to line"
     anchors = re.findall(r"\]\(#([^)]+)\)", jump_to.group(1))
     assert anchors == [_slugify(display_name_for_key(key)) for key in arch.canonical_h2_order], skill
+    first_h3 = re.search(r"^### (.+)$", template, flags=re.MULTILINE)
+    assert first_h3, f"{skill}: missing profile summary heading"
+    assert first_h3.group(1).strip() == arch.top_summary_name, skill
 
     for parent, children in arch.h3_groups.items():
         if _normalize_heading(display_name_for_key(parent)) == _normalize_heading(
             arch.top_summary_name
         ):
+            summary = output_schema._extract_at_a_glance(
+                template, arch.top_summary_name
+            )
+            assert set(children) <= set(summary), f"{skill}: summary fields missing"
             continue
         parent_match = re.search(
             rf"^## {re.escape(display_name_for_key(parent))}\s*$",
@@ -153,16 +159,125 @@ def _slugify(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
 
 
+def test_profile_summary_names_match_reader(repo_root: Path) -> None:
+    """The reader's explicit summary-name allowlist stays registry-synchronized."""
+    app_js = (repo_root / "webapp" / "static" / "app.js").read_text(encoding="utf-8")
+    match = re.search(
+        r"const PROFILE_SUMMARY_NAMES = \[(.*?)\];",
+        app_js,
+        flags=re.DOTALL,
+    )
+    assert match
+    names = re.findall(r'"([^"]+)"', match.group(1))
+    assert set(names) == {
+        arch.top_summary_name
+        for arch in CANONICAL_ARCHITECTURE.values()
+        if arch.top_summary_name
+        and not arch.structured_exception
+        and arch.skill != "pov-gsheet"
+    }
+
+
+@pytest.mark.parametrize(
+    "skill",
+    (
+        "biz-qual",
+        "tech-qual",
+        "deployment-model-qual",
+        "poc-plan",
+        "connector-feasibility",
+        "post-call",
+    ),
+)
+def test_enforced_producer_summary_round_trips(skill: str, repo_root: Path) -> None:
+    """Real producer summary rows are parseable by the output-schema extractor."""
+    arch = CANONICAL_ARCHITECTURE[skill]
+    summary = output_schema._extract_at_a_glance(
+        _marked_template(repo_root, skill), arch.top_summary_name
+    )
+    schema = output_schema._SKILL_SCHEMAS[skill]
+    assert set(schema.required_at_a_glance_labels) <= set(summary), skill
+
+
+def test_coverage_handoff_html_matches_registry(repo_root: Path) -> None:
+    """Coverage Handoff is validated against its real HTML production template."""
+    from html.parser import HTMLParser
+
+    class Titles(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__()
+            self.titles: list[str] = []
+
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            if tag != "div":
+                return
+            if dict(attrs).get("class") == "section-title":
+                self._capture = True
+
+        def handle_endtag(self, tag: str) -> None:
+            if tag == "div":
+                self._capture = False
+
+        def handle_data(self, data: str) -> None:
+            if getattr(self, "_capture", False):
+                value = data.strip()
+                if value:
+                    self.titles.append(value)
+
+    parser = Titles()
+    parser.feed(
+        (repo_root / "skills" / "coverage-handoff" / "template.html").read_text(
+            encoding="utf-8"
+        )
+    )
+    arch = CANONICAL_ARCHITECTURE["coverage-handoff"]
+    expected = [arch.top_summary_name] + [
+        display_name_for_key(key) for key in arch.canonical_h2_order
+    ]
+    assert parser.titles == expected
+
+
+def test_producer_content_contracts_are_not_empty_shells(repo_root: Path) -> None:
+    """The corrected architecture preserves the decision-bearing producer prose."""
+    poc = _marked_template(repo_root, "poc-plan")
+    exit_start = poc.index("## Exit Results Review")
+    exit_end = poc.index("## Open Items", exit_start)
+    exit_body = poc[exit_start:exit_end]
+    assert "### POC Exit Criteria" in exit_body
+    assert "### Story for Results Review" in exit_body
+    assert "| Outcome | Definition | Next step |" in exit_body
+
+    deal = _marked_template(repo_root, "deal-assessment")
+    actions_start = deal.index("## Recommended Actions & Coaching")
+    actions_end = deal.index("## Source Coverage", actions_start)
+    actions_body = deal[actions_start:actions_end]
+    assert "### Coaching Observations" in actions_body
+    assert "| # | Next action |" in actions_body
+
+    account = _marked_template(repo_root, "account-refresher")
+    summary_start = account.index("### Account Snapshot")
+    summary_end = account.index("**Jump to:**", summary_start)
+    assert "**Current state:**" in account[summary_start:summary_end]
+    assert "**Source Coverage:**" not in account.split("### Account Snapshot", 1)[0]
+
+    filler = "Capture the applicable facts, analysis, and recommendations here"
+    assert not any(filler in path.read_text(encoding="utf-8") for path in (repo_root / "skills").glob("*/SKILL.md"))
+
+
 def test_playbook_architecture_table_matches_registry(repo_root: Path) -> None:
     """The playbook's architecture table stays synchronized with the registry."""
     text = (repo_root / "skills" / "_se-playbook.md").read_text(encoding="utf-8")
     start = text.index("| Skill | Canonical H2 order | Notes |")
     end = text.index("\n\nLegacy headings", start)
     rows = re.findall(
-        r"^\| ([^|]+) \| ([^|]+) \|",
+        r"^\| ([^|]+) \| ([^|]*) \|",
         text[start:end],
         flags=re.MULTILINE,
-    )[1:]
+    )
+    rows = [
+        row for row in rows
+        if row[0].strip() in CANONICAL_ARCHITECTURE
+    ]
     assert [skill.strip() for skill, _ in rows] == list(CANONICAL_ARCHITECTURE)
     for skill, order in rows:
         arch = CANONICAL_ARCHITECTURE[skill.strip()]

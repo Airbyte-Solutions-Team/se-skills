@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 # webapp to parse generated Markdown outputs. Python puts the script directory on
 # sys.path[0], so the direct import works.
 import output_schema
+from architecture import CANONICAL_ARCHITECTURE
 
 
 # ---------------------------------------------------------------------------
@@ -377,6 +378,63 @@ def _canonical_section(key: str) -> str:
     return re.sub(r"[-_]+", " ", key).strip()
 
 
+def _parse_h2_h3_bodies(text: str, skill: str) -> dict[tuple[str, str | None], str]:
+    """Preserve Markdown H2/H3 ownership for semantic downstream extraction."""
+    arch = CANONICAL_ARCHITECTURE.get(skill)
+    bodies: dict[tuple[str, str | None], list[str]] = {}
+    current: tuple[str, str | None] | None = None
+    in_fence = False
+
+    def flush() -> None:
+        if current is None:
+            return
+        body = "\n".join(bodies[current]).strip()
+        bodies[current] = [body] if body else []
+
+    for line in text.splitlines():
+        if re.match(r"^(```|~~~)", line):
+            in_fence = not in_fence
+        if not in_fence:
+            h2 = re.match(r"^##\s+(.+?)\s*$", line)
+            h3 = re.match(r"^###\s+(.+?)\s*$", line)
+            if h2:
+                flush()
+                key = output_schema._normalize_heading(h2.group(1))
+                if arch is not None:
+                    key = arch.aliases.get(key, key)
+                current = (key, None)
+                bodies.setdefault(current, [])
+                continue
+            if h3 and current is not None:
+                flush()
+                current = (current[0], output_schema._normalize_heading(h3.group(1)))
+                bodies.setdefault(current, [])
+                continue
+        if current is not None:
+            bodies[current].append(line)
+    flush()
+    return {key: "\n".join(value).strip() for key, value in bodies.items()}
+
+
+def _semantic_bodies(
+    text: str,
+    skill: str,
+    parent_keys: set[str],
+    child_patterns: tuple[str, ...],
+) -> list[tuple[str, str]]:
+    """Return only bodies whose H2/H3 pair matches an extraction contract."""
+    parsed = _parse_h2_h3_bodies(text, skill)
+    selected: list[tuple[str, str]] = []
+    for (parent, child), body in parsed.items():
+        if not body:
+            continue
+        if parent not in parent_keys:
+            continue
+        if child is None or any(re.search(pattern, child) for pattern in child_patterns):
+            selected.append((child or parent, body))
+    return selected
+
+
 # ---------------------------------------------------------------------------
 # Connector / system extraction for technical scope
 # ---------------------------------------------------------------------------
@@ -560,34 +618,27 @@ def _extract_business_objectives(meta: output_schema.OutputMetadata, path: Path,
     objectives: list[BusinessObjective] = []
     source = _output_source_label(path, customers_dir)
 
-    headings = [
-        r"business\s*objective",
-        r"objectives",
-        r"deal.thesis",
-        r"trajectory",
-        r"stakeholder",
-        r"driver",
-        r"need",
-        r"urgency",
-        r"bottom\s*line",
-    ]
     seen: set[str] = set()
-    for section_name, section_text in meta.sections.items():
-        if any(re.search(h, _canonical_section(section_name), re.IGNORECASE) for h in headings):
-            bullets = _extract_bullets(section_text)
-            if bullets:
-                for bullet in bullets:
-                    b = _strip_markup(bullet)
-                    if b and b not in seen:
-                        seen.add(b)
-                        objectives.append(BusinessObjective(objective=b, sources=[source]))
-            else:
-                # Some sections (e.g. Driver, Need) are prose paragraphs.
-                para = _strip_markup(section_text).split("\n\n")[0].strip()
-                para = re.sub(r"\s+", " ", para)
-                if para and len(para) < 500 and para not in seen:
-                    seen.add(para)
-                    objectives.append(BusinessObjective(objective=para, sources=[source]))
+    bodies = _semantic_bodies(
+        path.read_text(encoding="utf-8"),
+        path.parent.name,
+        {"qualification-narrative", "business-objectives", "business-objective"},
+        (r"identify-pain", r"metrics", r"business[- ]objective", r"objective", r"pain"),
+    )
+    for section_name, section_text in bodies:
+        bullets = _extract_bullets(section_text)
+        if bullets:
+            for bullet in bullets:
+                b = _strip_markup(bullet)
+                if b and b not in seen:
+                    seen.add(b)
+                    objectives.append(BusinessObjective(objective=b, sources=[source]))
+        else:
+            para = _strip_markup(section_text).split("\n\n")[0].strip()
+            para = re.sub(r"\s+", " ", para)
+            if para and len(para) < 500 and para not in seen:
+                seen.add(para)
+                objectives.append(BusinessObjective(objective=para, sources=[source]))
     # Also harvest any MEDDPICC / scorecard table with a "why it matters" column.
     for section_name, section_text in meta.sections.items():
         if "meddpicc" in section_name or "scorecard" in section_name:
@@ -603,32 +654,35 @@ def _extract_technical_scope(meta: output_schema.OutputMetadata, path: Path, cus
     scope: dict[str, list[Any]] = {"sources": [], "destinations": [], "use_cases": [], "requirements": [], "dependencies": []}
     source = _output_source_label(path, customers_dir)
 
-    relevant = {
-        "connector", "technical", "in-scope", "in scope", "source systems",
-        "destination systems", "sources and destinations", "connectors",
-        "architecture", "security", "cdc", "schema", "performance", "capacity", "throughput",
-        "need", "what would close", "what would lose",
-        # Canonical architecture H2 names (spaces) produced by output_schema.
-        "deal thesis",
-        "close path",
-        "system by system",
-        "coverage gaps",
-        "risks and constraints",
-        "validation questions",
-        "recommended next steps",
-        "requirements and architecture",
-        "implementation readiness",
-        "risks and open items",
-        "technical fit",
-    }
-    excluded = {"source coverage", "sources used", "source-coverage", "sources-used"}
+    bodies = _semantic_bodies(
+        path.read_text(encoding="utf-8"),
+        path.parent.name,
+        {
+            "requirements-and-architecture",
+            "technical-fit-summary",
+            "system-by-system-fit",
+            "scope-and-architecture",
+            "deployment-verdict",
+            "customer-constraints",
+        },
+        (
+            r"source.*destination",
+            r"technical",
+            r"requirement",
+            r"architecture",
+            r"deployment",
+            r"security",
+            r"data[- ](source|volume|scale)",
+            r"current[- ]stack",
+            r"integration",
+            r"fit[- ]verdict",
+            r"use[- ]case",
+            r"connector",
+            r"constraint",
+        ),
+    )
 
-    for section_name, section_text in meta.sections.items():
-        canon = _canonical_section(section_name)
-        if any(ex in canon for ex in excluded):
-            continue
-        if not any(k in canon for k in relevant):
-            continue
+    for section_name, section_text in bodies:
 
         # Connector/system extraction
         for name, explicit_kind in _find_connectors(section_text):
@@ -657,43 +711,37 @@ def _extract_success_criteria(meta: output_schema.OutputMetadata, path: Path, cu
     criteria: list[SuccessCriterion] = []
     source = _output_source_label(path, customers_dir)
 
-    headings = [
-        r"success\s*criteria",
-        r"success",
-        r"close.path",
-        r"loss.risks",
-        r"what\s*would\s*close",
-        r"close\s*criteria",
-        r"recommended.actions",
-        r"coaching",
-        r"validation",
-    ]
     seen: set[str] = set()
-    for section_name, section_text in meta.sections.items():
-        if any(re.search(h, _canonical_section(section_name), re.IGNORECASE) for h in headings):
-            for bullet in _extract_bullets(section_text):
-                b = _strip_markup(bullet)
-                if not b or b in seen:
-                    continue
-                seen.add(b)
-                validation_method = "Customer validation during POV"
-                lower = b.lower()
-                if any(k in lower for k in ("count", "record", "loss", "missing")):
-                    validation_method = "Record-level comparison against source"
-                elif any(k in lower for k in ("latency", "minute", "hour", "throughput")):
-                    validation_method = "Latency / throughput measurement"
-                elif "security" in lower or "infosec" in lower or "sign-off" in lower:
-                    validation_method = "Documented customer sign-off"
-                criteria.append(
-                    SuccessCriterion(
-                        feature_or_capability=b,
-                        validation_method=validation_method,
-                        in_scope="Yes",
-                        priority="Must Have",
-                        evidence=b,
-                        sources=[source],
-                    )
+    bodies = _semantic_bodies(
+        path.read_text(encoding="utf-8"),
+        path.parent.name,
+        {"success-criteria"},
+        (r".*",),
+    )
+    for section_name, section_text in bodies:
+        for bullet in _extract_bullets(section_text):
+            b = _strip_markup(bullet)
+            if not b or b in seen:
+                continue
+            seen.add(b)
+            validation_method = "Customer validation during POV"
+            lower = b.lower()
+            if any(k in lower for k in ("count", "record", "loss", "missing")):
+                validation_method = "Record-level comparison against source"
+            elif any(k in lower for k in ("latency", "minute", "hour", "throughput")):
+                validation_method = "Latency / throughput measurement"
+            elif "security" in lower or "infosec" in lower or "sign-off" in lower:
+                validation_method = "Documented customer sign-off"
+            criteria.append(
+                SuccessCriterion(
+                    feature_or_capability=b,
+                    validation_method=validation_method,
+                    in_scope="Yes",
+                    priority="Must Have",
+                    evidence=b,
+                    sources=[source],
                 )
+            )
     return criteria
 
 

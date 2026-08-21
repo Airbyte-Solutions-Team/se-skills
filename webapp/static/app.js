@@ -360,6 +360,35 @@ function slugify(s) {
     .replace(/^-+|-+$/g, "");
 }
 
+// Profile-specific summary headings are deliberately explicit so the reader
+// can promote every current producer profile while retaining legacy outputs.
+const PROFILE_SUMMARY_NAMES = [
+  "Meeting Snapshot",
+  "Call Snapshot",
+  "Decision Summary",
+  "Decision Summary / Bottom Line",
+  "POC Summary",
+  "Business-Case Summary",
+  "Close Summary",
+  "Account Snapshot",
+  "Recommendation",
+  "Meeting / Decision Summary",
+  "Coverage Snapshot",
+  "Severity / Bottom Line",
+];
+
+function summaryHeadingLabelText(text) {
+  const value = (text || "").trim();
+  const match = PROFILE_SUMMARY_NAMES.find((name) => name.toLowerCase() === value.toLowerCase());
+  if (match) return match;
+  return /^at a glance$/i.test(value) ? "At a Glance" : "";
+}
+
+function summaryHeadingLabel(section) {
+  const heading = section?.querySelector(":scope > h2, :scope > h3");
+  return summaryHeadingLabelText(heading?.textContent || "");
+}
+
 // Strip inline markdown to plain text (for TOC sidebar labels).
 function stripInline(s) {
   return (s || "")
@@ -2258,7 +2287,8 @@ async function openOutput(path, title, ctx) {
   const leadSection = sections[0];
   // The lead is the pre-first-H2 block (title meta + At-a-Glance). Promote it only
   // when it actually holds an At-a-Glance card and isn't itself an H2 section.
-  const leadIsGlance = leadSection && /at a glance/i.test(leadSection.textContent || "")
+  const leadSummaryLabel = summaryHeadingLabel(leadSection);
+  const leadIsGlance = leadSection && leadSummaryLabel
     && !leadSection.querySelector(":scope > h2.md-h2");
   let glancePromoted = false;
   if (leadIsGlance) {
@@ -2305,7 +2335,7 @@ async function openOutput(path, title, ctx) {
         `<div class="tile ${t.sev}"><div class="tile-label">${esc(t.label)}</div><div class="tile-value">${t.valHtml}</div></div>`
       ).join("");
       const restHtml = rest.length ? `<div class="exec-rest"><div class="kv-grid">${rest.join("")}</div></div>` : "";
-      execCardHtml = `<div class="exec-card"><div class="exec-card-eyebrow">Executive Assessment</div>`
+      execCardHtml = `<div class="exec-card"><div class="exec-card-eyebrow">${esc(leadSummaryLabel)}</div>`
         + `${readHtml}<div class="tile-grid">${tileHtml}</div>${restHtml}</div>`;
       glancePromoted = true;
       // The lead section's content (meta line + At-a-Glance) is now fully
@@ -2333,10 +2363,10 @@ async function openOutput(path, title, ctx) {
     }
   }
 
-  // Tag the section containing "At a Glance" so it gets the summary panel (only
+  // Tag the section containing a recognized summary heading so it gets the summary panel (only
   // reached if the glance wasn't promoted above — keeps backward behavior).
   for (const s of sections) {
-    if (/at a glance/i.test(s.querySelector("h2,h3")?.textContent || "")) s.classList.add("is-glance");
+    if (summaryHeadingLabel(s)) s.classList.add("is-glance");
   }
 
   // ── "**Lead.** detail" bullet sections → cards. RISK_SECTION (Watch-outs / What

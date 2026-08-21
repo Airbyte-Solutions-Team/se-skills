@@ -65,10 +65,11 @@ This skill is **light-touch** under `_se-playbook.md` → Output Document Format
 
 <!-- output-template:start -->
 # Objection Handler: [Customer] — [Date]
-
 ### Severity / Bottom Line
-- **Severity:** [🟢/🟡/🔴 and rationale]
-- **Objection:** [restate it cleanly]
+- **Severity:** [Deal-killer / High / Medium / Low]
+- **Bottom line:** [one-line truthful response or route recommendation]
+- **Customer context:** [customer-specific evidence used, or **TBD**]
+
 
 **Jump to:** [What's True](#what-s-true) · [Talk Track](#talk-track) · [Follow-Up Questions](#follow-up-questions) · [Fit & Route Boundary](#fit-route-boundary)
 
@@ -88,7 +89,7 @@ Plain-language statement of Airbyte's actual capability/position on this. Do NOT
 
 ## Talk Track
 
-Capture the applicable facts, talk track, questions, and routing guidance here.
+State the customer concern, give the truthful product response, list the follow-up question, and route any unresolved gap to a named owner.
 
 
 
@@ -112,7 +113,7 @@ NOW the actual answer. Specific, honest, 2-3 sentences max. This is what most SE
 > Example: "On lock-in specifically: Airbyte's connectors are open-source, your data lives in your warehouse, and the schemas/configs are exportable. If you ever wanted to leave, you'd rebuild the orchestration layer, not the integrations."
 
 ## Follow-Up Questions
-Capture the applicable facts, talk track, questions, and routing guidance here.
+State the customer concern, give the truthful product response, list the follow-up question, and route any unresolved gap to a named owner.
 
 
 

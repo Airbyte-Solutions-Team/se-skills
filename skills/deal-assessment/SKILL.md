@@ -100,15 +100,17 @@ The punchy verdict should be honest, e.g.:
 **Date:** [today's date — long form per `_se-playbook.md`, e.g. June 11, 2026, NOT 2026-06-11 or MM.DD.YY] · **Stage:** [Discovery / POC / Negotiation / Closed Won / Closed Lost / Stalled]
 
 
-*Decision card — lead with the call (see `_se-playbook.md` → Decision-First Layout).*
+### Decision Summary / Bottom Line
+- **Verdict:** [one-line judgment — honest deal call]
 - **Probability:** ==[band, e.g. 40–60%]== ([dead/dying / at risk / likely / very likely / committed])
 - **Stage:** [stage] · **Trajectory:** [🟢 Accelerating / 🟡 Steady / 🔴 Decelerating / 🔴 Silent]
 - **#1 Blocker:** [one line — name the person/process/alternative]
 - **Recommended motion:** [the single highest-leverage next move]
 - **Driver:** [one line — what's pushing them now]
 - **Source confidence:** [one line — N transcripts + notes, dates; "see Source Coverage"]
-### Decision Summary / Bottom Line
-- [One-line judgment or status for this artifact]
+
+
+*Decision card — lead with the call (see `_se-playbook.md` → Decision-First Layout).*
 
 **Jump to:** [Trajectory & What Changed](#trajectory-what-changed) · [Deal Thesis](#deal-thesis) · [Stakeholders & Qualification](#stakeholders-qualification) · [Close Path Blockers & Loss Risks](#close-path-blockers-loss-risks) · [Recommended Actions & Coaching](#recommended-actions-coaching) · [Source Coverage](#source-coverage)
 
@@ -143,8 +145,9 @@ Compared to the prior assessment ([its date]):
 
 ---
 
+## Deal Thesis
 
-One paragraph. Honest assessment of deal health. Not optimistic, not pessimistic — accurate.
+One paragraph. Honest assessment of deal health. Not optimistic, not pessimistic — accurate. This is the supporting rationale for the verdict and probability band above.
 
 **Probability estimate — use bands, not point estimates.** Render the chosen band as a verdict callout, picking the type by band: `[!verdict]` if ≥60%, `[!risk]` if 20–60%, `[!blocker]` if <20%. Wrap the band figure in `==…==`.
 
@@ -170,8 +173,6 @@ Defend the band with specific evidence. Don't say "40-60%" — say "in the 40-60
 If you don't have enough signal to band, say "Unable to estimate — source base too thin."
 
 ---
-
-## Deal Thesis
 
 ### Driver
 What's pushing them to evaluate Airbyte *right now*? (Not what their general problem is — what made them pick up the phone this quarter.) If you can't identify one, say so plainly — that's a red flag.
@@ -205,10 +206,13 @@ The primary obstacle to closing. There's usually one big thing. Name it. If ther
 What kills this deal entirely? Competitor selection? Budget cut? Internal build decision? Champion leaving? Be honest about the failure modes.
 
 ## Recommended Actions & Coaching
-Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
 
+Recommended actions must be concrete and executable. List the action, intended outcome, owner, and target date; use **TBD** when the source does not establish an owner or date.
 
-
+| # | Next action | Why now / expected outcome | Owner | Target date |
+|---|-------------|----------------------------|-------|-------------|
+| 1 | [concrete action] | [gap or decision it resolves] | [name or **TBD**] | [date or **TBD**] |
+| 2 | [concrete action] | [gap or decision it resolves] | [name or **TBD**] | [date or **TBD**] |
 
 
 ### Coaching Observations
@@ -226,8 +230,7 @@ Keep candid. This is the part of the assessment the SE can act on personally.
 
 ## Source Coverage
 
-Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
-<!-- output-template:end -->
+Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.<!-- output-template:end -->
 
 ## Style
 

@@ -67,7 +67,7 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 **Date:** [today's date, long form] · **SE owner:** [SE name]
 
 
-*Decision card — lead with the judgment (see `_se-playbook.md` → Decision-First Layout).*
+### Decision Summary
 - **Technical fit:** 🟢 Strong / 🟡 Moderate / 🔴 Weak / ⬜ Insufficient info — [3–6 word headline]
 - **Recommended motion:** [the one next move — e.g. "Proceed to POC scoping" / "Validate destination first"]
 - **Primary risk:** [the single biggest technical thing that could blow it up — one line]
@@ -76,8 +76,9 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 - **Scope:** [sources → destination] · **# connectors:** ==[N]== · **Volume:** ==[e.g., 50M rows/day]== · **Latency:** [e.g., 15 min]
 - **Compliance:** [omit if none in scope; else "N/A" or "compliance claims pending verification" if any cert/security line is unverified — see Security & Compliance]
 - **Source confidence:** [one line — N transcripts + SFDC + qual docs; "see Source Coverage"]
-### Decision Summary
-- [One-line judgment or status for this artifact]
+
+
+*Decision card — lead with the judgment (see `_se-playbook.md` → Decision-First Layout).*
 
 **Jump to:** [Technical Fit Summary](#technical-fit-summary) · [Requirements & Architecture](#requirements-architecture) · [Implementation Readiness](#implementation-readiness) · [Risks & Open Items](#risks-open-items) · [Recommended Next Actions](#recommended-next-actions) · [Source Coverage](#source-coverage)
 
@@ -252,8 +253,7 @@ Classify every item in this table into one of four buckets so the SE knows wheth
 
 **DS2 product-truth (per `_se-playbook.md` → fail-loud):** report whether the `airbyte-platform` checkout (`reference_data.repos.airbyte_platform`) was used to verify entitlement claims in Security & Compliance — with the checkout date — e.g. "entitlement claims grounded in `EntitlementDefinitions.kt`, airbyte-platform checkout [date]"; or "airbyte-platform not available — compliance/entitlement claims reasoned from memory and marked 'verify with [team]', confidence capped." Never assert an entitlement you couldn't verify against the file.
 
----
-<!-- output-template:end -->
+---<!-- output-template:end -->
 
 ## Style (tech-qual skill guidance — not part of output template)
 

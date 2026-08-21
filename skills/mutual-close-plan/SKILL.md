@@ -88,15 +88,16 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 **Date:** [today, long form] · **SE owner:** [SE name] · **AE:** [AE name] · **EB:** [name/role]
 
 
-*Decision card — lead with the target and the gating risk (see `_se-playbook.md` → Decision-First Layout).*
+### Close Summary
 - **Target signature date:** ==[date]== (anchored to [compelling event] on [date])
 - **Steps to signature:** ==[N]== · **Critical path:** [the step most likely to gate — e.g. "InfoSec review, 3-wk queue"]
 - **Timeline verdict:** [✅ fits before the event / ⚠️ tight — needs compression / 🔴 doesn't fit — event or scope must move]
 - **Mutually agreed?** [✅ customer has seen + agreed / ⬜ draft — not yet shared with customer]
 - **Single biggest risk to close:** [one line]
 - **Source confidence:** [one line — biz-qual Paper Process + transcripts; "see Source Coverage"]
-### Close Summary
-- [One-line judgment or status for this artifact]
+
+
+*Decision card — lead with the target and the gating risk (see `_se-playbook.md` → Decision-First Layout).*
 
 **Jump to:** [Path to Signature](#path-to-signature) · [Two-Sided Responsibilities](#two-sided-responsibilities) · [Critical Path & Risks](#critical-path-risks) · [Mutual Agreement Ask](#mutual-agreement-ask) · [Source Coverage](#source-coverage)
 
@@ -150,8 +151,7 @@ If the plan is still a draft the customer hasn't seen, mark it ⬜ **not yet mut
 ## Source Coverage
 
 
-[biz-qual Paper Process / EB read, poc-plan end date, transcripts referenced (line counts), which steps are customer-confirmed vs. [confirm].]
-<!-- output-template:end -->
+[biz-qual Paper Process / EB read, poc-plan end date, transcripts referenced (line counts), which steps are customer-confirmed vs. [confirm].]<!-- output-template:end -->
 
 ## Style
 

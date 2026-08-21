@@ -63,15 +63,16 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 **Date:** [today's date] · **Deal stage:** [Discovery / Technical Eval / POC / Negotiation] · **SE owner:** [SE name]
 
 
-*Decision card — lead with the judgment (see `_se-playbook.md` → Decision-First Layout).*
+### Decision Summary
 - **Overall:** 🟢 Strong / 🟡 Moderate / 🔴 Weak — [3–6 word headline]
 - **MEDDPICC:** [one-line scorecard, e.g. `M🟢 E🔴 D🟡 D🟡 P🔴 I🟢 C🟡 C🟢`]
 - **Economic Buyer:** [name/title or "not identified"] · **Champion:** [name/title or "untested"]
 - **Biggest gap:** [the weakest/blocking letter — one line — what it blocks]
 - **Recommended motion:** [the one next move to close the biggest gap]
 - **Source confidence:** [one line — N transcripts + SFDC; "see Source Coverage"]
-### Decision Summary
-- [One-line judgment or status for this artifact]
+
+
+*Decision card — lead with the judgment (see `_se-playbook.md` → Decision-First Layout).*
 
 **Jump to:** [MEDDPICC Scorecard](#meddpicc-scorecard) · [Qualification Narrative](#qualification-narrative) · [Movement & Deal Risks](#movement-deal-risks) · [Recommended Next Actions](#recommended-next-actions) · [Source Coverage](#source-coverage)
 
@@ -301,8 +302,7 @@ If none hold → say "no disqualifying signals; proceed." If one+ hold → state
 
 ## Source Coverage
 
-Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
-<!-- output-template:end -->
+Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.<!-- output-template:end -->
 
 ## Style
 

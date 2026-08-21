@@ -98,6 +98,10 @@ _DISPLAY_NAMES = {
     "roles-and-responsibilities": "Roles & Responsibilities",
     "sources-and-destinations": "Sources & Destinations",
     "technical-notes": "Technical Notes",
+    "deal-impact": "Deal Impact",
+    "key-takeaways": "Key Takeaways",
+    "coaching-observations": "Coaching Observations",
+    "exit-results-review": "Exit Results Review",
     "data-sources-and-destinations": "Data Sources & Destinations",
     "data-volume-and-scale": "Data Volume & Scale",
     "security-and-compliance": "Security & Compliance",
@@ -197,7 +201,9 @@ _PREP_CALL = SkillArchitecture(
     ],
     h3_groups={
         "meeting-snapshot": [
-            "date-time-duration",
+            "date",
+            "time",
+            "duration",
             "primary-contact",
             "attendees",
             "call-objective",
@@ -269,8 +275,12 @@ _POST_CALL = SkillArchitecture(
     ],
     h3_groups={
         "call-snapshot": [
-            "date",
             "call-type",
+            "call-date",
+            "attendees",
+            "action-items",
+            "next-step",
+            "deal-assessment-update-needed",
             "customer-attendees",
             "airbyte-attendees",
             "one-line-deal-impact",
@@ -552,7 +562,7 @@ _POC_PLAN = SkillArchitecture(
         _SOURCE_COVERAGE,
     ],
     h3_groups={
-        "success-criteria": [
+        "exit-results-review": [
             "poc-exit-criteria",
             "story-for-results-review",
         ],

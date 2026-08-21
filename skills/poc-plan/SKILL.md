@@ -97,7 +97,7 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 **Date:** [today's date, long form] · **SE owner:** [SE name] · **AE:** [AE name]
 
 
-*Decision card — lead with what this POC proves and the call after (see `_se-playbook.md` → Decision-First Layout).*
+### POC Summary
 - **POC proves:** [the one thing — e.g. "Airbyte reliably lands SAP + Coupa data in their Postgres CDR at scale"]
 - **Timeline:** ==[N] weeks== ([start] → [end]) · **Mid-POC checkpoint:** ==[date]==
 - **Success criteria:** ==[N]== ([M] must-have) · **Mutual commitments:** [N]
@@ -105,8 +105,9 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 - **Primary risk:** [the one thing most likely to derail the POC — one line]
 - **Prospect technical lead:** [name / title if known]
 - **Source confidence:** [one line — prior qual docs + transcripts; "see Source Coverage"]
-### POC Summary
-- [One-line judgment or status for this artifact]
+
+
+*Decision card — lead with what this POC proves and the call after (see `_se-playbook.md` → Decision-First Layout).*
 
 **Jump to:** [POC Objective](#poc-objective) · [Success Criteria](#success-criteria) · [Scope & Architecture](#scope-architecture) · [Mutual Commitments & Roles](#mutual-commitments-roles) · [Timeline & Milestones](#timeline-milestones) · [Access & Prerequisites](#access-prerequisites) · [Risks & Mitigations](#risks-mitigations) · [Exit Results Review](#exit-results-review) · [Open Items](#open-items) · [Source Coverage](#source-coverage)
 
@@ -134,28 +135,6 @@ These are the specific, measurable outcomes that define a successful POC. **Both
 **Preserve the customer's stated success criteria, including capacity sizing, sync frequency, concurrency, and throughput targets.** Do not remove a difficult success criterion or shrink the schedule merely to make the POC easier to complete (see `_se-playbook.md` → Operating Discipline D5). If a criterion is genuinely out of scope for the POC window, move it to **Optional stretch scope** or **Production requirements** below and explain the rationale and proxy validation; do not silently drop it. The customer's baseline requirement stays the baseline.
 
 
-
-### POC Exit Criteria
-At the end of the POC, one of three outcomes:
-
-| Outcome | Definition | Next step |
-|---------|------------|-----------|
-| **Pass** | All must-have criteria met | Advance to commercial discussion |
-| **Conditional pass** | Must-haves met, minor gaps remain | Agree remediation plan, proceed to commercial |
-| **No-go** | One or more must-haves not met | Document gap, escalate to Product/Eng or disqualify |
-
-
-
-### Story for Results Review
-**The narrative you'll tell at the end of POC — designed during planning, not afterward.**
-
-Not "we synced data." Something like:
-> "We synced [customer's hardest source] in [actual hours of config time] vs. the [customer-estimated weeks] it would have taken your team to build. Schema changes during the POC were handled automatically — no engineering intervention needed."
-
-Pre-stage 2-3 narrative beats you'll be able to tell if the POC succeeds:
-1. [Narrative beat tied to a Must-Have criterion]
-2. [Narrative beat tied to a Must-Have criterion]
-3. [Narrative beat tied to a Need-Payoff moment]
 
 ## Scope & Architecture
 ### Scope
@@ -200,7 +179,7 @@ Capture latency, volume, freshness, schema, transformation, networking, security
 - **Approximate data volume for POC:** [estimate]
 
 ## Mutual Commitments & Roles
-Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
+Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.
 
 
 
@@ -262,7 +241,7 @@ Capture the applicable facts, analysis, and recommendations here; label stated f
 **Mid-POC checkpoint is an explicit go/no-go gate, not a status call.** State it as: "By [mid-date] we should have [specific must-have working]; if not, we pause and diagnose rather than pushing to the end date." Name who declares go/no-go (the SE + the customer's POC owner). A POC that's clearly off-track at the midpoint is cheaper to reset than to let drift to the end.
 
 ## Access & Prerequisites
-Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
+Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.
 
 
 
@@ -297,11 +276,34 @@ Before the POC can begin, the following must be in place. *Access delays are the
 
 ## Exit Results Review
 
-Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
+### POC Exit Criteria
+At the end of the POC, one of three outcomes:
+
+| Outcome | Definition | Next step |
+|---------|------------|-----------|
+| **Pass** | All must-have criteria met | Advance to commercial discussion |
+| **Conditional pass** | Must-haves met, minor gaps remain | Agree remediation plan, proceed to commercial |
+| **No-go** | One or more must-haves not met | Document gap, escalate to Product/Eng or disqualify |
+
+
+
+### Story for Results Review
+**The narrative you'll tell at the end of POC — designed during planning, not afterward.**
+
+Not "we synced data." Something like:
+> "We synced [customer's hardest source] in [actual hours of config time] vs. the [customer-estimated weeks] it would have taken your team to build. Schema changes during the POC were handled automatically — no engineering intervention needed."
+
+Pre-stage 2-3 narrative beats you'll be able to tell if the POC succeeds:
+1. [Narrative beat tied to a Must-Have criterion]
+2. [Narrative beat tied to a Must-Have criterion]
+3. [Narrative beat tied to a Need-Payoff moment]
+
+Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.
+
 
 ## Open Items
 
-Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
+Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.
 
 
 
@@ -317,8 +319,7 @@ Capture the applicable facts, analysis, and recommendations here; label stated f
 ## Source Coverage
 
 
-[Prior qual docs read, transcripts referenced (line counts), external context pulled — see After Generating. Note whether scoped-connector availability was **reused from connector-feasibility**, checked directly against the **registry/`airbyte-enterprise`** (with cache/checkout date), or **not verified** (source unavailable → availability claims capped).]
-<!-- output-template:end -->
+[Prior qual docs read, transcripts referenced (line counts), external context pulled — see After Generating. Note whether scoped-connector availability was **reused from connector-feasibility**, checked directly against the **registry/`airbyte-enterprise`** (with cache/checkout date), or **not verified** (source unavailable → availability claims capped).]<!-- output-template:end -->
 
 ## Style (poc-plan skill guidance — not part of output template)
 

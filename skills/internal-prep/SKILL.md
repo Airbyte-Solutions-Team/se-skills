@@ -96,11 +96,12 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 <!-- output-template:start -->
 # Internal Prep — [Customer / Meeting Type]
 **Date:** [today's date, long form] · **Meeting type:** [ae-sync / forecast / exec-readout / deal-review]
-
 ### Meeting / Decision Summary
-- **Headline:** [the one-line state of the meeting or portfolio]
-- **Primary ask:** [the decision or help needed]
-- **Top risk:** [the one thing that could surprise the team]
+- **Meeting type:** [ae-sync / forecast / exec-readout / deal-review]
+- **Date:** [today's date, long form]
+- **Primary decision needed:** [the decision this meeting must make]
+- **Recommended motion:** [the action the team should take]
+
 
 **Jump to:** [Relevant Deal Context](#relevant-deal-context) · [Alignment & Asks](#alignment-asks) · [Decisions Required](#decisions-required) · [Source Coverage](#source-coverage)
 

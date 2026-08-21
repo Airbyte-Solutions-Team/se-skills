@@ -148,15 +148,16 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 **Date:** [today's date — long form per `_se-playbook.md`, e.g. June 11, 2026, NOT 2026-06-11] · **Sources read:** [transcripts (with dates) / SFDC / qual docs]
 
 
-*Decision card — lead with the judgment (see `_se-playbook.md` → Decision-First Layout).*
+### Decision Summary
 - **Feasibility:** 🟢 All needs covered / 🟡 Covered with gaps to build / 🔴 Hard gap blocks use case — [3–6 word headline]
 - **Coverage:** ==[N of M]== connectors validated · **Gaps:** [count build-needed] · **Open questions:** [count]
 - **Availability:** [count 🟢 Cloud+SM] Cloud · [count 🟦] Self-Managed/Flex-only · [count 🟧] Enterprise · [count 🟥] none — *if any 🟦/🟧, note "constrains deployment model"*
 - **Recommended motion:** [e.g. "Proceed to POC scoping" / "Confirm gaps before committing"]
 - **Primary risk:** [the biggest unvalidated assumption or hard gap — one line]
 - **Source confidence:** [one line — N transcripts + SFDC; "see Source Coverage"]
-### Decision Summary
-- [One-line judgment or status for this artifact]
+
+
+*Decision card — lead with the judgment (see `_se-playbook.md` → Decision-First Layout).*
 
 **Jump to:** [System-by-System Fit](#system-by-system-fit) · [Coverage Gaps & Custom Work](#coverage-gaps-custom-work) · [Risks & Constraints](#risks-constraints) · [Validation Questions](#validation-questions) · [Recommended Next Steps](#recommended-next-steps) · [Source Coverage](#source-coverage)
 
@@ -231,7 +232,7 @@ For each missing connector, provide:
 ---
 
 ## Risks & Constraints
-Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
+Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.
 
 
 
@@ -245,7 +246,7 @@ Capture the applicable facts, analysis, and recommendations here; label stated f
 
 ## Validation Questions
 
-Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
+Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.
 
 
 
@@ -279,8 +280,7 @@ Capture the applicable facts, analysis, and recommendations here; label stated f
 
 ## Source Coverage
 
-Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
-<!-- output-template:end -->
+Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.<!-- output-template:end -->
 
 ## Style
 

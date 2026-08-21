@@ -185,8 +185,7 @@ Any stage + objection raised on most recent call
 <!-- output-template:start -->
 # SE Workflow: [Customer] — [Inferred Stage]
 **Date:** [today, long form] · **Stage:** [inferred stage] · **Days since activity:** [N] · **Sources:** [N] transcripts, [N] qual docs, memory [yes/no]
-
-
+### Recommendation
 - **Recommended Next Move:** [the ONE skill/action — e.g. "Run `deal-assessment`"]
 - **Confidence:** [High / Medium / Low] — [what it's pending on, one clause]
 - **Stage:** [🟢/🟡/🔴 + inferred stage]
@@ -194,37 +193,14 @@ Any stage + objection raised on most recent call
 - **Effort:** [quick / moderate / depends on source coverage]
 - **Expected output:** [what artifact the top move produces]
 
-### Recommendation
-- [One-line judgment or status for this artifact]
-
-## Why This Move
-
-
-- **Rationale:** [1–2 sentences tying the top move to the specific gap or override it resolves]
-- **What it unblocks:** [the downstream work this enables]
-
----
-
-
-
-### Current Read
-[The TL;DR as 1–2 sentences of PROSE (not bullets): "[Customer] is in [stage]; the highest-value move is [X] because [why]. [Do-not caveat if any]." This is the one-liner a user copies into Slack — keep it tight and self-contained.]
-
----
-
-> [!blocker] 🔴 Stalled / Blocked     ← use `[!blocker]` for a hard stall/block
-> 🔴 Stalled — [X days since last activity]
-> 🔴 Blocked — [memory cite + specific blocker]
-
-> [!risk] 🟡 Active objection     ← use `[!risk]` for an open objection
-> 🟡 Active objection — [from transcript]
-
-*(Only render the override callouts that actually apply; omit this block if none. These feed the reader's Top-Risks strip automatically.)*
-
----
 **Jump to:** [Why This Move](#why-this-move) · [Ranked Next Moves](#ranked-next-moves) · [Don't Do Yet](#don-t-do-yet) · [Workflow State](#workflow-state) · [Evidence Gaps & External Actions](#evidence-gaps-external-actions) · [Source Coverage](#source-coverage)
 
 *(Use the canonical sections below; retain all facts, tables, and reasoning while nesting sub-topics under the relevant H2.)*
+
+## Why This Move
+Explain the evidence-backed recommendation, the decision gap it closes, and any prerequisite that must be completed first.
+### Current Read
+Summarize the current deal state and the concrete evidence supporting the recommendation.
 
 ## Ranked Next Moves
 
@@ -249,7 +225,7 @@ Any stage + objection raised on most recent call
 ---
 
 ## Don't Do Yet
-Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
+Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.
 
 
 

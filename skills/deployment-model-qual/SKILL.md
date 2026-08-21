@@ -110,14 +110,15 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 **Date:** [today — long form per `_se-playbook.md`, e.g. June 11, 2026, NOT 2026-06-11 or MM.DD.YY] · **Sources:** [transcripts, notes, Notion pages used]
 
 
-*Decision card — lead with the verdict (see `_se-playbook.md` → Decision-First Layout).*
+### Decision Summary
 - **Verdict:** 🟢 Cloud Pro viable / 🟦 Flex viable (data-plane isolation) / 🔴 genuine blocker (park / no fit today) — [3–6 word headline]
 - **Hard constraint:** [the single requirement that drives the verdict, or "none — no hard blockers surfaced"]
 - **Recommended motion:** [Proceed with Cloud Pro / Position Flex (confirm availability) / Pause & clarify / Park-or-disqualify]
 - **Next gate:** [what resolves the open constraint — e.g. "confirm KMS requirement with CISO"]
 - **Source confidence:** [one line — N transcripts; which of the 5 questions are actually answered vs. assumed]
-### Decision Summary
-- [One-line judgment or status for this artifact]
+
+
+*Decision card — lead with the verdict (see `_se-playbook.md` → Decision-First Layout).*
 
 **Jump to:** [Deployment Verdict](#deployment-verdict) · [Customer Constraints](#customer-constraints) · [Remaining Validation](#remaining-validation) · [Recommended Motion](#recommended-motion) · [Source Coverage](#source-coverage)
 
@@ -217,8 +218,7 @@ ONE of:
 
 ## Source Coverage
 
-Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
-<!-- output-template:end -->
+Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.<!-- output-template:end -->
 
 ## Style
 

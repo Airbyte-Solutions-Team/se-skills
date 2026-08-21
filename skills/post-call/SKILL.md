@@ -66,7 +66,7 @@ If the user signals brief mode (`--brief`, `quick summary`, `just the takeaways`
 > 7. `Source Coverage`
 >
 > **H3 subtopics (when used):**
-> - under `Call Snapshot`: Date, Call Type, Customer Attendees, Airbyte Attendees, One-Line Deal Impact
+> - under `Call Snapshot`: Call Type, Call Date, Attendees, Action Items, Next Step, Deal-Assessment Update Needed, Customer Attendees, Airbyte Attendees, One-Line Deal Impact
 > - under `Scope & Technical Changes`: Sources & Destinations, Technical Notes
 > - under `Deal Impact`: Movement, Deal Health, MEDDPICC Changes
 > - under `Objections & Open Questions`: New Objections / Concerns Surfaced, Open Questions / Follow-Ups
@@ -82,14 +82,16 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 <!-- output-template:start -->
 # Call Summary: [Customer Name] — [Call Date in long form, e.g. June 11, 2026]
 **Date:** [today's date, long form]
-
-
-- **Call type:** [Discovery / Technical / Exec / POC review / etc. — infer from transcript] · **Duration:** [if discernible]
-- **Call date:** [long-form date] · **Attendees:** ==[N]==
-- **Action items:** ==[N]== · **Next step:** [one line]
-- **Deal-assessment update needed?** [yes/no — if yes, one line on what changed]
 ### Call Snapshot
-- [One-line judgment or status for this artifact]
+- **Call type:** [Discovery / Technical / Exec / POC review / etc.]
+- **Call date:** [long-form date]
+- **Attendees:** [number and short roster summary]
+- **Action items:** [count]
+- **Next step:** [one line]
+- **Deal-assessment update needed:** [yes/no — if yes, one line on what changed]
+- **Customer attendees:** [names + roles]
+- **Airbyte attendees:** [names + roles]
+- **One-line deal impact:** [what this call changed in the deal]
 
 **Jump to:** [Key Takeaways](#key-takeaways) · [Deal Impact](#deal-impact) · [Scope & Technical Changes](#scope-technical-changes) · [Objections & Open Questions](#objections-open-questions) · [Actions & Next Step](#actions-next-step) · [Coaching Observations](#coaching-observations) · [Source Coverage](#source-coverage)
 
@@ -119,7 +121,7 @@ Quick read on what this call moved (or didn't):
 Describe the deal-stage, momentum, and customer-commitment movement since the prior call; state what changed and why it matters.
 
 ### MEDDPICC Changes
-AE-led discovery calls only: summarize each MEDDPICC letter with 🟢/🟡/🔴 status and the change this call produced. Omit this subsection for SE-attended or unknown-attribution calls.
+*(AE-led discovery calls only — summarize each MEDDPICC letter with 🟢/🟡/🔴 status and the change this call produced; omit for SE-attended or unknown attribution.)*
 
 ## Scope & Technical Changes
 ### Sources & Destinations
@@ -170,7 +172,7 @@ The single most important next action. Be specific — "send POC proposal by Fri
 
 ## Coaching Observations
 
-Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
+Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.
 
 ## Source Coverage
 

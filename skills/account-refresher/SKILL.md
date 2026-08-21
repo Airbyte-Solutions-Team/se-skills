@@ -38,6 +38,8 @@ Apply **Source Coverage transparency** (report what you read) and **assertive SF
 
 ## Output Format
 
+The default deliverable is an approximately one-page briefing: concise enough to read in two minutes while preserving the account arc, current state, open items, and audit trail.
+
 
 > [!info] Canonical output architecture for `account-refresher`
 > This skill follows the shared content-architecture contract. Produce the H2 sections below in this exact order; use H3 (`###`) for the listed sub-topics.
@@ -58,15 +60,12 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 
 <!-- output-template:start -->
 # Account Refresher: [Customer]
-**As of:** [today's date — long form per `_se-playbook.md`, e.g. June 11, 2026, NOT 2026-06-11] · **Source Coverage:** [1 line — what was read: N transcripts (most recent in full), qual docs, memory, SFDC opp]
-
-
+**As of:** [today's date — long form per `_se-playbook.md`, e.g. June 11, 2026, NOT 2026-06-11]
+### Account Snapshot
 - **Current state:** [one-liner — what's actively happening: POC? eval? stalled? negotiating?]
 - **Key players:** [EB name (role)] · **Champion:** [name (role)]
 - **Last touch:** [date + what happened] · ==[N] days ago==
 - **Open items:** ==[N]==
-### Account Snapshot
-- [One-line judgment or status for this artifact]
 
 **Jump to:** [Who's Who](#who-s-who) · [Story So Far](#story-so-far) · [Current State](#current-state) · [Open Items](#open-items) · [Watch Outs](#watch-outs) · [Source Coverage](#source-coverage)
 
@@ -92,7 +91,7 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 - **Use case / what they want:** [1-2 lines]
 
 ## Open Items
-Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
+Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.
 
 
 
@@ -115,7 +114,7 @@ Capture the applicable facts, analysis, and recommendations here; label stated f
 
 ## Source Coverage
 
-Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
+Record decision-relevant evidence, label each point as stated or inferred, and close with the recommendation, owner, and due date when action is required.
 <!-- output-template:end -->
 
 ## Style
