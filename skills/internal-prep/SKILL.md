@@ -80,15 +80,36 @@ If user signals brief mode (`--brief`, `quick prep`, `bullet points only`): prod
 > 2. `Alignment And Asks`
 > 3. `Decisions Required`
 > 4. `Source Coverage`
->
-> Source Coverage must be the **final H2**. The `At a Glance` block is an H3 under the title block (not a navigable section).
->
+
+> Source Coverage must be the **final H2**. The profile-specific summary block is an H3 under the title block (not a navigable section).
 
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference — applied per mode template below. In every template, write the `[Date]` in the title/headers and any prose dates in long form per `_se-playbook.md`, e.g. June 11, 2026 — not 2026-06-11. (Filenames keep the numeric `YYYY-MM-DD` prefix.)
 
 ### Type: `ae-sync`
 
 ```
+<!-- output-template:start -->
+# Internal Prep: [Meeting Type] — [Date]
+
+### Meeting / Decision Summary
+- **Decision / ask:** [what this meeting must resolve]
+- **Participants:** [names and roles]
+
+**Jump to:** [Relevant Deal Context](#relevant-deal-context) · [Alignment And Asks](#alignment-and-asks) · [Decisions Required](#decisions-required) · [Source Coverage](#source-coverage)
+
+## Relevant Deal Context
+Capture the applicable meeting context, alignment, and decision detail here.
+
+## Alignment And Asks
+Capture the applicable meeting context, alignment, and decision detail here.
+
+## Decisions Required
+Capture the applicable meeting context, alignment, and decision detail here.
+
+## Source Coverage
+Capture the applicable meeting context, alignment, and decision detail here.
+
+### Existing meeting-type guidance
 # AE Sync Prep — [AE Name] × [SE name] — [Date]
 **Date:** [today's date, long form] · **Duration:** [if known]
 
@@ -98,9 +119,8 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 - **Deals in scope:** [Customer A, Customer B, … — count]
 - **Headline ask:** [the single most important thing the SE needs from the AE]
 
-**Jump to:** [At a Glance](#at-a-glance) · [Deal-by-deal status](#deal-by-deal-status) · [Open Items Between Us](#open-items-between-us) · [Cross-Deal Themes](#cross-deal-themes-if-multiple-customers) · [Decisions Needed This Sync](#decisions-needed-this-sync)
 
-## Deal-by-deal status
+### Deal-by-deal status
 
 For each customer in scope:
 
@@ -115,13 +135,13 @@ For each customer in scope:
 > [!risk] [Customer] — risk flag
 > [Only if a real risk exists — silence, walking-back signal, competitor surfacing. One callout per at-risk deal; omit for healthy deals.]
 
-## Open Items Between Us
+### Open Items Between Us
 - [ ] [Item — owner — by when]
 
-## Cross-Deal Themes (if multiple customers)
+### Cross-Deal Themes (if multiple customers)
 - [Pattern across deals — e.g., "3 deals stuck on InfoSec questionnaire — need a standard template"]
 
-## Decisions Needed This Sync
+### Decisions Needed This Sync
 - [Specific yes/no asks from AE]
 ```
 
@@ -136,15 +156,14 @@ For each customer in scope:
 - **Deals in scope:** ==[count]== · **Total committed:** ==$[amount]==
 - **Headline status:** [N] Commit / [N] Best Case / [N] Pipeline
 
-**Jump to:** [At a Glance](#at-a-glance) · [Per-deal forecast table](#per-deal-forecast-table) · [Per-deal commentary](#per-deal-commentary) · [Honest call: which deals don't belong on the forecast?](#honest-call-which-deals-dont-belong-on-the-forecast) · [Deals I'm worried about](#deals-im-worried-about)
 
-## Per-deal forecast table
+### Per-deal forecast table
 
 | Customer | Stage | Probability Band | Forecast $ | Close timing | Confidence | Top risk |
 |----------|-------|-----------------|------------|--------------|------------|----------|
 | [Customer] | [stage] | <20% / 20-40% / 40-60% / 60-80% / >80% (per deal-assessment bands) | $[amount] | [Q? Month?] | Commit / Best Case / Pipeline | [risk] |
 
-## Per-deal commentary
+### Per-deal commentary
 
 For each deal in the table:
 
@@ -157,10 +176,10 @@ For each deal in the table:
 > [!verdict] [Customer] — Commit at ==[band]==, ==$[amount]==
 > [Only for deals you're committing — the one-line evidence-backed defense of the commit. Use a [!verdict] callout per committed deal.]
 
-## Honest call: which deals don't belong on the forecast?
+### Honest call: which deals don't belong on the forecast?
 Apply Sandler honesty — which "Best Case" deals are actually pipeline padding? Name them explicitly.
 
-## Deals I'm worried about
+### Deals I'm worried about
 - [Customer + specific concern]
 ```
 
@@ -176,27 +195,26 @@ Apply Sandler honesty — which "Best Case" deals are actually pipeline padding?
 - **Exec's likely question:** [what are they really going to ask? — often "is this going to close" or "do you need help"]
 - **Headline ask:** [the one thing you need from this exec — or "situational awareness, no asks"]
 
-**Jump to:** [At a Glance](#at-a-glance) · [30-second deal summary](#30-second-deal-summary) · [Why this deal matters](#why-this-deal-matters-strategic-frame) · [Where we are](#where-we-are) · [What I need from this exec](#what-i-need-from-this-exec) · [What could surprise the exec](#what-could-surprise-the-exec)
 
-## 30-second deal summary
+### 30-second deal summary
 [Customer, stage, contract size, expected close, top 1 risk]
 
-## Why this deal matters (strategic frame)
+### Why this deal matters (strategic frame)
 [1-2 sentences — segment, ARR potential, logo value, reference value]
 
-## Where we are
+### Where we are
 - **MEDDPICC top-line:** [snapshot — 🟢/🟡/🔴 per letter, but in prose: "EB confirmed, Champion strong, Paper Process unknown"]
 - **Trajectory:** [accelerating / steady / decelerating / silent]
 - **Probability band:** ==[from deal-assessment]== — [one-line defense]
 
-## What I need from this exec
+### What I need from this exec
 Be concrete:
 - "Exec intro to [their EB title]"
 - "Pricing concession on Pro tier"
 - "Pull in [internal expert] for a security deep-dive"
 - "Just situational awareness — no asks today"
 
-## What could surprise the exec
+### What could surprise the exec
 
 > [!risk] [Title the risk the exec should hear from you first]
 > [The risk the exec should know about before this customer surfaces it in another forum. One callout per material risk; lead with the worst.]
@@ -214,14 +232,13 @@ Be concrete:
 - **Deal in scope:** [Customer] · **Stage:** [stage] · **Size:** ==$[amount]==
 - **Headline status:** [aligned / misaligned on probability — the fault line to resolve]
 
-**Jump to:** [At a Glance](#at-a-glance) · [Where we collectively are](#where-we-collectively-are) · [Alignment check](#alignment-check--does-everyone-see-this-deal-the-same-way) · [Cross-functional asks](#cross-functional-asks) · [Decisions needed from this meeting](#decisions-needed-from-this-meeting)
 
-## Where we collectively are
+### Where we collectively are
 - **Stage:** [stage]
 - **MEDDPICC scorecard:** [pull from biz-qual]
 - **Recent activity:** [last call, last decision]
 
-## Alignment check — does everyone see this deal the same way?
+### Alignment check — does everyone see this deal the same way?
 *Fill only the columns you have SE-side evidence for. Mark AE/AM cells you can't source "to confirm live" (never guess their view) and carry them into Cross-functional asks as the specific input you need from each owner.*
 
 | Question | AE view | SE view | AM view (if applicable) |
@@ -233,17 +250,18 @@ Be concrete:
 > [!risk] Misalignment to resolve
 > [Only if AE/SE/AM genuinely disagree — name the fault line (e.g., AE says 70%, SE says 30% on the same deal) and why. Surfacing disagreement is the point of the review; omit only if there's true alignment.]
 
-## Cross-functional asks
+### Cross-functional asks
 - **To Product:** [feature gap, roadmap question]
 - **To Eng:** [implementation risk, custom build]
 - **To Legal/Security:** [DPA, certification, redline]
 - **To Leadership:** [exec involvement, escalation]
 
-## Decisions needed from this meeting
+### Decisions needed from this meeting
 - [ ] [Specific decision — who decides, by when]
 ```
 
 ---
+<!-- output-template:end -->
 
 ## Style (internal-prep skill guidance — not part of output template)
 

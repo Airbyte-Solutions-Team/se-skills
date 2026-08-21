@@ -94,34 +94,34 @@ Per `_se-playbook.md` → "Product & Connector Reference Data," ground each qual
 > 3. `Remaining Validation`
 > 4. `Recommended Motion`
 > 5. `Source Coverage`
->
+
 > **H3 subtopics (when used):**
-> - under `Customer Constraints`: `The Five Questions`, `Implications By Answer`
->
-> Source Coverage must be the **final H2**. The `At a Glance` block is an H3 under the title block (not a navigable section).
->
+> - under `Customer Constraints`: The Five Questions, Implications By Answer
+
+> Source Coverage must be the **final H2**. The profile-specific summary block is an H3 under the title block (not a navigable section).
 
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---
 
+<!-- output-template:start -->
 # Deployment Model Qualification: [Customer]
 **Date:** [today — long form per `_se-playbook.md`, e.g. June 11, 2026, NOT 2026-06-11 or MM.DD.YY] · **Sources:** [transcripts, notes, Notion pages used]
 
-### At a Glance
+### Decision Summary
 *Decision card — lead with the verdict (see `_se-playbook.md` → Decision-First Layout).*
 - **Verdict:** 🟢 Cloud Pro viable / 🟦 Flex viable (data-plane isolation) / 🔴 genuine blocker (park / no fit today) — [3–6 word headline]
 - **Hard constraint:** [the single requirement that drives the verdict, or "none — no hard blockers surfaced"]
 - **Recommended motion:** [Proceed with Cloud Pro / Position Flex (confirm availability) / Pause & clarify / Park-or-disqualify]
 - **Next gate:** [what resolves the open constraint — e.g. "confirm KMS requirement with CISO"]
 - **Source confidence:** [one line — N transcripts; which of the 5 questions are actually answered vs. assumed]
+**Jump to:** [Deployment Verdict](#deployment-verdict) · [Customer Constraints](#customer-constraints) · [Remaining Validation](#remaining-validation) · [Recommended Motion](#recommended-motion) · [Source Coverage](#source-coverage)
 
-**Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [Verdict](#verdict) · [The Five Questions](#the-five-questions) · [Implications by Answer](#implications-by-answer) · [Recommended Next Action](#recommended-next-action) · [Discovery Questions for Next Call](#discovery-questions-for-next-call)
+*(Use the canonical sections below; retain all facts, tables, and reasoning while nesting sub-topics under the relevant H2.)*
 
----
+## Deployment Verdict
 
-## Verdict
-
+### Verdict
 This is a **3-way** verdict — route to the right *live* shape (Cloud or Flex), or flag a genuine no-fit. Don't just gate Cloud in/out. Render as a callout, picking the type by status: `[!verdict]` if 🟢 Cloud viable, `[!info]` if 🟦 Flex viable, `[!blocker]` if 🔴 genuine blocker.
 
 - 🟢 **Cloud Pro viable** — no data-isolation / KMS / control-plane requirement. Default happy path.
@@ -161,8 +161,9 @@ Do not collapse these into one "looks good" verdict. A 🟦 Flex recommendation 
 
 ---
 
-## The Five Questions
+## Customer Constraints
 
+### The Five Questions
 | # | Question | Customer Answer | Who answered (name + role) | Source (date) | Risk |
 |---|----------|-----------------|----------------------------|---------------|------|
 | 1 | Deployment preference (Cloud / self-host / hybrid) | [answer or Unknown] | [name + role, or "not asked"] | [transcript date] | 🟢/🟡/🔴 |
@@ -175,8 +176,7 @@ Do not collapse these into one "looks good" verdict. A 🟦 Flex recommendation 
 
 ---
 
-## Implications by Answer
-
+### Implications by Answer
 For each answer that rules out Cloud Pro, state explicitly:
 - **What it breaks:** Cloud Pro cannot support this requirement because [reason].
 - **Which shape fixes it:** **Flex** (data-plane isolation in customer VPC — data residency, VPC isolation, "our data can't share compute") — or **no currently-offered fit** (BYOK/KMS, full control-plane-in-VPC control, true air-gap fall outside the Flex boundary; historically SME, now retired). Name which, and why.
@@ -192,7 +192,20 @@ For each 🟢 answer:
 
 ---
 
-## Recommended Next Action
+## Remaining Validation
+
+### Discovery Questions for Next Call
+If any answer is Unknown or ambiguous, draft 3-5 specific questions the SE can ask to close the gap. Avoid generic phrasing — use SPIN/Sandler tactics. Examples:
+
+- "Walk me through how your security team thinks about data leaving your environment. Where's the line?"
+- "If we ran the data plane in your VPC vs. ours, would that change the conversation with your CISO?"
+- "Is BYOK a hard requirement for this project, or a 'we'd prefer it'? What would change if it wasn't available?"
+
+---
+
+## Recommended Motion
+
+### Recommended Next Action
 ONE of:
 1. **Proceed with Cloud Pro.** All five questions answered 🟢. Move to tech qual / connector feasibility.
 2. **Position Enterprise Flex.** Data-plane isolation is required (data must stay in customer VPC) but no BYOK/control-plane mandate. Confirm current Flex availability + terms for their region with the AE/deal-desk, then proceed to tech qual scoped for a customer-hosted data plane.
@@ -202,15 +215,10 @@ ONE of:
 
 ---
 
-## Discovery Questions for Next Call
+## Source Coverage
 
-If any answer is Unknown or ambiguous, draft 3-5 specific questions the SE can ask to close the gap. Avoid generic phrasing — use SPIN/Sandler tactics. Examples:
-
-- "Walk me through how your security team thinks about data leaving your environment. Where's the line?"
-- "If we ran the data plane in your VPC vs. ours, would that change the conversation with your CISO?"
-- "Is BYOK a hard requirement for this project, or a 'we'd prefer it'? What would change if it wasn't available?"
-
----
+Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
+<!-- output-template:end -->
 
 ## Style
 
@@ -261,7 +269,7 @@ Per `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → After Ge
 ```
 
 ### Source Coverage
-Include a Source Coverage section at the top reporting: which transcripts answered which of the 5 questions, who said what (cite speaker), and which questions remain unasked. **Also report the DS2 product-truth sources used/unavailable** (per `_se-playbook.md` → fail-loud): the `airbyte-platform` checkout (date) for `EntitlementDefinitions.kt` + the `airbyte-data-plane` chart, or "airbyte-platform not available — entitlement claims reasoned from inlined product reality, confidence capped." Never assert an entitlement you couldn't verify against the file.
+Include a final Source Coverage section reporting: which transcripts answered which of the 5 questions, who said what (cite speaker), and which questions remain unasked. **Also report the DS2 product-truth sources used/unavailable** (per `_se-playbook.md` → fail-loud): the `airbyte-platform` checkout (date) for `EntitlementDefinitions.kt` + the `airbyte-data-plane` chart, or "airbyte-platform not available — entitlement claims reasoned from inlined product reality, confidence capped." Never assert an entitlement you couldn't verify against the file.
 
 ### Then offer to
 1. **Add to Notion Overview page** as a deployment fit section

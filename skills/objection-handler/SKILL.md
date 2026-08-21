@@ -50,13 +50,23 @@ If user signals brief mode (`--brief`, `quick talk track`, `just the talk track`
 > 2. `Talk Track`
 > 3. `Follow Up Questions`
 > 4. `Fit And Route Boundary`
->
-> Source Coverage must be the **final H2**. The `At a Glance` block is an H3 under the title block (not a navigable section).
->
+
+> Source Coverage is conditional: include it only when customer-specific evidence or reference sources are used. If present, it must be the final H2; it is not required for generic objections.
 
 This skill is **light-touch** under `_se-playbook.md` → Output Document Format (no At-a-Glance, no Jump-to — it's already short and scannable). The one required callout is the severity indicator at the top.
 
 ---
+
+<!-- output-template:start -->
+# Objection Handler: [Customer] — [Date]
+
+### Severity / Bottom Line
+- **Severity:** [🟢/🟡/🔴 and rationale]
+- **Objection:** [restate it cleanly]
+
+**Jump to:** [Whats True](#whats-true) · [Talk Track](#talk-track) · [Follow Up Questions](#follow-up-questions) · [Fit And Route Boundary](#fit-and-route-boundary)
+
+## Whats True
 
 ### Objection: [restate it cleanly]
 **Category:** [bucket from above]
@@ -72,7 +82,6 @@ This skill is **light-touch** under `_se-playbook.md` → Output Document Format
 Plain-language statement of Airbyte's actual capability/position on this. Do NOT spin. If the customer is right that we don't support something, say so. If they're misinformed, gently correct.
 
 ### Talk Track (Voss moves — use what fits)
-
 Use the Voss moves that fit — mirror/label to defuse, a calibrated question to open it up, the substantive answer **last**. Don't force all four when a clean two-move response is stronger; a talk track that sounds scripted loses the room. Keep the moves as separate beats (not one collapsed paragraph) so the SE can deliver them in order. The ordering rule — substantive answer last — always holds; the four steps below are the full scaffold to draw from, not a quota to fill.
 
 #### Step 1 — Mirror
@@ -100,11 +109,24 @@ If this objection can't be met by Cloud Pro, check whether **Flex** solves it be
 - **Customer-managed KMS / BYOK, full control-plane-in-VPC, or true air-gap** → genuine Cloud-and-Flex boundary. There is **no currently-offered shape that meets this** — be upfront: this is a **park / no-fit today**. (Self-Managed Enterprise historically covered this but is **not currently offered**; may return.) Don't oversell Flex here, and don't route to a dead motion.
 - **A requirement no shape meets, or Flex unavailable for their region/segment** → park/escalate or disqualify. State it plainly.
 
+## Talk Track
+
+Capture the applicable facts, talk track, questions, and routing guidance here.
+
+## Follow Up Questions
+
+Capture the applicable facts, talk track, questions, and routing guidance here.
+
+## Fit And Route Boundary
+
 ### Related context
 - Link to relevant docs/resources if applicable
 - Note if this should be added to the customer's Notion Q&A page
 
 ---
+
+> Include `## Source Coverage` only when customer-specific evidence or reference sources were used; if included, keep it last.
+<!-- output-template:end -->
 
 ## Style
 

@@ -73,15 +73,14 @@ If user signals brief mode (`--brief`, `quick assessment`, `deal health summary`
 > 4. `Close Path Blockers And Loss Risks`
 > 5. `Recommended Actions And Coaching`
 > 6. `Source Coverage`
->
+
 > **H3 subtopics (when used):**
-> - under `Trajectory And What Changed`: `Activity Trajectory`, `What Changed Since Last Assessment`
-> - under `Deal Thesis`: `Driver`, `Need`, `Urgency`
-> - under `Stakeholders And Qualification`: `Stakeholder Read`, `Meddpicc Read`
-> - under `Close Path Blockers And Loss Risks`: `What Would Close It`, `Deal Blocker`, `Loss Risks`
->
-> Source Coverage must be the **final H2**. The `At a Glance` block is an H3 under the title block (not a navigable section).
->
+> - under `Trajectory And What Changed`: Activity Trajectory, What Changed Since Last Assessment
+> - under `Deal Thesis`: Driver, Need, Urgency
+> - under `Stakeholders And Qualification`: Stakeholder Read, Meddpicc Read
+> - under `Close Path Blockers And Loss Risks`: What Would Close It, Deal Blocker, Loss Risks
+
+> Source Coverage must be the **final H2**. The profile-specific summary block is an H3 under the title block (not a navigable section).
 
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
@@ -95,10 +94,11 @@ The punchy verdict should be honest, e.g.:
 
 ---
 
+<!-- output-template:start -->
 # <Customer> — Deal Assessment: <punchy verdict>
 **Date:** [today's date — long form per `_se-playbook.md`, e.g. June 11, 2026, NOT 2026-06-11 or MM.DD.YY] · **Stage:** [Discovery / POC / Negotiation / Closed Won / Closed Lost / Stalled]
 
-### At a Glance
+### Decision Summary / Bottom Line
 *Decision card — lead with the call (see `_se-playbook.md` → Decision-First Layout).*
 - **Probability:** ==[band, e.g. 40–60%]== ([dead/dying / at risk / likely / very likely / committed])
 - **Stage:** [stage] · **Trajectory:** [🟢 Accelerating / 🟡 Steady / 🔴 Decelerating / 🔴 Silent]
@@ -106,13 +106,13 @@ The punchy verdict should be honest, e.g.:
 - **Recommended motion:** [the single highest-leverage next move]
 - **Driver:** [one line — what's pushing them now]
 - **Source confidence:** [one line — N transcripts + notes, dates; "see Source Coverage"]
+**Jump to:** [Trajectory And What Changed](#trajectory-and-what-changed) · [Deal Thesis](#deal-thesis) · [Stakeholders And Qualification](#stakeholders-and-qualification) · [Close Path Blockers And Loss Risks](#close-path-blockers-and-loss-risks) · [Recommended Actions And Coaching](#recommended-actions-and-coaching) · [Source Coverage](#source-coverage)
 
-**Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [Activity Trajectory](#activity-trajectory) · [What Changed Since Last Assessment](#what-changed-since-last-assessment) · [Driver](#driver) · [Need](#need) · [Urgency](#urgency) · [What Would Close It](#what-would-close-it) · [Deal Blocker](#deal-blocker) · [What Would Lose It](#what-would-lose-it) · [Bottom Line](#bottom-line) · [Coaching Observations](#coaching-observations)
-*(Include the "What Changed Since Last Assessment" anchor only when a prior assessment exists — see that section; drop it from this line on a first assessment.)*
+*(Use the canonical sections below; retain all facts, tables, and reasoning while nesting sub-topics under the relevant H2.)*
 
----
+## Trajectory And What Changed
 
-## Activity Trajectory
+### Activity Trajectory
 *Silence is signal. Quantify the deal's cadence and whether it's healthy.*
 
 | Metric | Value |
@@ -128,7 +128,7 @@ The punchy verdict should be honest, e.g.:
 
 ---
 
-## What Changed Since Last Assessment
+### What Changed Since Last Assessment
 *Conditional — include this section ONLY when a prior `outputs/deal-assessment/deal-assessment-*.md` exists. On a first assessment, omit it entirely (and drop it from the Jump-to line). This is what turns the skill from a one-time snapshot into health monitoring.*
 
 Compared to the prior assessment ([its date]):
@@ -140,28 +140,13 @@ Compared to the prior assessment ([its date]):
 
 ---
 
-## Driver
-What's pushing them to evaluate Airbyte *right now*? (Not what their general problem is — what made them pick up the phone this quarter.) If you can't identify one, say so plainly — that's a red flag.
-
-## Need
-What do they actually require from the product? Be specific — connectors, deployment model, volume, latency, compliance. Distinguish must-have from nice-to-have.
-
-## Urgency
-What's the **compelling event** (D2 — a dated, external forcing function: contract renewal, migration deadline, compliance/audit date, funding milestone, system sunset)? "They're keen" or "sometime this year" is not a compelling event — if that's all there is, say so plainly: absence of a compelling event is why deals slip a quarter every quarter, and it caps the probability band. If a real forcing function exists, does the backward-planned timeline (signature → procurement → security → POC) actually fit before it? See `_se-playbook.md` → Operating Disciplines D2.
-
-## Stakeholder read (multi-threading)
+### Stakeholder read (multi-threading)
 Pull the stakeholder map from the customer's biz-qual (per `_se-playbook.md` → Operating Disciplines) if it exists; otherwise reconstruct a quick who's-who. Flag two things: (1) are we **single-threaded** (deal lives on one contact — a top failure mode)? (2) is there a **coach masquerading as a champion** (friendly and informative but no power/access)? Both belong in the health read.
 
-## What Would Close It
-Specific levers that could move this to signature. Be concrete — "POC success on Workday source", "exec demo with their CDO", "pricing concession on Pro tier", "introducing them to reference customer in financial services".
-
-## Deal Blocker
-The primary obstacle to closing. There's usually one big thing. Name it. If there are multiple, rank them.
-
-## What Would Lose It
+### What Would Lose It
 What kills this deal entirely? Competitor selection? Budget cut? Internal build decision? Champion leaving? Be honest about the failure modes.
 
-## Bottom Line
+### Bottom Line
 One paragraph. Honest assessment of deal health. Not optimistic, not pessimistic — accurate.
 
 **Probability estimate — use bands, not point estimates.** Render the chosen band as a verdict callout, picking the type by band: `[!verdict]` if ≥60%, `[!risk]` if 20–60%, `[!blocker]` if <20%. Wrap the band figure in `==…==`.
@@ -189,7 +174,7 @@ If you don't have enough signal to band, say "Unable to estimate — source base
 
 ---
 
-## Coaching Observations (For the SE's Growth)
+### Coaching Observations (For the SE's Growth)
 *This section is for the SE, not for the deal. Flag SE-craft issues surfaced by the source material:*
 
 - **Happy-ears moments:** Times when verbal positivity wasn't backed by a next step
@@ -201,6 +186,45 @@ If you don't have enough signal to band, say "Unable to estimate — source base
 Keep candid. This is the part of the assessment the SE can act on personally.
 
 ---
+
+## Deal Thesis
+
+### Driver
+What's pushing them to evaluate Airbyte *right now*? (Not what their general problem is — what made them pick up the phone this quarter.) If you can't identify one, say so plainly — that's a red flag.
+
+### Need
+What do they actually require from the product? Be specific — connectors, deployment model, volume, latency, compliance. Distinguish must-have from nice-to-have.
+
+### Urgency
+What's the **compelling event** (D2 — a dated, external forcing function: contract renewal, migration deadline, compliance/audit date, funding milestone, system sunset)? "They're keen" or "sometime this year" is not a compelling event — if that's all there is, say so plainly: absence of a compelling event is why deals slip a quarter every quarter, and it caps the probability band. If a real forcing function exists, does the backward-planned timeline (signature → procurement → security → POC) actually fit before it? See `_se-playbook.md` → Operating Disciplines D2.
+
+## Stakeholders And Qualification
+
+### Stakeholder Read
+Include the applicable evidence and decision detail here.
+
+### Meddpicc Read
+Include the applicable evidence and decision detail here.
+
+## Close Path Blockers And Loss Risks
+
+### What Would Close It
+Specific levers that could move this to signature. Be concrete — "POC success on Workday source", "exec demo with their CDO", "pricing concession on Pro tier", "introducing them to reference customer in financial services".
+
+### Deal Blocker
+The primary obstacle to closing. There's usually one big thing. Name it. If there are multiple, rank them.
+
+### Loss Risks
+Include the applicable evidence and decision detail here.
+
+## Recommended Actions And Coaching
+
+Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
+
+## Source Coverage
+
+Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
+<!-- output-template:end -->
 
 ## Style
 
@@ -221,7 +245,7 @@ Per `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → After Ge
 ```
 
 ### Source Coverage
-Include a Source Coverage section at the top reporting:
+Include a final Source Coverage section reporting:
 - Every transcript read (filename + line count: e.g., "Acme-04.01.26.txt — 566 / 566 lines")
 - Every prior qual doc read (filename + date)
 - Memory records consulted (filename + last update date)

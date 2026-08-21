@@ -175,18 +175,18 @@ Any stage + objection raised on most recent call
 > 4. `Workflow State`
 > 5. `Evidence Gaps And External Actions`
 > 6. `Source Coverage`
->
-> Source Coverage must be the **final H2**. The `At a Glance` block is an H3 under the title block (not a navigable section).
->
+
+> Source Coverage must be the **final H2**. The profile-specific summary block is an H3 under the title block (not a navigable section).
 
 *Lead with an H1 title (the web app reader uses the H1 as the page title), then a lightweight **At-a-Glance decision card**. next-move is **decision-first**: the recommendation is the lead, the audit trail is the tail. The web-app reader promotes the At-a-Glance block into a prominent hero card above the body, so the labels below are chosen to render as decision tiles — keep the wording.*
 
 ---
 
+<!-- output-template:start -->
 # SE Workflow: [Customer] — [Inferred Stage]
 **Date:** [today, long form] · **Stage:** [inferred stage] · **Days since activity:** [N] · **Sources:** [N] transcripts, [N] qual docs, memory [yes/no]
 
-### At a Glance
+### Recommendation
 - **Recommended Next Move:** [the ONE skill/action — e.g. "Run `deal-assessment`"]
 - **Confidence:** [High / Medium / Low] — [what it's pending on, one clause]
 - **Stage:** [🟢/🟡/🔴 + inferred stage]
@@ -209,15 +209,29 @@ Any stage + objection raised on most recent call
 *(Only render the override callouts that actually apply; omit this block if none. These feed the reader's Top-Risks strip automatically.)*
 
 ---
+**Jump to:** [Why This Move](#why-this-move) · [Ranked Next Moves](#ranked-next-moves) · [Dont Do Yet](#dont-do-yet) · [Workflow State](#workflow-state) · [Evidence Gaps And External Actions](#evidence-gaps-and-external-actions) · [Source Coverage](#source-coverage)
+
+*(Use the canonical sections below; retain all facts, tables, and reasoning while nesting sub-topics under the relevant H2.)*
 
 ## Why This Move
+
+### Why This Move
 - **Rationale:** [1–2 sentences tying the top move to the specific gap or override it resolves]
 - **What it unblocks:** [the downstream work this enables]
 
 ---
 
+### Don't Do Yet
+*Skills tempting but premature given current state (missing ≠ needed):*
+- **`[skill]`.** [Why not yet — e.g. "No deployment qualification yet; scoping `tech-qual` now risks an air-gap customer who can't use Cloud."]
+
+*(Lead-bold the skill. Do NOT put the word "risk" in this section's heading or bullets' lead — that would wrongly feed the Top-Risks strip.)*
+
+---
+
 ## Ranked Next Moves
 
+### Ranked Next Moves
 **1 · `[skill]` — [headline reason]**
 - **Priority:** High
 - **Why now:** [1–2 sentence rationale tied to the gap or override]
@@ -237,22 +251,22 @@ Any stage + objection raised on most recent call
 
 ---
 
-## Don't Do Yet
-*Skills tempting but premature given current state (missing ≠ needed):*
-- **`[skill]`.** [Why not yet — e.g. "No deployment qualification yet; scoping `tech-qual` now risks an air-gap customer who can't use Cloud."]
+## Dont Do Yet
 
-*(Lead-bold the skill. Do NOT put the word "risk" in this section's heading or bullets' lead — that would wrongly feed the Top-Risks strip.)*
-
----
+Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
 
 ## Workflow State
+
+### Workflow State
 - **Inferred stage:** [from decision tree]
 - **Reasoning:** [1–2 sentences citing the specific artifacts/transcripts that put them here]
 - **SFDC vs. reality:** [the mismatch finding, if any — flag it assertively; omit the line if SFDC and local state agree or SFDC is unavailable]
 
 ---
 
-## Context Inventory
+## Evidence Gaps And External Actions
+
+### Context Inventory
 *What context exists to ground the recommendation. `Needed Now?` separates a true gap (**Yes**) from a not-yet artifact (**Later**) or an irrelevant one (**No**) — so missing ≠ todo.*
 
 | Artifact | Status | Date | Needed Now? |
@@ -268,7 +282,7 @@ Any stage + objection raised on most recent call
 
 ---
 
-## Gaps
+### Gaps
 *What's missing that should exist at this stage, sorted by whether it blocks the next move:*
 
 **Critical (blocks the next move):**
@@ -284,7 +298,7 @@ Any stage + objection raised on most recent call
 
 ---
 
-## External Actions
+### External Actions
 *Things to do that aren't a skill — but matter for moving the deal. Owner is a real person's name or **TBD** — never fabricate a name.*
 
 | Action | Owner | Why it matters | Definition of done |
@@ -297,12 +311,15 @@ Any stage + objection raised on most recent call
 ---
 
 ## Source Coverage
+
+### Source Coverage
 *Per the Read-Depth Contract: report what was read in full vs. inventoried by metadata only.*
 - **Read in full:** [qual docs, memory files, most recent transcript — filenames + dates]
 - **Metadata only:** [older transcripts, large raw notes — filenames + line counts]
 - **Memory:** [records read, or "none matched"]
 
 ---
+<!-- output-template:end -->
 
 ## Style
 

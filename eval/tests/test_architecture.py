@@ -68,6 +68,96 @@ def test_output_schema_required_sections_ends_with_source_coverage() -> None:
             )
 
 
+_PRODUCER_SKILLS = (
+    "prep-call",
+    "post-call",
+    "biz-qual",
+    "tech-qual",
+    "deployment-model-qual",
+    "connector-feasibility",
+    "deal-assessment",
+    "poc-plan",
+    "roi-business-case",
+    "mutual-close-plan",
+    "account-refresher",
+    "next-move",
+    "internal-prep",
+    "coverage-handoff",
+    "objection-handler",
+)
+
+
+def _marked_template(repo_root: Path, skill: str) -> str:
+    text = (repo_root / "skills" / skill / "SKILL.md").read_text(encoding="utf-8")
+    matches = re.findall(
+        r"<!-- output-template:start -->(.*?)<!-- output-template:end -->",
+        text,
+        flags=re.DOTALL,
+    )
+    assert len(matches) == 1, f"{skill}: expected one marked output template"
+    return matches[0]
+
+
+@pytest.mark.parametrize("skill", _PRODUCER_SKILLS)
+def test_producer_templates_follow_canonical_architecture(
+    skill: str, repo_root: Path
+) -> None:
+    """Marked producer templates are machine-checkable against the registry."""
+    arch = CANONICAL_ARCHITECTURE[skill]
+    template = _marked_template(repo_root, skill)
+    headings = re.findall(r"^## (.+)$", template, flags=re.MULTILINE)
+    keys = [arch.canonical_key(heading) for heading in headings]
+    assert keys == arch.canonical_h2_order, skill
+    assert all(key is not None for key in keys)
+
+    jump_to = re.search(r"^\*\*Jump to:\*\* (.+)$", template, flags=re.MULTILINE)
+    assert jump_to, f"{skill}: missing canonical Jump to line"
+    anchors = re.findall(r"\]\(#([^)]+)\)", jump_to.group(1))
+    assert anchors == arch.canonical_h2_order, skill
+
+    for parent, children in arch.h3_groups.items():
+        if parent == arch.top_summary_name.lower().replace(" ", "-"):
+            continue
+        parent_match = re.search(
+            rf"^## {re.escape(parent.replace('-', ' ').title())}\s*$",
+            template,
+            flags=re.MULTILINE,
+        )
+        assert parent_match, f"{skill}: missing H2 parent {parent}"
+        next_h2 = re.search(r"^## ", template[parent_match.end() :], flags=re.MULTILINE)
+        body = template[parent_match.end() : parent_match.end() + next_h2.start()] if next_h2 else template[parent_match.end() :]
+        child_keys = {
+            _normalize_heading(match)
+            for match in re.findall(r"^### (.+)$", body, flags=re.MULTILINE)
+        }
+        assert set(children) <= child_keys, f"{skill}: H3s not nested under {parent}"
+
+
+def _normalize_heading(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+
+
+def test_playbook_architecture_table_matches_registry(repo_root: Path) -> None:
+    """The playbook's architecture table stays synchronized with the registry."""
+    text = (repo_root / "skills" / "_se-playbook.md").read_text(encoding="utf-8")
+    start = text.index("| Skill | Canonical H2 order | Notes |")
+    end = text.index("\n\nLegacy headings", start)
+    rows = re.findall(
+        r"^\| ([^|]+) \| ([^|]+) \|",
+        text[start:end],
+        flags=re.MULTILINE,
+    )[1:]
+    assert [skill.strip() for skill, _ in rows] == list(CANONICAL_ARCHITECTURE)
+    for skill, order in rows:
+        arch = CANONICAL_ARCHITECTURE[skill.strip()]
+        if arch.canonical_h2_order:
+            expected = " → ".join(
+                " ".join(word.title() for word in key.split("-"))
+                for key in arch.canonical_h2_order
+            )
+            assert order.strip() == expected
+
+
 def _load_output_fixture(repo_root: Path, filename: str) -> str:
     return (repo_root / "eval" / "fixtures" / "outputs" / filename).read_text(encoding="utf-8")
 
@@ -170,6 +260,97 @@ ok
     assert section_order.index(_SOURCE_COVERAGE) != len(section_order) - 1
 
 
+def test_mixed_legacy_and_canonical_headings_enforce_source_coverage_order() -> None:
+    """Mixed-generation documents are current drift, not historical legacy."""
+    text = """# Biz Qual
+
+**Date:** 2026-07-01
+
+### Decision Summary
+- **Overall:** qualified · **Recommended Motion:** run tech-qual
+
+## Qualification Narrative
+ok
+
+## Source Coverage
+- transcript
+
+## Recommended Next Actions
+run tech-qual
+"""
+    meta = output_schema.parse_output("biz-qual", text)
+    assert meta.is_legacy is False
+    assert meta.valid is False
+    assert any("Source Coverage must be the final H2" in error for error in meta.validation_errors)
+
+
+@pytest.mark.parametrize(
+    "skill",
+    (
+        "biz-qual",
+        "tech-qual",
+        "deployment-model-qual",
+        "poc-plan",
+        "connector-feasibility",
+        "pov-gsheet",
+        "post-call",
+    ),
+)
+@pytest.mark.parametrize("mode", ("full", "brief"))
+def test_enforced_skills_use_minimal_required_sections(skill: str, mode: str) -> None:
+    """Each enforced profile accepts a minimal synthetic full or brief document."""
+    schema = output_schema._SKILL_SCHEMAS[skill]
+    assert schema.validation_enforced is True
+    required = (
+        schema.brief_required_sections
+        if mode == "brief" and schema.brief_required_sections is not None
+        else schema.required_sections
+    )
+    labels = (
+        schema.brief_required_at_a_glance_labels
+        if mode == "brief" and schema.brief_required_at_a_glance_labels is not None
+        else schema.required_at_a_glance_labels
+    )
+    summary_heading = CANONICAL_ARCHITECTURE[skill].top_summary_name
+    lines = [f"# {skill}", "", "**Date:** July 1, 2026", "", f"### {summary_heading}"]
+    lines.extend(f"- **{label.replace('-', ' ').title()}:** confirmed" for label in labels)
+    for section in required:
+        heading = " ".join(word.title() for word in section.split("-"))
+        body = "612 / 612 lines." if section == "source-coverage" and skill == "post-call" else "Synthetic evidence."
+        lines.extend(["", f"## {heading}", body])
+    text = "\n".join(lines)
+    meta = output_schema.parse_output(skill, text, mode=mode)
+    assert meta.valid is True, meta.validation_errors
+
+    missing = required[0]
+    missing_text = re.sub(
+        rf"^## {re.escape(' '.join(word.title() for word in missing.split('-')))}\n(?:Synthetic evidence\.|612 / 612 lines\.)\n?",
+        "",
+        text,
+        flags=re.MULTILINE,
+    )
+    missing_text = re.sub(
+        rf"^- \*\*{re.escape(missing.replace('-', ' ').title())}:\*\* confirmed\n?",
+        "",
+        missing_text,
+        flags=re.MULTILINE,
+    )
+    invalid = output_schema.parse_output(skill, missing_text, mode=mode)
+    assert invalid.valid is False
+    assert missing in invalid.missing_sections
+
+
+def test_non_enforced_schema_is_unvalidated() -> None:
+    """Schema support does not imply automatic validation support."""
+    assert output_schema.skill_has_schema("prep-call") is False
+    meta = output_schema.parse_output(
+        "prep-call",
+        "# Prep Call\n\n## Account Context\nFacts\n## Source Coverage\nTranscript",
+    )
+    assert meta.validation_status == "unvalidated"
+    assert meta.valid is True
+
+
 def test_app_js_sidebar_uses_source_order_not_intent_groups(repo_root: Path) -> None:
     """Sidebar no longer groups by intent; it follows the Markdown source order."""
     app_js = (repo_root / "webapp" / "static" / "app.js").read_text(encoding="utf-8")
@@ -178,5 +359,3 @@ def test_app_js_sidebar_uses_source_order_not_intent_groups(repo_root: Path) -> 
     # Flat source-order links for H2/H3.
     assert 'class="doc-toc-link lvl${t.level}"' in app_js
     assert "tocEntries" in app_js
-
-

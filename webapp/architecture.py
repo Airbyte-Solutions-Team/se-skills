@@ -123,8 +123,8 @@ _POST_CALL = SkillArchitecture(
     top_summary_name="Call Snapshot",
     canonical_h2_order=[
         "key-takeaways",
-        "scope-and-technical-changes",
         "deal-impact",
+        "scope-and-technical-changes",
         "objections-and-open-questions",
         "actions-and-next-step",
         "coaching-observations",
@@ -660,6 +660,12 @@ CANONICAL_ARCHITECTURE: dict[str, SkillArchitecture] = {
         _WORKER_ANALYSIS,
     ]
 }
+
+# Source Coverage existed in the prior report format. Keep it out of the
+# current-generation drift calculation when a document also uses older aliases.
+for _architecture in CANONICAL_ARCHITECTURE.values():
+    if _SOURCE_COVERAGE in _architecture.canonical_h2_order:
+        _architecture.aliases.setdefault(_SOURCE_COVERAGE, _SOURCE_COVERAGE)
 
 
 def get_architecture(skill: str) -> SkillArchitecture | None:

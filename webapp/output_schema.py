@@ -24,7 +24,7 @@ from architecture import CANONICAL_ARCHITECTURE, get_architecture
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 Mode = Literal["full", "brief"]
 
@@ -45,6 +45,7 @@ class SkillOutputSchema(BaseModel):
     strict_at_a_glance: bool = False
     strict_sections: bool = False
     strict: bool = False
+    validation_enforced: bool = False
 
 
 class OutputMetadata(BaseModel):
@@ -132,24 +133,41 @@ _SKILL_SCHEMA_OVERRIDES: dict[str, dict[str, Any]] = {
         "strict_at_a_glance": True,
         "strict_sections": True,
         "strict": True,
+        "validation_enforced": True,
     },
     "biz-qual": {
+        "required_sections": ["meddpicc-scorecard", "source-coverage"],
+        "brief_required_sections": ["meddpicc-scorecard", "source-coverage"],
         "required_at_a_glance_labels": ["overall", "recommended-motion"],
+        "validation_enforced": True,
     },
     "tech-qual": {
+        "required_sections": ["technical-fit-summary", "source-coverage"],
+        "brief_required_sections": ["technical-fit-summary", "source-coverage"],
         "required_at_a_glance_labels": ["technical-fit", "primary-risk"],
+        "validation_enforced": True,
     },
     "deployment-model-qual": {
+        "required_sections": ["deployment-verdict", "source-coverage"],
+        "brief_required_sections": ["deployment-verdict", "source-coverage"],
         "required_at_a_glance_labels": ["verdict", "recommended-motion"],
+        "validation_enforced": True,
     },
     "poc-plan": {
+        "required_sections": ["success-criteria", "source-coverage"],
+        "brief_required_sections": ["success-criteria", "source-coverage"],
         "required_at_a_glance_labels": ["poc-proves", "timeline", "success-criteria"],
+        "validation_enforced": True,
     },
     "connector-feasibility": {
+        "required_sections": ["system-by-system-fit", "source-coverage"],
+        "brief_required_sections": ["system-by-system-fit", "source-coverage"],
         "required_at_a_glance_labels": ["feasibility", "recommended-motion"],
+        "validation_enforced": True,
     },
     "pov-gsheet": {
         "required_at_a_glance_labels": ["google-sheet-url", "status"],
+        "validation_enforced": True,
     },
 }
 
@@ -474,6 +492,21 @@ def _transcript_triggered_conditionals(transcript_text: str | None) -> set[str]:
     ):
         triggered.add("scope-and-technical-changes")
 
+    ae_role = re.search(
+        r"\b(?:ae|account executive|sales rep|sales representative|sdr|"
+        r"sales development rep|business development rep)\b",
+        lowered,
+    )
+    discovery = re.search(
+        r"\b(?:discovery call|discovery meeting|discovery session|intro call|"
+        r"initial call|first call|qualification call|qualifying call|qual call|"
+        r"meddpicc|metrics|economic buyer|decision criteria|decision process|"
+        r"identify pain|champion|competition)\b",
+        lowered,
+    )
+    if ae_role and discovery:
+        triggered.add("deal-impact")
+
     return triggered
 
 
@@ -507,8 +540,14 @@ def parse_output(
     date = _extract_date(text)
     at_a_glance = _extract_at_a_glance(text, arch.top_summary_name if arch else None)
     sections = _extract_sections(text)
+    source_heading_keys = set(sections)
     sections, legacy_seen = _canonicalize_sections(sections, arch)
-    is_legacy = bool(legacy_seen)
+    new_only = (
+        set(arch.canonical_h2_order) - set(arch.aliases)
+        if arch is not None
+        else set()
+    )
+    is_legacy = bool(legacy_seen) and not bool(source_heading_keys & new_only)
 
     required: list[str] = list(schema.required_sections) if schema else []
     required_at_a_glance: list[str] = list(schema.required_at_a_glance_labels) if schema else []
@@ -518,10 +557,30 @@ def parse_output(
         if schema.brief_required_at_a_glance_labels is not None:
             required_at_a_glance = list(schema.brief_required_at_a_glance_labels)
 
+    if schema is not None and not schema.validation_enforced:
+        return OutputMetadata(
+            skill=skill,
+            title=title,
+            date=date,
+            mode=mode,
+            at_a_glance=at_a_glance,
+            sections={k: v[:5000] for k, v in sections.items()},
+            required_sections=required,
+            missing_sections=[],
+            validation_errors=[],
+            valid=True,
+            schema_version=SCHEMA_VERSION,
+            validation_status="unvalidated",
+            is_legacy=is_legacy,
+            reference_freshness_at_generation=reference_freshness_at_generation,
+        )
+
     # Conditional transcript-entity triggers are deterministic and additive.
+    triggered_conditionals: set[str] = set()
     if skill == "post-call" and schema and transcript_text is not None:
+        triggered_conditionals = _transcript_triggered_conditionals(transcript_text)
         required = required + sorted(
-            c for c in _transcript_triggered_conditionals(transcript_text)
+            c for c in triggered_conditionals
             if c not in required
         )
 
@@ -641,10 +700,19 @@ def parse_output(
                 body = sections[found_key].strip()
                 if not body:
                     errors.append(f"Conditional section '{conditional_key}' is empty.")
+        if "deal-impact" in triggered_conditionals and not re.search(
+            r"^###\s+MEDDPICC\b",
+            sections.get("deal-impact", ""),
+            re.MULTILINE | re.IGNORECASE,
+        ):
+            errors.append(
+                "Deal Impact must include a '### MEDDPICC' subsection for AE-led discovery."
+            )
 
     section_order = list(sections.keys())
     if "source-coverage" not in sections:
-        errors.append("Missing Source Coverage section.")
+        if schema and schema.source_coverage_required:
+            errors.append("Missing Source Coverage section.")
     elif schema and schema.source_coverage_required:
         if not is_legacy and section_order.index("source-coverage") != len(section_order) - 1:
             errors.append("Source Coverage must be the final H2 section.")
@@ -1036,7 +1104,8 @@ def semantic_diff(left_meta: OutputMetadata, right_meta: OutputMetadata) -> dict
 
 
 def skill_has_schema(skill: str) -> bool:
-    return skill in _SKILL_SCHEMAS
+    schema = _SKILL_SCHEMAS.get(skill)
+    return bool(schema and schema.validation_enforced)
 
 
 def list_schemas() -> list[str]:

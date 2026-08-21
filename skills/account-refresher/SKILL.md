@@ -49,51 +49,59 @@ Apply **Source Coverage transparency** (report what you read) and **assertive SF
 > 4. `Open Items`
 > 5. `Watch Outs`
 > 6. `Source Coverage`
->
-> Source Coverage must be the **final H2**. The `At a Glance` block is an H3 under the title block (not a navigable section).
->
 
-Keep it to ~1 page. This is a briefing, not a report. Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
+> Source Coverage must be the **final H2**. The profile-specific summary block is an H3 under the title block (not a navigable section).
+
+Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---
 
-## Account Refresher: [Customer]
+<!-- output-template:start -->
+# Account Refresher: [Customer]
 **As of:** [today's date — long form per `_se-playbook.md`, e.g. June 11, 2026, NOT 2026-06-11] · **Source Coverage:** [1 line — what was read: N transcripts (most recent in full), qual docs, memory, SFDC opp]
 
-### At a Glance
+### Account Snapshot
 - **Current state:** [one-liner — what's actively happening: POC? eval? stalled? negotiating?]
 - **Key players:** [EB name (role)] · **Champion:** [name (role)]
 - **Last touch:** [date + what happened] · ==[N] days ago==
 - **Open items:** ==[N]==
+**Jump to:** [Whos Who](#whos-who) · [Story So Far](#story-so-far) · [Current State](#current-state) · [Open Items](#open-items) · [Watch Outs](#watch-outs) · [Source Coverage](#source-coverage)
 
-**Jump to:** [Who's Who](#whos-who) · [The Story So Far](#the-story-so-far) · [Where Things Stand](#where-things-stand-right-now) · [What's Open](#whats-open) · [Watch-outs](#watch-outs)
+*(Use the canonical sections below; retain all facts, tables, and reasoning while nesting sub-topics under the relevant H2.)*
 
----
+## Whos Who
 
-### The 10-Second Version
-[2-3 sentences. What is this account, what are they evaluating Airbyte for, and where do things stand right now. The "if you only read one thing" summary.]
-
-## Who's Who
+### Who's Who
 | Person | Role | Side | Notes |
 |--------|------|------|-------|
 | [name] | [title] | Customer / Partner / Airbyte | [champion? EB? technical lead? quiet?] |
 
 *Pull from transcripts + SFDC `Champion__c`/`Economic_Buyer__c`/`Owner`. Flag if SFDC names someone who hasn't appeared in transcripts.*
 
-## The Story So Far
+### What's Open
+- [ ] [Open item / unanswered question / pending action — who owns it]
+- [ ] [...]
+
+## Story So Far
+
+### The Story So Far
 [3-6 bullets, chronological. The arc of the relationship — how it started, key moments, what's been decided, what changed. Cite dates.]
 
-## Where Things Stand Right Now
+## Current State
+
+### Where Things Stand Right Now
 - **Current state:** [what's actively happening — POC? eval? stalled? negotiating?]
 - **SFDC says:** [stage, amount, close date, owner — and ⚠️ flag any mismatch with the local/transcript reality]
 - **Last contact:** [date + what happened] (==[N] days ago==)
 - **Use case / what they want:** [1-2 lines]
 
-## What's Open
-- [ ] [Open item / unanswered question / pending action — who owns it]
-- [ ] [...]
+## Open Items
 
-## Watch-outs
+Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
+
+## Watch Outs
+
+### Watch-outs
 - [Anything that would bite you if you walked in cold — a sensitivity, a blocker, a competitor, a promise made]
 
 ---
@@ -102,6 +110,11 @@ Keep it to ~1 page. This is a briefing, not a report. Document structure follows
 > → `deal-assessment` for health, `prep-call` to prep a specific call, `next-move` for what to do next.
 
 ---
+
+## Source Coverage
+
+Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
+<!-- output-template:end -->
 
 ## Style
 

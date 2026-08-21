@@ -482,27 +482,29 @@ The canonical H2/H3 structure for every saving skill is declared in `webapp/arch
 
 Per-skill canonical H2 order:
 
+
+
 | Skill | Canonical H2 order | Notes |
 |-------|--------------------|-------|
-| prep-call | Meeting Snapshot → Call Objectives → Discovery Agenda → Attendees & Roles → Success Criteria → Logistics & Materials → Risks & Contingencies → Source Coverage | Call plan, not a report. |
-| post-call | Call Snapshot → Key Takeaways → Scope & Technical Changes → Deal Impact → Objections & Open Questions → Actions & Next Step → Coaching Observations → Source Coverage | brief mode skips Coaching and MEDDPICC. |
-| biz-qual | MEDDPICC Scorecard → Qualification Narrative → Movement & Deal Risks → Recommended Next Actions → Source Coverage | H3s under Qualification Narrative: Metrics, Economic Buyer, Decision Criteria, Decision Process, Paper Process, Identify Pain, Champion, Stakeholder Map, Competition. |
-| tech-qual | Technical Fit Summary → System-by-System Deep Dive → Risks & Constraints → Validation Questions → Recommended Next Steps → Source Coverage | |
-| deployment-model-qual | Deployment Verdict → The Five Questions → Implications by Answer → Recommended Motion → Source Coverage | |
-| connector-feasibility | System-by-System Fit → Coverage Gaps & Custom Work → Risks & Constraints → Validation Questions → Recommended Next Steps → Source Coverage | |
-| deal-assessment | Trajectory & What Changed → Deal Thesis → Stakeholders & Qualification → Close Path, Blockers & Loss Risks → Recommended Actions & Coaching → Source Coverage | |
-| poc-plan | POC Objective → Success Criteria → Scope & Architecture → Mutual Commitments & Roles → Timeline & Milestones → Access & Prerequisites → Risks & Mitigations → Exit / Results Review → Source Coverage | |
-| roi-business-case | ROI Summary → Value Drivers → Cost Inputs → Sourced Math → Sensitivity & Risk → Recommended Actions → Source Coverage | |
-| mutual-close-plan | Mutual Close Summary → Mutual Commitments → Close Path → Risks & Blockers → Recommended Next Steps → Source Coverage | |
-| account-refresher | Account Snapshot → What's Changed → Stakeholder Map → Open Risks & Watch-Outs → Recommended Next Steps → Source Coverage | |
-| next-move | Current Read → Why This Move → Ranked Next Moves → Don't Do Yet → Workflow State → Context Inventory → Gaps → External Actions → Source Coverage | Router skill. |
-| internal-prep | depends on meeting type; each sub-template leads with an H3 decision card, then Source Coverage | |
-| coverage-handoff | Handoff Snapshot → What Was Covered → What's Still Open → Recommended Next Actions → Source Coverage | |
-| objection-handler | Objection Snapshot → Reframe & Validation → Recommended Response → Source Coverage | |
-| pov-gsheet | Receipt → Source Coverage | Lightweight sheet artifact. |
-| follow-up-email | *specialized email artifact — exempt from report architecture* | |
-| full-qual | *orchestration wrapper — no standalone Markdown report; inherits child skill outputs* | |
-| worker-analysis | *specialized report with its own page architecture* | |
+| prep-call | Account Context → Call Strategy → Discovery Plan → Agenda → Watch Outs → Desired Next Step → Source Coverage |  |
+| post-call | Key Takeaways → Deal Impact → Scope And Technical Changes → Objections And Open Questions → Actions And Next Step → Coaching Observations → Source Coverage |  |
+| biz-qual | Meddpicc Scorecard → Qualification Narrative → Movement And Deal Risks → Recommended Next Actions → Source Coverage |  |
+| tech-qual | Technical Fit Summary → Requirements And Architecture → Implementation Readiness → Risks And Open Items → Recommended Next Actions → Source Coverage |  |
+| deployment-model-qual | Deployment Verdict → Customer Constraints → Remaining Validation → Recommended Motion → Source Coverage |  |
+| connector-feasibility | System By System Fit → Coverage Gaps And Custom Work → Risks And Constraints → Validation Questions → Recommended Next Steps → Source Coverage |  |
+| deal-assessment | Trajectory And What Changed → Deal Thesis → Stakeholders And Qualification → Close Path Blockers And Loss Risks → Recommended Actions And Coaching → Source Coverage |  |
+| poc-plan | Poc Objective → Success Criteria → Scope And Architecture → Mutual Commitments And Roles → Timeline And Milestones → Access And Prerequisites → Risks And Mitigations → Exit Results Review → Open Items → Source Coverage |  |
+| roi-business-case | One Slide Eb View → Current State Baseline → Airbyte Cost Projection → Payback And Sensitivity → Assumptions And Confirms → Source Coverage |  |
+| mutual-close-plan | Path To Signature → Two Sided Responsibilities → Critical Path And Risks → Mutual Agreement Ask → Source Coverage |  |
+| account-refresher | Whos Who → Story So Far → Current State → Open Items → Watch Outs → Source Coverage |  |
+| next-move | Why This Move → Ranked Next Moves → Dont Do Yet → Workflow State → Evidence Gaps And External Actions → Source Coverage |  |
+| internal-prep | Relevant Deal Context → Alignment And Asks → Decisions Required → Source Coverage |  |
+| coverage-handoff | Deal Snapshot → Whos Who → Story So Far → Current State → In Flight Commitments → Open Items → Technical Threads → Access And Escalation → Source Coverage |  |
+| objection-handler | Whats True → Talk Track → Follow Up Questions → Fit And Route Boundary | Source Coverage is used when the response references customer-specific evidence. It is not required for generic snippets. |
+| follow-up-email | *structured exception — no standalone canonical H2 order* | Email is a specialized artifact; do not force Markdown report architecture. |
+| full-qual | *structured exception — no standalone canonical H2 order* | full-qual orchestrates biz-qual and tech-qual; it does not emit a standalone Markdown report. |
+| pov-gsheet | Receipt → Source Coverage | Sheet artifact with a lightweight receipt and source coverage; not a normal report. |
+| worker-analysis | *structured exception — no standalone canonical H2 order* | Worker analysis is a specialized report with its own page architecture. |
 
 Legacy headings are preserved through the `aliases` map in `webapp/architecture.py`. Older outputs that use those headings remain openable and are not reclassified as corrupt; they are flagged as `is_legacy` and skip the strict Source-Coverage-must-be-last rule.
 

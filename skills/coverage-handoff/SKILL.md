@@ -53,9 +53,45 @@ Copy these straight from the SFDC query into the page; IDs and numbers must be e
 > 7. `Technical Threads`
 > 8. `Access And Escalation`
 > 9. `Source Coverage`
->
-> Source Coverage must be the **final H2**. The `At a Glance` block is an H3 under the title block (not a navigable section).
->
+
+> Source Coverage must be the **final H2**. The profile-specific summary block is an H3 under the title block (not a navigable section).
+
+<!-- output-template:start -->
+# Coverage Handoff: [Customer] — [Date]
+
+### Coverage Snapshot
+- **Coverage window:** [dates and covering SE]
+- **Trajectory:** [current read]
+
+**Jump to:** [Deal Snapshot](#deal-snapshot) · [Whos Who](#whos-who) · [Story So Far](#story-so-far) · [Current State](#current-state) · [In Flight Commitments](#in-flight-commitments) · [Open Items](#open-items) · [Technical Threads](#technical-threads) · [Access And Escalation](#access-and-escalation) · [Source Coverage](#source-coverage)
+
+## Deal Snapshot
+Populate this section in the standalone HTML artifact with sourced, realistic detail.
+
+## Whos Who
+Populate this section in the standalone HTML artifact with sourced, realistic detail.
+
+## Story So Far
+Populate this section in the standalone HTML artifact with sourced, realistic detail.
+
+## Current State
+Populate this section in the standalone HTML artifact with sourced, realistic detail.
+
+## In Flight Commitments
+Populate this section in the standalone HTML artifact with sourced, realistic detail.
+
+## Open Items
+Populate this section in the standalone HTML artifact with sourced, realistic detail.
+
+## Technical Threads
+Populate this section in the standalone HTML artifact with sourced, realistic detail.
+
+## Access And Escalation
+Populate this section in the standalone HTML artifact with sourced, realistic detail.
+
+## Source Coverage
+Populate this section in the standalone HTML artifact with sourced, realistic detail.
+<!-- output-template:end -->
 
 **Produce one self-contained HTML file.** Use `template.html` in this skill's own directory (the installed skill lives at `~/.claude/skills/coverage-handoff/`, so read `~/.claude/skills/coverage-handoff/template.html`) as the exact skeleton:
 

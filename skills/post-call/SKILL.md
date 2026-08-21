@@ -58,47 +58,51 @@ If the user signals brief mode (`--brief`, `quick summary`, `just the takeaways`
 >
 > **Canonical H2 order:**
 > 1. `Key Takeaways`
-> 2. `Scope And Technical Changes`
-> 3. `Deal Impact`
+> 2. `Deal Impact`
+> 3. `Scope And Technical Changes`
 > 4. `Objections And Open Questions`
 > 5. `Actions And Next Step`
 > 6. `Coaching Observations`
 > 7. `Source Coverage`
->
-> **H3 subtopics (when used):**
-> - under `Call Snapshot`: `Date`, `Call Type`, `Customer Attendees`, `Airbyte Attendees`, `One Line Deal Impact`
-> - under `Scope And Technical Changes`: `Sources And Destinations`, `Technical Notes`, `Architecture`, `Requirements`
-> - under `Deal Impact`: `Movement`, `Deal Health`, `Meddpicc Changes`
-> - under `Objections And Open Questions`: `New Objections Concerns Surfaced`, `Open Questions Follow Ups`
-> - under `Actions And Next Step`: `Action Items`, `Next Step`
->
-> Source Coverage must be the **final H2**. The `At a Glance` block is an H3 under the title block (not a navigable section).
->
 
-Generate a structured summary with these sections. **Local auto-save is ON** (see After Generating). Only **Notion and memory writes are ask-first** — never auto-write those without confirmation.
+> **H3 subtopics (when used):**
+> - under `Call Snapshot`: Date, Call Type, Customer Attendees, Airbyte Attendees, One Line Deal Impact
+> - under `Scope And Technical Changes`: Sources And Destinations, Technical Notes, Architecture, Requirements
+> - under `Deal Impact`: Movement, Deal Health, Meddpicc Changes
+> - under `Objections And Open Questions`: New Objections Concerns Surfaced, Open Questions Follow Ups
+> - under `Actions And Next Step`: Action Items, Next Step
+
+> Source Coverage must be the **final H2**. The profile-specific summary block is an H3 under the title block (not a navigable section).
 
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---
 
+<!-- output-template:start -->
 # Call Summary: [Customer Name] — [Call Date in long form, e.g. June 11, 2026]
 **Date:** [today's date, long form]
 
-### At a Glance
+### Call Snapshot
 - **Call type:** [Discovery / Technical / Exec / POC review / etc. — infer from transcript] · **Duration:** [if discernible]
 - **Call date:** [long-form date] · **Attendees:** ==[N]==
 - **Action items:** ==[N]== · **Next step:** [one line]
 - **Deal-assessment update needed?** [yes/no — if yes, one line on what changed]
+**Jump to:** [Key Takeaways](#key-takeaways) · [Deal Impact](#deal-impact) · [Scope And Technical Changes](#scope-and-technical-changes) · [Objections And Open Questions](#objections-and-open-questions) · [Actions And Next Step](#actions-and-next-step) · [Coaching Observations](#coaching-observations) · [Source Coverage](#source-coverage)
 
-**Jump to:** [At a Glance](#at-a-glance) · [Key Takeaways](#key-takeaways) · [Deal Health Signals](#deal-health-signals) · [New Objections / Concerns Surfaced](#new-objections--concerns-surfaced) · [Action Items](#action-items) · [Sources & Destinations](#sources--destinations) · [Technical Notes](#technical-notes) · [Open Questions / Follow-ups](#open-questions--follow-ups) · [Attendees](#attendees) · [Next Step](#next-step) · [Coaching Observations](#coaching-observations) · [Source Coverage](#source-coverage)
-*(omit the Sources & Destinations and/or Technical Notes anchors if the call had no such content)*
-*(Append [MEDDPICC Quick Pass](#meddpicc-quick-pass) and/or [Coaching Observations](#coaching-observations) to the Jump-to line only when those conditional sections are present; place Coaching Observations immediately before the final Source Coverage section — see SE Best Practices below.)*
-*(Section order is "what changed → what to do": takeaways, health, and new objections lead; the attendee roster and source audit sit at the bottom — see `_se-playbook.md`.)*
+*(Use the canonical sections below; retain all facts, tables, and reasoning while nesting sub-topics under the relevant H2.)*
 
 ## Key Takeaways
+
+### Key Takeaways
 3–6 bullets capturing the most important things learned. Lead with what changed in your understanding of the deal, not a chronological recap. Mark each takeaway `[stated]` (the customer said it — cite speaker) or `[inferred]` (your read of the evidence) — never blend the two in one bullet. A downstream skill (deal-assessment, tech-qual) will treat a `[stated]` fact differently from an `[inferred]` read.
 
-## Deal Health Signals
+### Attendees
+- **Airbyte:** [names + roles]
+- **Customer:** [names + roles]
+
+## Deal Impact
+
+### Deal Health Signals
 Quick read on what this call moved (or didn't):
 - **Positive signals:** [what they said/did that's good]
 - **Negative signals:** [hesitation, delays, scope shrinkage, etc.]
@@ -107,17 +111,18 @@ Quick read on what this call moved (or didn't):
 > [!verdict] [Title the strongest positive signal — only if the call produced a genuinely strong positive]
 > [The signal and why it moves the deal forward — e.g., EB confirmed budget, champion pushed timeline up. Omit if the call was neutral or negative.]
 
-## New Objections / Concerns Surfaced
-Anything the customer raised that wasn't on your radar before the call — pricing, security, deployment model, competitor mentions, internal politics. *(Placed high: a newly-surfaced objection is often the most important thing that changed, and it usually drives an action item below.)*
+### Movement
+Include the applicable evidence and decision detail here.
 
-> [!risk] [Title the new objection — only if a genuinely new concern surfaced]
-> [What they raised, who raised it, and the severity. Omit this callout if no new objection surfaced; if multiple, use one callout each for the material ones.]
+### Deal Health
+Include the applicable evidence and decision detail here.
 
-## Action Items
-Markdown checklist. Each item: who owns it, what they're doing, by when (if stated).
-- [ ] **[Owner]** — [action] *(by [date if mentioned])*
+### Meddpicc Changes
+Include the applicable evidence and decision detail here.
 
-## Sources & Destinations
+## Scope And Technical Changes
+
+### Sources & Destinations
 *Include this section whenever the call named ANY system the customer wants to move data from or to. This is the single most reused fact downstream — `connector-feasibility` and `tech-qual` both build directly on it — so capture it as its own section, not buried in prose. Omit only for a purely business/exec call with zero systems mentioned.*
 
 Capture each system verbatim as named, tagged as a **Source** (data comes FROM it) or **Destination** (data goes TO it). Note if a system's role is ambiguous or if it's a new mention vs. a prior call. Don't assess connector coverage here — that's `connector-feasibility`'s job; this is just the record of what was said.
@@ -133,7 +138,7 @@ Capture each system verbatim as named, tagged as a **Source** (data comes FROM i
 > [!info] Feeds connector-feasibility & tech-qual
 > Run or update `connector-feasibility` to check Airbyte coverage for these systems, and `tech-qual` to fold them into the canonical requirements. (Routed in "After Generating" below.)
 
-## Technical Notes
+### Technical Notes
 *Include this section ONLY if the call surfaced technical scope beyond source/destination systems (volume, latency, deployment, auth, sizing/pricing). Omit entirely for a purely business/exec call.*
 
 Capture the technical FACTS as stated on this call — raw, attributed, not synthesized. This is a record, not an analysis: don't build the full requirements matrix here (that's `tech-qual`'s job). Quote numbers and system names verbatim where load-bearing.
@@ -145,18 +150,44 @@ Capture the technical FACTS as stated on this call — raw, attributed, not synt
 > [!info] Feeds tech-qual
 > This call added technical scope. Run or update `tech-qual` to consolidate these facts into the canonical **Technical Requirements & Scope** section — don't let scope live only in scattered call summaries. (Routed in "After Generating" below.)
 
-## Open Questions / Follow-ups
+### Sources And Destinations
+Include the applicable evidence and decision detail here.
+
+### Architecture
+Include the applicable evidence and decision detail here.
+
+### Requirements
+Include the applicable evidence and decision detail here.
+
+## Objections And Open Questions
+
+### New Objections / Concerns Surfaced
+Anything the customer raised that wasn't on your radar before the call — pricing, security, deployment model, competitor mentions, internal politics. *(Placed high: a newly-surfaced objection is often the most important thing that changed, and it usually drives an action item below.)*
+
+> [!risk] [Title the new objection — only if a genuinely new concern surfaced]
+> [What they raised, who raised it, and the severity. Omit this callout if no new objection surfaced; if multiple, use one callout each for the material ones.]
+
+### Open Questions / Follow-ups
 Questions the customer asked that weren't fully answered, or that you committed to follow up on. These should feed the customer's Notion `Q&A` page.
 
-## Attendees
-- **Airbyte:** [names + roles]
-- **Customer:** [names + roles]
+## Actions And Next Step
 
-## Next Step
+### Action Items
+Markdown checklist. Each item: who owns it, what they're doing, by when (if stated).
+- [ ] **[Owner]** — [action] *(by [date if mentioned])*
+
+### Next Step
 The single most important next action. Be specific — "send POC proposal by Friday" not "follow up".
 
+## Coaching Observations
+
+Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
+
 ## Source Coverage
+
+### Source Coverage
 *Audit trail — final content section, after all analytical and coaching content (progressive disclosure per `_se-playbook.md`).* [Transcript read in full (lines read / total), attribution determination, prior transcripts/summaries cross-referenced, memory files.]
+<!-- output-template:end -->
 
 ## After Generating the Summary
 
@@ -232,7 +263,7 @@ If prior transcripts or call summaries exist for this customer, read the "Cross-
 **Only include MEDDPICC Movement for AE-led discovery calls** (which feed into the SE's prep for follow-up tech calls). Full MEDDPICC scoring belongs in `biz-qual`, not post-call.
 
 Decision logic:
-- **AE-led discovery call (SE not on the call):** Add a `## MEDDPICC Quick Pass` section (H2, so it lands in the Jump-to index) with brief 🟢/🟡/🔴 status per letter — enough signal to feed `prep-call` for the SE's follow-up. Don't run the full pain funnel or champion test here; that's biz-qual's job.
+- **AE-led discovery call (SE not on the call):** Under `## Deal Impact`, add a `### MEDDPICC Changes` subsection with brief 🟢/🟡/🔴 status per letter — enough signal to feed `prep-call` for the SE's follow-up. Don't run the full pain funnel or champion test here; that's biz-qual's job.
 - **SE-attended call (tech-discovery, deep-dive, exec readout, POC review, etc.):** Skip MEDDPICC scoring entirely. Focus on call-specific data (attendees, takeaways, action items, objections, next step). Anyone who needs MEDDPICC scoring should run `biz-qual` directly.
 - **Unknown attribution:** Skip MEDDPICC by default; note "MEDDPICC skipped — call attribution unclear."
 

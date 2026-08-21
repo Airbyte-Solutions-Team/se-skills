@@ -130,21 +130,21 @@ Only surface questions for items **not already answered** in the transcripts/SFD
 > 4. `Validation Questions`
 > 5. `Recommended Next Steps`
 > 6. `Source Coverage`
->
+
 > **H3 subtopics (when used):**
-> - under `System By System Fit`: `System`, `Connector`, `Exists`, `Availability`, `Use Case Fit`, `Confidence`, `Top Risk`
->
-> Source Coverage must be the **final H2**. The `At a Glance` block is an H3 under the title block (not a navigable section).
->
+> - under `System By System Fit`: System, Connector, Exists, Availability, Use Case Fit, Confidence, Top Risk
+
+> Source Coverage must be the **final H2**. The profile-specific summary block is an H3 under the title block (not a navigable section).
 
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---
 
+<!-- output-template:start -->
 # Connector Feasibility: [Customer Name]
 **Date:** [today's date — long form per `_se-playbook.md`, e.g. June 11, 2026, NOT 2026-06-11] · **Sources read:** [transcripts (with dates) / SFDC / qual docs]
 
-### At a Glance
+### Decision Summary
 *Decision card — lead with the judgment (see `_se-playbook.md` → Decision-First Layout).*
 - **Feasibility:** 🟢 All needs covered / 🟡 Covered with gaps to build / 🔴 Hard gap blocks use case — [3–6 word headline]
 - **Coverage:** ==[N of M]== connectors validated · **Gaps:** [count build-needed] · **Open questions:** [count]
@@ -152,26 +152,13 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 - **Recommended motion:** [e.g. "Proceed to POC scoping" / "Confirm gaps before committing"]
 - **Primary risk:** [the biggest unvalidated assumption or hard gap — one line]
 - **Source confidence:** [one line — N transcripts + SFDC; "see Source Coverage"]
+**Jump to:** [System By System Fit](#system-by-system-fit) · [Coverage Gaps And Custom Work](#coverage-gaps-and-custom-work) · [Risks And Constraints](#risks-and-constraints) · [Validation Questions](#validation-questions) · [Recommended Next Steps](#recommended-next-steps) · [Source Coverage](#source-coverage)
 
-**Jump to:** [At a Glance](#at-a-glance) · [Fit Verdict](#fit-verdict) · [Use Case Summary](#use-case-summary) · [Missing / Gap Connectors](#missing-gap-connectors) · [Constraints & Edge Cases](#constraints-edge-cases-given-their-context) · [Questions to Ask the Customer](#questions-to-ask-the-customer-to-fully-validate-fit) · [Recommended Next Steps](#recommended-next-steps) · [Source Coverage](#source-coverage)
+*(Use the canonical sections below; retain all facts, tables, and reasoning while nesting sub-topics under the relevant H2.)*
 
-*(Section order is decision-first: the verdict and gaps come before the use-case recap and the audit trail. Source Coverage is the last content section — see `_se-playbook.md` → Progressive disclosure.)*
+## System By System Fit
 
-### Fail loud on unavailable tools (per `_se-playbook.md` → Fail loud on missing sources/tools)
-
-This skill's rigor depends on external sources. In Source Coverage, list each as used/unavailable:
-- **connector registry cache** (`registry/oss_registry.json` + `cloud_registry.json` — report the cache date) · **`airbyte-enterprise` `connector_stubs.json`** (enterprise-variant detection — report available/unavailable + checkout date) · live connector registry MCP (`get_connector_registry_entry` / `get_connector_registry_spec`) · local connector source checkout · prod failed-sync data · docs MCPs (deepwiki/Kapa) · observability (Sentry/Datadog).
-
-If the registry cache was unavailable (no network AND no cached copy) so availability couldn't be derived, mark the **Availability** column `⬜ unverified` and say so in the lead. If `airbyte-enterprise` was unavailable, state "enterprise-connector coverage not checked (repo unavailable)" and cap confidence on any regulated/legacy-stack row — don't infer an enterprise variant from memory.
-
-If the registry (cache or MCP) OR local source OR prod-failure data was unavailable, this is NOT a full feasibility verdict. Cap the Feasibility confidence at 🟡 and lead with the caveat:
-> "Fit assessed from registry metadata only — connector source and prod failure data were unavailable, so pagination/auth/reliability risks are unverified. Treat as a first-pass screen, not a validated verdict."
-
-Also label build-effort ranges as planning estimates: "1–3 wks build is a planning estimate, not a commitment."
-
----
-
-## Fit Verdict
+### Fit Verdict
 *Lead with the answer — this is the first section after the decision card.* For each needed connector, the verdict is not just exists/missing — it's **does it solve their use case**. Make the distinction between availability, supported sync behavior, auth/network feasibility, and full use-case fit visible for each row:
 
 If every needed connector is fully validated, open with a verdict callout:
@@ -210,13 +197,59 @@ Any missing/gap connector that **blocks the use case** (no connector and no viab
 
 ---
 
-## Use Case Summary
+### Use Case Summary
 *Context recap — placed after the verdict so the reader gets the answer first, then the framing.* [2-4 sentences reconstructed from Step 1: what data, from where to where, why, at what volume/cadence, with what history. State explicitly if the use case is thin.]
 
 ---
 
-## Missing / Gap Connectors
+### Constraints & Edge Cases (given their context)
+*The gotchas that matter for THIS use case — not generic. Placed after coverage + gaps: it qualifies HOW the connectors behave in their environment.*
+- [e.g., "14 Shopify instances → per-store API rate limits; parallelism + scheduling matter for the 15-min target"]
+- [e.g., "Oracle CDC requires LogMiner enabled — not confirmed; without it, only full refresh / cursor available"]
+- [e.g., "NetSuite historical backfill: SuiteTalk REST returns limited history; confirm how far back they need"]
 
+---
+
+### Questions to Ask the Customer (to fully validate fit)
+*The highest-value output. Per connector, only the items NOT yet answered in the transcripts/SFDC. These are what the SE should raise to confirm the connector actually solves the use case. Be specific and explain why each matters.* Wrap the per-connector questions in a `[!info]` callout:
+
+```markdown
+> [!info] Salesforce — open questions before POC
+> - [ ] Which Salesforce objects do you need synced — standard only, or custom objects too? *Our connector covers standard + custom, but custom objects need API access enabled on their side.*
+> - [ ] Do you need change-data-capture (every change) on Orders, or is an hourly snapshot enough? *Determines whether we use CDC vs. incremental, which changes setup + cost.*
+
+> [!info] [Connector / System] — open questions
+> - [ ] [Specific question] — *why it matters: …*
+```
+
+*If a connector is fully validated (all needs-to-know answered), say "✓ Fully validated — no open questions" rather than inventing questions.*
+
+---
+
+### System
+Include the applicable evidence and decision detail here.
+
+### Connector
+Include the applicable evidence and decision detail here.
+
+### Exists
+Include the applicable evidence and decision detail here.
+
+### Availability
+Include the applicable evidence and decision detail here.
+
+### Use Case Fit
+Include the applicable evidence and decision detail here.
+
+### Confidence
+Include the applicable evidence and decision detail here.
+
+### Top Risk
+Include the applicable evidence and decision detail here.
+
+## Coverage Gaps And Custom Work
+
+### Missing / Gap Connectors
 For each missing connector, provide:
 
 **[System Name]**
@@ -238,31 +271,17 @@ For each missing connector, provide:
 
 ---
 
-## Constraints & Edge Cases (given their context)
-*The gotchas that matter for THIS use case — not generic. Placed after coverage + gaps: it qualifies HOW the connectors behave in their environment.*
-- [e.g., "14 Shopify instances → per-store API rate limits; parallelism + scheduling matter for the 15-min target"]
-- [e.g., "Oracle CDC requires LogMiner enabled — not confirmed; without it, only full refresh / cursor available"]
-- [e.g., "NetSuite historical backfill: SuiteTalk REST returns limited history; confirm how far back they need"]
+## Risks And Constraints
 
----
+Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
 
-## Questions to Ask the Customer (to fully validate fit)
-*The highest-value output. Per connector, only the items NOT yet answered in the transcripts/SFDC. These are what the SE should raise to confirm the connector actually solves the use case. Be specific and explain why each matters.* Wrap the per-connector questions in a `[!info]` callout:
+## Validation Questions
 
-```markdown
-> [!info] Salesforce — open questions before POC
-> - [ ] Which Salesforce objects do you need synced — standard only, or custom objects too? *Our connector covers standard + custom, but custom objects need API access enabled on their side.*
-> - [ ] Do you need change-data-capture (every change) on Orders, or is an hourly snapshot enough? *Determines whether we use CDC vs. incremental, which changes setup + cost.*
-
-> [!info] [Connector / System] — open questions
-> - [ ] [Specific question] — *why it matters: …*
-```
-
-*If a connector is fully validated (all needs-to-know answered), say "✓ Fully validated — no open questions" rather than inventing questions.*
-
----
+Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
 
 ## Recommended Next Steps
+
+### Recommended Next Steps
 *Action table — each action has a goal, a definition of "done," and a fallback. Render `TBD` for Owner when unstated — never invent.*
 
 | # | Next Action | Goal | Success criteria | Fallback | Owner |
@@ -272,6 +291,11 @@ For each missing connector, provide:
 | 3 | Schedule POC scoping if coverage sufficient | Move to a scoped POC | POC plan drafted | — | [name or **TBD**] |
 
 ---
+
+## Source Coverage
+
+Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
+<!-- output-template:end -->
 
 ## Style
 
@@ -289,7 +313,7 @@ Per `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → After Ge
 ```
 
 ### Source Coverage
-Include a Source Coverage section at the top reporting: **connector registry cache** (which files, the cache date, and whether it was fetched fresh this run or read from cache), **`airbyte-enterprise` `connector_stubs.json`** (available/unavailable + checkout date — the source for enterprise-variant detection), MCP queries run (`list_connectors_in_registry`, `get_connector_registry_entry`/`_spec`, etc.), transcripts referenced for source/dest list, and connectors verified for known issues. **Also report, when used:** which connectors' local source was read (and the `{airbyte_repos_dir}/airbyte` checkout date — so the SE can gauge build-path freshness), any docs queries run (Kapa / deepwiki), and any runtime-observability checks (Sentry / Datadog). If a tool or checkout was unavailable on this machine (e.g. `airbyte_repos_dir` unset, Kapa MCP, Sentry, Datadog not configured), don't list it as consulted — note "not available" rather than implying coverage you didn't have.
+Include a final Source Coverage section reporting: **connector registry cache** (which files, the cache date, and whether it was fetched fresh this run or read from cache), **`airbyte-enterprise` `connector_stubs.json`** (available/unavailable + checkout date — the source for enterprise-variant detection), MCP queries run (`list_connectors_in_registry`, `get_connector_registry_entry`/`_spec`, etc.), transcripts referenced for source/dest list, and connectors verified for known issues. **Also report, when used:** which connectors' local source was read (and the `{airbyte_repos_dir}/airbyte` checkout date — so the SE can gauge build-path freshness), any docs queries run (Kapa / deepwiki), and any runtime-observability checks (Sentry / Datadog). If a tool or checkout was unavailable on this machine (e.g. `airbyte_repos_dir` unset, Kapa MCP, Sentry, Datadog not configured), don't list it as consulted — note "not available" rather than implying coverage you didn't have.
 
 ### Then offer to
 1. Add a section to the customer's Notion Overview page

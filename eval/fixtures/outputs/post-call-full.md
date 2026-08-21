@@ -8,12 +8,20 @@
 - **Action items:** ==[2]== · **Next step:** Schedule technical deep-dive for June 18
 - **Deal-assessment update needed?** yes — EB confirmed budget
 
-**Jump to:** [At a Glance](#at-a-glance) · [Key Takeaways](#key-takeaways) · [Scope & Technical Changes](#scope--technical-changes) · [Deal Impact](#deal-impact) · [Objections & Open Questions](#objections--open-questions) · [Actions & Next Step](#actions--next-step) · [Coaching Observations](#coaching-observations) · [Source Coverage](#source-coverage)
+**Jump to:** [Key Takeaways](#key-takeaways) · [Deal Impact](#deal-impact) · [Scope & Technical Changes](#scope--technical-changes) · [Objections & Open Questions](#objections--open-questions) · [Actions & Next Step](#actions--next-step) · [Coaching Observations](#coaching-observations) · [Source Coverage](#source-coverage)
 
 ## Key Takeaways
 - [stated — VP Engineering] The data engineering team spends 520 hours/year maintaining broken pipelines.
 - [inferred — pricing page] They need a solution before the Fivetran renewal in March.
 - [inferred — call structure] POC must start by July 1 to hit renewal.
+
+## Deal Impact
+- **Positive signals:** EB confirmed budget and champion pushed timeline up.
+- **Negative signals:** Security review may add 2 weeks.
+- **Recommended Deal Assessment update?** yes — EB confirmed budget
+
+> [!verdict] Budget confirmed by EB
+> The economic buyer signed off on a $200K budget, which moves the deal forward.
 
 ## Scope & Technical Changes
 - **Sources & Destinations:**
@@ -27,14 +35,6 @@
 
 > [!info] Feeds connector-feasibility & tech-qual
 > Run or update connector-feasibility to check Airbyte coverage for these systems.
-
-## Deal Impact
-- **Positive signals:** EB confirmed budget and champion pushed timeline up.
-- **Negative signals:** Security review may add 2 weeks.
-- **Recommended Deal Assessment update?** yes — EB confirmed budget
-
-> [!verdict] Budget confirmed by EB
-> The economic buyer signed off on a $200K budget, which moves the deal forward.
 
 ## Objections & Open Questions
 - [stated — Security lead] Security team raised VPC residency as a new concern.

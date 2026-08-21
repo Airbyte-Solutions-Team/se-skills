@@ -47,22 +47,22 @@ If user signals brief mode (`--brief`, `quick qual`, `qual summary`): produce ju
 > 3. `Movement And Deal Risks`
 > 4. `Recommended Next Actions`
 > 5. `Source Coverage`
->
+
 > **H3 subtopics (when used):**
-> - under `Qualification Narrative`: `Metrics`, `Economic Buyer`, `Decision Criteria`, `Decision Process`, `Paper Process`, `Identify Pain`, `Champion`, `Stakeholder Map`, `Competition`
-> - under `Movement And Deal Risks`: `Movement Since Last Qualification`, `Deal Risks`, `Reasons To Walk Or Deprioritize`
->
-> Source Coverage must be the **final H2**. The `At a Glance` block is an H3 under the title block (not a navigable section).
->
+> - under `Qualification Narrative`: Metrics, Economic Buyer, Decision Criteria, Decision Process, Paper Process, Identify Pain, Champion, Stakeholder Map, Competition
+> - under `Movement And Deal Risks`: Movement Since Last Qualification, Deal Risks, Reasons To Walk Or Deprioritize
+
+> Source Coverage must be the **final H2**. The profile-specific summary block is an H3 under the title block (not a navigable section).
 
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---
 
+<!-- output-template:start -->
 # Business Qualification: [Company Name]
 **Date:** [today's date] · **Deal stage:** [Discovery / Technical Eval / POC / Negotiation] · **SE owner:** [SE name]
 
-### At a Glance
+### Decision Summary
 *Decision card — lead with the judgment (see `_se-playbook.md` → Decision-First Layout).*
 - **Overall:** 🟢 Strong / 🟡 Moderate / 🔴 Weak — [3–6 word headline]
 - **MEDDPICC:** [one-line scorecard, e.g. `M🟢 E🔴 D🟡 D🟡 P🔴 I🟢 C🟡 C🟢`]
@@ -70,13 +70,13 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 - **Biggest gap:** [the weakest/blocking letter — one line — what it blocks]
 - **Recommended motion:** [the one next move to close the biggest gap]
 - **Source confidence:** [one line — N transcripts + SFDC; "see Source Coverage"]
+**Jump to:** [Meddpicc Scorecard](#meddpicc-scorecard) · [Qualification Narrative](#qualification-narrative) · [Movement And Deal Risks](#movement-and-deal-risks) · [Recommended Next Actions](#recommended-next-actions) · [Source Coverage](#source-coverage)
 
-**Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [MEDDPICC Scorecard](#meddpicc-scorecard) · [Metrics](#metrics) · [Economic Buyer](#economic-buyer) · [Decision Criteria](#decision-criteria) · [Decision Process](#decision-process) · [Paper Process](#paper-process) · [Identify Pain](#identify-pain) · [Champion](#champion) · [Competition](#competition) · [Movement Since Last Qualification](#movement-since-last-qualification) · [Deal Risks](#deal-risks) · [Recommended Next Actions](#recommended-next-actions)
+*(Use the canonical sections below; retain all facts, tables, and reasoning while nesting sub-topics under the relevant H2.)*
 
----
+## Meddpicc Scorecard
 
-## MEDDPICC Scorecard
-
+### MEDDPICC Scorecard
 *The Source column is your facts column (cite transcript date + speaker, or mark Unknown); Why it matters states the deal consequence.*
 
 | Element | Status | Source (transcript date + speaker) | Why it matters |
@@ -108,7 +108,9 @@ Every 🔴/🟡 MEDDPICC element must produce a Next Actions row: `Gap → the s
 
 ---
 
-## Metrics
+## Qualification Narrative
+
+### Metrics
 **What business outcomes are they trying to achieve?**
 - Quantified value: [e.g., "reduce pipeline build time from 3 weeks to 1 day", "consolidate 5 tools into 1"]
 - KPIs they've mentioned: 
@@ -121,7 +123,7 @@ Every 🔴/🟡 MEDDPICC element must produce a Next Actions row: `Gap → the s
 
 ---
 
-## Economic Buyer
+### Economic Buyer
 **Who controls the budget and can say yes?**
 - Name / title: 
 - Engaged: [Yes / No / Indirectly]
@@ -133,7 +135,7 @@ Every 🔴/🟡 MEDDPICC element must produce a Next Actions row: `Gap → the s
 
 ---
 
-## Decision Criteria
+### Decision Criteria
 **What does "winning" look like to them?**
 - Stated criteria: 
 - Unstated / inferred criteria: 
@@ -146,7 +148,7 @@ Every 🔴/🟡 MEDDPICC element must produce a Next Actions row: `Gap → the s
 
 ---
 
-## Decision Process
+### Decision Process
 **How will they make the decision?**
 - Evaluation steps: 
 - Key stakeholders involved: 
@@ -164,7 +166,7 @@ Every 🔴/🟡 MEDDPICC element must produce a Next Actions row: `Gap → the s
 
 ---
 
-## Paper Process
+### Paper Process
 **The legal/procurement/security steps between handshake and signed contract. Surface this early — surprises here kill end-of-quarter deals.**
 - InfoSec / security review: [required? owner? typical duration?]
 - Legal redline cycle: [DPA, MSA, order form — owner and timeline]
@@ -177,7 +179,7 @@ Every 🔴/🟡 MEDDPICC element must produce a Next Actions row: `Gap → the s
 
 ---
 
-## Identify Pain
+### Identify Pain
 **Apply the Sandler pain funnel — go three layers deep. If you can't fill layer 3, pain isn't fully identified.**
 
 **Layer 1 — Surface complaint (what they said):**
@@ -197,7 +199,7 @@ Every 🔴/🟡 MEDDPICC element must produce a Next Actions row: `Gap → the s
 
 ---
 
-## Champion
+### Champion
 **Who is selling Airbyte internally on our behalf?**
 - Name / title: 
 - Motivation: [Why do they personally win if Airbyte wins?]
@@ -222,7 +224,7 @@ If they only relay your messages, they're a coach — not a champion. Downgrade 
 
 ---
 
-## Stakeholder Map
+### Stakeholder Map
 *The reusable artifact per `_se-playbook.md` → Operating Disciplines. `deal-assessment`, `internal-prep`, and `coverage-handoff` read this. Mark unknowns `⬜ not yet mapped` — a blank means "we haven't done the work," not "no stakeholder." A one-row map = single-threaded (a risk).*
 
 | Name | Role / title | Authority | Disposition | Last touched |
@@ -231,7 +233,7 @@ If they only relay your messages, they're a coach — not a champion. Downgrade 
 
 ---
 
-## Competition
+### Competition
 **Who else are they considering — including the "do nothing" and "build it ourselves" options?**
 
 | Alternative | Status | Notes |
@@ -249,7 +251,9 @@ If they only relay your messages, they're a coach — not a champion. Downgrade 
 
 ---
 
-## Movement Since Last Qualification
+## Movement And Deal Risks
+
+### Movement Since Last Qualification
 *If a prior biz-qual exists for this customer (check `{customers_dir}/<Customer>/outputs/biz-qual/biz-qual-*.md`), compare letter-by-letter:*
 
 | Letter | Prior status | Current status | Trend |
@@ -260,7 +264,7 @@ Flag any letter that regressed (especially Champion, EB, Pain) — that's a *wal
 
 ---
 
-## Deal Risks
+### Deal Risks
 | Risk | Severity | Mitigation |
 |------|----------|------------|
 | [e.g., No EB access] | High | |
@@ -280,7 +284,12 @@ If none hold → say "no disqualifying signals; proceed." If one+ hold → state
 
 ---
 
+### Reasons To Walk Or Deprioritize
+Include the applicable evidence and decision detail here.
+
 ## Recommended Next Actions
+
+### Recommended Next Actions
 *Action table — render `TBD` for Owner when the source doesn't state one; never invent a name. **Every 🔴/🟡 letter in the scorecard gets a row here** (no gap without an owned close-path); order by what unblocks the deal soonest.*
 
 | # | Gap (MEDDPICC letter) | The ask that closes it | By when | Owner |
@@ -290,6 +299,11 @@ If none hold → say "no disqualifying signals; proceed." If one+ hold → state
 | 3 | [next 🔴/🟡] | | | |
 
 ---
+
+## Source Coverage
+
+Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
+<!-- output-template:end -->
 
 ## Style
 

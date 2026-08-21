@@ -156,7 +156,7 @@ def test_prep_call_runtime_metadata_is_supported_but_unvalidated_without_schema_
     rel = str(md.relative_to(tmp_path))
 
     data = svc.read_output_meta(rel)
-    assert data["validation_supported"] is True
+    assert data["validation_supported"] is False
     assert data["reference_sources_tracked"] is False
     assert svc.output_validation_status(md.with_suffix(".md.json")) == (False, "unvalidated")
 
