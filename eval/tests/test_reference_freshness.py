@@ -162,6 +162,11 @@ def test_skill_filtering_limits_sources(tmp_workspace: Path) -> None:
         "airbyte_enterprise",
     }
 
+    roi = rf.compute_reference_freshness(
+        {}, tmp_workspace, tmp_workspace, skill="roi-business-case"
+    )
+    assert {r.source for r in roi} == {"objection_reference"}
+
     biz = rf.compute_reference_freshness(
         {}, tmp_workspace, tmp_workspace, skill="biz-qual"
     )

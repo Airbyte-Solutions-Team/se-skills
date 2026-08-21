@@ -346,6 +346,9 @@ def test_overview_unvalidated_output_awaits_review(tmp_path) -> None:
     assert len(data["attention"]) == 1
     item = data["attention"][0]
     assert item["type"] == "review"
+    assert output_svc.output_validation_status(
+        output_svc.customers_dir / "Acme" / "outputs" / "next-move" / "next-move-2026-07-14.md.json"
+    ) == (False, "unvalidated")
     assert item["status"] == "awaiting review"
     assert item["validation_status"] == "unvalidated"
     assert item["review_status"] == "awaiting review"

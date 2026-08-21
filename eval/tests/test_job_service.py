@@ -149,6 +149,32 @@ def test_run_job_success(service: JobService, monkeypatch) -> None:
     assert "finished_at" in job and job["finished_at"] >= job["started_at"]
 
 
+def test_run_job_persists_acknowledged_choices(tmp_path, monkeypatch) -> None:
+    """The on-disk run record carries the explicit skip acknowledgement."""
+    records: list[dict] = []
+
+    def _capture(account, opp_slug, skill, record) -> None:
+        records.append(record)
+
+    svc = JobService(tmp_path, model_for=_model_for, persist_run=_capture)
+    svc.jobs = {}
+    meta = {
+        "account": "Acme", "opp_slug": "op1", "skill": "poc-plan",
+        "opportunity": "Big Deal",
+        "acknowledged_choices": ["run-quals:biz-qual,tech-qual"],
+    }
+    job_id, _ = asyncio.run(svc.launch(
+        account="Acme", opp_slug="op1", skill="poc-plan", opportunity="Big Deal",
+        sig=("s",), prompt="p", meta=meta,
+    ))
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_proc(returncode=0, stdout="out", stderr=""))
+
+    asyncio.run(JobService._run_job(svc, job_id, "p", meta))
+
+    assert records
+    assert records[-1]["acknowledged_choices"] == ["run-quals:biz-qual,tech-qual"]
+
+
 def test_run_job_failure(service: JobService, monkeypatch) -> None:
     """6. Failure transition; 7. Error detail preservation."""
     job_id, _ = asyncio.run(service.launch(

@@ -206,16 +206,16 @@ The SE skills are designed to compose in a specific order. Skipping ahead produc
 
 ### Hard prerequisite: call data before qualification
 
-**`biz-qual` and `deal-assessment` require at least one customer transcript.** They synthesize what the customer said — without customer voice, you're producing hypotheses dressed up as analysis.
+**`biz-qual` requires at least one customer transcript, local or from Gong.** **`deal-assessment` requires at least one customer transcript or one real biz-qual, tech-qual, or deployment qualification document.** The skill/agent performs the final source-sufficiency check; the deterministic webapp planner reports local facts and advisory source-resolution warnings.
 
-For a brand-new prospect with **zero transcripts**:
+For a brand-new prospect with **zero locally available transcripts**:
 - ✅ Run `prep-call` to plan the first call
-- ❌ Do NOT run `biz-qual` (no MEDDPICC data to score against)
-- ❌ Do NOT run `deal-assessment` (no health to assess)
+- ⚠️ `biz-qual` may check Gong; it must stop if no customer voice is available
+- ⚠️ `deal-assessment` may use a real qualification document or check Gong; it must stop if neither yields customer evidence
 
-After the first call:
+After a source-resolved call:
 - Save the transcript to `01-customers/_transcripts/<Customer>-MM.DD.YY.txt`
-- THEN `biz-qual` and `deal-assessment` become meaningful
+- THEN `biz-qual` and `deal-assessment` can use the saved local evidence on subsequent runs
 
 ### Standard workflow order
 

@@ -31,6 +31,8 @@ function normalizeOutputMeta(o) {
     missing_sections: o.missing_sections || [],
     reference_freshness_at_generation: o.reference_freshness_at_generation,
     reference_changed_since_generation: o.reference_changed_since_generation || [],
+    validation_supported: o.validation_supported !== false,
+    reference_sources_tracked: o.reference_sources_tracked !== false,
   };
 }
 
@@ -53,6 +55,17 @@ async function invokeWithPlan(payload, alreadyConfirmed = false) {
       if (plan.warnings && plan.warnings.length) {
         plan.warnings.forEach((w) => showToast(w, "warn"));
       }
+      const acknowledged = new Set(payload.acknowledged_choices || []);
+      const pendingChoices = (plan.choices || []).filter((choice) => !acknowledged.has(choice.id));
+      if (pendingChoices.length) {
+        const message = pendingChoices.map((choice) => choice.message).join("\n") +
+          "\n\nOK = skip and proceed now (the skill will flag the risk). Cancel = don't run yet — run the missing skill(s) first from the command bar.";
+        if (!confirm(message)) throw new Error("Cancelled");
+        const acknowledgedChoices = [
+          ...new Set([...(payload.acknowledged_choices || []), ...pendingChoices.map((choice) => choice.id)]),
+        ];
+        return invokeWithPlan({ ...payload, acknowledged_choices: acknowledgedChoices }, true);
+      }
     } catch (e) {
       if (e.message === "Cancelled") throw e;
       // Planner unavailable — proceed to invoke so a local/network glitch doesn't
@@ -63,6 +76,19 @@ async function invokeWithPlan(payload, alreadyConfirmed = false) {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
   });
+  if (res.blocked && res.choices) {
+    const acknowledged = new Set(payload.acknowledged_choices || []);
+    const pendingChoices = res.choices.filter((choice) => !acknowledged.has(choice.id));
+    if (pendingChoices.length) {
+      const message = pendingChoices.map((choice) => choice.message).join("\n") +
+        "\n\nOK = skip and proceed now (the skill will flag the risk). Cancel = don't run yet — run the missing skill(s) first from the command bar.";
+      if (!confirm(message)) throw new Error("Cancelled");
+      const acknowledgedChoices = [
+        ...new Set([...(payload.acknowledged_choices || []), ...pendingChoices.map((choice) => choice.id)]),
+      ];
+      return invokeWithPlan({ ...payload, acknowledged_choices: acknowledgedChoices }, true);
+    }
+  }
   if (res.blocked && res.permissions) {
     // Auto-approve: the Invoke modal already discloses the required permissions
     // ("Expected permissions" panel), so clicking Run IS the approval — no extra
@@ -1519,35 +1545,22 @@ function renderOutputGroups(outputs) {
       <div class="out-group-items">
         ${groups[day].map((o) => {
           const isHtml = o.ext === "html";
+          const decision = window.docStatus(normalizeOutputMeta(o));
+          const invalid = decision.severity === "error";
+          const refWarn = decision.issues.some((i) => i.type === "warn");
           const atGen = o.reference_freshness_at_generation;
-          const changed = o.reference_changed_since_generation || [];
-          const legacy = atGen == null;
-          const staleAtGen = !legacy && atGen.some((r) => !r.fresh);
-          const changedSince = !legacy && changed.length > 0;
-          const refParts = [];
-          if (staleAtGen) {
-            const stale = atGen.filter((r) => !r.fresh);
-            refParts.push("Reference data was stale/missing when generated: " + stale.map((r) => `${r.label}${r.age_days != null ? " (" + r.age_days + " days old)" : r.status === "missing" ? " (missing)" : ""}`).join(", "));
-          }
-          if (changedSince) {
-            refParts.push("Reference data has changed since generation: " + changed.map((c) => `${c.label}${c.new_date ? " (now " + c.new_date + ")" : ""}`).join(", "));
-          }
-          const refWarn = staleAtGen || changedSince;
-          const refTitle = refParts.join(" | ");
-          const status = o.validation_status || (o.valid === false ? "invalid" : "unvalidated");
-          const invalid = status === "invalid";
-          const uncertain = status === "unvalidated" && !refWarn;
-          const warn = invalid || refWarn;
-          const validationTitle = invalid ? esc(o.validation_errors.slice(0, 2).join(" ")) : "";
-          const warnTitle = [validationTitle, refTitle].filter(Boolean).join(validationTitle && refTitle ? " | " : "");
+          const staleAtGen = atGen != null && atGen.some((r) => !r.fresh);
+          const changedSince = (o.reference_changed_since_generation || []).length > 0;
+          const warnTitle = decision.issues.map((i) => i.text).join(" | ");
+          const safeWarnTitle = window.docStatus.escapeHtml(warnTitle);
           let statusBadge = "";
           if (invalid) {
-            statusBadge = `<span class="out-status out-status--error" title="${warnTitle}">Incomplete</span>`;
+            statusBadge = `<span class="out-status out-status--error" title="${safeWarnTitle}">Incomplete</span>`;
           } else if (refWarn) {
-            const label = changedSince ? "Source changed" : "Stale source";
-            statusBadge = `<span class="out-status out-status--warn" title="${warnTitle}">${esc(label)}</span>`;
-          } else if (uncertain) {
-            statusBadge = `<span class="out-status out-status--info" title="${warnTitle}">Needs review</span>`;
+            const label = changedSince ? "Source changed" : (staleAtGen ? "Stale source" : "Review sources");
+            statusBadge = `<span class="out-status out-status--warn" title="${safeWarnTitle}">${esc(label)}</span>`;
+          } else if (decision.severity === "info") {
+            statusBadge = `<span class="out-status out-status--info" title="${safeWarnTitle}">${esc(decision.label)}</span>`;
           }
           return `
           <div class="out-item${isHtml ? " is-html" : ""}" data-path="${encodeURIComponent(o.path)}" data-ext="${esc(o.ext || "md")}" data-title="${esc(prettySkill(o.skill))} — ${esc(o.filename)}">
@@ -2110,73 +2123,24 @@ function tileSentiment(label, valueText) {
 // validation state and reference freshness into one color-coded line, with the
 // verbose explanation hidden behind a Details toggle.
 function buildDocStatus(meta) {
-  const issues = [];
-  let severity = "ok";
-
-  if (!meta) {
-    issues.push({ text: "Metadata unavailable. This output could not be checked.", type: "warn" });
-    severity = "warn";
-  } else {
-    const vstatus = meta.validation_status || "unvalidated";
-    if (vstatus === "invalid") {
-      issues.push({
-        text: "This output is missing required sections: " + (meta.validation_errors || []).slice(0, 3).join("; ") + ".",
-        type: "error",
-      });
-      severity = "error";
-    } else if (vstatus === "unvalidated") {
-      issues.push({
-        text: "This output could not be validated against the current output contract. It may predate the required-section format or use headings the parser does not recognize.",
-        type: "info",
-      });
-      if (severity === "ok") severity = "info";
-    }
-
-    const atGen = meta.reference_freshness_at_generation;
-    const changed = meta.reference_changed_since_generation || [];
-    const legacy = atGen == null;
-    if (legacy) {
-      issues.push({
-        text: "Reference freshness unknown for this legacy output; product claims may be stale.",
-        type: "warn",
-      });
-      if (severity === "ok" || severity === "info") severity = "warn";
-    } else {
-      const stale = atGen.filter((r) => !r.fresh);
-      if (stale.length) {
-        issues.push({
-          text: "Reference data was stale/missing when generated: " + stale.map((r) => `${r.label}${r.age_days != null ? " (" + r.age_days + " days old)" : r.status === "missing" ? " (missing)" : ""}`).join(", ") + ".",
-          type: "warn",
-        });
-        if (severity === "ok" || severity === "info") severity = "warn";
-      }
-      if (changed.length) {
-        issues.push({
-          text: "Reference data has changed since generation: " + changed.map((c) => `${c.label}${c.new_date ? " (now " + c.new_date + ")" : ""}`).join(", ") + ".",
-          type: "warn",
-        });
-        if (severity === "ok" || severity === "info") severity = "warn";
-      }
-    }
-  }
-
+  const decision = window.docStatus(meta);
   const config = {
-    ok: { icon: "✓", label: "Ready", cls: "ok" },
-    info: { icon: "?", label: "Needs review", cls: "info" },
-    warn: { icon: "⚠", label: "Review sources", cls: "warn" },
-    error: { icon: "✕", label: "Output incomplete", cls: "error" },
-  }[severity];
+    ok: { icon: "✓", cls: "ok" },
+    info: { icon: "?", cls: "info" },
+    warn: { icon: "⚠", cls: "warn" },
+    error: { icon: "✕", cls: "error" },
+  }[decision.severity];
 
-  if (severity === "ok" && !issues.length) {
-    return `<div class="doc-status doc-status--ok"><span class="doc-status-icon">${config.icon}</span><span class="doc-status-label">${config.label}</span></div>`;
+  if (decision.severity === "ok" && !decision.issues.length) {
+    return `<div class="doc-status doc-status--ok"><span class="doc-status-icon">${config.icon}</span><span class="doc-status-label">${decision.label}</span></div>`;
   }
 
-  const details = issues.map((i) => `<li class="doc-status-issue doc-status-issue--${i.type}">${esc(i.text)}</li>`).join("");
-  const summary = issues.length === 1 ? issues[0].text : `${issues.length} issues`;
+  const details = decision.issues.map((i) => `<li class="doc-status-issue doc-status-issue--${i.type}">${esc(i.text)}</li>`).join("");
+  const summary = decision.issues.length === 1 ? decision.issues[0].text : `${decision.issues.length} issues`;
   return `<div class="doc-status doc-status--${config.cls}" id="doc-status">
     <div class="doc-status-main">
       <span class="doc-status-icon">${config.icon}</span>
-      <span class="doc-status-label">${config.label}</span>
+      <span class="doc-status-label">${decision.label}</span>
       <span class="doc-status-summary">${esc(summary)}</span>
       <button class="doc-status-toggle ghost smallest" id="doc-status-toggle">Details ▾</button>
     </div>

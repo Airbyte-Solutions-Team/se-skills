@@ -183,6 +183,7 @@ class JobService:
                 {
                     "skill": meta["skill"],
                     "opportunity": meta.get("opportunity"),
+                    "acknowledged_choices": meta.get("acknowledged_choices", []),
                     "ok": job.get("ok"),
                     "stdout": job.get("stdout", ""),
                     "stderr": job.get("stderr", ""),
