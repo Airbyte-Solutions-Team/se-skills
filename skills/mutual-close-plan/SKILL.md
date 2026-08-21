@@ -71,13 +71,13 @@ If there's **no** compelling event, say so plainly: the plan is then Airbyte-pac
 > This skill follows the shared content-architecture contract. Produce the H2 sections below in this exact order; use H3 (`###`) for the listed sub-topics.
 >
 > **Canonical H2 order:**
-> 1. `Path To Signature`
-> 2. `Two Sided Responsibilities`
-> 3. `Critical Path And Risks`
+> 1. `Path to Signature`
+> 2. `Two-Sided Responsibilities`
+> 3. `Critical Path & Risks`
 > 4. `Mutual Agreement Ask`
 > 5. `Source Coverage`
-
-> Source Coverage must be the **final H2**. The profile-specific summary block is an H3 under the title block (not a navigable section).
+>
+> Source Coverage must be the **final H2** when required. The profile-specific summary block is an H3 under the title block (not a navigable section).
 
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
@@ -87,7 +87,7 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 # Mutual Close Plan: [Company Name] × Airbyte
 **Date:** [today, long form] · **SE owner:** [SE name] · **AE:** [AE name] · **EB:** [name/role]
 
-### Close Summary
+
 *Decision card — lead with the target and the gating risk (see `_se-playbook.md` → Decision-First Layout).*
 - **Target signature date:** ==[date]== (anchored to [compelling event] on [date])
 - **Steps to signature:** ==[N]== · **Critical path:** [the step most likely to gate — e.g. "InfoSec review, 3-wk queue"]
@@ -95,13 +95,15 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 - **Mutually agreed?** [✅ customer has seen + agreed / ⬜ draft — not yet shared with customer]
 - **Single biggest risk to close:** [one line]
 - **Source confidence:** [one line — biz-qual Paper Process + transcripts; "see Source Coverage"]
-**Jump to:** [Path To Signature](#path-to-signature) · [Two Sided Responsibilities](#two-sided-responsibilities) · [Critical Path And Risks](#critical-path-and-risks) · [Mutual Agreement Ask](#mutual-agreement-ask) · [Source Coverage](#source-coverage)
+### Close Summary
+- [One-line judgment or status for this artifact]
+
+**Jump to:** [Path to Signature](#path-to-signature) · [Two-Sided Responsibilities](#two-sided-responsibilities) · [Critical Path & Risks](#critical-path-risks) · [Mutual Agreement Ask](#mutual-agreement-ask) · [Source Coverage](#source-coverage)
 
 *(Use the canonical sections below; retain all facts, tables, and reasoning while nesting sub-topics under the relevant H2.)*
 
-## Path To Signature
+## Path to Signature
 
-### Path to Signature
 *Backward-planned from the target date. Every row has an owner and a date. Status tracks live.*
 
 | # | Step | Owner (side) | Target date | Status | Notes / dependency |
@@ -115,18 +117,16 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 
 *Adapt rows to the customer's actual Paper Process — don't invent steps they didn't mention, and don't omit ones they did.*
 
-## Two Sided Responsibilities
+## Two-Sided Responsibilities
 
-### Two-Sided Responsibilities
 *The "mutual" in mutual action plan — make both sides' commitments explicit. This is a Sandler upfront contract applied to the close, not just the POC.*
 
 - **Airbyte commits to:** [e.g. deliver final business case by [date], provide SOC 2 report + security questionnaire responses within [N] days of request, AE to send order form by [date]]
 - **[Customer] commits to:** [e.g. schedule InfoSec review by [date], name the procurement owner, return legal redlines within [N] days]
 - **Shared checkpoints:** [e.g. weekly 15-min close-plan sync until signature]
 
-## Critical Path And Risks
+## Critical Path & Risks
 
-### Critical Path & Risks
 - **Critical path:** the sequence of steps that determines the earliest possible signature. Name the single step most likely to gate (usually security review or procurement queue) and what compresses it.
 - **Risks to close:**
 
@@ -140,7 +140,6 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 
 ## Mutual Agreement Ask
 
-### The Mutual Agreement Ask
 *A close plan is only real once the customer has agreed to it. End with the concrete ask.*
 > "Here's how I see the path from POC to go-live by [date]. Can we walk through it together, confirm the owners and dates on your side, and agree to a weekly 15-minute check-in until signature? If any of these dates don't work, I'd rather adjust the plan now than discover it in [target month]."
 
@@ -150,7 +149,7 @@ If the plan is still a draft the customer hasn't seen, mark it ⬜ **not yet mut
 
 ## Source Coverage
 
-### Source Coverage
+
 [biz-qual Paper Process / EB read, poc-plan end date, transcripts referenced (line counts), which steps are customer-confirmed vs. [confirm].]
 <!-- output-template:end -->
 

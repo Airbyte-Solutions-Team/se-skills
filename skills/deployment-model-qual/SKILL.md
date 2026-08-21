@@ -94,11 +94,12 @@ Per `_se-playbook.md` → "Product & Connector Reference Data," ground each qual
 > 3. `Remaining Validation`
 > 4. `Recommended Motion`
 > 5. `Source Coverage`
-
+>
 > **H3 subtopics (when used):**
-> - under `Customer Constraints`: The Five Questions, Implications By Answer
-
-> Source Coverage must be the **final H2**. The profile-specific summary block is an H3 under the title block (not a navigable section).
+> - under `Deployment Verdict`: Verdict, Product Reality Stamp, Verdict Breakdown
+> - under `Customer Constraints`: The Five Questions, Implications by Answer
+>
+> Source Coverage must be the **final H2** when required. The profile-specific summary block is an H3 under the title block (not a navigable section).
 
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
@@ -108,19 +109,21 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 # Deployment Model Qualification: [Customer]
 **Date:** [today — long form per `_se-playbook.md`, e.g. June 11, 2026, NOT 2026-06-11 or MM.DD.YY] · **Sources:** [transcripts, notes, Notion pages used]
 
-### Decision Summary
+
 *Decision card — lead with the verdict (see `_se-playbook.md` → Decision-First Layout).*
 - **Verdict:** 🟢 Cloud Pro viable / 🟦 Flex viable (data-plane isolation) / 🔴 genuine blocker (park / no fit today) — [3–6 word headline]
 - **Hard constraint:** [the single requirement that drives the verdict, or "none — no hard blockers surfaced"]
 - **Recommended motion:** [Proceed with Cloud Pro / Position Flex (confirm availability) / Pause & clarify / Park-or-disqualify]
 - **Next gate:** [what resolves the open constraint — e.g. "confirm KMS requirement with CISO"]
 - **Source confidence:** [one line — N transcripts; which of the 5 questions are actually answered vs. assumed]
+### Decision Summary
+- [One-line judgment or status for this artifact]
+
 **Jump to:** [Deployment Verdict](#deployment-verdict) · [Customer Constraints](#customer-constraints) · [Remaining Validation](#remaining-validation) · [Recommended Motion](#recommended-motion) · [Source Coverage](#source-coverage)
 
 *(Use the canonical sections below; retain all facts, tables, and reasoning while nesting sub-topics under the relevant H2.)*
 
 ## Deployment Verdict
-
 ### Verdict
 This is a **3-way** verdict — route to the right *live* shape (Cloud or Flex), or flag a genuine no-fit. Don't just gate Cloud in/out. Render as a callout, picking the type by status: `[!verdict]` if 🟢 Cloud viable, `[!info]` if 🟦 Flex viable, `[!blocker]` if 🔴 genuine blocker.
 
@@ -140,13 +143,13 @@ This is a **3-way** verdict — route to the right *live* shape (Cloud or Flex),
 - **Status:** 🟢 Cloud viable / 🟦 Flex viable / 🔴 genuine blocker (park / no fit today)
 - **One-sentence rationale:** [punchy verdict]
 
-### Product-reality stamp (verdict can go stale)
+### Product Reality Stamp
 
 State the product-capability basis and its date with the verdict: "Verdict assumes Flex is sellable-with-caveats to new customers as of [reference date], Cloud managed regions = [list], and that Self-Managed Enterprise is retired as of [reference date] — so BYOK/KMS, full control-plane-in-VPC, and true air-gap are not available on any currently-offered shape. If any changed (esp. an SME revival), re-run — the verdict can flip." Two stale-fact guards:
 - If a **🟦 Flex** verdict depends on Flex being available for the customer's region/segment and you can't confirm current terms, mark it **🟦 Flex viable — availability unconfirmed** and make "confirm Flex terms with deal-desk" the next gate. Don't promise Flex on a stale availability assumption.
 - If a customer requirement hinges on any capability you can't verify as current, issue a **Provisional** verdict ("verify current product state before acting") rather than a hard route. A 🔴 park verdict is expensive to get wrong on a stale fact — if SME (or another shape covering BYOK/air-gap/control-plane-in-VPC) has been revived, the deal may be winnable — and so is a 🟦 that promises Flex before terms are confirmed.
 
-### Verdict breakdown (separate these five dimensions)
+### Verdict Breakdown
 For the recommended shape, make the following distinctions visible in a short table or bullets so the SE and the customer know what is proven vs. still open:
 
 | Dimension | Finding | Confidence | Still to validate |
@@ -162,7 +165,6 @@ Do not collapse these into one "looks good" verdict. A 🟦 Flex recommendation 
 ---
 
 ## Customer Constraints
-
 ### The Five Questions
 | # | Question | Customer Answer | Who answered (name + role) | Source (date) | Risk |
 |---|----------|-----------------|----------------------------|---------------|------|
@@ -193,7 +195,6 @@ For each 🟢 answer:
 ---
 
 ## Remaining Validation
-
 ### Discovery Questions for Next Call
 If any answer is Unknown or ambiguous, draft 3-5 specific questions the SE can ask to close the gap. Avoid generic phrasing — use SPIN/Sandler tactics. Examples:
 
@@ -204,7 +205,6 @@ If any answer is Unknown or ambiguous, draft 3-5 specific questions the SE can a
 ---
 
 ## Recommended Motion
-
 ### Recommended Next Action
 ONE of:
 1. **Proceed with Cloud Pro.** All five questions answered 🟢. Move to tech qual / connector feasibility.

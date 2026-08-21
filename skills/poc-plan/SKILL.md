@@ -70,19 +70,23 @@ If user signals brief mode (`--brief`, `quick POC plan`, `POC summary`): produce
 > **Canonical H2 order:**
 > 1. `POC Objective`
 > 2. `Success Criteria`
-> 3. `Scope And Architecture`
-> 4. `Mutual Commitments And Roles`
-> 5. `Timeline And Milestones`
-> 6. `Access And Prerequisites`
-> 7. `Risks And Mitigations`
+> 3. `Scope & Architecture`
+> 4. `Mutual Commitments & Roles`
+> 5. `Timeline & Milestones`
+> 6. `Access & Prerequisites`
+> 7. `Risks & Mitigations`
 > 8. `Exit Results Review`
 > 9. `Open Items`
 > 10. `Source Coverage`
-
+>
 > **H3 subtopics (when used):**
-> - under `Scope And Architecture`: Sources And Destinations, Technical Notes, POC Architecture
-
-> Source Coverage must be the **final H2**. The profile-specific summary block is an H3 under the title block (not a navigable section).
+> - under `Success Criteria`: POC Exit Criteria, Story for Results Review
+> - under `Scope & Architecture`: Scope, Scope Tiers, POC Architecture, Sources & Destinations, Technical Notes
+> - under `Mutual Commitments & Roles`: Mutual Commitments, Roles & Responsibilities
+> - under `Access & Prerequisites`: Access & Prerequisites Checklist
+> - under `Open Items`: Notes / Open Items
+>
+> Source Coverage must be the **final H2** when required. The profile-specific summary block is an H3 under the title block (not a navigable section).
 
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
@@ -92,7 +96,7 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 # POC Plan: [Company Name] × Airbyte
 **Date:** [today's date, long form] · **SE owner:** [SE name] · **AE:** [AE name]
 
-### POC Summary
+
 *Decision card — lead with what this POC proves and the call after (see `_se-playbook.md` → Decision-First Layout).*
 - **POC proves:** [the one thing — e.g. "Airbyte reliably lands SAP + Coupa data in their Postgres CDR at scale"]
 - **Timeline:** ==[N] weeks== ([start] → [end]) · **Mid-POC checkpoint:** ==[date]==
@@ -101,17 +105,106 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 - **Primary risk:** [the one thing most likely to derail the POC — one line]
 - **Prospect technical lead:** [name / title if known]
 - **Source confidence:** [one line — prior qual docs + transcripts; "see Source Coverage"]
-**Jump to:** [POC Objective](#poc-objective) · [Success Criteria](#success-criteria) · [Scope And Architecture](#scope-and-architecture) · [Mutual Commitments And Roles](#mutual-commitments-and-roles) · [Timeline And Milestones](#timeline-and-milestones) · [Access And Prerequisites](#access-and-prerequisites) · [Risks And Mitigations](#risks-and-mitigations) · [Exit Results Review](#exit-results-review) · [Open Items](#open-items) · [Source Coverage](#source-coverage)
+### POC Summary
+- [One-line judgment or status for this artifact]
+
+**Jump to:** [POC Objective](#poc-objective) · [Success Criteria](#success-criteria) · [Scope & Architecture](#scope-architecture) · [Mutual Commitments & Roles](#mutual-commitments-roles) · [Timeline & Milestones](#timeline-milestones) · [Access & Prerequisites](#access-prerequisites) · [Risks & Mitigations](#risks-mitigations) · [Exit Results Review](#exit-results-review) · [Open Items](#open-items) · [Source Coverage](#source-coverage)
 
 *(Use the canonical sections below; retain all facts, tables, and reasoning while nesting sub-topics under the relevant H2.)*
 
 ## POC Objective
 
-### POC Objective
 **In one sentence, what does this POC need to prove?**
 > [e.g., "Validate that Airbyte can replicate data from [Source A] and [Source B] into Snowflake reliably, at [X] volume, with acceptable latency, and meet [Company]'s security requirements."]
 
-### Mutual Commitments (Upfront Contract — Sandler)
+## Success Criteria
+
+These are the specific, measurable outcomes that define a successful POC. **Both parties must agree on these in writing before the POC begins** (Sandler upfront contract — "if we hit these, you move to procurement"). Each criterion must be numeric/verifiable and **tie back to a MEDDPICC Decision Criterion** — the POC should prove the thing that actually drives the buy, not a generic feature checklist. See `_se-playbook.md` → Operating Disciplines for why an open-ended POC without pre-agreed exit criteria becomes a science project.
+
+| # | Criterion | How it will be measured | Ties to Decision Criterion | Must-have or Nice-to-have |
+|---|-----------|------------------------|----------------------------|--------------------------|
+| 1 | [e.g., Data from Salesforce successfully synced to Snowflake] | Manual data validation / row count check | [which MEDDPICC DC this proves] | Must-have |
+| 2 | [e.g., Full refresh completes within X hours] | Sync duration logged | [DC] | Must-have |
+| 3 | [e.g., Incremental sync detects and captures all CDC events] | Delta validation | [DC] | Must-have |
+| 4 | [e.g., SSO login works with their IdP] | Login test | [DC] | Must-have |
+| 5 | [e.g., SE can configure connector without engineering support] | Usability assessment | [DC] | Nice-to-have |
+
+**POC passes if:** All must-have criteria are met. **Pre-agreed with:** [name + role who signed off on these criteria, and date] — if this is blank, the criteria aren't really agreed yet; flag it.
+
+**Preserve the customer's stated success criteria, including capacity sizing, sync frequency, concurrency, and throughput targets.** Do not remove a difficult success criterion or shrink the schedule merely to make the POC easier to complete (see `_se-playbook.md` → Operating Discipline D5). If a criterion is genuinely out of scope for the POC window, move it to **Optional stretch scope** or **Production requirements** below and explain the rationale and proxy validation; do not silently drop it. The customer's baseline requirement stays the baseline.
+
+
+
+### POC Exit Criteria
+At the end of the POC, one of three outcomes:
+
+| Outcome | Definition | Next step |
+|---------|------------|-----------|
+| **Pass** | All must-have criteria met | Advance to commercial discussion |
+| **Conditional pass** | Must-haves met, minor gaps remain | Agree remediation plan, proceed to commercial |
+| **No-go** | One or more must-haves not met | Document gap, escalate to Product/Eng or disqualify |
+
+
+
+### Story for Results Review
+**The narrative you'll tell at the end of POC — designed during planning, not afterward.**
+
+Not "we synced data." Something like:
+> "We synced [customer's hardest source] in [actual hours of config time] vs. the [customer-estimated weeks] it would have taken your team to build. Schema changes during the POC were handled automatically — no engineering intervention needed."
+
+Pre-stage 2-3 narrative beats you'll be able to tell if the POC succeeds:
+1. [Narrative beat tied to a Must-Have criterion]
+2. [Narrative beat tied to a Must-Have criterion]
+3. [Narrative beat tied to a Need-Payoff moment]
+
+## Scope & Architecture
+### Scope
+**In scope:**
+- [Use case 1 — e.g., Salesforce → Snowflake full refresh + incremental]
+- [Use case 2 — e.g., Postgres CDC → Snowflake]
+- [Specific streams or tables to validate]
+- [Security validation — SSO, RBAC, audit logs]
+
+*Connector-availability note (from connector-feasibility, or a quick registry lookup — see "Before generating"): [confirm each scoped connector is Cloud-available + certified, OR flag — e.g. "`source-db2` is Self-Managed-only (not on Cloud) → this POC runs on Enterprise Flex or self-hosted OSS, not a Cloud trial"; "`source-workday` is an enterprise variant (Flex, entitlement-gated)". If unverified: "connector availability not verified against registry."]*
+
+**Out of scope (explicitly):**
+- [e.g., Custom connector development]
+- [e.g., dbt transformation layer]
+- [e.g., Production-scale volume testing]
+- [e.g., BI tool integration]
+
+
+
+### Scope Tiers
+Separate the POC into four tiers so the customer sees what is being proven now versus what is deferred:
+- **Minimum viable POC scope:** the smallest set of must-have success criteria that proves the core value. This is what the POC will actually run.
+- **Optional stretch scope:** additional success criteria or connectors that will be validated only if time permits and only with explicit customer agreement.
+- **Production requirements:** items the customer needs in production but that are intentionally excluded from the POC (e.g., full volume, full HA, production SSO, dbt transforms). List them so they are not forgotten.
+- **POC-specific simplifications:** deliberate departures from the final production architecture (e.g., test data subset, one region, manual credential rotation). Label each one and explain what must be revisited before go-live.
+
+Do not let a production requirement disappear because it is "hard to test in a POC." If it cannot be tested, say so, document the proxy validation, and keep it in the production requirements list.
+
+
+
+### Sources & Destinations
+List every source and destination in scope, ownership, connector availability, and the specific data path the POC will validate. Distinguish confirmed systems from assumptions and name any connector or access dependency.
+
+### Technical Notes
+Capture latency, volume, freshness, schema, transformation, networking, security, and operational requirements that affect the POC design. Tie each note to a success criterion or an explicit open question.
+
+### POC Architecture
+- **Deployment:** [Airbyte Cloud / Self-Managed on [cloud provider]]
+- **Environment:** [Dedicated POC workspace / sandbox / their existing infra]
+- **Data sources:** [list]
+- **Destinations:** [list]
+- **Approximate data volume for POC:** [estimate]
+
+## Mutual Commitments & Roles
+Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
+
+
+
+### Mutual Commitments
 **Required for any POC. A POC without a written upfront contract drifts.**
 
 > [!info] Mutual Commitments — Sandler upfront contract
@@ -128,6 +221,8 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 | **[Customer]** | If all must-have criteria are met, commit to a commercial conversation within 2 weeks of POC end | [EB/champion or **TBD**] | [POC end + 2wk] |
 | **Both** | If criteria are not met, mutually agree the deal doesn't move forward (or explicitly extend scope with a renegotiated commitment) | — | [POC end] |
 
+
+
 ### Roles & Responsibilities
 **Airbyte ([SE owner]):**
 - [ ] Configure initial workspace and connections
@@ -142,106 +237,8 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 - [ ] Validate data accuracy against source of truth
 - [ ] Complete success criteria scoring at end of POC
 
-### Access & Prerequisites Checklist
-Before the POC can begin, the following must be in place. *Access delays are the #1 POC killer — name an owner and a date for each. Render `TBD` when unassigned; never invent.*
+## Timeline & Milestones
 
-| Prerequisite | Owner | By when | Status |
-|--------------|-------|---------|--------|
-| Airbyte Cloud workspace provisioned (or self-managed env set up) | [name or **TBD**] | [date or **TBD**] | ☐ |
-| Source credentials provided: [list sources] | [name or **TBD**] | [date or **TBD**] | ☐ |
-| Destination credentials provided: [list destinations] | [name or **TBD**] | [date or **TBD**] | ☐ |
-| Network access confirmed (firewall, IP allowlist if needed) | [name or **TBD**] | [date or **TBD**] | ☐ |
-| SSO/IdP details shared (if testing SSO) | [name or **TBD**] | [date or **TBD**] | ☐ |
-| Internal stakeholders aligned on POC scope and timeline | [name or **TBD**] | [date or **TBD**] | ☐ |
-
-### POC Exit Criteria
-At the end of the POC, one of three outcomes:
-
-| Outcome | Definition | Next step |
-|---------|------------|-----------|
-| **Pass** | All must-have criteria met | Advance to commercial discussion |
-| **Conditional pass** | Must-haves met, minor gaps remain | Agree remediation plan, proceed to commercial |
-| **No-go** | One or more must-haves not met | Document gap, escalate to Product/Eng or disqualify |
-
-### Story for Results Review (Pre-staged)
-**The narrative you'll tell at the end of POC — designed during planning, not afterward.**
-
-Not "we synced data." Something like:
-> "We synced [customer's hardest source] in [actual hours of config time] vs. the [customer-estimated weeks] it would have taken your team to build. Schema changes during the POC were handled automatically — no engineering intervention needed."
-
-Pre-stage 2-3 narrative beats you'll be able to tell if the POC succeeds:
-1. [Narrative beat tied to a Must-Have criterion]
-2. [Narrative beat tied to a Must-Have criterion]
-3. [Narrative beat tied to a Need-Payoff moment]
-
-### Notes / Open Items
-- [ ] [Any open question or dependency before POC can be confirmed]
-
----
-
-## Success Criteria
-
-### Success Criteria
-These are the specific, measurable outcomes that define a successful POC. **Both parties must agree on these in writing before the POC begins** (Sandler upfront contract — "if we hit these, you move to procurement"). Each criterion must be numeric/verifiable and **tie back to a MEDDPICC Decision Criterion** — the POC should prove the thing that actually drives the buy, not a generic feature checklist. See `_se-playbook.md` → Operating Disciplines for why an open-ended POC without pre-agreed exit criteria becomes a science project.
-
-| # | Criterion | How it will be measured | Ties to Decision Criterion | Must-have or Nice-to-have |
-|---|-----------|------------------------|----------------------------|--------------------------|
-| 1 | [e.g., Data from Salesforce successfully synced to Snowflake] | Manual data validation / row count check | [which MEDDPICC DC this proves] | Must-have |
-| 2 | [e.g., Full refresh completes within X hours] | Sync duration logged | [DC] | Must-have |
-| 3 | [e.g., Incremental sync detects and captures all CDC events] | Delta validation | [DC] | Must-have |
-| 4 | [e.g., SSO login works with their IdP] | Login test | [DC] | Must-have |
-| 5 | [e.g., SE can configure connector without engineering support] | Usability assessment | [DC] | Nice-to-have |
-
-**POC passes if:** All must-have criteria are met. **Pre-agreed with:** [name + role who signed off on these criteria, and date] — if this is blank, the criteria aren't really agreed yet; flag it.
-
-**Preserve the customer's stated success criteria, including capacity sizing, sync frequency, concurrency, and throughput targets.** Do not remove a difficult success criterion or shrink the schedule merely to make the POC easier to complete (see `_se-playbook.md` → Operating Discipline D5). If a criterion is genuinely out of scope for the POC window, move it to **Optional stretch scope** or **Production requirements** below and explain the rationale and proxy validation; do not silently drop it. The customer's baseline requirement stays the baseline.
-
-## Scope And Architecture
-
-### Scope
-**In scope:**
-- [Use case 1 — e.g., Salesforce → Snowflake full refresh + incremental]
-- [Use case 2 — e.g., Postgres CDC → Snowflake]
-- [Specific streams or tables to validate]
-- [Security validation — SSO, RBAC, audit logs]
-
-*Connector-availability note (from connector-feasibility, or a quick registry lookup — see "Before generating"): [confirm each scoped connector is Cloud-available + certified, OR flag — e.g. "`source-db2` is Self-Managed-only (not on Cloud) → this POC runs on Enterprise Flex or self-hosted OSS, not a Cloud trial"; "`source-workday` is an enterprise variant (Flex, entitlement-gated)". If unverified: "connector availability not verified against registry."]*
-
-**Out of scope (explicitly):**
-- [e.g., Custom connector development]
-- [e.g., dbt transformation layer]
-- [e.g., Production-scale volume testing]
-- [e.g., BI tool integration]
-
-### Scope tiers
-Separate the POC into four tiers so the customer sees what is being proven now versus what is deferred:
-- **Minimum viable POC scope:** the smallest set of must-have success criteria that proves the core value. This is what the POC will actually run.
-- **Optional stretch scope:** additional success criteria or connectors that will be validated only if time permits and only with explicit customer agreement.
-- **Production requirements:** items the customer needs in production but that are intentionally excluded from the POC (e.g., full volume, full HA, production SSO, dbt transforms). List them so they are not forgotten.
-- **POC-specific simplifications:** deliberate departures from the final production architecture (e.g., test data subset, one region, manual credential rotation). Label each one and explain what must be revisited before go-live.
-
-Do not let a production requirement disappear because it is "hard to test in a POC." If it cannot be tested, say so, document the proxy validation, and keep it in the production requirements list.
-
-### POC Architecture
-- **Deployment:** [Airbyte Cloud / Self-Managed on [cloud provider]]
-- **Environment:** [Dedicated POC workspace / sandbox / their existing infra]
-- **Data sources:** [list]
-- **Destinations:** [list]
-- **Approximate data volume for POC:** [estimate]
-
-### Sources And Destinations
-Include the applicable evidence and decision detail here.
-
-### Technical Notes
-Include the applicable evidence and decision detail here.
-
-## Mutual Commitments And Roles
-
-Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
-
-## Timeline And Milestones
-
-### Timeline & Milestones
 **Size the POC to scope, not habit:**
 - **1–2 weeks** — single-connector validation (one source → one destination, no transformation).
 - **3–5 weeks** — multi-source and/or a transformation/modeling requirement.
@@ -264,13 +261,29 @@ Capture the applicable facts, analysis, and recommendations here; label stated f
 
 **Mid-POC checkpoint is an explicit go/no-go gate, not a status call.** State it as: "By [mid-date] we should have [specific must-have working]; if not, we pause and diagnose rather than pushing to the end date." Name who declares go/no-go (the SE + the customer's POC owner). A POC that's clearly off-track at the midpoint is cheaper to reset than to let drift to the end.
 
-## Access And Prerequisites
-
+## Access & Prerequisites
 Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
 
-## Risks And Mitigations
 
-### Risks & Mitigations
+
+
+
+
+
+### Access & Prerequisites Checklist
+Before the POC can begin, the following must be in place. *Access delays are the #1 POC killer — name an owner and a date for each. Render `TBD` when unassigned; never invent.*
+
+| Prerequisite | Owner | By when | Status |
+|--------------|-------|---------|--------|
+| Airbyte Cloud workspace provisioned (or self-managed env set up) | [name or **TBD**] | [date or **TBD**] | ☐ |
+| Source credentials provided: [list sources] | [name or **TBD**] | [date or **TBD**] | ☐ |
+| Destination credentials provided: [list destinations] | [name or **TBD**] | [date or **TBD**] | ☐ |
+| Network access confirmed (firewall, IP allowlist if needed) | [name or **TBD**] | [date or **TBD**] | ☐ |
+| SSO/IdP details shared (if testing SSO) | [name or **TBD**] | [date or **TBD**] | ☐ |
+| Internal stakeholders aligned on POC scope and timeline | [name or **TBD**] | [date or **TBD**] | ☐ |
+
+## Risks & Mitigations
+
 | Risk | Likelihood | Mitigation |
 |------|------------|------------|
 | [e.g., Access provisioning delays] | Medium | Start checklist 1 week before kickoff |
@@ -290,9 +303,20 @@ Capture the applicable facts, analysis, and recommendations here; label stated f
 
 Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
 
+
+
+
+
+
+
+### Notes / Open Items
+- [ ] [Any open question or dependency before POC can be confirmed]
+
+---
+
 ## Source Coverage
 
-### Source Coverage
+
 [Prior qual docs read, transcripts referenced (line counts), external context pulled — see After Generating. Note whether scoped-connector availability was **reused from connector-feasibility**, checked directly against the **registry/`airbyte-enterprise`** (with cache/checkout date), or **not verified** (source unavailable → availability claims capped).]
 <!-- output-template:end -->
 

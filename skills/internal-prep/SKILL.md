@@ -77,11 +77,16 @@ If user signals brief mode (`--brief`, `quick prep`, `bullet points only`): prod
 >
 > **Canonical H2 order:**
 > 1. `Relevant Deal Context`
-> 2. `Alignment And Asks`
+> 2. `Alignment & Asks`
 > 3. `Decisions Required`
 > 4. `Source Coverage`
-
-> Source Coverage must be the **final H2**. The profile-specific summary block is an H3 under the title block (not a navigable section).
+>
+> **H3 subtopics (when used):**
+> - under `Relevant Deal Context`: Deal-by-Deal Status
+> - under `Alignment & Asks`: Open Items Between Us
+> - under `Decisions Required`: Decisions Needed This Sync
+>
+> Source Coverage must be the **final H2** when required. The profile-specific summary block is an H3 under the title block (not a navigable section).
 
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference — applied per mode template below. In every template, write the `[Date]` in the title/headers and any prose dates in long form per `_se-playbook.md`, e.g. June 11, 2026 — not 2026-06-11. (Filenames keep the numeric `YYYY-MM-DD` prefix.)
 
@@ -89,25 +94,32 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 
 ```
 <!-- output-template:start -->
-# Internal Prep: [Meeting Type] — [Date]
+# Internal Prep — [Customer / Meeting Type]
+**Date:** [today's date, long form] · **Meeting type:** [ae-sync / forecast / exec-readout / deal-review]
 
 ### Meeting / Decision Summary
-- **Decision / ask:** [what this meeting must resolve]
-- **Participants:** [names and roles]
+- **Headline:** [the one-line state of the meeting or portfolio]
+- **Primary ask:** [the decision or help needed]
+- **Top risk:** [the one thing that could surprise the team]
 
-**Jump to:** [Relevant Deal Context](#relevant-deal-context) · [Alignment And Asks](#alignment-and-asks) · [Decisions Required](#decisions-required) · [Source Coverage](#source-coverage)
+**Jump to:** [Relevant Deal Context](#relevant-deal-context) · [Alignment & Asks](#alignment-asks) · [Decisions Required](#decisions-required) · [Source Coverage](#source-coverage)
 
 ## Relevant Deal Context
-Capture the applicable meeting context, alignment, and decision detail here.
+### Deal-by-Deal Status
+For each customer in scope, summarize stage, recent activity, MEDDPICC gap, and what the team should know before the meeting.
 
-## Alignment And Asks
-Capture the applicable meeting context, alignment, and decision detail here.
+## Alignment & Asks
+### Open Items Between Us
+- [ ] [Item — owner — by when]
 
 ## Decisions Required
-Capture the applicable meeting context, alignment, and decision detail here.
+### Decisions Needed This Sync
+- [Specific yes/no asks from the AE, exec, or cross-functional team]
 
 ## Source Coverage
-Capture the applicable meeting context, alignment, and decision detail here.
+[Sources read, freshness, and any missing customer artifacts.]
+<!-- output-template:end -->
+
 
 ### Existing meeting-type guidance
 # AE Sync Prep — [AE Name] × [SE name] — [Date]
@@ -261,7 +273,7 @@ Be concrete:
 ```
 
 ---
-<!-- output-template:end -->
+
 
 ## Style (internal-prep skill guidance — not part of output template)
 

@@ -124,17 +124,20 @@ Only surface questions for items **not already answered** in the transcripts/SFD
 > This skill follows the shared content-architecture contract. Produce the H2 sections below in this exact order; use H3 (`###`) for the listed sub-topics.
 >
 > **Canonical H2 order:**
-> 1. `System By System Fit`
-> 2. `Coverage Gaps And Custom Work`
-> 3. `Risks And Constraints`
+> 1. `System-by-System Fit`
+> 2. `Coverage Gaps & Custom Work`
+> 3. `Risks & Constraints`
 > 4. `Validation Questions`
 > 5. `Recommended Next Steps`
 > 6. `Source Coverage`
-
+>
 > **H3 subtopics (when used):**
-> - under `System By System Fit`: System, Connector, Exists, Availability, Use Case Fit, Confidence, Top Risk
-
-> Source Coverage must be the **final H2**. The profile-specific summary block is an H3 under the title block (not a navigable section).
+> - under `System-by-System Fit`: Fit Verdict, Use Case Summary
+> - under `Risks & Constraints`: Constraints & Edge Cases
+> - under `Validation Questions`: Questions to Ask
+> - under `Coverage Gaps & Custom Work`: Missing / Gap Connectors
+>
+> Source Coverage must be the **final H2** when required. The profile-specific summary block is an H3 under the title block (not a navigable section).
 
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
@@ -144,7 +147,7 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 # Connector Feasibility: [Customer Name]
 **Date:** [today's date — long form per `_se-playbook.md`, e.g. June 11, 2026, NOT 2026-06-11] · **Sources read:** [transcripts (with dates) / SFDC / qual docs]
 
-### Decision Summary
+
 *Decision card — lead with the judgment (see `_se-playbook.md` → Decision-First Layout).*
 - **Feasibility:** 🟢 All needs covered / 🟡 Covered with gaps to build / 🔴 Hard gap blocks use case — [3–6 word headline]
 - **Coverage:** ==[N of M]== connectors validated · **Gaps:** [count build-needed] · **Open questions:** [count]
@@ -152,12 +155,14 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 - **Recommended motion:** [e.g. "Proceed to POC scoping" / "Confirm gaps before committing"]
 - **Primary risk:** [the biggest unvalidated assumption or hard gap — one line]
 - **Source confidence:** [one line — N transcripts + SFDC; "see Source Coverage"]
-**Jump to:** [System By System Fit](#system-by-system-fit) · [Coverage Gaps And Custom Work](#coverage-gaps-and-custom-work) · [Risks And Constraints](#risks-and-constraints) · [Validation Questions](#validation-questions) · [Recommended Next Steps](#recommended-next-steps) · [Source Coverage](#source-coverage)
+### Decision Summary
+- [One-line judgment or status for this artifact]
+
+**Jump to:** [System-by-System Fit](#system-by-system-fit) · [Coverage Gaps & Custom Work](#coverage-gaps-custom-work) · [Risks & Constraints](#risks-constraints) · [Validation Questions](#validation-questions) · [Recommended Next Steps](#recommended-next-steps) · [Source Coverage](#source-coverage)
 
 *(Use the canonical sections below; retain all facts, tables, and reasoning while nesting sub-topics under the relevant H2.)*
 
-## System By System Fit
-
+## System-by-System Fit
 ### Fit Verdict
 *Lead with the answer — this is the first section after the decision card.* For each needed connector, the verdict is not just exists/missing — it's **does it solve their use case**. Make the distinction between availability, supported sync behavior, auth/network feasibility, and full use-case fit visible for each row:
 
@@ -202,53 +207,7 @@ Any missing/gap connector that **blocks the use case** (no connector and no viab
 
 ---
 
-### Constraints & Edge Cases (given their context)
-*The gotchas that matter for THIS use case — not generic. Placed after coverage + gaps: it qualifies HOW the connectors behave in their environment.*
-- [e.g., "14 Shopify instances → per-store API rate limits; parallelism + scheduling matter for the 15-min target"]
-- [e.g., "Oracle CDC requires LogMiner enabled — not confirmed; without it, only full refresh / cursor available"]
-- [e.g., "NetSuite historical backfill: SuiteTalk REST returns limited history; confirm how far back they need"]
-
----
-
-### Questions to Ask the Customer (to fully validate fit)
-*The highest-value output. Per connector, only the items NOT yet answered in the transcripts/SFDC. These are what the SE should raise to confirm the connector actually solves the use case. Be specific and explain why each matters.* Wrap the per-connector questions in a `[!info]` callout:
-
-```markdown
-> [!info] Salesforce — open questions before POC
-> - [ ] Which Salesforce objects do you need synced — standard only, or custom objects too? *Our connector covers standard + custom, but custom objects need API access enabled on their side.*
-> - [ ] Do you need change-data-capture (every change) on Orders, or is an hourly snapshot enough? *Determines whether we use CDC vs. incremental, which changes setup + cost.*
-
-> [!info] [Connector / System] — open questions
-> - [ ] [Specific question] — *why it matters: …*
-```
-
-*If a connector is fully validated (all needs-to-know answered), say "✓ Fully validated — no open questions" rather than inventing questions.*
-
----
-
-### System
-Include the applicable evidence and decision detail here.
-
-### Connector
-Include the applicable evidence and decision detail here.
-
-### Exists
-Include the applicable evidence and decision detail here.
-
-### Availability
-Include the applicable evidence and decision detail here.
-
-### Use Case Fit
-Include the applicable evidence and decision detail here.
-
-### Confidence
-Include the applicable evidence and decision detail here.
-
-### Top Risk
-Include the applicable evidence and decision detail here.
-
-## Coverage Gaps And Custom Work
-
+## Coverage Gaps & Custom Work
 ### Missing / Gap Connectors
 For each missing connector, provide:
 
@@ -271,17 +230,43 @@ For each missing connector, provide:
 
 ---
 
-## Risks And Constraints
-
+## Risks & Constraints
 Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
+
+
+
+### Constraints & Edge Cases
+*The gotchas that matter for THIS use case — not generic. Placed after coverage + gaps: it qualifies HOW the connectors behave in their environment.*
+- [e.g., "14 Shopify instances → per-store API rate limits; parallelism + scheduling matter for the 15-min target"]
+- [e.g., "Oracle CDC requires LogMiner enabled — not confirmed; without it, only full refresh / cursor available"]
+- [e.g., "NetSuite historical backfill: SuiteTalk REST returns limited history; confirm how far back they need"]
+
+---
 
 ## Validation Questions
 
 Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
 
+
+
+### Questions to Ask
+*The highest-value output. Per connector, only the items NOT yet answered in the transcripts/SFDC. These are what the SE should raise to confirm the connector actually solves the use case. Be specific and explain why each matters.* Wrap the per-connector questions in a `[!info]` callout:
+
+```markdown
+> [!info] Salesforce — open questions before POC
+> - [ ] Which Salesforce objects do you need synced — standard only, or custom objects too? *Our connector covers standard + custom, but custom objects need API access enabled on their side.*
+> - [ ] Do you need change-data-capture (every change) on Orders, or is an hourly snapshot enough? *Determines whether we use CDC vs. incremental, which changes setup + cost.*
+
+> [!info] [Connector / System] — open questions
+> - [ ] [Specific question] — *why it matters: …*
+```
+
+*If a connector is fully validated (all needs-to-know answered), say "✓ Fully validated — no open questions" rather than inventing questions.*
+
+---
+
 ## Recommended Next Steps
 
-### Recommended Next Steps
 *Action table — each action has a goal, a definition of "done," and a fallback. Render `TBD` for Owner when unstated — never invent.*
 
 | # | Next Action | Goal | Success criteria | Fallback | Owner |

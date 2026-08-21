@@ -75,17 +75,17 @@ If ≥3 of these are unknown, say so prominently — the case will be directiona
 > This skill follows the shared content-architecture contract. Produce the H2 sections below in this exact order; use H3 (`###`) for the listed sub-topics.
 >
 > **Canonical H2 order:**
-> 1. `One Slide EB View`
-> 2. `Current State Baseline`
+> 1. `One-Slide EB View`
+> 2. `Current-State Baseline`
 > 3. `Airbyte Cost Projection`
-> 4. `Payback And Sensitivity`
-> 5. `Assumptions And Confirms`
+> 4. `Payback & Sensitivity`
+> 5. `Assumptions & Confirms`
 > 6. `Source Coverage`
-
+>
 > **H3 subtopics (when used):**
-> - under `Airbyte Cost Projection`: 3 Year TCO Comparison, TCO Comparison
-
-> Source Coverage must be the **final H2**. The profile-specific summary block is an H3 under the title block (not a navigable section).
+> - under `Airbyte Cost Projection`: 3-Year TCO Comparison
+>
+> Source Coverage must be the **final H2** when required. The profile-specific summary block is an H3 under the title block (not a navigable section).
 
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
@@ -95,7 +95,7 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 # ROI / Business Case: [Company Name] × Airbyte
 **Date:** [today, long form] · **SE owner:** [SE name] · **AE:** [AE name] · **For:** [EB name/role if known]
 
-### Business-Case Summary
+
 *Decision card — lead with the number (see `_se-playbook.md` → Decision-First Layout).*
 - **3-yr TCO — Airbyte vs. status quo:** ==$[X]== saved / ==[Y]%== lower
 - **Payback period:** ==[N] months==
@@ -103,13 +103,15 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 - **Confidence:** [Decision-grade / Directional — depends on how many inputs are customer-confirmed vs. [confirm]]
 - **Deployment model priced:** [Cloud Pro (capacity) / Flex (capacity)]
 - **Source confidence:** [one line — biz-qual Metrics + transcripts; "see Source Coverage"]
-**Jump to:** [One Slide EB View](#one-slide-eb-view) · [Current State Baseline](#current-state-baseline) · [Airbyte Cost Projection](#airbyte-cost-projection) · [Payback And Sensitivity](#payback-and-sensitivity) · [Assumptions And Confirms](#assumptions-and-confirms) · [Source Coverage](#source-coverage)
+### Business-Case Summary
+- [One-line judgment or status for this artifact]
+
+**Jump to:** [One-Slide EB View](#one-slide-eb-view) · [Current-State Baseline](#current-state-baseline) · [Airbyte Cost Projection](#airbyte-cost-projection) · [Payback & Sensitivity](#payback-sensitivity) · [Assumptions & Confirms](#assumptions-confirms) · [Source Coverage](#source-coverage)
 
 *(Use the canonical sections below; retain all facts, tables, and reasoning while nesting sub-topics under the relevant H2.)*
 
-## One Slide EB View
-
-### One-Slide Summary (for the EB)
+## One-Slide EB View
+### One-Slide Summary
 *A clean, paste-into-a-deck block the SE can hand over. Plain language, three numbers, no jargon.*
 
 > **[Company] × Airbyte — the business case**
@@ -118,9 +120,8 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 > - [The qualitative unlock — e.g. "frees 2 data engineers from pipeline babysitting to ship revenue work"]
 > *Based on [Company]'s own numbers: [1-line of the key inputs]. Full derivation available.*
 
-## Current State Baseline
+## Current-State Baseline
 
-### Current-State Baseline
 *What the status quo actually costs per year. Every line sourced or labeled [confirm].*
 
 | Cost driver | Annual cost | Basis / source |
@@ -133,7 +134,7 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 
 ## Airbyte Cost Projection
 
-### Airbyte Cost Projection
+
 *Capacity-based for Pro/Flex — model against the customer's volume **and its growth**, since that's where predictable pricing wins.*
 
 | Year | Volume (rows/GB) | Airbyte cost (capacity) | Competitor cost (consumption, if modeled) |
@@ -157,19 +158,14 @@ Note the shape difference: capacity-based stays predictable as volume grows; con
 
 Be honest about Airbyte's own costs (migration, ramp) — a case that shows zero switching cost isn't believed.
 
-### TCO Comparison
-Include the applicable evidence and decision detail here.
+## Payback & Sensitivity
 
-## Payback And Sensitivity
-
-### Payback & Sensitivity
 - **Payback period:** [N] months — [the crossover where cumulative savings > cumulative Airbyte cost].
 - **Sensitivity:** which 1-2 inputs swing the case most? (Usually eng loaded-rate and volume growth.) State the range: "Payback is [N] months at the customer's stated eng cost; [M] months if that's 20% lower."
 - If the case only works under optimistic assumptions, **say so** — a fragile case handed to a CFO backfires.
 
-## Assumptions And Confirms
+## Assumptions & Confirms
 
-### Assumptions & Confirms
 - **Customer-confirmed inputs:** [list — these are solid]
 - **[confirm] inputs (SE must validate before this goes to the EB):** [list — the case is directional until these are nailed]
 - **Missing inputs that materially affect the result:** [list the 1–3 inputs whose absence changes the answer most — e.g., volume growth rate, true concurrency target, exact data-worker pricing. State clearly how the result would move if each is higher/lower.]
@@ -181,7 +177,7 @@ Include the applicable evidence and decision detail here.
 
 ## Source Coverage
 
-### Source Coverage
+
 [biz-qual Metrics read, transcripts referenced (line counts), which discovery inputs are customer-confirmed vs. [confirm].]
 <!-- output-template:end -->
 

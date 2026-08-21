@@ -42,17 +42,17 @@ If user signals brief mode (`--brief`, `quick qual`, `qual summary`): produce ju
 > This skill follows the shared content-architecture contract. Produce the H2 sections below in this exact order; use H3 (`###`) for the listed sub-topics.
 >
 > **Canonical H2 order:**
-> 1. `Meddpicc Scorecard`
+> 1. `MEDDPICC Scorecard`
 > 2. `Qualification Narrative`
-> 3. `Movement And Deal Risks`
+> 3. `Movement & Deal Risks`
 > 4. `Recommended Next Actions`
 > 5. `Source Coverage`
-
+>
 > **H3 subtopics (when used):**
-> - under `Qualification Narrative`: Metrics, Economic Buyer, Decision Criteria, Decision Process, Paper Process, Identify Pain, Champion, Stakeholder Map, Competition
-> - under `Movement And Deal Risks`: Movement Since Last Qualification, Deal Risks, Reasons To Walk Or Deprioritize
-
-> Source Coverage must be the **final H2**. The profile-specific summary block is an H3 under the title block (not a navigable section).
+> - under `Qualification Narrative`: No Gap Without a Close Path, Metrics, Economic Buyer, Decision Criteria, Decision Process, Paper Process, Identify Pain, Champion, Stakeholder Map, Competition
+> - under `Movement & Deal Risks`: Movement Since Last Qualification, Deal Risks, Reasons to Walk or Deprioritize
+>
+> Source Coverage must be the **final H2** when required. The profile-specific summary block is an H3 under the title block (not a navigable section).
 
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
@@ -62,7 +62,7 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 # Business Qualification: [Company Name]
 **Date:** [today's date] · **Deal stage:** [Discovery / Technical Eval / POC / Negotiation] · **SE owner:** [SE name]
 
-### Decision Summary
+
 *Decision card — lead with the judgment (see `_se-playbook.md` → Decision-First Layout).*
 - **Overall:** 🟢 Strong / 🟡 Moderate / 🔴 Weak — [3–6 word headline]
 - **MEDDPICC:** [one-line scorecard, e.g. `M🟢 E🔴 D🟡 D🟡 P🔴 I🟢 C🟡 C🟢`]
@@ -70,13 +70,15 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 - **Biggest gap:** [the weakest/blocking letter — one line — what it blocks]
 - **Recommended motion:** [the one next move to close the biggest gap]
 - **Source confidence:** [one line — N transcripts + SFDC; "see Source Coverage"]
-**Jump to:** [Meddpicc Scorecard](#meddpicc-scorecard) · [Qualification Narrative](#qualification-narrative) · [Movement And Deal Risks](#movement-and-deal-risks) · [Recommended Next Actions](#recommended-next-actions) · [Source Coverage](#source-coverage)
+### Decision Summary
+- [One-line judgment or status for this artifact]
+
+**Jump to:** [MEDDPICC Scorecard](#meddpicc-scorecard) · [Qualification Narrative](#qualification-narrative) · [Movement & Deal Risks](#movement-deal-risks) · [Recommended Next Actions](#recommended-next-actions) · [Source Coverage](#source-coverage)
 
 *(Use the canonical sections below; retain all facts, tables, and reasoning while nesting sub-topics under the relevant H2.)*
 
-## Meddpicc Scorecard
+## MEDDPICC Scorecard
 
-### MEDDPICC Scorecard
 *The Source column is your facts column (cite transcript date + speaker, or mark Unknown); Why it matters states the deal consequence.*
 
 | Element | Status | Source (transcript date + speaker) | Why it matters |
@@ -102,13 +104,14 @@ Surface the weakest letters as callouts directly under the scorecard — `[!bloc
 > No InfoSec/legal timeline confirmed. New-vendor onboarding can run ==60–90 days==; if not started now, the close date slips.
 ```
 
-### No gap without a close-path
+## Qualification Narrative
+
+### No Gap Without a Close Path
 
 Every 🔴/🟡 MEDDPICC element must produce a Next Actions row: `Gap → the specific ask that closes it → owner (or TBD) → by when`. A logged gap with no owned next step is incomplete. State score confidence: e.g. "Scored from 3 transcripts through 05.20; Economic Buyer unconfirmed — treat the EB line as [inferred], not fact."
 
 ---
 
-## Qualification Narrative
 
 ### Metrics
 **What business outcomes are they trying to achieve?**
@@ -251,8 +254,7 @@ If they only relay your messages, they're a coach — not a champion. Downgrade 
 
 ---
 
-## Movement And Deal Risks
-
+## Movement & Deal Risks
 ### Movement Since Last Qualification
 *If a prior biz-qual exists for this customer (check `{customers_dir}/<Customer>/outputs/biz-qual/biz-qual-*.md`), compare letter-by-letter:*
 
@@ -272,7 +274,7 @@ Flag any letter that regressed (especially Champion, EB, Pain) — that's a *wal
 | [e.g., Budget not confirmed] | High | |
 | [e.g., Single-threaded on one contact] | High | |
 
-### Reasons to walk / deprioritize
+### Reasons to Walk or Deprioritize
 *Per `_se-playbook.md` → Operating Disciplines **D1** — qualifying OUT is a win. State honestly whether any hold, and if so, what would have to become true (and by when) to keep investing. This is a required read, not optional — a senior SE names the walk-away line early.*
 - **No economic buyer** identified after 2-3 substantive calls?
 - **No quantified pain** (customer can't put a number on the status quo cost)?
@@ -284,12 +286,9 @@ If none hold → say "no disqualifying signals; proceed." If one+ hold → state
 
 ---
 
-### Reasons To Walk Or Deprioritize
-Include the applicable evidence and decision detail here.
-
 ## Recommended Next Actions
 
-### Recommended Next Actions
+
 *Action table — render `TBD` for Owner when the source doesn't state one; never invent a name. **Every 🔴/🟡 letter in the scorecard gets a row here** (no gap without an owned close-path); order by what unblocks the deal soonest.*
 
 | # | Gap (MEDDPICC letter) | The ask that closes it | By when | Owner |

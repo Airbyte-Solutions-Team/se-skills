@@ -43,14 +43,14 @@ Apply **Source Coverage transparency** (report what you read) and **assertive SF
 > This skill follows the shared content-architecture contract. Produce the H2 sections below in this exact order; use H3 (`###`) for the listed sub-topics.
 >
 > **Canonical H2 order:**
-> 1. `Whos Who`
+> 1. `Who's Who`
 > 2. `Story So Far`
 > 3. `Current State`
 > 4. `Open Items`
 > 5. `Watch Outs`
 > 6. `Source Coverage`
-
-> Source Coverage must be the **final H2**. The profile-specific summary block is an H3 under the title block (not a navigable section).
+>
+> Source Coverage must be the **final H2** when required. The profile-specific summary block is an H3 under the title block (not a navigable section).
 
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
@@ -60,48 +60,50 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 # Account Refresher: [Customer]
 **As of:** [today's date — long form per `_se-playbook.md`, e.g. June 11, 2026, NOT 2026-06-11] · **Source Coverage:** [1 line — what was read: N transcripts (most recent in full), qual docs, memory, SFDC opp]
 
-### Account Snapshot
+
 - **Current state:** [one-liner — what's actively happening: POC? eval? stalled? negotiating?]
 - **Key players:** [EB name (role)] · **Champion:** [name (role)]
 - **Last touch:** [date + what happened] · ==[N] days ago==
 - **Open items:** ==[N]==
-**Jump to:** [Whos Who](#whos-who) · [Story So Far](#story-so-far) · [Current State](#current-state) · [Open Items](#open-items) · [Watch Outs](#watch-outs) · [Source Coverage](#source-coverage)
+### Account Snapshot
+- [One-line judgment or status for this artifact]
+
+**Jump to:** [Who's Who](#who-s-who) · [Story So Far](#story-so-far) · [Current State](#current-state) · [Open Items](#open-items) · [Watch Outs](#watch-outs) · [Source Coverage](#source-coverage)
 
 *(Use the canonical sections below; retain all facts, tables, and reasoning while nesting sub-topics under the relevant H2.)*
 
-## Whos Who
+## Who's Who
 
-### Who's Who
 | Person | Role | Side | Notes |
 |--------|------|------|-------|
 | [name] | [title] | Customer / Partner / Airbyte | [champion? EB? technical lead? quiet?] |
 
 *Pull from transcripts + SFDC `Champion__c`/`Economic_Buyer__c`/`Owner`. Flag if SFDC names someone who hasn't appeared in transcripts.*
 
-### What's Open
-- [ ] [Open item / unanswered question / pending action — who owns it]
-- [ ] [...]
-
 ## Story So Far
 
-### The Story So Far
 [3-6 bullets, chronological. The arc of the relationship — how it started, key moments, what's been decided, what changed. Cite dates.]
 
 ## Current State
 
-### Where Things Stand Right Now
 - **Current state:** [what's actively happening — POC? eval? stalled? negotiating?]
 - **SFDC says:** [stage, amount, close date, owner — and ⚠️ flag any mismatch with the local/transcript reality]
 - **Last contact:** [date + what happened] (==[N] days ago==)
 - **Use case / what they want:** [1-2 lines]
 
 ## Open Items
-
 Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
+
+
+
+
+
+
+- [ ] [Open item / unanswered question / pending action — who owns it]
+- [ ] [...]
 
 ## Watch Outs
 
-### Watch-outs
 - [Anything that would bite you if you walked in cold — a sensitivity, a blocker, a competitor, a promise made]
 
 ---

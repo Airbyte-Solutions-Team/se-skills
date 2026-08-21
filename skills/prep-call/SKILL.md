@@ -71,13 +71,15 @@ If user signals brief mode (`--brief`, `quick prep`, `1-pager`, `short version`)
 > 7. `Source Coverage`
 >
 > **H3 subtopics (when used):**
-> - under `Meeting Snapshot`: `Date Time Duration`, `Primary Contact`, `Attendees`, `Call Objective`, `Key Unknown`
-> - under `Account Context`: `Company Snapshot`, `Why Airbyte`, `Prior Call Context`, `What We Already Know`, `Open Threads From Prior Calls`
-> - under `Call Strategy`: `Point Of View To Test`, `Suggested Opener`
-> - under `Discovery Plan`: `Must Ask Questions`, `Implication Depth Questions`, `Persona Specific Questions`
+> - under `Meeting Snapshot`: Date, Time & Duration, Primary Contact, Attendees, Call Objective, Key Unknown
+> - under `Account Context`: Company Snapshot, Why Airbyte, Prior Call Context, Open Threads From Prior Calls
+> - under `Call Strategy`: Point of View to Test, Suggested Opener
+> - under `Discovery Plan`: Must-Ask Questions, Implication-Depth Questions, Persona-Specific Questions
+> - under `Agenda`: Suggested Agenda (30 min)
+> - under `Watch Outs`: Watch-Outs / Landmines
+> - under `Desired Next Step`: Suggested Next Step
 >
-> Source Coverage must be the **final H2**. The `At a Glance` block is an H3 under the title block (not a navigable section).
->
+> Source Coverage must be the **final H2** when required. The profile-specific summary block is an H3 under the title block (not a navigable section).
 
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference. Produce a structured call prep brief with the following sections:
 
@@ -107,13 +109,13 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 - **Tech signals:** [any known tech stack, tools, or integrations — job postings, G2, BuiltWith — tag `[public]` or `[assumption — confirm live]`]
 - **Recent news:** [funding, launches, acquisitions, leadership changes — with source tag]
 
-### Why Airbyte (Hypothesis)
+### Why Airbyte
 *Positioning anchor — comes before talk tracks/agenda because it frames how the SE leads the call.* Based on their profile, the most likely reasons they're evaluating Airbyte:
 - [Hypothesis 1 — e.g., scaling data pipelines beyond a manual solution]
 - [Hypothesis 2 — e.g., replacing a brittle custom ETL or legacy tool]
 - [Hypothesis 3 — e.g., need for connector breadth or self-hosted deployment]
 
-### What the AE Already Learned (from prior Gong call)
+### Prior Call Context
 *Only present if a prior AE call exists. The SE inherits the AE's discovery and goes deeper from there. In cold-prep mode, skip the bullets below and emit the cold-prep risk callout instead.*
 
 > [!risk] Cold-prep mode — no AE call found
@@ -129,37 +131,16 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 - **Open questions the AE flagged for the SE:** [things the AE said "we'll have our SE answer that"]
 - **AE's read on the deal:** [if AE shared a temperature check on the call or in notes]
 
-### Where We Left Off (if follow-up call)
+### Open Threads From Prior Calls
 *Skip this section if first call. Otherwise: ground the call in the most recent transcript — continuity belongs right after the AE inheritance.*
 - Most recent call: [date]
 - Last stated next-step: [what was committed]
 - Topics that went quiet since: [anything from earlier calls that stopped being discussed]
 - Walking-it-back signals to address: [if any stakeholder has been softening commitment]
 
-### Suggested Next Step (Concrete — date + attendees + agenda)
-*"Follow up next week" is not a next step. Write the exact next-step you'll push for.*
-
-- **Meeting name:** [e.g., Technical deep-dive — security & deployment]
-- **Attendees needed:** [specific names/roles]
-- **Proposed date:** [specific date or "within 1 week of this call"]
-- **Agenda:** [3-4 bullets]
-- **Pre-work:** [anything the SE or customer needs to do beforehand]
-
-### Why Airbyte
-Include the applicable evidence and decision detail here.
-
-### Prior Call Context
-Include the applicable evidence and decision detail here.
-
-### What We Already Know
-Include the applicable evidence and decision detail here.
-
-### Open Threads From Prior Calls
-Include the applicable evidence and decision detail here.
-
 ## Call Strategy
 
-### Reframe Hypothesis (Challenger)
+### Point of View to Test
 **ONE counterintuitive, data-backed reframe you'll lead with.** Not generic discovery — a point of view that reframes what they thought they were buying.
 
 > [Example: "Most data teams think their cost problem is warehouse spend. The data shows 60-70% of actual cost is engineering time maintaining custom connectors — invisible because it's salary, not SaaS."]
@@ -168,21 +149,15 @@ State the reframe as **"They likely believe X (basis: …); we reframe to Y."** 
 
 Why this reframe for this customer: [brief rationale based on their stack/industry/news — cite the signal, or mark it a hypothesis]
 
-### Upfront Contract (Sandler)
+### Suggested Opener
 **Your opener — sets agenda, outcomes, and mutual permission to disqualify.**
 
 > [!info] Upfront Contract opener
 > "We've got [duration]. I want to understand your current data integration pain and your evaluation criteria. You'll probably want to see how we handle [their likely use case]. By the end we should know whether a POC makes sense — or whether this isn't a fit. Sound good?"
 
-### Point Of View To Test
-Include the applicable evidence and decision detail here.
-
-### Suggested Opener
-Include the applicable evidence and decision detail here.
-
 ## Discovery Plan
 
-### Discovery Questions
+### Must-Ask Questions
 *Two modes — depends on whether an AE call exists.*
 
 **If AE call exists (default mode):**
@@ -244,7 +219,7 @@ Include the applicable evidence and decision detail here.
 
 ---
 
-### SPIN Implication Ladders
+### Implication-Depth Questions
 *For each top-2 likely pain point, pre-stage 2-3 Implication questions that force the customer to quantify the cost themselves. Wrap the resulting cost framing in `==…==` where it's a headline figure (e.g., ==$80K/yr== of engineering capacity, ==13h → 15min== latency).*
 
 **Pain Hypothesis 1: [name the pain]**
@@ -256,7 +231,7 @@ Include the applicable evidence and decision detail here.
 **Pain Hypothesis 2: [name the pain]**
 - [Same structure]
 
-### Per-Persona Questions
+### Persona-Specific Questions
 *If multiple personas will attend, tailor questions per persona. Same deck for everyone = #1 expansion killer.*
 
 **For [CDO / Data Eng VP / etc.]:**
@@ -268,15 +243,6 @@ Include the applicable evidence and decision detail here.
 
 **For [Security / Compliance lead, if attending]:**
 - [Persona-specific question]
-
-### Must Ask Questions
-Include the applicable evidence and decision detail here.
-
-### Implication Depth Questions
-Include the applicable evidence and decision detail here.
-
-### Persona Specific Questions
-Include the applicable evidence and decision detail here.
 
 ## Agenda
 
@@ -291,7 +257,7 @@ Include the applicable evidence and decision detail here.
 
 ## Watch Outs
 
-### Watch-outs / Landmines
+### Watch-Outs / Landmines
 - [Any competitors they likely use or have evaluated]
 - [Any known sensitivities — e.g., data residency, compliance, open-source skepticism]
 
@@ -299,9 +265,26 @@ Include the applicable evidence and decision detail here.
 
 Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
 
+
+
+
+
+
+
+
+
+### Suggested Next Step
+*"Follow up next week" is not a next step. Write the exact next-step you'll push for.*
+
+- **Meeting name:** [e.g., Technical deep-dive — security & deployment]
+- **Attendees needed:** [specific names/roles]
+- **Proposed date:** [specific date or "within 1 week of this call"]
+- **Agenda:** [3-4 bullets]
+- **Pre-work:** [anything the SE or customer needs to do beforehand]
+
 ## Source Coverage
 
-### Source Coverage
+
 *Audit trail — last content section (progressive disclosure per `_se-playbook.md`).* [AE Gong transcript path + line count, local notes, memory files, web queries — see After Generating. In cold-prep mode, state that explicitly here.]
 
 ---

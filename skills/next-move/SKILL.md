@@ -186,7 +186,7 @@ Any stage + objection raised on most recent call
 # SE Workflow: [Customer] — [Inferred Stage]
 **Date:** [today, long form] · **Stage:** [inferred stage] · **Days since activity:** [N] · **Sources:** [N] transcripts, [N] qual docs, memory [yes/no]
 
-### Recommendation
+
 - **Recommended Next Move:** [the ONE skill/action — e.g. "Run `deal-assessment`"]
 - **Confidence:** [High / Medium / Low] — [what it's pending on, one clause]
 - **Stage:** [🟢/🟡/🔴 + inferred stage]
@@ -194,7 +194,20 @@ Any stage + objection raised on most recent call
 - **Effort:** [quick / moderate / depends on source coverage]
 - **Expected output:** [what artifact the top move produces]
 
-### Current read
+### Recommendation
+- [One-line judgment or status for this artifact]
+
+## Why This Move
+
+
+- **Rationale:** [1–2 sentences tying the top move to the specific gap or override it resolves]
+- **What it unblocks:** [the downstream work this enables]
+
+---
+
+
+
+### Current Read
 [The TL;DR as 1–2 sentences of PROSE (not bullets): "[Customer] is in [stage]; the highest-value move is [X] because [why]. [Do-not caveat if any]." This is the one-liner a user copies into Slack — keep it tight and self-contained.]
 
 ---
@@ -209,29 +222,13 @@ Any stage + objection raised on most recent call
 *(Only render the override callouts that actually apply; omit this block if none. These feed the reader's Top-Risks strip automatically.)*
 
 ---
-**Jump to:** [Why This Move](#why-this-move) · [Ranked Next Moves](#ranked-next-moves) · [Dont Do Yet](#dont-do-yet) · [Workflow State](#workflow-state) · [Evidence Gaps And External Actions](#evidence-gaps-and-external-actions) · [Source Coverage](#source-coverage)
+**Jump to:** [Why This Move](#why-this-move) · [Ranked Next Moves](#ranked-next-moves) · [Don't Do Yet](#don-t-do-yet) · [Workflow State](#workflow-state) · [Evidence Gaps & External Actions](#evidence-gaps-external-actions) · [Source Coverage](#source-coverage)
 
 *(Use the canonical sections below; retain all facts, tables, and reasoning while nesting sub-topics under the relevant H2.)*
 
-## Why This Move
-
-### Why This Move
-- **Rationale:** [1–2 sentences tying the top move to the specific gap or override it resolves]
-- **What it unblocks:** [the downstream work this enables]
-
----
-
-### Don't Do Yet
-*Skills tempting but premature given current state (missing ≠ needed):*
-- **`[skill]`.** [Why not yet — e.g. "No deployment qualification yet; scoping `tech-qual` now risks an air-gap customer who can't use Cloud."]
-
-*(Lead-bold the skill. Do NOT put the word "risk" in this section's heading or bullets' lead — that would wrongly feed the Top-Risks strip.)*
-
----
-
 ## Ranked Next Moves
 
-### Ranked Next Moves
+
 **1 · `[skill]` — [headline reason]**
 - **Priority:** High
 - **Why now:** [1–2 sentence rationale tied to the gap or override]
@@ -251,21 +248,29 @@ Any stage + objection raised on most recent call
 
 ---
 
-## Dont Do Yet
-
+## Don't Do Yet
 Capture the applicable facts, analysis, and recommendations here; label stated facts, inferences, and recommendations.
+
+
+
+
+*Skills tempting but premature given current state (missing ≠ needed):*
+- **`[skill]`.** [Why not yet — e.g. "No deployment qualification yet; scoping `tech-qual` now risks an air-gap customer who can't use Cloud."]
+
+*(Lead-bold the skill. Do NOT put the word "risk" in this section's heading or bullets' lead — that would wrongly feed the Top-Risks strip.)*
+
+---
 
 ## Workflow State
 
-### Workflow State
+
 - **Inferred stage:** [from decision tree]
 - **Reasoning:** [1–2 sentences citing the specific artifacts/transcripts that put them here]
 - **SFDC vs. reality:** [the mismatch finding, if any — flag it assertively; omit the line if SFDC and local state agree or SFDC is unavailable]
 
 ---
 
-## Evidence Gaps And External Actions
-
+## Evidence Gaps & External Actions
 ### Context Inventory
 *What context exists to ground the recommendation. `Needed Now?` separates a true gap (**Yes**) from a not-yet artifact (**Later**) or an irrelevant one (**No**) — so missing ≠ todo.*
 
@@ -312,7 +317,7 @@ Capture the applicable facts, analysis, and recommendations here; label stated f
 
 ## Source Coverage
 
-### Source Coverage
+
 *Per the Read-Depth Contract: report what was read in full vs. inventoried by metadata only.*
 - **Read in full:** [qual docs, memory files, most recent transcript — filenames + dates]
 - **Metadata only:** [older transcripts, large raw notes — filenames + line counts]

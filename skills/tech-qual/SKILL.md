@@ -45,18 +45,18 @@ If user signals brief mode (`--brief`, `quick tech qual`, `tech summary`): produ
 >
 > **Canonical H2 order:**
 > 1. `Technical Fit Summary`
-> 2. `Requirements And Architecture`
+> 2. `Requirements & Architecture`
 > 3. `Implementation Readiness`
-> 4. `Risks And Open Items`
+> 4. `Risks & Open Items`
 > 5. `Recommended Next Actions`
 > 6. `Source Coverage`
-
+>
 > **H3 subtopics (when used):**
-> - under `Requirements And Architecture`: Source And Destination Landscape, Data Volume Latency Frequency, Networking Security, Transformation Orchestration, Operational Expectations, Current Stack And Integration Context
-> - under `Implementation Readiness`: Team And Implementation Readiness, Deployment Entitlement
-> - under `Risks And Open Items`: Technical Risks And Open Items, Questions Still Needed
-
-> Source Coverage must be the **final H2**. The profile-specific summary block is an H3 under the title block (not a navigable section).
+> - under `Requirements & Architecture`: Technical Requirements & Scope, Data Sources & Destinations, Data Volume & Scale, Deployment Model, Security & Compliance, Current Stack & Integration Context
+> - under `Implementation Readiness`: Team & Implementation Readiness
+> - under `Risks & Open Items`: Technical Risks & Open Items, Questions Still Needed
+>
+> Source Coverage must be the **final H2** when required. The profile-specific summary block is an H3 under the title block (not a navigable section).
 
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
@@ -66,7 +66,7 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 # Technical Qualification: [Company Name]
 **Date:** [today's date, long form] · **SE owner:** [SE name]
 
-### Decision Summary
+
 *Decision card — lead with the judgment (see `_se-playbook.md` → Decision-First Layout).*
 - **Technical fit:** 🟢 Strong / 🟡 Moderate / 🔴 Weak / ⬜ Insufficient info — [3–6 word headline]
 - **Recommended motion:** [the one next move — e.g. "Proceed to POC scoping" / "Validate destination first"]
@@ -76,13 +76,15 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 - **Scope:** [sources → destination] · **# connectors:** ==[N]== · **Volume:** ==[e.g., 50M rows/day]== · **Latency:** [e.g., 15 min]
 - **Compliance:** [omit if none in scope; else "N/A" or "compliance claims pending verification" if any cert/security line is unverified — see Security & Compliance]
 - **Source confidence:** [one line — N transcripts + SFDC + qual docs; "see Source Coverage"]
-**Jump to:** [Technical Fit Summary](#technical-fit-summary) · [Requirements And Architecture](#requirements-and-architecture) · [Implementation Readiness](#implementation-readiness) · [Risks And Open Items](#risks-and-open-items) · [Recommended Next Actions](#recommended-next-actions) · [Source Coverage](#source-coverage)
+### Decision Summary
+- [One-line judgment or status for this artifact]
+
+**Jump to:** [Technical Fit Summary](#technical-fit-summary) · [Requirements & Architecture](#requirements-architecture) · [Implementation Readiness](#implementation-readiness) · [Risks & Open Items](#risks-open-items) · [Recommended Next Actions](#recommended-next-actions) · [Source Coverage](#source-coverage)
 
 *(Use the canonical sections below; retain all facts, tables, and reasoning while nesting sub-topics under the relevant H2.)*
 
 ## Technical Fit Summary
 
-### Technical Fit Summary
 **Overall fit:** 🟢 Strong / 🟡 Moderate / 🔴 Weak / ⬜ Insufficient info
 
 **Pre-save fit gate:** Do not label the overall technical fit as `🟢 Strong` when any scorecard row is `⬜ Unknown` or `🔴 Weak` unless that row is explicitly a **solvable implementation risk** (not a critical blocker). If a critical requirement is unverified, cap the overall fit at `🟡 Moderate` or lower and make the recommended motion conditional on resolving the open item. An "Insufficient info" call is better than an inflated "Strong."
@@ -99,8 +101,7 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 | Integration complexity | 🟢 / 🟡 / 🔴 / ⬜ | [e.g. "1 custom CDK connector needed"] |
 | Team capability | 🟢 / 🟡 / 🔴 / ⬜ | [e.g. "capable integration owners; can self-serve"] |
 
-## Requirements And Architecture
-
+## Requirements & Architecture
 ### Technical Requirements & Scope
 *The one-place scope snapshot — consolidates the key technical asks across all calls/docs so the SE doesn't have to reassemble them from per-call summaries. The detailed sections below expand each line. This is the canonical scope; if a later call revises a number, update it HERE.*
 
@@ -201,24 +202,6 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 - [Notes on integration with existing tooling]
 - [Migration risks or dependencies]
 
-### Source And Destination Landscape
-Include the applicable evidence and decision detail here.
-
-### Data Volume Latency Frequency
-Include the applicable evidence and decision detail here.
-
-### Networking Security
-Include the applicable evidence and decision detail here.
-
-### Transformation Orchestration
-Include the applicable evidence and decision detail here.
-
-### Operational Expectations
-Include the applicable evidence and decision detail here.
-
-### Current Stack And Integration Context
-Include the applicable evidence and decision detail here.
-
 ## Implementation Readiness
 
 ### Team & Implementation Readiness
@@ -228,14 +211,7 @@ Include the applicable evidence and decision detail here.
 - **Implementation timeline expectation:** 
 - **Need for professional services:** [Yes / No / Possibly]
 
-### Team And Implementation Readiness
-Include the applicable evidence and decision detail here.
-
-### Deployment Entitlement
-Include the applicable evidence and decision detail here.
-
-## Risks And Open Items
-
+## Risks & Open Items
 ### Technical Risks & Open Items
 Classify every item in this table into one of four buckets so the SE knows whether the deal is qualified, blocked, or merely unfinished:
 
@@ -260,12 +236,8 @@ Classify every item in this table into one of four buckets so the SE knows wheth
 |---------------|-------|-----------|----------------|--------|
 | [unanswered technical question] | [name or **TBD**] | [gate/date or **TBD**] | [decision it unblocks] | Open |
 
-### Technical Risks And Open Items
-Include the applicable evidence and decision detail here.
-
 ## Recommended Next Actions
 
-### Recommended Next Actions
 *Action table — each action has a goal, a definition of "done," and a fallback.*
 
 | # | Next Action | Goal | Success criteria | Fallback | Owner |
@@ -275,7 +247,7 @@ Include the applicable evidence and decision detail here.
 
 ## Source Coverage
 
-### Source Coverage
+
 *Audit trail — last content section (progressive disclosure per `_se-playbook.md`).* [Transcripts read with line counts, prior qual docs consulted, MCP queries run, certification claims marked "needs verification" — see After Generating.]
 
 **DS2 product-truth (per `_se-playbook.md` → fail-loud):** report whether the `airbyte-platform` checkout (`reference_data.repos.airbyte_platform`) was used to verify entitlement claims in Security & Compliance — with the checkout date — e.g. "entitlement claims grounded in `EntitlementDefinitions.kt`, airbyte-platform checkout [date]"; or "airbyte-platform not available — compliance/entitlement claims reasoned from memory and marked 'verify with [team]', confidence capped." Never assert an entitlement you couldn't verify against the file.

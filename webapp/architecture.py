@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 
 def _normalize_heading(text: str) -> str:
     key = text.strip().lower()
+    key = re.sub(r"[’']", "", key)
     key = re.sub(r"&", "and", key)
     key = re.sub(r"[^a-z0-9]+", "-", key)
     return key.strip("-")
@@ -49,6 +50,134 @@ class SkillArchitecture:
 
 _SOURCE_COVERAGE = "source-coverage"
 
+_DISPLAY_NAMES = {
+    "scope-and-technical-changes": "Scope & Technical Changes",
+    "objections-and-open-questions": "Objections & Open Questions",
+    "actions-and-next-step": "Actions & Next Step",
+    "movement-and-deal-risks": "Movement & Deal Risks",
+    "requirements-and-architecture": "Requirements & Architecture",
+    "recommended-next-actions": "Recommended Next Actions",
+    "system-by-system-fit": "System-by-System Fit",
+    "coverage-gaps-and-custom-work": "Coverage Gaps & Custom Work",
+    "risks-and-open-items": "Risks & Open Items",
+    "risks-and-constraints": "Risks & Constraints",
+    "recommended-next-steps": "Recommended Next Steps",
+    "trajectory-and-what-changed": "Trajectory & What Changed",
+    "stakeholders-and-qualification": "Stakeholders & Qualification",
+    "close-path-blockers-and-loss-risks": "Close Path Blockers & Loss Risks",
+    "recommended-actions-and-coaching": "Recommended Actions & Coaching",
+    "poc-objective": "POC Objective",
+    "scope-and-architecture": "Scope & Architecture",
+    "mutual-commitments-and-roles": "Mutual Commitments & Roles",
+    "timeline-and-milestones": "Timeline & Milestones",
+    "access-and-prerequisites": "Access & Prerequisites",
+    "risks-and-mitigations": "Risks & Mitigations",
+    "one-slide-eb-view": "One-Slide EB View",
+    "current-state-baseline": "Current-State Baseline",
+    "payback-and-sensitivity": "Payback & Sensitivity",
+    "assumptions-and-confirms": "Assumptions & Confirms",
+    "two-sided-responsibilities": "Two-Sided Responsibilities",
+    "critical-path-and-risks": "Critical Path & Risks",
+    "whos-who": "Who's Who",
+    "dont-do-yet": "Don't Do Yet",
+    "evidence-gaps-and-external-actions": "Evidence Gaps & External Actions",
+    "whats-true": "What's True",
+    "follow-up-questions": "Follow-Up Questions",
+    "fit-and-route-boundary": "Fit & Route Boundary",
+    "fit-and-route-guidance": "Fit & Route Guidance",
+    "point-of-view-to-test": "Point of View to Test",
+    "must-ask-questions": "Must-Ask Questions",
+    "implication-depth-questions": "Implication-Depth Questions",
+    "persona-specific-questions": "Persona-Specific Questions",
+    "meddpicc-scorecard": "MEDDPICC Scorecard",
+    "meddpicc-changes": "MEDDPICC Changes",
+    "meddpicc-read": "MEDDPICC Read",
+    "poc-exit-criteria": "POC Exit Criteria",
+    "poc-architecture": "POC Architecture",
+    "story-for-results-review": "Story for Results Review",
+    "roles-and-responsibilities": "Roles & Responsibilities",
+    "sources-and-destinations": "Sources & Destinations",
+    "technical-notes": "Technical Notes",
+    "data-sources-and-destinations": "Data Sources & Destinations",
+    "data-volume-and-scale": "Data Volume & Scale",
+    "security-and-compliance": "Security & Compliance",
+    "current-stack-and-integration-context": "Current Stack & Integration Context",
+    "team-and-implementation-readiness": "Team & Implementation Readiness",
+    "technical-risks-and-open-items": "Technical Risks & Open Items",
+    "questions-still-needed": "Questions Still Needed",
+    "technical-requirements-and-scope": "Technical Requirements & Scope",
+    "the-five-questions": "The Five Questions",
+    "implications-by-answer": "Implications by Answer",
+    "discovery-questions-for-next-call": "Discovery Questions for Next Call",
+    "product-reality-stamp": "Product Reality Stamp",
+    "verdict-breakdown": "Verdict Breakdown",
+    "use-case-summary": "Use Case Summary",
+    "constraints-and-edge-cases": "Constraints & Edge Cases",
+    "questions-to-ask": "Questions to Ask",
+    "missing-gap-connectors": "Missing / Gap Connectors",
+    "activity-trajectory": "Activity Trajectory",
+    "what-changed-since-last-assessment": "What Changed Since Last Assessment",
+    "stakeholder-read": "Stakeholder Read",
+    "what-would-close-it": "What Would Close It",
+    "deal-blocker": "Deal Blocker",
+    "3-year-tco-comparison": "3-Year TCO Comparison",
+    "airbyte-cost-projection": "Airbyte Cost Projection",
+    "one-slide-summary": "One-Slide Summary",
+    "path-to-signature": "Path to Signature",
+    "mutual-agreement-ask": "Mutual Agreement Ask",
+    "coverage-snapshot": "Coverage Snapshot",
+    "deal-snapshot": "Deal Snapshot",
+    "story-so-far": "Story So Far",
+    "current-state": "Current State",
+    "in-flight-commitments": "In-Flight Commitments",
+    "open-items": "Open Items",
+    "technical-threads": "Technical Threads",
+    "access-and-escalation": "Access & Escalation",
+    "call-snapshot": "Call Snapshot",
+    "date-time-duration": "Date, Time & Duration",
+    "primary-contact": "Primary Contact",
+    "customer-attendees": "Customer Attendees",
+    "airbyte-attendees": "Airbyte Attendees",
+    "one-line-deal-impact": "One-Line Deal Impact",
+    "new-objections-concerns-surfaced": "New Objections / Concerns Surfaced",
+    "open-questions-follow-ups": "Open Questions / Follow-Ups",
+    "action-items": "Action Items",
+    "current-read": "Current Read",
+    "whats-actually-true": "What's Actually True",
+    "relevant-deal-context": "Relevant Deal Context",
+    "alignment-and-asks": "Alignment & Asks",
+    "decisions-required": "Decisions Required",
+    "why-this-move": "Why This Move",
+    "ranked-next-moves": "Ranked Next Moves",
+    "workflow-state": "Workflow State",
+    "context-inventory": "Context Inventory",
+    "external-actions": "External Actions",
+    "watch-outs-landmines": "Watch-Outs / Landmines",
+    "suggested-agenda-30-min": "Suggested Agenda (30 min)",
+    "suggested-next-step": "Suggested Next Step",
+    "no-gap-without-a-close-path": "No Gap Without a Close Path",
+    "reasons-to-walk-or-deprioritize": "Reasons to Walk or Deprioritize",
+    "loss-risks": "Loss Risks",
+    "access-and-prerequisites-checklist": "Access & Prerequisites Checklist",
+    "notes-open-items": "Notes / Open Items",
+    "story": "Story",
+    "current-state-detail": "Current State Detail",
+    "talk-track-guidance": "Talk Track Guidance",
+    "follow-up-questions-detail": "Follow-Up Questions Detail",
+    "fit-and-route-guidance": "Fit & Route Guidance",
+    "related-context": "Related Context",
+    "deal-by-deal-status": "Deal-by-Deal Status",
+    "open-items-between-us": "Open Items Between Us",
+    "decisions-needed-this-sync": "Decisions Needed This Sync",
+}
+
+
+def display_name_for_key(key: str) -> str:
+    """Return the reader-facing heading for a canonical key."""
+    if key in _DISPLAY_NAMES:
+        return _DISPLAY_NAMES[key]
+    return " ".join(word.capitalize() for word in key.split("-"))
+
 # ---------------------------------------------------------------------------
 # Report-style skills
 # ---------------------------------------------------------------------------
@@ -78,7 +207,6 @@ _PREP_CALL = SkillArchitecture(
             "company-snapshot",
             "why-airbyte",
             "prior-call-context",
-            "what-we-already-know",
             "open-threads-from-prior-calls",
         ],
         "call-strategy": [
@@ -89,6 +217,15 @@ _PREP_CALL = SkillArchitecture(
             "must-ask-questions",
             "implication-depth-questions",
             "persona-specific-questions",
+        ],
+        "agenda": [
+            "suggested-agenda-30-min",
+        ],
+        "watch-outs": [
+            "watch-outs-landmines",
+        ],
+        "desired-next-step": [
+            "suggested-next-step",
         ],
     },
     aliases={
@@ -141,8 +278,6 @@ _POST_CALL = SkillArchitecture(
         "scope-and-technical-changes": [
             "sources-and-destinations",
             "technical-notes",
-            "architecture",
-            "requirements",
         ],
         "deal-impact": [
             "movement",
@@ -156,6 +291,9 @@ _POST_CALL = SkillArchitecture(
         "actions-and-next-step": [
             "action-items",
             "next-step",
+        ],
+        "key-takeaways": [
+            "attendees",
         ],
     },
     aliases={
@@ -188,6 +326,7 @@ _BIZ_QUAL = SkillArchitecture(
     ],
     h3_groups={
         "qualification-narrative": [
+            "no-gap-without-a-close-path",
             "metrics",
             "economic-buyer",
             "decision-criteria",
@@ -240,16 +379,15 @@ _TECH_QUAL = SkillArchitecture(
     ],
     h3_groups={
         "requirements-and-architecture": [
-            "source-and-destination-landscape",
-            "data-volume-latency-frequency",
-            "networking-security",
-            "transformation-orchestration",
-            "operational-expectations",
+            "technical-requirements-and-scope",
+            "data-sources-and-destinations",
+            "data-volume-and-scale",
+            "deployment-model",
+            "security-and-compliance",
             "current-stack-and-integration-context",
         ],
         "implementation-readiness": [
             "team-and-implementation-readiness",
-            "deployment-entitlement",
         ],
         "risks-and-open-items": [
             "technical-risks-and-open-items",
@@ -286,6 +424,11 @@ _DEPLOYMENT_QUAL = SkillArchitecture(
         _SOURCE_COVERAGE,
     ],
     h3_groups={
+        "deployment-verdict": [
+            "verdict",
+            "product-reality-stamp",
+            "verdict-breakdown",
+        ],
         "customer-constraints": [
             "the-five-questions",
             "implications-by-answer",
@@ -316,13 +459,17 @@ _CONNECTOR_FEASIBILITY = SkillArchitecture(
     ],
     h3_groups={
         "system-by-system-fit": [
-            "system",
-            "connector",
-            "exists",
-            "availability",
-            "use-case-fit",
-            "confidence",
-            "top-risk",
+            "fit-verdict",
+            "use-case-summary",
+        ],
+        "risks-and-constraints": [
+            "constraints-and-edge-cases",
+        ],
+        "validation-questions": [
+            "questions-to-ask",
+        ],
+        "coverage-gaps-and-custom-work": [
+            "missing-gap-connectors",
         ],
     },
     aliases={
@@ -362,12 +509,14 @@ _DEAL_ASSESSMENT = SkillArchitecture(
         ],
         "stakeholders-and-qualification": [
             "stakeholder-read",
-            "meddpicc-read",
         ],
         "close-path-blockers-and-loss-risks": [
             "what-would-close-it",
             "deal-blocker",
             "loss-risks",
+        ],
+        "recommended-actions-and-coaching": [
+            "coaching-observations",
         ],
     },
     aliases={
@@ -403,10 +552,26 @@ _POC_PLAN = SkillArchitecture(
         _SOURCE_COVERAGE,
     ],
     h3_groups={
+        "success-criteria": [
+            "poc-exit-criteria",
+            "story-for-results-review",
+        ],
         "scope-and-architecture": [
+            "scope",
+            "scope-tiers",
+            "poc-architecture",
             "sources-and-destinations",
             "technical-notes",
-            "poc-architecture",
+        ],
+        "mutual-commitments-and-roles": [
+            "mutual-commitments",
+            "roles-and-responsibilities",
+        ],
+        "access-and-prerequisites": [
+            "access-and-prerequisites-checklist",
+        ],
+        "open-items": [
+            "notes-open-items",
         ],
     },
     aliases={
@@ -438,7 +603,6 @@ _ROI_BUSINESS_CASE = SkillArchitecture(
     h3_groups={
         "airbyte-cost-projection": [
             "3-year-tco-comparison",
-            "tco-comparison",
         ],
     },
     aliases={
@@ -491,11 +655,11 @@ _ACCOUNT_REFRESHER = SkillArchitecture(
         "whos-who": "whos-who",
         "whos-who-on-the-account": "whos-who",
         "the-story-so-far": "story-so-far",
-        "story-so-far": "story-so-far",
-        "where-things-stand-right-now": "current-state",
         "where-things-stand": "current-state",
-        "whats-open": "open-items",
+        "watchouts": "watch-outs",
+        "watch-outs": "watch-outs",
     },
+    h3_groups={},
     source_coverage_required=True,
 )
 
@@ -511,8 +675,19 @@ _NEXT_MOVE = SkillArchitecture(
         "evidence-gaps-and-external-actions",
         _SOURCE_COVERAGE,
     ],
+    h3_groups={
+        "why-this-move": [
+            "current-read",
+        ],
+        "evidence-gaps-and-external-actions": [
+            "context-inventory",
+            "gaps",
+            "external-actions",
+        ],
+    },
     aliases={
-        "next-move": "why-this-move",
+        "recommendation": "why-this-move",
+        "current-read": "why-this-move",
         "why-this-move": "why-this-move",
         "ranked-next-moves": "ranked-next-moves",
         "dont-do-yet": "dont-do-yet",
@@ -534,6 +709,17 @@ _INTERNAL_PREP = SkillArchitecture(
         "decisions-required",
         _SOURCE_COVERAGE,
     ],
+    h3_groups={
+        "relevant-deal-context": [
+            "deal-by-deal-status",
+        ],
+        "alignment-and-asks": [
+            "open-items-between-us",
+        ],
+        "decisions-required": [
+            "decisions-needed-this-sync",
+        ],
+    },
     aliases={
         "ae-sync": "relevant-deal-context",
         "forecast": "relevant-deal-context",
@@ -589,10 +775,25 @@ _OBJECTION_HANDLER = SkillArchitecture(
         "follow-up-questions": "follow-up-questions",
         "related-context": "fit-and-route-boundary",
     },
+    h3_groups={
+        "whats-true": [
+            "objection",
+            "whats-actually-true",
+        ],
+        "talk-track": [
+            "talk-track-guidance",
+        ],
+        "follow-up-questions": [
+            "follow-up-questions-detail",
+        ],
+        "fit-and-route-boundary": [
+            "fit-and-route-guidance",
+            "related-context",
+        ],
+    },
     source_coverage_required=False,
     notes="Source Coverage is used when the response references customer-specific evidence. It is not required for generic snippets.",
 )
-
 # ---------------------------------------------------------------------------
 # Specialized / non-report exceptions
 # ---------------------------------------------------------------------------

@@ -2,10 +2,12 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 21, 2026 — HEAD `8296a16` on `devin/1787273787-ux010-content-architecture`.
+_Last updated: August 21, 2026 — HEAD `(pending)` on `devin/1787273787-ux010-content-architecture`.
 
 
 ## Built this session (newest first — see `git log`)
+
+- **Producer template review fixes (August 21).** Merged rich guidance into canonical H3s across all 15 saving skills, removed every filler stub and redundant same-name subsection, added profile-specific summary headings, corrected reader-facing display names and Jump-to anchors, and synchronized the registry callouts and playbook. Collapsed prep-call's duplicate `What We Already Know` topic, removed post-call's redundant Architecture/Requirements H3s in favor of Technical Notes, and aligned connector, deal-assessment, POC, and objection-handler H3 groups with their actual producer prose.
 
 - **Authoritative producer templates and validation architecture (August 21).** Reworked every saving skill's marked output-template region and Jump-to links to follow the canonical H2 order, corrected post-call Deal Impact ordering, synchronized the playbook table, and kept Source Coverage conditional for generic objection handling. Added machine-checkable template/playbook tests, restored AE-led discovery MEDDPICC H3 validation, and retained legacy alias compatibility while distinguishing mixed-generation drift from historical documents.
 

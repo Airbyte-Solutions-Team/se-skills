@@ -59,16 +59,19 @@ Copy these straight from the SFDC query into the page; IDs and numbers must be e
 <!-- output-template:start -->
 # Coverage Handoff: [Customer] — [Date]
 
-### Coverage Snapshot
+
 - **Coverage window:** [dates and covering SE]
 - **Trajectory:** [current read]
 
-**Jump to:** [Deal Snapshot](#deal-snapshot) · [Whos Who](#whos-who) · [Story So Far](#story-so-far) · [Current State](#current-state) · [In Flight Commitments](#in-flight-commitments) · [Open Items](#open-items) · [Technical Threads](#technical-threads) · [Access And Escalation](#access-and-escalation) · [Source Coverage](#source-coverage)
+### Coverage Snapshot
+- [One-line judgment or status for this artifact]
+
+**Jump to:** [Deal Snapshot](#deal-snapshot) · [Who's Who](#who-s-who) · [Story So Far](#story-so-far) · [Current State](#current-state) · [In-Flight Commitments](#in-flight-commitments) · [Open Items](#open-items) · [Technical Threads](#technical-threads) · [Access & Escalation](#access-escalation) · [Source Coverage](#source-coverage)
 
 ## Deal Snapshot
 Populate this section in the standalone HTML artifact with sourced, realistic detail.
 
-## Whos Who
+## Who's Who
 Populate this section in the standalone HTML artifact with sourced, realistic detail.
 
 ## Story So Far
@@ -77,7 +80,7 @@ Populate this section in the standalone HTML artifact with sourced, realistic de
 ## Current State
 Populate this section in the standalone HTML artifact with sourced, realistic detail.
 
-## In Flight Commitments
+## In-Flight Commitments
 Populate this section in the standalone HTML artifact with sourced, realistic detail.
 
 ## Open Items
@@ -86,7 +89,7 @@ Populate this section in the standalone HTML artifact with sourced, realistic de
 ## Technical Threads
 Populate this section in the standalone HTML artifact with sourced, realistic detail.
 
-## Access And Escalation
+## Access & Escalation
 Populate this section in the standalone HTML artifact with sourced, realistic detail.
 
 ## Source Coverage

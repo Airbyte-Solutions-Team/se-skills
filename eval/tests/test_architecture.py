@@ -8,7 +8,11 @@ from pathlib import Path
 import pytest
 
 import output_schema
-from architecture import CANONICAL_ARCHITECTURE, _SOURCE_COVERAGE
+from architecture import (
+    CANONICAL_ARCHITECTURE,
+    _SOURCE_COVERAGE,
+    display_name_for_key,
+)
 
 
 def _report_skills() -> list:
@@ -113,27 +117,39 @@ def test_producer_templates_follow_canonical_architecture(
     jump_to = re.search(r"^\*\*Jump to:\*\* (.+)$", template, flags=re.MULTILINE)
     assert jump_to, f"{skill}: missing canonical Jump to line"
     anchors = re.findall(r"\]\(#([^)]+)\)", jump_to.group(1))
-    assert anchors == arch.canonical_h2_order, skill
+    assert anchors == [_slugify(display_name_for_key(key)) for key in arch.canonical_h2_order], skill
 
     for parent, children in arch.h3_groups.items():
-        if parent == arch.top_summary_name.lower().replace(" ", "-"):
+        if _normalize_heading(display_name_for_key(parent)) == _normalize_heading(
+            arch.top_summary_name
+        ):
             continue
         parent_match = re.search(
-            rf"^## {re.escape(parent.replace('-', ' ').title())}\s*$",
+            rf"^## {re.escape(display_name_for_key(parent))}\s*$",
             template,
             flags=re.MULTILINE,
         )
         assert parent_match, f"{skill}: missing H2 parent {parent}"
         next_h2 = re.search(r"^## ", template[parent_match.end() :], flags=re.MULTILINE)
         body = template[parent_match.end() : parent_match.end() + next_h2.start()] if next_h2 else template[parent_match.end() :]
-        child_keys = {
-            _normalize_heading(match)
-            for match in re.findall(r"^### (.+)$", body, flags=re.MULTILINE)
+        child_names = re.findall(r"^### (.+)$", body, flags=re.MULTILINE)
+        child_keys = {_normalize_heading(match) for match in child_names}
+        expected_keys = {
+            _normalize_heading(display_name_for_key(child)) for child in children
         }
-        assert set(children) <= child_keys, f"{skill}: H3s not nested under {parent}"
+        assert expected_keys <= child_keys, f"{skill}: H3s not nested under {parent}"
+        assert child_keys <= expected_keys, (
+            f"{skill}: undeclared H3s under {parent}: "
+            f"{sorted(child_keys - expected_keys)}"
+        )
 
 
 def _normalize_heading(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+
+
+def _slugify(text: str) -> str:
+    """Mirror the frontend slugify implementation for plain headings."""
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
 
 
@@ -152,8 +168,7 @@ def test_playbook_architecture_table_matches_registry(repo_root: Path) -> None:
         arch = CANONICAL_ARCHITECTURE[skill.strip()]
         if arch.canonical_h2_order:
             expected = " → ".join(
-                " ".join(word.title() for word in key.split("-"))
-                for key in arch.canonical_h2_order
+                display_name_for_key(key) for key in arch.canonical_h2_order
             )
             assert order.strip() == expected
 
