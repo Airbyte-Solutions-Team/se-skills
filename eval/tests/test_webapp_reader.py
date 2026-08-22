@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -331,6 +332,92 @@ def test_every_gallery_fixture_renders_through_the_reader(repo_root: Path, tmp_p
     assert "<h1" not in doc["sheetHtml"]
 
 
+def test_prep_call_gallery_fixture_carries_the_canonical_prep_architecture(repo_root: Path) -> None:
+    """The Prep Call preview must exercise Prep Call, not another skill's shape."""
+    from architecture import get_architecture
+
+    arch = get_architecture("prep-call")
+    assert arch is not None
+    markdown_text = _fixture_md(repo_root, "prep-call")
+    h2s = [line[3:].strip() for line in markdown_text.splitlines() if line.startswith("## ")]
+    h3s = [line[4:].strip() for line in markdown_text.splitlines() if line.startswith("### ")]
+
+    assert [arch.canonical_key(h) for h in h2s] == arch.canonical_h2_order
+    assert h3s[0] == arch.top_summary_name
+    # The Discovery Plan groups this review depends on are actually present.
+    discovery = arch.h3_groups["discovery-plan"]
+    keys = [re.sub(r"[^a-z0-9]+", "-", h.lower()).strip("-") for h in h3s]
+    assert set(discovery) <= set(keys)
+
+
+def test_must_ask_is_the_primary_discovery_group_and_siblings_are_not(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    sheet = _build_document(repo_root, _fixture_md(repo_root, "prep-call"), tmp_path)["sheetHtml"]
+    assert sheet.count('class="qa-group qa-group--primary"') == 1
+    assert sheet.count("qa-group--supporting") == 2
+    primary = sheet[sheet.index("qa-group--primary"):sheet.index("qa-group--supporting")]
+    assert "Must-Ask Questions" in primary
+    for sibling in ("Implication-Depth Questions", "Persona-Specific Questions"):
+        assert sibling not in primary
+
+
+@pytest.mark.parametrize(
+    ("markdown_text", "grouped"),
+    [
+        pytest.param(
+            "# Doc\n\n## Discovery Plan\n\n### Must-Ask Questions\n\n- **Q1?**\n\n"
+            "### Persona-Specific Questions\n\n- **Q2?**\n",
+            True,
+            id="discovery_h2_with_must_ask_sibling",
+        ),
+        pytest.param(
+            "# Doc\n\n## Discovery Plan\n\n### Implication-Depth Questions\n\n- **Q1?**\n\n"
+            "### Persona-Specific Questions\n\n- **Q2?**\n",
+            False,
+            id="no_must_ask_group_present",
+        ),
+        pytest.param(
+            "# Doc\n\n## Discovery Plan\n\n### Must-Ask Questions\n\n- **Q1?**\n",
+            False,
+            id="single_group_has_nothing_to_rank",
+        ),
+        pytest.param(
+            "# Doc\n\n## Objections & Open Questions\n\n### Must-Ask Questions\n\n- **Q1?**\n\n"
+            "### Other Questions\n\n- **Q2?**\n",
+            False,
+            id="must_ask_outside_a_discovery_section",
+        ),
+    ],
+)
+def test_discovery_grouping_requires_the_canonical_structure(
+    repo_root: Path, tmp_path: Path, markdown_text: str, grouped: bool
+) -> None:
+    sheet = _build_document(repo_root, markdown_text, tmp_path)["sheetHtml"]
+    assert ("qa-group" in sheet) is grouped
+    assert "Q1?" in sheet
+
+
+def test_discovery_grouping_preserves_markdown_order_and_content(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    markdown_text = _fixture_md(repo_root, "prep-call")
+    doc = _build_document(repo_root, markdown_text, tmp_path)
+    sheet = doc["sheetHtml"]
+    groups = ["Must-Ask Questions", "Implication-Depth Questions", "Persona-Specific Questions"]
+    assert [g for g in groups if g in sheet] == groups
+    assert sorted(groups, key=sheet.index) == groups
+    assert [t["text"] for t in doc["tocEntries"] if t["text"] in groups] == groups
+    for value in (
+        "who gets paged",
+        "is CDC off because of the version",
+        "$95K/yr",
+        "what is the next thing your team would be judged on",
+        "where the data plane runs",
+    ):
+        assert value in sheet
+
+
 def test_unrelated_wide_table_next_to_a_connector_table_stays_a_table(
     repo_root: Path, tmp_path: Path
 ) -> None:
@@ -484,3 +571,6 @@ def test_narrow_layout_rules_exist_for_every_new_component(repo_root: Path) -> N
     for selector in (".sys-fields", ".person", ".kv-grid", ".tile-grid"):
         assert selector in narrow
     assert "overflow-x: auto" in css
+    # Discovery groups differ by weight only, and must never force overflow.
+    assert ".qa-group--primary" in css and ".qa-group--supporting" in css
+    assert ".md-body .qa-group { min-width: 0; }" in css

@@ -869,6 +869,26 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 .md-body .qa-list > li > strong:first-child { display: block; font-size: 14.5px; font-weight: 650; line-height: 1.45; margin-bottom: 3px; }
 .md-body .qa-list > li em { color: var(--muted); font-style: normal; font-size: 13px; }
 
+/* Discovery Plan groups: the Must-Ask group is what has to happen on the call,
+   so it reads as the primary group (accented, full-size questions) while the
+   sibling topical groups stay legible but subordinate. Markdown order is
+   unchanged — only weight differs. */
+.md-body .qa-group { min-width: 0; }
+.md-body .qa-group--primary {
+  margin: 14px 0 18px; padding: 4px 0 4px 16px;
+  border-left: 3px solid var(--accent);
+}
+.md-body .qa-group--primary > .md-h3 {
+  margin-top: 0; font-size: 13px; color: var(--accent);
+}
+.md-body .qa-group--primary .qa-list > li > strong:first-child { font-size: 15px; font-weight: 700; }
+.md-body .qa-group--supporting { margin: 14px 0; }
+.md-body .qa-group--supporting > .md-h3 { font-size: 11.5px; }
+.md-body .qa-group--supporting .qa-list > li { padding: 8px 0; }
+.md-body .qa-group--supporting .qa-list > li > strong:first-child { font-size: 13.5px; font-weight: 600; }
+.md-body .qa-group--supporting .md-p,
+.md-body .qa-group--supporting .md-list > li { font-size: 13.5px; }
+
 /* ── thesis / point-of-view lead ───────────────────────────────────────── */
 .md-body .thesis { margin: 12px 0 16px; }
 .md-body .thesis-head { font-size: 17px; font-weight: 650; line-height: 1.45; letter-spacing: -.01em; }

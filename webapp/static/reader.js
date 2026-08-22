@@ -469,6 +469,41 @@
     });
   }
 
+  // ── Discovery groups ────────────────────────────────────────────────────
+  // The canonical Prep Call architecture gives `Discovery Plan` sibling H3
+  // question groups (Must-Ask / Implication-Depth / Persona-Specific). The
+  // must-ask group is the one the AE has to get through on the call, so it reads
+  // as the primary group and the topical groups stay legible but subordinate.
+  // Recognition is purely structural — the section's own H2 must be the
+  // discovery section and the groups must be its sibling H3s. No prose is
+  // inspected, nothing is reordered and no text is added or removed.
+  const DISCOVERY_SECTION = /^discovery (plan|questions)$/i;
+  const MUST_ASK_GROUP = /^must[- ]ask\b/i;
+
+  function upgradeDiscoveryGroups(section, doc) {
+    const h2 = section.querySelector(":scope > h2.md-h2");
+    if (!h2 || !DISCOVERY_SECTION.test((h2.textContent || "").trim())) return;
+    const heads = Array.from(section.querySelectorAll(":scope > h3.md-h3"));
+    if (heads.length < 2) return;
+    const mustAsk = heads.filter((h) => MUST_ASK_GROUP.test((h.textContent || "").trim()));
+    if (mustAsk.length !== 1) return;
+    section.classList.add("has-discovery-groups");
+    heads.forEach((head) => {
+      const group = doc.createElement("div");
+      group.className = head === mustAsk[0]
+        ? "qa-group qa-group--primary"
+        : "qa-group qa-group--supporting";
+      head.before(group);
+      let node = group.nextSibling;
+      while (node) {
+        const next = node.nextSibling;
+        if (node !== head && node.nodeType === 1 && /^H[1-6]$/.test(node.tagName)) break;
+        group.appendChild(node);
+        node = next;
+      }
+    });
+  }
+
   // One-line preview shown when a section is collapsed.
   function sectionSummary(sectionEl, titleText) {
     if (/source coverage/i.test(titleText)) {
@@ -678,6 +713,7 @@
       upgradePeopleLists(s);
       upgradeActionLists(s);
       upgradeQuestionLists(s);
+      upgradeDiscoveryGroups(s, doc);
     }
 
     // ── Role classes (surface weight) + collapsible audit/detail sections.
@@ -784,6 +820,7 @@
     tileSentiment,
     riskSeverity,
     sectionRole,
+    upgradeDiscoveryGroups,
     classifyTableShape,
     parsePersonEntry,
     splitActionMeta,
