@@ -11,8 +11,10 @@ test toolchain is introduced.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -56,6 +58,10 @@ def _build_document(repo_root: Path, markdown_text: str, tmp_path: Path) -> dict
     """Run buildReaderDocument on server-rendered HTML inside headless Chrome."""
     chrome = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
     if not chrome:
+        # A skipped browser test is not browser validation: in CI this must fail
+        # loudly rather than let a green run stand in for reader DOM coverage.
+        if os.environ.get("CI"):
+            pytest.fail("no Chrome/Chromium binary on the CI runner; reader DOM coverage cannot silently skip")
         pytest.skip("no Chrome binary available for DOM behavior tests")
     server_html = OutputService.render_markdown(markdown_text)
     harness = tmp_path / "harness.html"
@@ -104,8 +110,21 @@ def _build_document(repo_root: Path, markdown_text: str, tmp_path: Path) -> dict
         (["Workstream", "Owner", "Start", "End", "Dependency", "Notes"], "generic"),
         (["System", "Notes", "Comment", "Detail"], "generic"),
         ([], "generic"),
+        # Reordered but equivalent: the contract is the header set, not its order.
+        (["System", "Top risk", "Confidence", "Availability", "Connector"], "system-records"),
+        # Extra columns are fine as long as the contract is still recognizable.
+        (["System", "Connector", "Exists", "Availability", "Owner", "Ticket"], "system-records"),
+        # Partial: only one contract field present.
+        (["System", "Connector", "Owner", "Ticket", "Notes"], "generic"),
+        # Malformed: blank header cells must not be counted as contract fields.
+        (["System", "", "", "", ""], "generic"),
+        # Right fields, wrong first column: not a system-by-system table.
+        (["Workstream", "Connector", "Exists", "Availability", "Confidence"], "generic"),
     ],
-    ids=["canonical", "variant-headers", "too-narrow", "wide-generic", "system-but-unrelated", "empty"],
+    ids=[
+        "canonical", "variant-headers", "too-narrow", "wide-generic", "system-but-unrelated", "empty",
+        "reordered-equivalent", "extra-columns", "partial-contract", "malformed-blank", "wrong-first-column",
+    ],
 )
 def test_only_a_confident_connector_table_shape_is_reshaped(repo_root: Path, headers, expected) -> None:
     data = _run_node(
@@ -312,6 +331,85 @@ def test_every_gallery_fixture_renders_through_the_reader(repo_root: Path, tmp_p
     assert "<h1" not in doc["sheetHtml"]
 
 
+def test_unrelated_wide_table_next_to_a_connector_table_stays_a_table(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    """Recognition is per-table: one reshape must not capture its neighbours."""
+    md = (
+        "# Doc\n\n## System-by-System Feasibility\n\n"
+        "| System | Connector | Exists | Availability | Use-case fit | Confidence | Top risk |\n"
+        "| --- | --- | --- | --- | --- | --- | --- |\n"
+        "| Postgres | source-postgres | yes | GA | strong | high | CDC slot limits |\n\n"
+        "### Timeline\n\n"
+        "| Workstream | Owner | Start | End | Dependency | Notes |\n"
+        "| --- | --- | --- | --- | --- | --- |\n"
+        "| Security review | Dana | 09-02 | 09-09 | none | booked |\n\n"
+        "## Source Coverage\n\n- one source\n"
+    )
+    sheet = _build_document(repo_root, md, tmp_path)["sheetHtml"]
+    assert sheet.count('class="sys-record"') == 1
+    assert 'class="md-table-wrap"' in sheet
+    for value in ("Security review", "Dana", "09-09", "booked", "CDC slot limits", "source-postgres"):
+        assert value in sheet
+
+
+# ── Extraction parity: the reader contract that existed before UX-011 ────────
+
+def test_extraction_preserves_the_pre_existing_reader_contract(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    """Behavior that `openOutput()` owned before the module split still holds."""
+    markdown_text = (
+        repo_root / "eval" / "fixtures" / "outputs" / "post-call-canonical.md"
+    ).read_text(encoding="utf-8")
+    doc = _build_document(repo_root, markdown_text, tmp_path)
+
+    # Document title is extracted from the H1 and removed from the body.
+    first_h1 = next(
+        line[2:].strip() for line in markdown_text.splitlines() if line.startswith("# ")
+    )
+    assert doc["docTitle"] == first_h1
+    assert "<h1" not in doc["sheetHtml"]
+
+    # Profile summary promoted into the lead surface (tile card when the summary
+    # exposes tileable labels, otherwise the glance panel), and kept out of the sidebar.
+    assert "exec-card" in doc["sheetHtml"] or "is-glance" in doc["sheetHtml"]
+    sidebar_labels = [t["text"] for t in doc["tocEntries"]]
+    summary_names = _run_node(
+        f"const r = require({str(_reader_path(repo_root))!r});"
+        "console.log(JSON.stringify({names: r.PROFILE_SUMMARY_NAMES}));"
+    )["names"]
+    assert not set(sidebar_labels) & set(summary_names + ["At a Glance"])
+
+    # Source order preserved for H2/H3, Source Coverage last, collapsible sections
+    # and the risk strip all still produced by the same call.
+    md_headings = [
+        line.lstrip("#").strip()
+        for line in markdown_text.splitlines()
+        if line.startswith("## ") or line.startswith("### ")
+    ]
+    assert sidebar_labels == [h for h in md_headings if h in sidebar_labels]
+    assert sidebar_labels[-1] == "Source Coverage"
+    assert "doc-toc-link" in doc["tocHtml"]
+    assert "sec-body" in doc["sheetHtml"] and "sec-summary" in doc["sheetHtml"]
+    assert isinstance(doc["riskStripHtml"], str)
+
+
+def test_reader_helpers_are_defined_once(repo_root: Path) -> None:
+    """No duplicated summary predicate or renderer logic left behind in app.js."""
+    app_js = (repo_root / "webapp" / "static" / "app.js").read_text(encoding="utf-8")
+    reader_js = (repo_root / "webapp" / "static" / "reader.js").read_text(encoding="utf-8")
+    for symbol in (
+        "PROFILE_SUMMARY_NAMES",
+        "function isSummaryHeadingText",
+        "function filterSummaryTocEntries",
+        "function classifyTableShape",
+        "function buildReaderDocument",
+    ):
+        assert symbol in reader_js
+        assert symbol not in app_js
+
+
 # ── Gallery route + wiring ───────────────────────────────────────────────────
 
 def test_gallery_serves_only_allowlisted_committed_fixtures() -> None:
@@ -327,6 +425,36 @@ def test_gallery_serves_only_allowlisted_committed_fixtures() -> None:
 
         for hostile in ("../../../etc/passwd", "deal-assessment.md", "..", "outputs/secret", "DEAL"):
             assert client.get("/api/gallery/fixture", params={"name": hostile}).status_code == 404
+
+
+def test_hosted_mode_exposes_no_gallery_route(repo_root: Path) -> None:
+    """The gallery is developer tooling on the local side of the trust boundary."""
+    env = {
+        **os.environ,
+        "HOSTED_MODE": "1",
+        "PYTHONPATH": f"{repo_root}{os.pathsep}{repo_root / 'webapp'}",
+        "SUPABASE_URL": "https://example.supabase.co",
+        "SUPABASE_ANON_KEY": "anon-key",
+        "HOSTED_JWT_ALGORITHM": "HS256",
+        "HOSTED_JWT_SECRET": "super-secret-32-byte-test-jwt-key!",
+        "SUPABASE_JWT_SECRET": "super-secret-32-byte-test-storage-jwt-key!",
+        "HOSTED_CONTEXT_SECRET": "test-context-secret-32-bytes!!",
+    }
+    probe = (
+        "import json, webapp.app as a;"
+        "print(json.dumps([getattr(r, 'path', '') for r in a.app.routes]))"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=repo_root,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    paths = json.loads(result.stdout.strip().splitlines()[-1])
+    assert paths, "hosted app registered no routes; the probe is not proving anything"
+    assert not [p for p in paths if "gallery" in p]
 
 
 def test_gallery_uses_the_production_rendering_path(repo_root: Path) -> None:
