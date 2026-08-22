@@ -71,10 +71,16 @@ function applyWidth() {
   if (frame) frame.style.width = FRAME_WIDTHS[widthSel.value] || FRAME_WIDTHS.full;
 }
 
+// Measure the body box, not documentElement.scrollHeight: inside an iframe the
+// latter is floored at the frame's current viewport height, so the frame could
+// only ever grow and left dead space after a section collapsed.
 function syncFrameHeight(frame) {
   const d = frame.contentDocument;
-  if (!d || !d.documentElement) return;
-  frame.style.height = d.documentElement.scrollHeight + "px";
+  if (!d || !d.body) return;
+  const style = frame.contentWindow ? frame.contentWindow.getComputedStyle(d.body) : null;
+  const marginBottom = style ? parseFloat(style.marginBottom) || 0 : 0;
+  const height = d.body.getBoundingClientRect().height + d.body.offsetTop + marginBottom;
+  frame.style.height = Math.ceil(height) + "px";
 }
 
 // The frame is a real browsing context loading the production stylesheet, so the
@@ -102,7 +108,7 @@ function writeFrame(bodyHtml) {
   d.close();
   wireDocument(d);
   if (window.ResizeObserver) {
-    new ResizeObserver(() => syncFrameHeight(frame)).observe(d.documentElement);
+    new ResizeObserver(() => syncFrameHeight(frame)).observe(d.body);
   }
   d.addEventListener("click", () => setTimeout(() => syncFrameHeight(frame), 0));
   // The stylesheet loads asynchronously, so measure again once it applies.

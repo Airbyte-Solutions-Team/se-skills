@@ -666,3 +666,72 @@ def test_gallery_has_no_gallery_specific_responsive_rules(repo_root: Path) -> No
     gallery_js = (repo_root / "webapp" / "static" / "gallery.js").read_text(encoding="utf-8")
     assert 'href="/style.css"' in gallery_js
     assert 'narrow: "420px"' in gallery_js and 'tablet: "780px"' in gallery_js
+
+
+def test_gallery_frame_height_shrinks_when_the_document_gets_shorter(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    """Collapsing a section must not leave dead space inside the preview frame.
+
+    `documentElement.scrollHeight` inside an iframe is floored at the frame's own
+    viewport height, so measuring it makes the frame grow-only. The production
+    `syncFrameHeight` is loaded here and driven against a shrinking document.
+    """
+    chrome = _chrome_bin()
+    gallery_js = (repo_root / "webapp" / "static" / "gallery.js").as_posix()
+    harness = tmp_path / "frameheight.html"
+    harness.write_text(
+        '<!doctype html><html><head><meta charset="utf-8"></head><body>'
+        '<pre id="out"></pre><main id="view"></main>'
+        '<div id="gallery-error" class="hidden"></div><div id="gallery-picker"></div>'
+        '<div id="gallery-doc"></div>'
+        '<select id="gallery-width"><option value="full">full</option>'
+        '<option value="narrow">narrow</option></select>'
+        "<script>window.fetch = () => Promise.resolve({ ok: true, "
+        "json: () => Promise.resolve({ fixtures: [] }), text: () => Promise.resolve('') });"
+        "window.seReader = {};</script>"
+        f'<script src="file://{gallery_js}"></script>'
+        "<script>\n"
+        "const frame = document.createElement('iframe');\n"
+        "frame.className = 'gallery-frame';\n"
+        "frame.style.width = '780px';\n"
+        "document.getElementById('gallery-doc').appendChild(frame);\n"
+        "const d = frame.contentDocument;\n"
+        "d.open();\n"
+        "d.write('<!doctype html><body style=\"margin:0\"><div id=\"tall\" style=\"height:3000px\"></div></body>');\n"
+        "d.close();\n"
+        "syncFrameHeight(frame);\n"
+        "const tall = frame.offsetHeight;\n"
+        "d.getElementById('tall').style.height = '400px';\n"
+        "syncFrameHeight(frame);\n"
+        "const short = frame.offsetHeight;\n"
+        "document.getElementById('out').textContent = JSON.stringify({ tall, short });\n"
+        "</script></body></html>",
+        encoding="utf-8",
+    )
+    dom = subprocess.run(
+        [
+            chrome,
+            "--headless=new",
+            "--disable-gpu",
+            "--no-sandbox",
+            "--allow-file-access-from-files",
+            f"--user-data-dir={tmp_path / 'profile'}",
+            "--window-size=1400,900",
+            "--virtual-time-budget=5000",
+            "--dump-dom",
+            f"file://{harness}",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    payload = dom[dom.index('<pre id="out">') + len('<pre id="out">'):]
+    payload = payload[: payload.index("</pre>")]
+    for entity, char in (("&lt;", "<"), ("&gt;", ">"), ("&quot;", '"'), ("&amp;", "&")):
+        payload = payload.replace(entity, char)
+    data = json.loads(payload)
+
+    assert 2990 <= data["tall"] <= 3010, data
+    # The frame must follow the content back down instead of ratcheting upward.
+    assert 390 <= data["short"] <= 420, data
