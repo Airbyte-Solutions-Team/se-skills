@@ -481,8 +481,10 @@ def test_canonical_deal_assessment_business_context_is_extracted(tmp_path: Path)
 
 
 def test_legacy_deal_assessment_h2_business_context_is_extracted(tmp_path: Path) -> None:
-    """Legacy H2 Driver and Need bodies retain their main-era extraction path."""
-    path = tmp_path / "deal-assessment.md"
+    """Legacy peer H2 bodies remain separate in the production output layout."""
+    root = tmp_path / "TestCo" / "opportunities" / "default" / "outputs" / "deal-assessment"
+    root.mkdir(parents=True)
+    path = root / "deal-assessment-2026-07-10.md"
     text = textwrap.dedent(
         """\
         # Deal Assessment
@@ -490,6 +492,8 @@ def test_legacy_deal_assessment_h2_business_context_is_extracted(tmp_path: Path)
         The team needs a reliable reverse ETL foundation.
         ## Need
         They need Salesforce data in Snowflake this quarter.
+        ## Urgency
+        The migration must be ready before the October planning cycle.
         ## Source Coverage
         - synthetic
         """
@@ -497,20 +501,27 @@ def test_legacy_deal_assessment_h2_business_context_is_extracted(tmp_path: Path)
     path.write_text(text, encoding="utf-8")
     meta = output_schema.parse_output("deal-assessment", text)
     objectives = _extract_business_objectives(meta, path, tmp_path)
-    assert any("reverse ETL foundation" in item.objective for item in objectives)
-    assert any("Salesforce data in Snowflake" in item.objective for item in objectives)
+    assert [item.objective for item in objectives] == [
+        "The team needs a reliable reverse ETL foundation.",
+        "They need Salesforce data in Snowflake this quarter.",
+        "The migration must be ready before the October planning cycle.",
+    ]
 
 
 def test_need_connector_mining_is_narrow(tmp_path: Path) -> None:
-    """Deal Thesis Need contributes connectors but not generic technical facts."""
-    path = tmp_path / "deal-assessment.md"
+    """Only the raw legacy Need body contributes connector names."""
+    root = tmp_path / "TestCo" / "opportunities" / "default" / "outputs" / "deal-assessment"
+    root.mkdir(parents=True)
+    path = root / "deal-assessment-2026-07-10.md"
     text = textwrap.dedent(
         """\
         # Deal Assessment
-        ## Deal Thesis
-        ### Need
-        Move data from Salesforce into Snowflake. This must support a hard requirement
-        for hourly loads and depends on a security review.
+        ## Driver
+        The current Postgres estate needs modernization.
+        ## Need
+        Move data from Salesforce into Snowflake.
+        ## Urgency
+        The Postgres contract ends this quarter.
         ## Source Coverage
         - synthetic
         """
@@ -523,6 +534,7 @@ def test_need_connector_mining_is_narrow(tmp_path: Path) -> None:
     assert scope["requirements"] == []
     assert scope["use_cases"] == []
     assert scope["dependencies"] == []
+    assert "Postgres" not in {system.name for system in scope["sources"]}
 
 
 def test_h3_semantics_keep_legacy_qualification_evidence(tmp_path: Path) -> None:

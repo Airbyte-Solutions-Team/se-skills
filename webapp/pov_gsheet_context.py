@@ -444,24 +444,41 @@ def _semantic_bodies(
 
 def _legacy_h2_bodies(
     text: str,
-    skill: str,
+    _skill: str,
     heading_keys: set[str],
 ) -> list[tuple[str, str]]:
-    """Return bodies owned by legacy H2 headings, including aliased keys."""
-    parsed = _parse_h2_h3_bodies(text, skill)
-    arch = CANONICAL_ARCHITECTURE.get(skill)
+    """Return bodies owned by raw legacy H2 headings without alias merging."""
     selected: list[tuple[str, str]] = []
-    for line in text.splitlines():
-        match = re.match(r"^##\s+(.+?)\s*$", line)
-        if not match:
-            continue
-        raw_key = output_schema._normalize_heading(match.group(1))
-        if raw_key not in heading_keys:
-            continue
-        canonical_key = arch.aliases.get(raw_key, raw_key) if arch else raw_key
-        body = parsed.get((canonical_key, None), "").strip()
+    current_key: str | None = None
+    current_body: list[str] = []
+    in_fence = False
+
+    def flush() -> None:
+        if current_key not in heading_keys:
+            return
+        body = "\n".join(current_body).strip()
         if body:
-            selected.append((raw_key, body))
+            selected.append((current_key, body))
+
+    for line in text.splitlines():
+        if re.match(r"^\s*(```|~~~)", line):
+            in_fence = not in_fence
+            if current_key is not None:
+                current_body.append(line)
+            continue
+        if in_fence:
+            if current_key is not None:
+                current_body.append(line)
+            continue
+        match = re.match(r"^##\s+(.+?)\s*$", line)
+        if match:
+            flush()
+            current_key = output_schema._normalize_heading(match.group(1))
+            current_body = []
+            continue
+        if current_key is not None:
+            current_body.append(line)
+    flush()
     return selected
 
 
