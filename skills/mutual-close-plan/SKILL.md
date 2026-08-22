@@ -43,7 +43,7 @@ Cite sources inline. Mark any step whose owner/date isn't customer-confirmed as 
 
 Default = full close plan (milestone table with owners+dates, the two-sided swimlane, risks, the mutual-agreement ask).
 
-If user signals brief mode (`--brief`, `just the steps`, `MAP summary`): produce only the At a Glance card + the milestone table (step / owner / date / status) + the target signature date. Skip the swimlane narrative and risk detail. See `_se-playbook.md` "Output Mode".
+If user signals brief mode (`--brief`, `just the steps`, `MAP summary`): produce only the Close Summary card + the milestone table (step / owner / date / status) + the target signature date. Skip the swimlane narrative and risk detail. See `_se-playbook.md` "Output Mode".
 
 ## Anchor to the compelling event (D2 — this is what makes a close plan real)
 
@@ -144,7 +144,7 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 *A close plan is only real once the customer has agreed to it. End with the concrete ask.*
 > "Here's how I see the path from POC to go-live by [date]. Can we walk through it together, confirm the owners and dates on your side, and agree to a weekly 15-minute check-in until signature? If any of these dates don't work, I'd rather adjust the plan now than discover it in [target month]."
 
-If the plan is still a draft the customer hasn't seen, mark it ⬜ **not yet mutual** in At a Glance and make "review + agree with [EB/champion]" the next step.
+If the plan is still a draft the customer hasn't seen, mark it ⬜ **not yet mutual** in Close Summary and make "review + agree with [EB/champion]" the next step.
 
 ---
 

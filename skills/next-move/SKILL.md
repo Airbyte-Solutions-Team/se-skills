@@ -64,7 +64,7 @@ Before recommending any skill, check whether a fresh, relevant artifact already 
 ### Missing-prerequisite flag
 A deliverable skill (`poc-plan`, `roi-business-case`, `mutual-close-plan`, `coverage-handoff`) may only be the top recommendation when the artifact chain supports it. If you are recommending one anyway — for example, because the user explicitly asked for it or because SFDC/local signals strongly demand it — you must **flag the missing prerequisites**:
 
-1. **At-a-Glance confidence line** must name the missing artifact(s): e.g., "Medium — `poc-plan` is conditional on completing `tech-qual` and `connector-feasibility`."
+1. **Recommendation summary confidence line** must name the missing artifact(s): e.g., "Medium — `poc-plan` is conditional on completing `tech-qual` and `connector-feasibility`."
 2. **Why This Move / Rationale** must state that the recommendation is conditional and that the missing artifact(s) must be completed first.
 3. **Don't do yet** must list the premature skill(s) and the missing gate(s).
 4. If confidence is actually low (thin evidence, stale artifacts, conflicting signals), default to the **evidence-gathering recommendation** instead of a conditional deliverable.
@@ -158,7 +158,7 @@ Any stage + objection raised on most recent call
 3. Stage-based recommendation
 4. Active objection (add-on, not override)
 
-**Conflicting signals — name the tension, don't force one tree path.** When signals genuinely collide (e.g. all quals exist but are >30 days stale AND a fresh objection landed; or SFDC stage says POC-scoping but the local artifacts say early-discovery), don't silently pick one branch. In the `Current read`, name the tension in one line and choose the move that **de-risks most**, stating the assumption behind the pick — e.g. "Stage says POC-scoping, but a 60-day-old biz-qual + a fresh pricing objection outrank that — recommend `deal-assessment` first to re-baseline, then `objection-handler`. Assumes the objection is real, not a negotiating feint." The recommendation still resolves to ONE top move in the At-a-Glance (keep those labels exactly — the reader keys on them); the conflict handling lives in the prose, not in new card fields.
+**Conflicting signals — name the tension, don't force one tree path.** When signals genuinely collide (e.g. all quals exist but are >30 days stale AND a fresh objection landed; or SFDC stage says POC-scoping but the local artifacts say early-discovery), don't silently pick one branch. In the `Current read`, name the tension in one line and choose the move that **de-risks most**, stating the assumption behind the pick — e.g. "Stage says POC-scoping, but a 60-day-old biz-qual + a fresh pricing objection outrank that — recommend `deal-assessment` first to re-baseline, then `objection-handler`. Assumes the objection is real, not a negotiating feint." The recommendation still resolves to ONE top move in the Recommendation summary (keep those labels exactly — the reader keys on them); the conflict handling lives in the prose, not in new card fields.
 
 ---
 
@@ -182,7 +182,7 @@ Any stage + objection raised on most recent call
 >
 > Source Coverage must be the **final H2**. The profile-specific summary block is an H3 under the title block (not a navigable section).
 
-*Lead with an H1 title (the web app reader uses the H1 as the page title), then a lightweight **At-a-Glance decision card**. next-move is **decision-first**: the recommendation is the lead, the audit trail is the tail. The web-app reader promotes the At-a-Glance block into a prominent hero card above the body, so the labels below are chosen to render as decision tiles — keep the wording.*
+*Lead with an H1 title (the web app reader uses the H1 as the page title), then a lightweight **Recommendation summary card**. next-move is **decision-first**: the recommendation is the lead, the audit trail is the tail. The web-app reader promotes the recognized profile summary into a prominent hero card above the body, so the labels below are chosen to render as decision tiles — keep the wording.*
 
 ---
 

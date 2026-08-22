@@ -172,7 +172,7 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 > Every certification/security claim must be either:
 > (a) cited to an authoritative source with a date, or
 > (b) written as "believed — SE to verify with [team] before customer confirmation."
-> Never state a certification (SOC 2, HIPAA, region availability, etc.) as fact from memory. Separate `[customer requires]` from `[Airbyte supports — verified]` from `[Airbyte supports — unverified]`. If any compliance line is unverified, note it in the At-a-Glance ("compliance claims pending verification").
+> Never state a certification (SOC 2, HIPAA, region availability, etc.) as fact from memory. Separate `[customer requires]` from `[Airbyte supports — verified]` from `[Airbyte supports — unverified]`. If any compliance line is unverified, note it in the Decision Summary ("compliance claims pending verification").
 >
 > **Ground each security/compliance requirement in a NAMED entitlement (DS2), not memory.** Per `_se-playbook.md` → "Product & Connector Reference Data" (DS2 = `reference_data.repos.airbyte_platform`), the source of truth is the real `airbyte-commons-entitlements/src/main/kotlin/io/airbyte/commons/entitlements/models/EntitlementDefinitions.kt` — reading it is how you verify a capability exists. Map each requirement to its `feature-*` entitlement when one exists:
 > - SSO / identity federation → `feature-sso`

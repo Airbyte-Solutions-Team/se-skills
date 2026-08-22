@@ -126,7 +126,7 @@ For each customer in scope, summarize stage, recent activity, MEDDPICC gap, and 
 # AE Sync Prep — [AE Name] × [SE name] — [Date]
 **Date:** [today's date, long form] · **Duration:** [if known]
 
-### At a Glance
+### Meeting / Decision Summary
 - **Meeting type:** AE sync (1:1 with [AE Name])
 - **Meeting purpose:** [What does the SE want to walk away with?]
 - **Deals in scope:** [Customer A, Customer B, … — count]
@@ -164,7 +164,7 @@ For each customer in scope:
 # Forecast Prep — [Date / Forecast Period]
 **Date:** [today's date, long form] · **Forecast period:** [period]
 
-### At a Glance
+### Meeting / Decision Summary
 - **Meeting type:** Forecast review ([forecast period])
 - **Deals in scope:** ==[count]== · **Total committed:** ==$[amount]==
 - **Headline status:** [N] Commit / [N] Best Case / [N] Pipeline
@@ -202,7 +202,7 @@ Apply Sandler honesty — which "Best Case" deals are actually pipeline padding?
 # Exec Readout — [Customer] for [Exec Name] — [Date]
 **Date:** [today's date, long form] · **Audience:** [exec name + role] · **Time slot:** [duration — typically 15-30 min]
 
-### At a Glance
+### Meeting / Decision Summary
 - **Meeting type:** Exec readout for [Exec Name] ([role])
 - **Deal in scope:** [Customer] · **Size:** ==$[amount]== · **Expected close:** ==[date]==
 - **Exec's likely question:** [what are they really going to ask? — often "is this going to close" or "do you need help"]
@@ -239,7 +239,7 @@ Be concrete:
 # Deal Review — [Customer] — [Date]
 **Date:** [today's date, long form] · **Attendees:** [AE, SE, AM, others]
 
-### At a Glance
+### Meeting / Decision Summary
 - **Meeting type:** Cross-functional deal review
 - **Purpose:** [alignment / unblock / strategic decision]
 - **Deal in scope:** [Customer] · **Stage:** [stage] · **Size:** ==$[amount]==

@@ -42,7 +42,7 @@ Cite each source inline. Where a number isn't in any source, mark it a **[confir
 
 Default = full business case (baseline, Airbyte projection, TCO comparison, payback, one-slide summary, assumptions).
 
-If user signals brief mode (`--brief`, `just the number`, `one-slide`): produce only the At a Glance card + the one-slide TCO summary table + payback + the top 3 assumptions. Skip the derivation detail. See `_se-playbook.md` "Output Mode".
+If user signals brief mode (`--brief`, `just the number`, `one-slide`): produce only the Business-Case Summary card + the one-slide TCO summary table + payback + the top 3 assumptions. Skip the derivation detail. See `_se-playbook.md` "Output Mode".
 
 ## Airbyte pricing model (get this right — it's the spine of the projection)
 

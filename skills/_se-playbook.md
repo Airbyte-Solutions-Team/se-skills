@@ -446,12 +446,12 @@ Every saving skill produces a markdown document that is read both in the raw `.m
 # <Customer> — <Skill Title>: <one-line verdict/descriptor>
 **Date:** June 18, 2026 · **Stage:** <stage> · **<key>:** <value>   ← ONE line, `·`-separated, long-form date
 
-### At a Glance
+### <Profile Summary — e.g. Decision Summary>
 - **Verdict:** <one line — wrap the headline figure in ==…==>
 - **<Label>:** <value> · **<Label>:** ==<key number>== · **<Label>:** <value>
 - **Top <blocker/risk/gap>:** <one line>
 
-**Jump to:** [At a Glance](#at-a-glance) · [<Section>](#slug) · … · [Source Coverage](#source-coverage)   ← Source Coverage is LAST
+**Jump to:** [<Section>](#slug) · … · [Source Coverage](#source-coverage)   ← Source Coverage is LAST
 
 ## <First body section>   ← lead with the decision content, not the audit trail
 ### <subsection>
@@ -512,9 +512,9 @@ Legacy headings are preserved through the `aliases` map in `webapp/architecture.
 
 The **analytical skills** — `tech-qual`, `biz-qual`, `deal-assessment`, `deployment-model-qual`, `connector-feasibility`, `poc-plan` — produce reports a busy SE or leader reads to make a call. Structure them so the doc answers, **in this order**: *(1) Should we proceed? (2) Why? (3) What could block us? (4) What do we do next? (5) What's the evidence?* The reader should get the answer in ~10 seconds and only descend for detail. This is a layer ON TOP of the top-of-document structure above — it does not replace each skill's signature sections, it standardizes the **head** and the **high-value tables**.
 
-**1. Decision Card.** The `At a Glance` block for an analytical skill IS the decision card — lead with the judgment, not metadata. Use these labels (adapt wording per skill; omit lines that don't apply):
+**1. Decision Card.** The profile-specific summary block for an analytical skill IS the decision card — lead with the judgment, not metadata. Legacy outputs may use `### At a Glance`. Use these labels (adapt wording per skill; omit lines that don't apply):
 ```markdown
-### At a Glance
+### <Profile Summary — e.g. Decision Summary>
 - **Verdict / Fit:** <🟢/🟡/🔴 pill + 3–6 word headline>
 - **Recommended motion:** <the one next move — e.g. "Proceed to CDK workshop">
 - **Primary risk:** <the single biggest thing that could blow itup — one line>
@@ -555,7 +555,7 @@ Status legend stays 🟢 strong/viable · 🟡 needs validation/caveat · 🔴 w
 ### Heading rule (required for the index to work)
 
 - **Every top-level section is an H2 (`##`).** The web app sidebar and the Jump-to index only anchor headings. Never skip from H1 straight to H3 for a primary section.
-- Use **H3 (`###`)** for sub-parts. `At a Glance` is an H3 (it sits under the title block, not a navigable section).
+- Use **H3 (`###`)** for sub-parts. The profile-specific summary is an H3 under the title block, not a navigable section; legacy outputs may use `### At a Glance`.
 - Don't go deeper than H3 in output.
 
 ### Callouts (verdicts, risks, blockers, questions)
@@ -588,9 +588,9 @@ Probability **==40–60%==**, deal size ==$88K==, latency ==13h → 15min==, ==3
 ### Exemptions
 
 - **`follow-up-email` is fully exempt** — it's a customer-facing email, not a report. No At-a-Glance, no Jump-to, no TOC headings, no callouts, no Decision-First layout. Keep its existing email structure.
-- **`next-move` leads with a lightweight Decision Card** — as the SE workflow router ("what do I do next?"), its recommendation IS the deliverable, so it now leads with an **At-a-Glance card** (`Recommended Next Move`/`Confidence`/`Stage`/`Top Blocker` → hero tiles) + a `### Current read` narrative + the `[!blocker]`/`[!risk]` override callouts, followed by decision-first sections (Why This Move → Ranked Next Moves → Don't Do Yet → Workflow State → Context Inventory → Gaps → External Actions → Source Coverage). It stays exempt from the *full* analytical apparatus (MEDDPICC scorecard, formal decision tables) — the card + ranked-move cards are enough for a router. (Reclassified 2026-07-02 from light-touch.)
-- **`objection-handler` and `account-refresher` are light-touch** — already short and scannable. They may use a callout for severity, and account-refresher's "10-Second Version" already serves as a decision card, but the full Decision-First layout (scorecard, decision tables) is optional, not required.
-- **`internal-prep` adopts the Decision Card concept lightly** — its four sub-templates (ae-sync, forecast, exec-readout, deal-review) already have tight At-a-Glance blocks; align their labels to the decision-card spirit (lead with the judgment/ask) but they keep their own per-type section structure.
+- **`next-move` leads with a lightweight Decision Card** — as the SE workflow router ("what do I do next?"), its recommendation IS the deliverable, so it now leads with a **Recommendation summary card** (`Recommended Next Move`/`Confidence`/`Stage`/`Top Blocker` → hero tiles) + a `### Current read` narrative + the `[!blocker]`/`[!risk]` override callouts, followed by decision-first sections (Why This Move → Ranked Next Moves → Don't Do Yet → Workflow State → Context Inventory → Gaps → External Actions → Source Coverage). It stays exempt from the *full* analytical apparatus (MEDDPICC scorecard, formal decision tables) — the card + ranked-move cards are enough for a router. (Reclassified 2026-07-02 from light-touch.)
+- **`objection-handler` and `account-refresher` are light-touch** — already short and scannable. They may use a callout for severity, and account-refresher's **Account Snapshot** already serves as a decision card, but the full Decision-First layout (scorecard, decision tables) is optional, not required.
+- **`internal-prep` adopts the Decision Card concept lightly** — its four sub-templates (ae-sync, forecast, exec-readout, deal-review) already have tight Meeting / Decision Summary blocks; align their labels to the decision-card spirit (lead with the judgment/ask) but they keep their own per-type section structure.
 - **The six analytical skills** (`tech-qual`, `biz-qual`, `deal-assessment`, `deployment-model-qual`, `connector-feasibility`, `poc-plan`) **fully adopt** the Decision-First Layout above.
 
 ### Backward compatibility
@@ -601,7 +601,7 @@ The web app degrades gracefully: documents predating this contract still get an 
 
 ## Confidence & Assumptions (all skills)
 
-Every analytical or decision output states, near the top (inside or just under At-a-Glance):
+Every analytical or decision output states, near the top (inside or just under its profile-specific summary):
 
 - **Working assumptions** — anything the read depends on that isn't confirmed. Written as an SE would say it, e.g. "Assuming the 05.20 architecture is still current" or "Assuming SFDC Amount reflects the live scope."
 - **What would change this** — the one or two facts that, if different, flip the verdict. e.g. "If Flex is now GA, the deployment verdict changes."
@@ -648,7 +648,7 @@ If a skill claims to do thorough work but reads only part of a source, this sect
 ### Fail loud on missing sources/tools (don't silently degrade)
 
 Graceful degradation must be *visible*, not silent. Source Coverage MUST list each expected source/tool as `used` or `unavailable` (never omit an unavailable one). If a **load-bearing** source was unavailable:
-1. Cap the At-a-Glance confidence (a metadata-only read is never High confidence), and
+1. Cap the profile-specific summary confidence (a metadata-only read is never High confidence), and
 2. Say so in the lead, in one clause — e.g. "assessed from registry metadata only; prod failure data was unavailable, so reliability risks are unverified."
 
 A confident-looking doc built on a fraction of the intended evidence is worse than an honest partial one.
@@ -852,7 +852,7 @@ When a skill consumes DS1–DS4 or the objection reference, include a single bul
 
 > - **Reference data freshness:** connector registry cache 2026-07-08 (6 days old, fresh); airbyte-platform repo 2026-07-01 (13 days old, stale); objection reference 2026-07-14 (0 days old, fresh).
 
-If any source is **stale** (older than its threshold) or **missing**, add a `[!warning]` callout in `## At a Glance` or `## Source Coverage` stating: "Product reference data is stale or unavailable; verify current availability, entitlements, and positioning before relying on these product claims." Cap the At-a-Glance confidence accordingly — a recommendation built on stale product data is never High confidence.
+If any source is **stale** (older than its threshold) or **missing**, add a `[!warning]` callout in the profile-specific summary H3 or `## Source Coverage` stating: "Product reference data is stale or unavailable; verify current availability, entitlements, and positioning before relying on these product claims." Cap the profile-specific summary confidence accordingly — a recommendation built on stale product data is never High confidence.
 
 The webapp will also compute freshness from file mtimes and show its own banner, but the skill must still be transparent in the document it produces.
 

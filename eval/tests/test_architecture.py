@@ -44,6 +44,7 @@ def test_pov_gsheet_is_lightweight_report() -> None:
     """pov-gsheet is a lightweight schema with a receipt and source coverage."""
     arch = CANONICAL_ARCHITECTURE["pov-gsheet"]
     assert arch.canonical_h2_order == ["receipt", _SOURCE_COVERAGE]
+    assert arch.top_summary_name == "At a Glance"
     assert arch.source_coverage_required is True
 
 
@@ -176,6 +177,17 @@ def test_profile_summary_names_match_reader(repo_root: Path) -> None:
         and not arch.structured_exception
         and arch.skill != "pov-gsheet"
     }
+
+
+@pytest.mark.parametrize("arch", _report_skills(), ids=lambda a: a.skill)
+def test_live_producer_templates_use_profile_summary_name(arch, repo_root: Path) -> None:
+    """Current producer guidance does not regress to a legacy summary heading."""
+    if arch.skill == "coverage-handoff" or arch.top_summary_name in {"", "At a Glance"}:
+        return
+    text = (repo_root / "skills" / arch.skill / "SKILL.md").read_text(encoding="utf-8")
+    live_text = text.split("## Changelog", 1)[0]
+    assert f"### {arch.top_summary_name}" in live_text, arch.skill
+    assert "\n### At a Glance\n" not in live_text, arch.skill
 
 
 def _canonical_callout(repo_root: Path, skill: str) -> str:
