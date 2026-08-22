@@ -401,12 +401,14 @@ def test_context_builder_gathers_workspace_data(tmp_path: Path) -> None:
     snowflake = next(s for s in ctx.technical_scope["destinations"] if s.name == "Snowflake")
     assert snowflake.sources == [
         "TestCo/opportunities/default/outputs/connector-feasibility/"
-        "connector-feasibility-2026-07-10.md"
+        "connector-feasibility-2026-07-10.md",
+        "TestCo/opportunities/default/outputs/deal-assessment/"
+        "deal-assessment-2026-07-10.md",
     ]
 
 
 def test_h3_semantics_exclude_deal_actions_and_coaching(tmp_path: Path) -> None:
-    """Deal rationale, close actions, and coaching cannot become POV scope or criteria."""
+    """Deal thesis context is retained while actions, risks, and coaching stay excluded."""
     path = tmp_path / "deal-assessment.md"
     text = textwrap.dedent(
         """\
@@ -417,7 +419,7 @@ def test_h3_semantics_exclude_deal_actions_and_coaching(tmp_path: Path) -> None:
         ### Driver
         The team wants faster pipelines.
         ### Need
-        Salesforce into Snowflake.
+        Move data from Salesforce into Snowflake.
         ## Close Path Blockers & Loss Risks
         ### What Would Close It
         - Complete an executive review.
@@ -433,15 +435,94 @@ def test_h3_semantics_exclude_deal_actions_and_coaching(tmp_path: Path) -> None:
     objectives = _extract_business_objectives(meta, path, tmp_path)
     technical = _extract_technical_scope(meta, path, tmp_path)
     criteria = _extract_success_criteria(meta, path, tmp_path)
-    assert objectives == []
-    assert technical == {
-        "sources": [],
-        "destinations": [],
-        "use_cases": [],
-        "requirements": [],
-        "dependencies": [],
-    }
+    assert any("faster pipelines" in item.objective for item in objectives)
+    assert any("Salesforce into Snowflake" in item.objective for item in objectives)
+    assert not any("executive review" in item.objective for item in objectives)
+    assert not any("dated next step" in item.objective for item in objectives)
+    assert [system.name for system in technical["sources"]] == ["Salesforce"]
+    assert [system.name for system in technical["destinations"]] == ["Snowflake"]
+    assert technical["use_cases"] == []
+    assert technical["requirements"] == []
+    assert technical["dependencies"] == []
     assert criteria == []
+
+
+def test_canonical_deal_assessment_business_context_is_extracted(tmp_path: Path) -> None:
+    """Deal Thesis Driver, Need, and Urgency are legitimate POV objectives."""
+    path = tmp_path / "deal-assessment.md"
+    text = textwrap.dedent(
+        """\
+        # Deal Assessment
+        ### Decision Summary / Bottom Line
+        - **Verdict:** viable
+        ## Deal Thesis
+        ### Driver
+        Reduce the data team's pipeline maintenance burden.
+        ### Need
+        Move Salesforce records into Snowflake without daily exports.
+        ### Urgency
+        The migration must be ready before the October planning cycle.
+        ## Close Path Blockers & Loss Risks
+        ### Loss Risks
+        The security review could slip.
+        ## Source Coverage
+        - synthetic
+        """
+    )
+    path.write_text(text, encoding="utf-8")
+    meta = output_schema.parse_output("deal-assessment", text)
+    objectives = _extract_business_objectives(meta, path, tmp_path)
+    assert [item.objective for item in objectives] == [
+        "Reduce the data team's pipeline maintenance burden.",
+        "Move Salesforce records into Snowflake without daily exports.",
+        "The migration must be ready before the October planning cycle.",
+    ]
+    assert not any("security review" in item.objective for item in objectives)
+
+
+def test_legacy_deal_assessment_h2_business_context_is_extracted(tmp_path: Path) -> None:
+    """Legacy H2 Driver and Need bodies retain their main-era extraction path."""
+    path = tmp_path / "deal-assessment.md"
+    text = textwrap.dedent(
+        """\
+        # Deal Assessment
+        ## Driver
+        The team needs a reliable reverse ETL foundation.
+        ## Need
+        They need Salesforce data in Snowflake this quarter.
+        ## Source Coverage
+        - synthetic
+        """
+    )
+    path.write_text(text, encoding="utf-8")
+    meta = output_schema.parse_output("deal-assessment", text)
+    objectives = _extract_business_objectives(meta, path, tmp_path)
+    assert any("reverse ETL foundation" in item.objective for item in objectives)
+    assert any("Salesforce data in Snowflake" in item.objective for item in objectives)
+
+
+def test_need_connector_mining_is_narrow(tmp_path: Path) -> None:
+    """Deal Thesis Need contributes connectors but not generic technical facts."""
+    path = tmp_path / "deal-assessment.md"
+    text = textwrap.dedent(
+        """\
+        # Deal Assessment
+        ## Deal Thesis
+        ### Need
+        Move data from Salesforce into Snowflake. This must support a hard requirement
+        for hourly loads and depends on a security review.
+        ## Source Coverage
+        - synthetic
+        """
+    )
+    path.write_text(text, encoding="utf-8")
+    meta = output_schema.parse_output("deal-assessment", text)
+    scope = _extract_technical_scope(meta, path, tmp_path)
+    assert [system.name for system in scope["sources"]] == ["Salesforce"]
+    assert [system.name for system in scope["destinations"]] == ["Snowflake"]
+    assert scope["requirements"] == []
+    assert scope["use_cases"] == []
+    assert scope["dependencies"] == []
 
 
 def test_h3_semantics_keep_legacy_qualification_evidence(tmp_path: Path) -> None:

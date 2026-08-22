@@ -2,10 +2,12 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 21, 2026 — HEAD `d441117` on `devin/1787273787-ux010-content-architecture`.
+_Last updated: August 21, 2026 — HEAD `(pending)` on `devin/1787273787-ux010-content-architecture`.
 
 
 ## Built this session (newest first — see `git log`)
+
+- **Round-3 architecture and POV restoration (August 21).** Unified reader summary filtering with promotion, synchronized producer callouts and stale guidance with the registry, removed the duplicate post-call attendee subsection, restored Deal Assessment Driver/Need/Urgency extraction (including legacy H2s), and narrowly restored Need connector mining. Added callout, reader round-trip, and POV regressions.
 
 - **Skill-specific producer audit contracts (August 21).** Replaced the repeated decision-evidence sentence with source-specific Source Coverage audit trails, removed it where real POC/account/connector contracts already follow, and added genuine coaching, desired-next-step, and deferred-action guidance. Extended the architecture regression to reject the replacement filler.
 

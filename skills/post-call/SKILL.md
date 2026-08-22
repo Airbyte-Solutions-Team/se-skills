@@ -71,7 +71,6 @@ If the user signals brief mode (`--brief`, `quick summary`, `just the takeaways`
 > - under `Deal Impact`: Movement, Deal Health, MEDDPICC Changes
 > - under `Objections & Open Questions`: New Objections / Concerns Surfaced, Open Questions / Follow-Ups
 > - under `Actions & Next Step`: Action Items, Next Step
-> - under `Key Takeaways`: Attendees
 >
 > Source Coverage must be the **final H2** when required. The profile-specific summary block is an H3 under the title block (not a navigable section).
 
@@ -101,10 +100,6 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 
 
 3–6 bullets capturing the most important things learned. Lead with what changed in your understanding of the deal, not a chronological recap. Mark each takeaway `[stated]` (the customer said it — cite speaker) or `[inferred]` (your read of the evidence) — never blend the two in one bullet. A downstream skill (deal-assessment, tech-qual) will treat a `[stated]` fact differently from an `[inferred]` read.
-
-### Attendees
-- **Airbyte:** [names + roles]
-- **Customer:** [names + roles]
 
 ## Deal Impact
 

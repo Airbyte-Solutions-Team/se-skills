@@ -178,6 +178,63 @@ def test_profile_summary_names_match_reader(repo_root: Path) -> None:
     }
 
 
+def _canonical_callout(repo_root: Path, skill: str) -> str:
+    text = (repo_root / "skills" / skill / "SKILL.md").read_text(encoding="utf-8")
+    start = text.index(f"> [!info] Canonical output architecture for `{skill}`")
+    lines = text[start:].splitlines()
+    block: list[str] = []
+    for line in lines:
+        if block and line and not line.startswith(">"):
+            break
+        block.append(line)
+    return "\n".join(block)
+
+
+@pytest.mark.parametrize(
+    "skill",
+    tuple(
+        arch.skill
+        for arch in _report_skills()
+        if arch.skill not in {"coverage-handoff", "pov-gsheet"}
+    ),
+)
+def test_canonical_callouts_match_registry(skill: str, repo_root: Path) -> None:
+    """Producer callouts must declare the same architecture as the registry."""
+    arch = CANONICAL_ARCHITECTURE[skill]
+    callout = _canonical_callout(repo_root, skill)
+    heading_names = re.findall(r"^> \d+\. `([^`]+)`$", callout, flags=re.MULTILINE)
+    assert [arch.canonical_key(name) for name in heading_names] == arch.canonical_h2_order
+
+    for parent, children in arch.h3_groups.items():
+        parent_name = display_name_for_key(parent)
+        match = re.search(
+            rf"^> - under `{re.escape(parent_name)}`: (.+)$",
+            callout,
+            flags=re.MULTILINE,
+        )
+        assert match, f"{skill}: callout missing H3 declaration for {parent_name}"
+        declared = {
+            _normalize_heading(name.strip())
+            for name in match.group(1).split(",")
+        }
+        expected = {
+            _normalize_heading(display_name_for_key(child))
+            for child in children
+        }
+        assert declared == expected, f"{skill}: callout H3 drift under {parent}"
+
+
+def test_coverage_handoff_callout_declares_html_exception(repo_root: Path) -> None:
+    """Coverage Handoff has one truthful HTML structure, not a Markdown surrogate."""
+    callout = _canonical_callout(repo_root, "coverage-handoff")
+    assert "HTML-artifact exception" in callout
+    assert "section-title" in callout
+    assert "second Markdown H2/H3 structure" in callout
+    names = re.findall(r"^> \d+\. `([^`]+)`$", callout, flags=re.MULTILINE)
+    arch = CANONICAL_ARCHITECTURE["coverage-handoff"]
+    assert names == [display_name_for_key(key) for key in arch.canonical_h2_order]
+
+
 @pytest.mark.parametrize(
     "skill",
     (

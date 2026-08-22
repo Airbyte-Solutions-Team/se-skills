@@ -461,10 +461,10 @@ Every saving skill produces a markdown document that is read both in the raw `.m
 …(anti-hallucination block — see Source Coverage Transparency)…
 ```
 
-**Source Coverage goes at the BOTTOM.** It is audit/evidence, not the lead — the reader wants the answer first, the trail last. Put the one-line "Source confidence" summary in the At-a-Glance decision card; place the full file list as the final content section (the web app also collapses audit sections, so low placement + collapse both defer it). This applies to **all** saving skills.
+**Source Coverage goes at the BOTTOM for report-producing skills.** It is audit/evidence, not the lead — the reader wants the answer first, the trail last. Put the one-line "Source confidence" summary in the profile-specific summary card; place the full file list as the final content section (the web app also collapses audit sections, so low placement + collapse both defer it). `objection-handler` includes Source Coverage only for customer-specific outputs; specialized non-report artifacts are exempt.
 
-- **The meta line under the H1 is ONE line.** Put the 2–4 most-scannable facts (date, stage, deal size, SE) on a single line joined by ` · `. **Never stack multiple `**Label:**` lines as separate paragraphs** — in markdown, adjacent lines with no blank line between them collapse into one flowing paragraph, and the web app renders that as an unreadable run-on blob. Everything else (attendees, contacts, meeting type, prerequisites, durations) belongs in the **At a Glance** list below, NOT in the header. If a fact needs its own row, make it an At-a-Glance bullet — a list item, not a loose paragraph.
-- **At a Glance** is a short labeled key/value list (3–6 lines) — the single most decision-relevant facts. It is NOT a table or a card; just bold `**Label:**` pairs, each as its own `- ` bullet (list items render as discrete rows; loose lines do not). Don't repeat the header's facts here — the meta line and At-a-Glance are complementary, not duplicative.
+- **The meta line under the H1 is ONE line.** Put the 2–4 most-scannable facts (date, stage, deal size, SE) on a single line joined by ` · `. **Never stack multiple `**Label:**` lines as separate paragraphs** — in markdown, adjacent lines with no blank line between them collapse into one flowing paragraph, and the web app renders that as an unreadable run-on blob. Everything else (attendees, contacts, meeting type, prerequisites, durations) belongs in the profile-specific summary list below, NOT in the header. If a fact needs its own row, make it a summary bullet — a list item, not a loose paragraph.
+- **The profile-specific summary** is a short labeled key/value list (3–6 lines) — the single most decision-relevant facts. It is NOT a table or a card; just bold `**Label:**` pairs, each as its own `- ` bullet (list items render as discrete rows; loose lines do not). Don't repeat the header's facts here — the meta line and summary are complementary, not duplicative. Legacy outputs may use `### At a Glance`.
 - **Jump to** is a one-line list of links to the document's `##` sections. The web app also auto-builds a sidebar from the headings, but the inline Jump-to keeps the raw `.md` navigable. Anchor slugs are lowercase, non-alphanumeric → `-` (e.g. `## Fit Verdict` → `#fit-verdict`).
 
 ### Canonical content architecture (source of truth)
@@ -472,10 +472,10 @@ Every saving skill produces a markdown document that is read both in the raw `.m
 The canonical H2/H3 structure for every saving skill is declared in `webapp/architecture.py`. The validator, the web-reader sidebar, and the skill prompts all consume that single source of truth. Skill output should follow this order:
 
 - **One H1** is the document title, followed by a single `**Date:** ...` meta line.
-- `### At a Glance` (or the profile-specific top-summary name) is an H3 decision card under the title block — it is not a navigable H2.
+- The profile-specific top-summary name (or legacy `### At a Glance`) is an H3 decision card under the title block — it is not a navigable H2.
 - `**Jump to:**` lists every H2 in document order, with `Source Coverage` last.
 - **H2 = major thought.** Every primary section is an H2. H3 (`###`) is used for sub-parts inside an H2.
-- **Source Coverage is always the final H2.** It is the audit trail, not the lead.
+- **Source Coverage is the final H2 for report-producing skills.** `objection-handler` uses it only for customer-specific outputs; specialized non-report artifacts do not inherit this report section.
 - **Methodology terms** (MEDDPICC, the five questions, scorecard dimensions) belong inside a narrative H2, not as top-level sections.
 - **Consolidate related topics.** Closely related sub-topics become H3s under one H2 rather than separate H2s.
 - **The sidebar mirrors the Markdown source order exactly.** The reader no longer groups headings by intent (`Decision / Context / Execution`) and no longer reorders them.
@@ -621,7 +621,7 @@ When a skill processes large source material (transcripts, multi-doc synthesis),
 
 ### The rule
 
-**Every skill that synthesizes from external sources should include a "Source Coverage" section as the final content section of its output**, stating:
+**Every report-producing skill that synthesizes from external sources should include a "Source Coverage" section as the final content section of its output**, stating:
 - Which files were read
 - For long transcripts: line count read / total line count
 - For multi-doc synthesis: list of files actually opened
@@ -926,7 +926,7 @@ The fragments below are referenced from multiple `SKILL.md` files. When a skill-
 
 ### Output format reference
 
-Saving skills produce a Markdown document that follows the shared `Output Document Format` above: top-of-document title/meta line, `### At a Glance`, `**Jump to:**` index, `##` body sections, and a final `## Source Coverage` audit section. Use callouts (`[!verdict]`, `[!risk]`, `[!blocker]`, `[!info]`) only for genuinely decision-relevant moments, wrap 3–6 key figures in `==…==`, and keep `Source Coverage` at the bottom.
+Report-producing saving skills produce a Markdown document that follows the shared `Output Document Format` above: top-of-document title/meta line, a profile-specific summary H3 (legacy outputs may use `### At a Glance`), `**Jump to:**` index, `##` body sections, and a final `## Source Coverage` audit section. Use callouts (`[!verdict]`, `[!risk]`, `[!blocker]`, `[!info]`) only for genuinely decision-relevant moments, wrap 3–6 key figures in `==…==`, and keep `Source Coverage` at the bottom. `objection-handler` includes that section only for customer-specific outputs; specialized non-report artifacts are exempt.
 
 ### Pre-flight source check (qualification and synthesis skills)
 

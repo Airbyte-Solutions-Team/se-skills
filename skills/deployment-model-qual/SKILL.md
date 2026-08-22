@@ -196,8 +196,7 @@ For each 🟢 answer:
 ---
 
 ## Remaining Validation
-### Discovery Questions for Next Call
-If any answer is Unknown or ambiguous, draft 3-5 specific questions the SE can ask to close the gap. Avoid generic phrasing — use SPIN/Sandler tactics. Examples:
+If any answer is Unknown or ambiguous, draft 3-5 specific questions the SE can ask to close the gap directly under `## Remaining Validation`. Avoid generic phrasing — use SPIN/Sandler tactics. Examples:
 
 - "Walk me through how your security team thinks about data leaving your environment. Where's the line?"
 - "If we ran the data plane in your VPC vs. ours, would that change the conversation with your CISO?"

@@ -384,6 +384,16 @@ function summaryHeadingLabelText(text) {
   return /^at a glance$/i.test(value) ? "At a Glance" : "";
 }
 
+function isSummaryHeadingText(text) {
+  return Boolean(summaryHeadingLabelText(text))
+    || /^(?:\d+-second|current read|in (?:a )?nutshell)\b/i.test((text || "").trim());
+}
+
+function filterSummaryTocEntries(toc) {
+  return (toc || []).filter((t) => (t.level === 2 || t.level === 3)
+    && !isSummaryHeadingText(t.text));
+}
+
 function summaryHeadingLabel(section) {
   const heading = section?.querySelector(":scope > h2, :scope > h3");
   return summaryHeadingLabelText(heading?.textContent || "");
@@ -2532,10 +2542,9 @@ async function openOutput(path, title, ctx) {
   // mirrors the Markdown source exactly; H2s are primary navigation and immediately
   // following H3s are indented beneath them. Grouping by intent (Decision / Context
   // / Execution) is removed so the reader never contradicts the document order.
-  // Drop the At-a-Glance entry from the index once it's promoted to the exec card
-  // (its in-sheet anchor no longer exists). Keep it otherwise (backward compat).
-  const tocEntries = toc.filter((t) => (t.level === 2 || t.level === 3)
-    && !(glancePromoted && /at a glance|\d+-second|current read|in (a )?nutshell/i.test(t.text)));
+  // Summary headings are lead metadata, not navigable sections. Filter them
+  // whether or not promotion found enough labels to build an executive card.
+  const tocEntries = filterSummaryTocEntries(toc);
   const tocHtml = tocEntries
     .map((t) => `<a href="#toc-${t.id}" class="doc-toc-link lvl${t.level}">${esc(conciseLabel(t.text))}</a>`)
     .join("");

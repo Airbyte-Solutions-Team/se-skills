@@ -176,6 +176,10 @@ Any stage + objection raised on most recent call
 > 5. `Evidence Gaps And External Actions`
 > 6. `Source Coverage`
 
+> **H3 subtopics (when used):**
+> - under `Why This Move`: Current Read
+> - under `Evidence Gaps & External Actions`: Context Inventory, Gaps, External Actions
+>
 > Source Coverage must be the **final H2**. The profile-specific summary block is an H3 under the title block (not a navigable section).
 
 *Lead with an H1 title (the web app reader uses the H1 as the page title), then a lightweight **At-a-Glance decision card**. next-move is **decision-first**: the recommendation is the lead, the audit trail is the tail. The web-app reader promotes the At-a-Glance block into a prominent hero card above the body, so the labels below are chosen to render as decision tiles — keep the wording.*

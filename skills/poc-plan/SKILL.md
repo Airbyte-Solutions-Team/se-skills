@@ -59,7 +59,7 @@ Cite source documents inline. **If a POC is being scoped without prior tech-qual
 
 Default = full POC plan (objective, mutual commitments, success criteria, scope, architecture, timeline, R&R, prerequisites, risks, exit criteria, story).
 
-If user signals brief mode (`--brief`, `quick POC plan`, `POC summary`): produce just Objective + Mutual Commitments table + must-have Success Criteria + Timeline + Next Step. Skip scope detail, architecture, prerequisites checklist, risk table. See `_se-playbook.md` "Output Mode" for the unified brief-mode rule.
+If user signals brief mode (`--brief`, `quick POC plan`, `POC summary`): produce the canonical POC Objective, Mutual Commitments table, must-have Success Criteria, Timeline & Milestones, and Open Items. Put the requested commitment and any fallback in Timeline & Milestones or Open Items; there is no standalone Next Step section. Skip scope detail, architecture, prerequisites checklist, and risk table. See `_se-playbook.md` "Output Mode" for the unified brief-mode rule.
 
 ## Output Format
 
@@ -80,7 +80,7 @@ If user signals brief mode (`--brief`, `quick POC plan`, `POC summary`): produce
 > 10. `Source Coverage`
 >
 > **H3 subtopics (when used):**
-> - under `Success Criteria`: POC Exit Criteria, Story for Results Review
+> - under `Exit Results Review`: POC Exit Criteria, Story for Results Review
 > - under `Scope & Architecture`: Scope, Scope Tiers, POC Architecture, Sources & Destinations, Technical Notes
 > - under `Mutual Commitments & Roles`: Mutual Commitments, Roles & Responsibilities
 > - under `Access & Prerequisites`: Access & Prerequisites Checklist
@@ -315,8 +315,8 @@ Per `_se-playbook.md` ("Source Freshness Check"): if the most-recent local trans
 - Pull the **most recent call only** — do not bulk-pull
 - Save to `_transcripts/<Customer-Name>-MM.DD.YY.txt` BEFORE using it (per CLAUDE.md)
 
-### Upfront Contract (Sandler) is mandatory for POCs
-A POC without a written upfront contract = a POC that drifts. Add a `### Mutual Commitments` section before Success Criteria:
+### Set the kickoff agreement (Sandler)
+A POC without a written upfront contract = a POC that drifts. Capture the resulting agreement under the existing `### Mutual Commitments` subsection:
 - "If we hit all must-have criteria by [end date], you commit to a commercial conversation within 2 weeks."
 - "If we miss criteria, we mutually agree the deal doesn't move forward (or we explicitly extend scope)."
 

@@ -421,6 +421,8 @@ def _semantic_bodies(
     skill: str,
     parent_keys: set[str],
     child_patterns: tuple[str, ...],
+    *,
+    require_child: bool = False,
 ) -> list[tuple[str, str]]:
     """Return only bodies whose H2/H3 pair matches an extraction contract."""
     parsed = _parse_h2_h3_bodies(text, skill)
@@ -430,8 +432,36 @@ def _semantic_bodies(
             continue
         if parent not in parent_keys:
             continue
-        if child is None or any(re.search(pattern, child) for pattern in child_patterns):
+        if child is None:
+            if require_child:
+                continue
             selected.append((child or parent, body))
+            continue
+        if any(re.search(pattern, child) for pattern in child_patterns):
+            selected.append((child or parent, body))
+    return selected
+
+
+def _legacy_h2_bodies(
+    text: str,
+    skill: str,
+    heading_keys: set[str],
+) -> list[tuple[str, str]]:
+    """Return bodies owned by legacy H2 headings, including aliased keys."""
+    parsed = _parse_h2_h3_bodies(text, skill)
+    arch = CANONICAL_ARCHITECTURE.get(skill)
+    selected: list[tuple[str, str]] = []
+    for line in text.splitlines():
+        match = re.match(r"^##\s+(.+?)\s*$", line)
+        if not match:
+            continue
+        raw_key = output_schema._normalize_heading(match.group(1))
+        if raw_key not in heading_keys:
+            continue
+        canonical_key = arch.aliases.get(raw_key, raw_key) if arch else raw_key
+        body = parsed.get((canonical_key, None), "").strip()
+        if body:
+            selected.append((raw_key, body))
     return selected
 
 
@@ -619,11 +649,28 @@ def _extract_business_objectives(meta: output_schema.OutputMetadata, path: Path,
     source = _output_source_label(path, customers_dir)
 
     seen: set[str] = set()
+    text = path.read_text(encoding="utf-8")
     bodies = _semantic_bodies(
-        path.read_text(encoding="utf-8"),
+        text,
         path.parent.name,
         {"qualification-narrative", "business-objectives", "business-objective"},
         (r"identify-pain", r"metrics", r"business[- ]objective", r"objective", r"pain"),
+    )
+    bodies.extend(
+        _semantic_bodies(
+            text,
+            path.parent.name,
+            {"deal-thesis"},
+            (r"driver", r"need", r"urgency", r"bottom[- ]line"),
+            require_child=True,
+        )
+    )
+    bodies.extend(
+        _legacy_h2_bodies(
+            text,
+            path.parent.name,
+            {"driver", "need", "urgency", "bottom-line"},
+        )
     )
     for section_name, section_text in bodies:
         bullets = _extract_bullets(section_text)
@@ -654,8 +701,9 @@ def _extract_technical_scope(meta: output_schema.OutputMetadata, path: Path, cus
     scope: dict[str, list[Any]] = {"sources": [], "destinations": [], "use_cases": [], "requirements": [], "dependencies": []}
     source = _output_source_label(path, customers_dir)
 
+    text = path.read_text(encoding="utf-8")
     bodies = _semantic_bodies(
-        path.read_text(encoding="utf-8"),
+        text,
         path.parent.name,
         {
             "requirements-and-architecture",
@@ -703,6 +751,26 @@ def _extract_technical_scope(meta: output_schema.OutputMetadata, path: Path, cus
             if any(k in b.lower() for k in ("dependency", "depends on", "blocked by")):
                 if b and b not in scope["dependencies"]:
                     scope["dependencies"].append(b)
+
+    # Historical deal assessments put connector-bearing system names in Need.
+    # Keep this compatibility path narrow: Need contributes connectors only,
+    # never requirements, use cases, or dependencies.
+    need_bodies = _semantic_bodies(
+        text,
+        path.parent.name,
+        {"deal-thesis"},
+        (r"need",),
+        require_child=True,
+    )
+    need_bodies.extend(
+        _legacy_h2_bodies(text, path.parent.name, {"need"})
+    )
+    for _, section_text in need_bodies:
+        for name, explicit_kind in _find_connectors(section_text):
+            kind = _classify_system(name, section_text, explicit_kind)
+            target = scope["sources"] if kind == "source" else scope["destinations"]
+            if not any(s.name == name for s in target):
+                target.append(TechnicalSystem(name=name, kind=kind, evidence="found in need", sources=[source]))
 
     return scope
 

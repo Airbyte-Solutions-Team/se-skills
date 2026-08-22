@@ -302,9 +302,6 @@ _POST_CALL = SkillArchitecture(
             "action-items",
             "next-step",
         ],
-        "key-takeaways": [
-            "attendees",
-        ],
     },
     aliases={
         "key-takeaways": "key-takeaways",
@@ -315,7 +312,6 @@ _POST_CALL = SkillArchitecture(
         "sources-and-destinations": "scope-and-technical-changes",
         "technical-notes": "scope-and-technical-changes",
         "open-questions-follow-ups": "objections-and-open-questions",
-        "attendees": "key-takeaways",
         "next-step": "actions-and-next-step",
         "coaching-observations": "coaching-observations",
         "meddpicc-quick-pass": "deal-impact",

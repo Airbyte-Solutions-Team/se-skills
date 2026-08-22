@@ -1,6 +1,6 @@
 ---
 name: prep-call
-description: Prepares an SE call brief — defaults to a tech-discovery call AFTER the AE has already done business discovery (the 90% case). Aggressively checks Gong (7-day lookback, extends to 14) for the AE call, reads it in full, and produces a prep doc that inherits the AE's discovery (What the AE Already Learned), goes deeper on technical implications, and includes Reframe Hypothesis, Upfront Contract, SPIN Implication ladders, per-persona questions, and a concrete next-step. Cold-prep mode (no AE call found) is the explicit exception. Use when the user says "prep call", "prep for", "call prep", or provides a company name before a meeting.
+description: Prepares an SE call brief — defaults to a tech-discovery call AFTER the AE has already done business discovery (the 90% case). Aggressively checks Gong (7-day lookback, extends to 14) for the AE call, reads it in full, and produces a prep doc that inherits the AE's discovery, goes deeper on technical implications, and includes a Point of View to Test, Suggested Opener, implication-depth questions, persona-specific questions, and a concrete next-step. Cold-prep mode (no AE call found) is the explicit exception. Use when the user says "prep call", "prep for", "call prep", or provides a company name before a meeting.
 ---
 
 # Call Prep Skill
@@ -53,7 +53,7 @@ Web search is **conditional**, not automatic:
 
 Default = full prep doc (all sections below).
 
-If user signals brief mode (`--brief`, `quick prep`, `1-pager`, `short version`): produce a tight version with only Snapshot, Reframe Hypothesis, Upfront Contract, top 3 discovery questions, and concrete Next Step. Skip per-persona, full SPIN ladders, full agenda table. See `_se-playbook.md` "Output Mode" for the unified brief-mode rule.
+If user signals brief mode (`--brief`, `quick prep`, `1-pager`, `short version`): produce a tight version with Meeting Snapshot, Point of View to Test, Suggested Opener, the top 3 Must-Ask Questions, and Suggested Next Step. Skip persona-specific questions, full implication-depth questions, and the full agenda table. See `_se-playbook.md` "Output Mode" for the unified brief-mode rule.
 
 ## Output Format
 
@@ -71,7 +71,7 @@ If user signals brief mode (`--brief`, `quick prep`, `1-pager`, `short version`)
 > 7. `Source Coverage`
 >
 > **H3 subtopics (when used):**
-> - under `Meeting Snapshot`: Date, Time & Duration, Primary Contact, Attendees, Call Objective, Key Unknown
+> - under `Meeting Snapshot`: Date, Time, Duration, Primary Contact, Attendees, Call Objective, Key Unknown
 > - under `Account Context`: Company Snapshot, Why Airbyte, Prior Call Context, Open Threads From Prior Calls
 > - under `Call Strategy`: Point of View to Test, Suggested Opener
 > - under `Discovery Plan`: Must-Ask Questions, Implication-Depth Questions, Persona-Specific Questions
@@ -154,7 +154,7 @@ Why this reframe for this customer: [brief rationale based on their stack/indust
 ### Suggested Opener
 **Your opener — sets agenda, outcomes, and mutual permission to disqualify.**
 
-> [!info] Upfront Contract opener
+> [!info] Suggested opener
 > "We've got [duration]. I want to understand your current data integration pain and your evaluation criteria. You'll probably want to see how we handle [their likely use case]. By the end we should know whether a POC makes sense — or whether this isn't a fit. Sound good?"
 
 ## Discovery Plan
@@ -326,19 +326,19 @@ Read `memory_dir` (per playbook → Workspace Paths) `MEMORY.md` and any custome
 
 ### Apply Cross-Transcript Analysis (when prior call history exists)
 For follow-up calls with an existing customer, read the "Cross-Transcript Analysis" section in `_se-playbook.md`. Read prior transcripts (recency-weighted but not recency-only). Specifically build:
-- A "Where we left off" section grounded in the most recent transcript
+- An "Open Threads From Prior Calls" section grounded in the most recent transcript
 - A "Topics to revisit" section flagging anything that went quiet or unresolved
 - A "Watch for contradictions" callout if a stakeholder has been softening commitment over time (walking it back signal — bring it up directly)
 - Cite prior-call dates and speakers when staging questions
 
-### Lead with a Challenger Reframe, not generic discovery
-Before the call, draft ONE provocative reframe based on what you know about their industry/stack. Example for a data-engineering-heavy prospect: "Most teams think their data cost problem is warehouse spend — for companies your size, 60-70% is actually engineering time maintaining custom connectors." Add a `### Reframe Hypothesis` section to the prep doc.
+### Lead with a Point of View to Test, not generic discovery
+Before the call, draft ONE provocative reframe based on what you know about their industry/stack. Example for a data-engineering-heavy prospect: "Most teams think their data cost problem is warehouse spend — for companies your size, 60-70% is actually engineering time maintaining custom connectors." Put it under `### Point of View to Test`.
 
-### Pre-stage SPIN Implication questions
+### Pre-stage implication-depth questions
 For each likely pain point, write 2-3 Implication questions that force the customer to quantify the cost themselves. Don't just ask "is X a problem?" — ask "when X happens, who gets paged, how long are you down, what does that cost?" Add these under each pain hypothesis.
 
-### Draft an Upfront Contract (Sandler)
-Add a `### Upfront Contract` section to the prep doc with a 2-3 sentence opener the SE can use to set agenda + outcomes + mutual permission to disqualify. Example: "We've got 30 minutes. I want to understand your current data integration pain and evaluation criteria. You'll want to see how we handle [their likely use case]. By the end we should know whether a POC makes sense — or whether this isn't a fit. Sound good?"
+### Draft the Suggested Opener (Sandler)
+Add a `### Suggested Opener` section to the prep doc with a 2-3 sentence opener the SE can use to set agenda + outcomes + mutual permission to disqualify. Example: "We've got 30 minutes. I want to understand your current data integration pain and evaluation criteria. You'll want to see how we handle [their likely use case]. By the end we should know whether a POC makes sense — or whether this isn't a fit. Sound good?"
 
 ### Tailor by persona
 If multiple attendees are known, list discovery questions *per persona*. CDO ≠ CFO ≠ security lead. Same deck for everyone is the #1 expansion killer.
@@ -373,7 +373,7 @@ Include a final Source Coverage section of the output stating:
 Per `_se-playbook.md` "Source Coverage Transparency" rule.
 
 ### SE Identity
-Read `config_file` (per playbook → Workspace Paths) to populate the `[SE name]` field in headers and the Upfront Contract opener. If the config doesn't exist, ask the user once and recommend they create it.
+Read `config_file` (per playbook → Workspace Paths) to populate the `[SE name]` field in headers and the Suggested Opener. If the config doesn't exist, ask the user once and recommend they create it.
 
 ---
 

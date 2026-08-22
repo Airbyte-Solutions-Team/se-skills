@@ -315,9 +315,9 @@ If the customer is comparing total connector counts to Fivetran/Stitch/Matillion
 2. How the long tail gets built when something's missing (manifest-only builder + custom CDK)
 3. Schema-drift and reliability over time, which count doesn't measure
 
-Add a `## Reframe Talk Track` section at the end with 2-3 sentences the SE can use if the customer reverts to a count comparison.
+Add the 2-3 sentence talk track to `## Coverage Gaps & Custom Work` if the customer reverts to a count comparison; do not create an extra top-level section.
 
-### Anchor gaps in stated value (SPIN Implication)
+### Anchor gaps in stated value
 For each missing connector, don't just note effort — note the cost of not having it. Example:
 - "Customer needs X system. Manual export workaround costs ~5 hrs/week of analyst time = $50K/year in opportunity cost."
 

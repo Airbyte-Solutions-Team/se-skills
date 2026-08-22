@@ -112,19 +112,19 @@ Audit trail: name every transcript or call summary read (lines read / total wher
 
 ## Style
 
-- **Fast and scannable.** This is read in the 2 minutes before a call. Lead with the 10-second version.
+- **Fast and scannable.** This is read in the 2 minutes before a call. Lead with the Account Snapshot.
 - **Facts, not judgment.** "Last call was 03.17; champion went quiet after" — not "this deal is at risk" (that's deal-assessment's call to make).
 - **Mark any read as a read.** Keep the light `[fact]`/`[inference]` split so the briefing never smuggles a judgment in as a fact: "Champion went quiet after 03.17 `[fact]`; may signal slipping priority `[inference — not a deal-health call, see deal-assessment]`." Facts get a date/source; inferences get the tag and stay out of deal-health territory.
 - **Cite dates and sources.** "Per the 04.01 transcript…", "SFDC stage = Negotiation as of [date]".
 - **Flag SFDC-vs-reality gaps** assertively but neutrally — state both, let the reader judge.
 - **Don't pad.** If the account is thin (one call, little history), the refresher is short. Say what's known, flag what isn't.
-- **Keep it lean — no gates, no dumps.** A refresher trades completeness for speed: do NOT add a validation checklist, a full Source Coverage dump, or a self-check gate, and do NOT exceed ~1 page. Thin input is valid — produce the short version, don't refuse.
+- **Keep it lean — no gates, no dumps.** A refresher trades completeness for speed: do NOT add a validation checklist or self-check gate, and do NOT exceed ~1 page. Keep the required Source Coverage section concise and factual. Thin input is valid — produce the short version, don't refuse.
 
 ## Output mode
 
 Default = the full ~1-page briefing above.
 
-If user signals brief mode (`--brief`, `just the gist`, `one-liner`): produce only the 10-Second Version + Last contact + top open item. See `_se-playbook.md` "Output Mode."
+If user signals brief mode (`--brief`, `just the gist`, `one-liner`): produce only the Account Snapshot, Last contact, and top open item. See `_se-playbook.md` "Output Mode."
 
 ## After Generating
 

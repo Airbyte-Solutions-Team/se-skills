@@ -40,7 +40,7 @@ Copy these straight from the SFDC query into the page; IDs and numbers must be e
 ## Output Format — HTML in the rs-group design system
 
 > [!info] Canonical output architecture for `coverage-handoff`
-> This skill follows the shared content-architecture contract. Produce the H2 sections below in this exact order; use H3 (`###`) for the listed sub-topics.
+> This skill is an HTML-artifact exception: produce one self-contained HTML file from `template.html`, using its `.section-title` divs in the exact order below. Do not emit a second Markdown H2/H3 structure.
 >
 > **Canonical H2 order:**
 > 1. `Deal Snapshot`
@@ -53,7 +53,7 @@ Copy these straight from the SFDC query into the page; IDs and numbers must be e
 > 8. `Access & Escalation`
 > 9. `Source Coverage`
 
-> Source Coverage must be the **final H2**. The profile-specific summary block is an H3 under the title block (not a navigable section).
+> Source Coverage must be the **final section-title div**. The Coverage Snapshot is the lead summary card, not a separate Markdown heading or sidebar entry.
 
 
 
@@ -75,8 +75,8 @@ Copy these straight from the SFDC query into the page; IDs and numbers must be e
 5. **Story So Far** — dated chronological bullets.
 6. **Current State** — current-state narrative, last contact (days ago), use case; **any upcoming meetings during the coverage window inferred from transcripts/SFDC**; risk callout if SFDC stage ≠ reality.
    - **Surface the deployment shape at a glance** so the covering SE isn't guessing (or re-deriving) it: pull the **current deployment verdict** (Cloud / Flex / park) from the deployment-qualification doc in `outputs/`, and any **`self_managed_only` or enterprise-connector flags** already computed in connector-feasibility's Availability column, and state them in this narrative in one line — e.g. "Deployment: Enterprise Flex (per deployment-qual); one source (`source-db2`) is Self-Managed-only, one is enterprise-tier." This is **display-only** — read the derived verdicts from the saved docs; do NOT pull the connector registry or repos to re-derive them (that's the analytical skills' job, per playbook → Product & Connector Reference Data). If those docs don't exist yet, note "deployment not yet assessed" / "connector availability not yet assessed" — no gate, no refusal.
-7. **Open Items** — checkbox list of open items / unanswered questions / pending actions.
-8. **In-Flight Commitments** — what the owner SE promised the customer, owner, due, status. (The #1 coverage failure is a dropped promise — mine transcripts/notes hard for these.)
+7. **In-Flight Commitments** — what the owner SE promised the customer, owner, due, status. (The #1 coverage failure is a dropped promise — mine transcripts/notes hard for these.)
+8. **Open Items** — checkbox list of open items / unanswered questions / pending actions.
 9. **Technical Threads** — mid-investigation questions/blockers, state, who it's waiting on.
 10. **Access & Escalation** — SFDC opp link, Airbyte Org ID, workspace IDs, Slack channel, Notion/drive links, prior SE doc filenames. SFDC/raw-derived; mark unknowns.
     - **"If you get stuck" (internal escalation) sub-block** — a covering SE inheriting a deal cold needs a routing map: **owner SE's return date** (from the PTO form), **the AE**, **the internal Slack channel**, and **the one eng/PS contact** for any live technical thread (§9). Names or `TBD` — never invented. This is the human analog of "who do I escalate to when blocked"; keep it in Access & Escalation so it's one glance from the IDs/links.
