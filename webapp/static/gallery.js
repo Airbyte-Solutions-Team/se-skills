@@ -80,7 +80,10 @@ function syncFrameHeight(frame) {
   const style = frame.contentWindow ? frame.contentWindow.getComputedStyle(d.body) : null;
   const marginBottom = style ? parseFloat(style.marginBottom) || 0 : 0;
   const height = d.body.getBoundingClientRect().height + d.body.offsetTop + marginBottom;
-  frame.style.height = Math.ceil(height) + "px";
+  const next = Math.ceil(height) + "px";
+  // No-op when unchanged: writing the height resizes the frame's viewport, which
+  // would re-notify the body observer inside the same delivery loop.
+  if (frame.style.height !== next) frame.style.height = next;
 }
 
 // The frame is a real browsing context loading the production stylesheet, so the
@@ -108,7 +111,16 @@ function writeFrame(bodyHtml) {
   d.close();
   wireDocument(d);
   if (window.ResizeObserver) {
-    new ResizeObserver(() => syncFrameHeight(frame)).observe(d.body);
+    // Defer the write out of the observer callback for the same reason.
+    let queued = false;
+    new ResizeObserver(() => {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(() => {
+        queued = false;
+        syncFrameHeight(frame);
+      });
+    }).observe(d.body);
   }
   d.addEventListener("click", () => setTimeout(() => syncFrameHeight(frame), 0));
   // The stylesheet loads asynchronously, so measure again once it applies.
