@@ -35,9 +35,27 @@ Apply **Source Coverage transparency** and **assertive SFDC-vs-reality flagging*
 ### SFDC hard facts — inject VERBATIM (do not paraphrase or reconstruct)
 
 Copy these straight from the SFDC query into the page; IDs and numbers must be exact:
-`Name`, `StageName`, `Stage_Number__c`, `Amount`, `CloseDate`, `Type`, `Owner.Name`, `SE_Name__c`, `Probability__c`, `Next_Step_Date__c`, `Days_Since_Last_Activity__c`, `Champion__c`, `Economic_Buyer__c`, `Identify_Pain__c`, `Primary_Competitor__c`, `Why_buy_anything__c`, `Why_buy_now__c`, `Most_important_sources__c`, `Most_Important_Destinations__c`, `Use_case_description__c`, `Region__c`, `SE_Deal_Risks__c`, `At_risk__c`. If org/workspace IDs are known (raw notes / memory / prior handover), include them in Access & Logistics verbatim.
+`Name`, `StageName`, `Stage_Number__c`, `Amount`, `CloseDate`, `Type`, `Owner.Name`, `SE_Name__c`, `Probability__c`, `Next_Step_Date__c`, `Days_Since_Last_Activity__c`, `Champion__c`, `Economic_Buyer__c`, `Identify_Pain__c`, `Primary_Competitor__c`, `Why_buy_anything__c`, `Why_buy_now__c`, `Most_important_sources__c`, `Most_Important_Destinations__c`, `Use_case_description__c`, `Region__c`, `SE_Deal_Risks__c`, `At_risk__c`. If org/workspace IDs are known (raw notes / memory / prior handover), include them in Access & Escalation verbatim.
 
 ## Output Format — HTML in the rs-group design system
+
+> [!info] Canonical output architecture for `coverage-handoff`
+> This skill is an HTML-artifact exception: produce one self-contained HTML file from `template.html`, using its `.section-title` divs in the exact order below. Do not emit a second Markdown H2/H3 structure.
+>
+> **Canonical H2 order:**
+> 1. `Deal Snapshot`
+> 2. `Who's Who`
+> 3. `Story So Far`
+> 4. `Current State`
+> 5. `In-Flight Commitments`
+> 6. `Open Items`
+> 7. `Technical Threads`
+> 8. `Access & Escalation`
+> 9. `Source Coverage`
+
+> Source Coverage must be the **final section-title div**. The Coverage Snapshot is the lead summary card, not a separate Markdown heading or sidebar entry.
+
+
 
 **Produce one self-contained HTML file.** Use `template.html` in this skill's own directory (the installed skill lives at `~/.claude/skills/coverage-handoff/`, so read `~/.claude/skills/coverage-handoff/template.html`) as the exact skeleton:
 
@@ -51,17 +69,17 @@ Copy these straight from the SFDC query into the page; IDs and numbers must be e
 ### The 11 sections (all present in the template, in order)
 
 1. **Header + Coverage banner** — Customer, opp name, deal size / stage / win band stats; coverage banner (SE out, covering SE, window, trajectory) — SE-out/covering-SE/window from the form, trajectory from SFDC.
-2. **The 10-Second Version** — what this deal is, what they're evaluating, where it stands now.
+2. **Coverage Snapshot** — what this deal is, what they're evaluating, where it stands now.
 3. **Deal Snapshot + Deal Health** (two cards) — SFDC facts verbatim; health = trajectory, days-since-activity, driver, top MEDDPICC gap, what would lose it.
 4. **Who's Who** — table: Name / Title / Role (EB, Champion, technical lead, quiet) / Notes (+contact if known). Flag SFDC names absent from transcripts.
-5. **The Story So Far** — dated chronological bullets.
-6. **Where Things Stand** — current-state narrative, last contact (days ago), use case; **any upcoming meetings during the coverage window inferred from transcripts/SFDC**; risk callout if SFDC stage ≠ reality.
+5. **Story So Far** — dated chronological bullets.
+6. **Current State** — current-state narrative, last contact (days ago), use case; **any upcoming meetings during the coverage window inferred from transcripts/SFDC**; risk callout if SFDC stage ≠ reality.
    - **Surface the deployment shape at a glance** so the covering SE isn't guessing (or re-deriving) it: pull the **current deployment verdict** (Cloud / Flex / park) from the deployment-qualification doc in `outputs/`, and any **`self_managed_only` or enterprise-connector flags** already computed in connector-feasibility's Availability column, and state them in this narrative in one line — e.g. "Deployment: Enterprise Flex (per deployment-qual); one source (`source-db2`) is Self-Managed-only, one is enterprise-tier." This is **display-only** — read the derived verdicts from the saved docs; do NOT pull the connector registry or repos to re-derive them (that's the analytical skills' job, per playbook → Product & Connector Reference Data). If those docs don't exist yet, note "deployment not yet assessed" / "connector availability not yet assessed" — no gate, no refusal.
-7. **What's Open** — checkbox list of open items / unanswered questions / pending actions.
-8. **In-Flight Commitments** — what the owner SE promised the customer, owner, due, status. (The #1 coverage failure is a dropped promise — mine transcripts/notes hard for these.)
-9. **Live Technical Thread** — mid-investigation questions/blockers, state, who it's waiting on.
-10. **Access & Logistics** — SFDC opp link, Airbyte Org ID, workspace IDs, Slack channel, Notion/drive links, prior SE doc filenames. SFDC/raw-derived; mark unknowns.
-    - **"If you get stuck" (internal escalation) sub-block** — a covering SE inheriting a deal cold needs a routing map: **owner SE's return date** (from the PTO form), **the AE**, **the internal Slack channel**, and **the one eng/PS contact** for any live technical thread (§9). Names or `TBD` — never invented. This is the human analog of "who do I escalate to when blocked"; keep it in Access & Logistics so it's one glance from the IDs/links.
+7. **In-Flight Commitments** — what the owner SE promised the customer, owner, due, status. (The #1 coverage failure is a dropped promise — mine transcripts/notes hard for these.)
+8. **Open Items** — checkbox list of open items / unanswered questions / pending actions.
+9. **Technical Threads** — mid-investigation questions/blockers, state, who it's waiting on.
+10. **Access & Escalation** — SFDC opp link, Airbyte Org ID, workspace IDs, Slack channel, Notion/drive links, prior SE doc filenames. SFDC/raw-derived; mark unknowns.
+    - **"If you get stuck" (internal escalation) sub-block** — a covering SE inheriting a deal cold needs a routing map: **owner SE's return date** (from the PTO form), **the AE**, **the internal Slack channel**, and **the one eng/PS contact** for any live technical thread (§9). Names or `TBD` — never invented. This is the human analog of "who do I escalate to when blocked"; keep it in Access & Escalation so it's one glance from the IDs/links.
 11. **Source Coverage** — what was read, with dates (anti-hallucination). **Note which `template.html` version this was built from** (its top-of-file version/date comment) so that if the internal.airbyte.ai rs-group design system changes, a stale handoff is caught and re-generated rather than hand-edited.
 
 ## After Generating
@@ -98,8 +116,8 @@ Read `~/.claude/skills/_se-playbook.md` for the source-reading pattern, SFDC fie
 
 ## Changelog
 
-- **2026-07-10** — "Where Things Stand" now surfaces the deployment shape at a glance for the covering SE: displays the current deployment verdict (Cloud / Flex / park) from the deployment-qual doc and any `self_managed_only`/enterprise-connector flags from connector-feasibility's Availability column. Display-only — reads the derived verdicts from saved `outputs/`, does NOT pull the registry/repos to re-derive; "not yet assessed" if the docs are absent (no gate). Fits the existing section 6 — no new HTML template section.
+- **2026-07-10** — "Current State" now surfaces the deployment shape at a glance for the covering SE: displays the current deployment verdict (Cloud / Flex / park) from the deployment-qual doc and any `self_managed_only`/enterprise-connector flags from connector-feasibility's Availability column. Display-only — reads the derived verdicts from saved `outputs/`, does NOT pull the registry/repos to re-derive; "not yet assessed" if the docs are absent (no gate). Fits the existing section 6 — no new HTML template section.
 - **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`memory_dir`/`config_file`) per playbook → Workspace Paths; the `template.html` reference is now skill-relative (`~/.claude/skills/coverage-handoff/template.html`) instead of assuming the repo lives at `~/airbyte-work/02-repos/se-skills`. Portable across SE machines.
-- **2026-07-09** — Added an "If you get stuck" internal-escalation sub-block to Access & Logistics (owner SE return date, AE, internal Slack channel, one eng/PS contact — names or TBD, never invented) so a covering SE has a routing map when blocked; added a template-version note (Source Coverage records which `template.html` version was used; template now carries a `TEMPLATE VERSION` stamp) so an rs-group design-system change triggers re-generation instead of hand-editing.
+- **2026-07-09** — Added an "If you get stuck" internal-escalation sub-block to Access & Escalation (owner SE return date, AE, internal Slack channel, one eng/PS contact — names or TBD, never invented) so a covering SE has a routing map when blocked; added a template-version note (Source Coverage records which `template.html` version was used; template now carries a `TEMPLATE VERSION` stamp) so an rs-group design-system change triggers re-generation instead of hand-editing.
 - **2026-07-06** — Initial creation. PTO coverage handoff → self-contained HTML in the internal.airbyte.ai rs-group design system. SFDC hard facts injected verbatim; consumes PTO modal-form context; portable to the internal repo (no auto-push).
 - **2026-07-06** — Slimmed to 11 sections: removed the form-fed Scheduled-During-Coverage, Guardrails, and Escalation-Contacts sections (meetings are now inferred from transcripts+SFDC). Modal input reduced to SE-out / covering-SE / coverage-window.

@@ -40,12 +40,22 @@ VALID_BIZ_QUAL = """# Acme — biz-qual: viable
 **Date:** 2026-07-01 · **Skill:** biz-qual
 
 ## At a Glance
-- **Verdict:** viable
+- **Overall:** viable
+- **Recommended Motion:** run tech-qual
 
 ## MEDDPICC Scorecard
 | Letter | Status |
 |---|---|
 | M | green |
+
+## Qualification Narrative
+ok
+
+## Movement and Deal Risks
+ok
+
+## Recommended Next Actions
+- run tech-qual
 
 ## Source Coverage
 - synthetic
@@ -62,6 +72,18 @@ VALID_TECH_QUAL = """# Acme — tech-qual: fit
 
 ## Technical Fit Summary
 Good fit.
+
+## Requirements and Architecture
+ok
+
+## Implementation Readiness
+ok
+
+## Risks and Open Items
+ok
+
+## Recommended Next Actions
+- run poc-plan
 
 ## Source Coverage
 - synthetic
@@ -126,7 +148,7 @@ def test_read_output_meta_returns_validation(tmp_path: Path) -> None:
     assert data["schema_version"] == output_schema.SCHEMA_VERSION
 
 
-def test_prep_call_runtime_metadata_is_unsupported_and_not_validation_attention(
+def test_prep_call_runtime_metadata_is_supported_but_unvalidated_without_schema_markers(
     tmp_path: Path,
 ) -> None:
     svc = _svc(tmp_path)

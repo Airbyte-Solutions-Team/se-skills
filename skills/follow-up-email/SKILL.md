@@ -33,6 +33,12 @@ If purpose isn't clear, ask.
 
 ## Output mode
 
+
+> [!info] `follow-up-email` output architecture
+> This is a specialized artifact — it does not follow the normal report H2/H3 architecture.
+> Email is a specialized artifact; do not force Markdown report architecture.
+>
+
 Emails are already short by design — brief mode is the default.
 
 If user signals "longer" or "more context": expand the email by 2-3 sentences with additional rationale, but never sacrifice the direct-answer-first structure. The voice rules below (fits a phone screen) trump everything else. See `_se-playbook.md` "Output Mode" for rules.

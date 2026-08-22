@@ -61,6 +61,12 @@ A wrapper that chains two skills can end in a **partial completion** even when t
 
 ## Output
 
+
+> [!info] `full-qual` output architecture
+> This is a specialized artifact — it does not follow the normal report H2/H3 architecture.
+> full-qual orchestrates biz-qual and tech-qual; it does not emit a standalone Markdown report.
+>
+
 Two independent documents (or one + a skip note, per above), each auto-saved to its own `outputs/<skill>/` folder exactly as the standalone skills do. After both run, give a closing summary of what was produced and where — with explicit status for each child:
 
 > "Full qualification for [Customer]:

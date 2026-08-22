@@ -42,12 +42,22 @@ def test_parse_output_flags_missing_required_sections() -> None:
 **Date:** 2026-07-01 · **Skill:** biz-qual
 
 ## At a Glance
-- **Verdict:** qualified
+- **Overall:** qualified
+- **Recommended Motion:** run tech-qual
 
 ## MEDDPICC Scorecard
 | Letter | Status |
 |---|---|
 | M | green |
+
+## Qualification Narrative
+ok
+
+## Movement and Deal Risks
+ok
+
+## Recommended Next Actions
+ok
 """
     meta = output_schema.parse_output("biz-qual", text)
     assert meta.valid is False
@@ -60,9 +70,19 @@ def test_parse_output_flags_missing_date() -> None:
     text = """# Biz Qual
 
 ## At a Glance
-- **Verdict:** qualified
+- **Overall:** qualified
+- **Recommended Motion:** run tech-qual
 
 ## MEDDPICC Scorecard
+ok
+
+## Qualification Narrative
+ok
+
+## Movement and Deal Risks
+ok
+
+## Recommended Next Actions
 ok
 
 ## Source Coverage
@@ -86,6 +106,15 @@ def test_parse_output_extracts_at_a_glance_kv_pairs() -> None:
 ## MEDDPICC Scorecard
 ok
 
+## Qualification Narrative
+ok
+
+## Movement and Deal Risks
+ok
+
+## Recommended Next Actions
+ok
+
 ## Source Coverage
 - synthetic
 """
@@ -103,9 +132,22 @@ def test_write_and_read_sidecar(tmp_path: Path) -> None:
 
 ## At a Glance
 - **Feasibility:** viable
+- **Recommended Motion:** proceed to tech-qual
 
-## Fit Verdict
+## System-by-System Fit
 - viable
+
+## Coverage Gaps and Custom Work
+- none
+
+## Risks and Constraints
+- none
+
+## Validation Questions
+- none
+
+## Recommended Next Steps
+- proceed
 
 ## Source Coverage
 - synthetic
@@ -158,9 +200,19 @@ def test_parse_output_fuzzy_matches_section_headings() -> None:
 **Date:** 2026-07-01
 
 ## At a Glance
-- **Verdict:** qualified
+- **Overall:** qualified
+- **Recommended Motion:** run tech-qual
 
 ## MEDDPICC Pre-Scorecard
+ok
+
+## Qualification Narrative
+ok
+
+## Movement and Deal Risks
+ok
+
+## Recommended Next Actions
 ok
 
 ## Source Coverage
@@ -195,7 +247,9 @@ def test_read_or_parse_sidecar_reparses_on_schema_version_mismatch(tmp_path: Pat
     md_path = tmp_path / "biz-qual" / "out.md"
     md_path.parent.mkdir(parents=True)
     md_path.write_text(
-        "# Title\n\n**Date:** 2026-07-01\n\n## At a Glance\n- **Verdict:** qualified\n\n## MEDDPICC Scorecard\nok\n\n## Source Coverage\n- x\n",
+        "# Title\n\n**Date:** 2026-07-01\n\n## At a Glance\n- **Overall:** qualified\n- **Recommended Motion:** run tech-qual\n\n"
+        "## MEDDPICC Scorecard\nok\n\n## Qualification Narrative\nok\n\n"
+        "## Movement and Deal Risks\nok\n\n## Recommended Next Actions\nok\n\n## Source Coverage\n- x\n",
         encoding="utf-8",
     )
 

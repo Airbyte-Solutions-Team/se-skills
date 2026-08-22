@@ -34,6 +34,22 @@ from hosted import config as hosted_config
 pytestmark = [pytest.mark.asyncio, pytest.mark.hosted]
 
 
+def _remove_section(text: str, heading: str) -> str:
+    """Remove a Markdown section from `heading` up to but not including the next H2."""
+    lines = text.splitlines()
+    result: list[str] = []
+    in_target = False
+    for line in lines:
+        if line.startswith("## ") and not line.startswith(heading):
+            in_target = False
+        if line == heading:
+            in_target = True
+            continue
+        if not in_target:
+            result.append(line)
+    return "\n".join(result)
+
+
 @pytest.fixture(autouse=True)
 def worker_workspace_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Provide the provisioned workspace root for deterministic orchestrator tests."""
@@ -198,8 +214,7 @@ def _valid_brief_output() -> str:
     keep = [
         "### At a Glance",
         "## Key Takeaways",
-        "## Action Items",
-        "## Next Step",
+        "## Actions & Next Step",
         "## Source Coverage",
     ]
     lines = []
@@ -315,18 +330,18 @@ async def test_brief_mode_is_accepted(
     [
         pytest.param(
             "We talked about Salesforce and Snowflake systems and connectors.",
-            _valid_full_output().replace("## Sources & Destinations\n", ""),
-            id="missing_sources_when_systems_mentioned",
+            _remove_section(_valid_full_output(), "## Scope & Technical Changes"),
+            id="missing_scope_when_systems_mentioned",
         ),
         pytest.param(
             "We discussed the data warehouse and CDC requirements.",
-            _valid_full_output().replace("## Technical Notes\n", ""),
-            id="missing_technical_when_scope_discussed",
+            _remove_section(_valid_full_output(), "## Scope & Technical Changes"),
+            id="missing_scope_when_technical_scope_discussed",
         ),
         pytest.param(
-            "The AE led a discovery call with MEDDPICC scoring.",
-            _valid_full_output().replace("## MEDDPICC Quick Pass\n", ""),
-            id="missing_meddpicc_when_discovery_call",
+            "The AE asked about the API integration and data sources for the new warehouse.",
+            _remove_section(_valid_full_output(), "## Scope & Technical Changes"),
+            id="missing_scope_when_api_mentioned",
         ),
     ],
 )

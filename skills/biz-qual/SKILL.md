@@ -37,15 +37,33 @@ If user signals brief mode (`--brief`, `quick qual`, `qual summary`): produce ju
 
 ## Output Format
 
+
+> [!info] Canonical output architecture for `biz-qual`
+> This skill follows the shared content-architecture contract. Produce the H2 sections below in this exact order; use H3 (`###`) for the listed sub-topics.
+>
+> **Canonical H2 order:**
+> 1. `MEDDPICC Scorecard`
+> 2. `Qualification Narrative`
+> 3. `Movement & Deal Risks`
+> 4. `Recommended Next Actions`
+> 5. `Source Coverage`
+>
+> **H3 subtopics (when used):**
+> - under `Qualification Narrative`: No Gap Without a Close Path, Metrics, Economic Buyer, Decision Criteria, Decision Process, Paper Process, Identify Pain, Champion, Stakeholder Map, Competition
+> - under `Movement & Deal Risks`: Movement Since Last Qualification, Deal Risks, Reasons to Walk or Deprioritize
+>
+> Source Coverage must be the **final H2** when required. The profile-specific summary block is an H3 under the title block (not a navigable section).
+
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---
 
+<!-- output-template:start -->
 # Business Qualification: [Company Name]
 **Date:** [today's date] · **Deal stage:** [Discovery / Technical Eval / POC / Negotiation] · **SE owner:** [SE name]
 
-### At a Glance
-*Decision card — lead with the judgment (see `_se-playbook.md` → Decision-First Layout).*
+
+### Decision Summary
 - **Overall:** 🟢 Strong / 🟡 Moderate / 🔴 Weak — [3–6 word headline]
 - **MEDDPICC:** [one-line scorecard, e.g. `M🟢 E🔴 D🟡 D🟡 P🔴 I🟢 C🟡 C🟢`]
 - **Economic Buyer:** [name/title or "not identified"] · **Champion:** [name/title or "untested"]
@@ -53,9 +71,12 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 - **Recommended motion:** [the one next move to close the biggest gap]
 - **Source confidence:** [one line — N transcripts + SFDC; "see Source Coverage"]
 
-**Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [MEDDPICC Scorecard](#meddpicc-scorecard) · [Metrics](#metrics) · [Economic Buyer](#economic-buyer) · [Decision Criteria](#decision-criteria) · [Decision Process](#decision-process) · [Paper Process](#paper-process) · [Identify Pain](#identify-pain) · [Champion](#champion) · [Competition](#competition) · [Movement Since Last Qualification](#movement-since-last-qualification) · [Deal Risks](#deal-risks) · [Recommended Next Actions](#recommended-next-actions)
 
----
+*Decision card — lead with the judgment (see `_se-playbook.md` → Decision-First Layout).*
+
+**Jump to:** [MEDDPICC Scorecard](#meddpicc-scorecard) · [Qualification Narrative](#qualification-narrative) · [Movement & Deal Risks](#movement-deal-risks) · [Recommended Next Actions](#recommended-next-actions) · [Source Coverage](#source-coverage)
+
+*(Use the canonical sections below; retain all facts, tables, and reasoning while nesting sub-topics under the relevant H2.)*
 
 ## MEDDPICC Scorecard
 
@@ -84,13 +105,16 @@ Surface the weakest letters as callouts directly under the scorecard — `[!bloc
 > No InfoSec/legal timeline confirmed. New-vendor onboarding can run ==60–90 days==; if not started now, the close date slips.
 ```
 
-### No gap without a close-path
+## Qualification Narrative
+
+### No Gap Without a Close Path
 
 Every 🔴/🟡 MEDDPICC element must produce a Next Actions row: `Gap → the specific ask that closes it → owner (or TBD) → by when`. A logged gap with no owned next step is incomplete. State score confidence: e.g. "Scored from 3 transcripts through 05.20; Economic Buyer unconfirmed — treat the EB line as [inferred], not fact."
 
 ---
 
-## Metrics
+
+### Metrics
 **What business outcomes are they trying to achieve?**
 - Quantified value: [e.g., "reduce pipeline build time from 3 weeks to 1 day", "consolidate 5 tools into 1"]
 - KPIs they've mentioned: 
@@ -103,7 +127,7 @@ Every 🔴/🟡 MEDDPICC element must produce a Next Actions row: `Gap → the s
 
 ---
 
-## Economic Buyer
+### Economic Buyer
 **Who controls the budget and can say yes?**
 - Name / title: 
 - Engaged: [Yes / No / Indirectly]
@@ -115,7 +139,7 @@ Every 🔴/🟡 MEDDPICC element must produce a Next Actions row: `Gap → the s
 
 ---
 
-## Decision Criteria
+### Decision Criteria
 **What does "winning" look like to them?**
 - Stated criteria: 
 - Unstated / inferred criteria: 
@@ -128,7 +152,7 @@ Every 🔴/🟡 MEDDPICC element must produce a Next Actions row: `Gap → the s
 
 ---
 
-## Decision Process
+### Decision Process
 **How will they make the decision?**
 - Evaluation steps: 
 - Key stakeholders involved: 
@@ -146,7 +170,7 @@ Every 🔴/🟡 MEDDPICC element must produce a Next Actions row: `Gap → the s
 
 ---
 
-## Paper Process
+### Paper Process
 **The legal/procurement/security steps between handshake and signed contract. Surface this early — surprises here kill end-of-quarter deals.**
 - InfoSec / security review: [required? owner? typical duration?]
 - Legal redline cycle: [DPA, MSA, order form — owner and timeline]
@@ -159,7 +183,7 @@ Every 🔴/🟡 MEDDPICC element must produce a Next Actions row: `Gap → the s
 
 ---
 
-## Identify Pain
+### Identify Pain
 **Apply the Sandler pain funnel — go three layers deep. If you can't fill layer 3, pain isn't fully identified.**
 
 **Layer 1 — Surface complaint (what they said):**
@@ -179,7 +203,7 @@ Every 🔴/🟡 MEDDPICC element must produce a Next Actions row: `Gap → the s
 
 ---
 
-## Champion
+### Champion
 **Who is selling Airbyte internally on our behalf?**
 - Name / title: 
 - Motivation: [Why do they personally win if Airbyte wins?]
@@ -204,7 +228,7 @@ If they only relay your messages, they're a coach — not a champion. Downgrade 
 
 ---
 
-## Stakeholder Map
+### Stakeholder Map
 *The reusable artifact per `_se-playbook.md` → Operating Disciplines. `deal-assessment`, `internal-prep`, and `coverage-handoff` read this. Mark unknowns `⬜ not yet mapped` — a blank means "we haven't done the work," not "no stakeholder." A one-row map = single-threaded (a risk).*
 
 | Name | Role / title | Authority | Disposition | Last touched |
@@ -213,7 +237,7 @@ If they only relay your messages, they're a coach — not a champion. Downgrade 
 
 ---
 
-## Competition
+### Competition
 **Who else are they considering — including the "do nothing" and "build it ourselves" options?**
 
 | Alternative | Status | Notes |
@@ -231,7 +255,8 @@ If they only relay your messages, they're a coach — not a champion. Downgrade 
 
 ---
 
-## Movement Since Last Qualification
+## Movement & Deal Risks
+### Movement Since Last Qualification
 *If a prior biz-qual exists for this customer (check `{customers_dir}/<Customer>/outputs/biz-qual/biz-qual-*.md`), compare letter-by-letter:*
 
 | Letter | Prior status | Current status | Trend |
@@ -242,7 +267,7 @@ Flag any letter that regressed (especially Champion, EB, Pain) — that's a *wal
 
 ---
 
-## Deal Risks
+### Deal Risks
 | Risk | Severity | Mitigation |
 |------|----------|------------|
 | [e.g., No EB access] | High | |
@@ -250,7 +275,7 @@ Flag any letter that regressed (especially Champion, EB, Pain) — that's a *wal
 | [e.g., Budget not confirmed] | High | |
 | [e.g., Single-threaded on one contact] | High | |
 
-### Reasons to walk / deprioritize
+### Reasons to Walk or Deprioritize
 *Per `_se-playbook.md` → Operating Disciplines **D1** — qualifying OUT is a win. State honestly whether any hold, and if so, what would have to become true (and by when) to keep investing. This is a required read, not optional — a senior SE names the walk-away line early.*
 - **No economic buyer** identified after 2-3 substantive calls?
 - **No quantified pain** (customer can't put a number on the status quo cost)?
@@ -263,6 +288,8 @@ If none hold → say "no disqualifying signals; proceed." If one+ hold → state
 ---
 
 ## Recommended Next Actions
+
+
 *Action table — render `TBD` for Owner when the source doesn't state one; never invent a name. **Every 🔴/🟡 letter in the scorecard gets a row here** (no gap without an owned close-path); order by what unblocks the deal soonest.*
 
 | # | Gap (MEDDPICC letter) | The ask that closes it | By when | Owner |
@@ -272,6 +299,10 @@ If none hold → say "no disqualifying signals; proceed." If one+ hold → state
 | 3 | [next 🔴/🟡] | | | |
 
 ---
+
+## Source Coverage
+
+Audit trail: list each transcript read (lines read / total where available), qualification document, memory file, and Salesforce field or record used for the MEDDPICC scorecard. Include source dates, label customer-stated versus inferred evidence, distinguish full reads from metadata-only inventory, and note anything requested but unavailable.<!-- output-template:end -->
 
 ## Style
 

@@ -42,7 +42,7 @@ Cite each source inline. Where a number isn't in any source, mark it a **[confir
 
 Default = full business case (baseline, Airbyte projection, TCO comparison, payback, one-slide summary, assumptions).
 
-If user signals brief mode (`--brief`, `just the number`, `one-slide`): produce only the At a Glance card + the one-slide TCO summary table + payback + the top 3 assumptions. Skip the derivation detail. See `_se-playbook.md` "Output Mode".
+If user signals brief mode (`--brief`, `just the number`, `one-slide`): produce only the Business-Case Summary card + the one-slide TCO summary table + payback + the top 3 assumptions. Skip the derivation detail. See `_se-playbook.md` "Output Mode".
 
 ## Airbyte pricing model (get this right — it's the spine of the projection)
 
@@ -70,15 +70,33 @@ If ≥3 of these are unknown, say so prominently — the case will be directiona
 
 ## Output Format
 
+
+> [!info] Canonical output architecture for `roi-business-case`
+> This skill follows the shared content-architecture contract. Produce the H2 sections below in this exact order; use H3 (`###`) for the listed sub-topics.
+>
+> **Canonical H2 order:**
+> 1. `One-Slide EB View`
+> 2. `Current-State Baseline`
+> 3. `Airbyte Cost Projection`
+> 4. `Payback & Sensitivity`
+> 5. `Assumptions & Confirms`
+> 6. `Source Coverage`
+>
+> **H3 subtopics (when used):**
+> - under `Airbyte Cost Projection`: 3-Year TCO Comparison
+>
+> Source Coverage must be the **final H2** when required. The profile-specific summary block is an H3 under the title block (not a navigable section).
+
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---
 
+<!-- output-template:start -->
 # ROI / Business Case: [Company Name] × Airbyte
 **Date:** [today, long form] · **SE owner:** [SE name] · **AE:** [AE name] · **For:** [EB name/role if known]
 
-### At a Glance
-*Decision card — lead with the number (see `_se-playbook.md` → Decision-First Layout).*
+
+### Business-Case Summary
 - **3-yr TCO — Airbyte vs. status quo:** ==$[X]== saved / ==[Y]%== lower
 - **Payback period:** ==[N] months==
 - **The one number for the EB:** [e.g. "$480K of data-engineering capacity reclaimed over 3 years"]
@@ -86,12 +104,25 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 - **Deployment model priced:** [Cloud Pro (capacity) / Flex (capacity)]
 - **Source confidence:** [one line — biz-qual Metrics + transcripts; "see Source Coverage"]
 
-**Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [Current-State Baseline](#current-state-baseline) · [Airbyte Cost Projection](#airbyte-cost-projection) · [3-Year TCO Comparison](#3-year-tco-comparison) · [Payback & Sensitivity](#payback--sensitivity) · [One-Slide Summary](#one-slide-summary-for-the-eb) · [Assumptions & Confirms](#assumptions--confirms)
 
-## Source Coverage
-[biz-qual Metrics read, transcripts referenced (line counts), which discovery inputs are customer-confirmed vs. [confirm].]
+*Decision card — lead with the number (see `_se-playbook.md` → Decision-First Layout).*
+
+**Jump to:** [One-Slide EB View](#one-slide-eb-view) · [Current-State Baseline](#current-state-baseline) · [Airbyte Cost Projection](#airbyte-cost-projection) · [Payback & Sensitivity](#payback-sensitivity) · [Assumptions & Confirms](#assumptions-confirms) · [Source Coverage](#source-coverage)
+
+*(Use the canonical sections below; retain all facts, tables, and reasoning while nesting sub-topics under the relevant H2.)*
+
+## One-Slide EB View
+### One-Slide Summary
+*A clean, paste-into-a-deck block the SE can hand over. Plain language, three numbers, no jargon.*
+
+> **[Company] × Airbyte — the business case**
+> - Reclaims ==$[X]== over 3 years vs. [status quo / incumbent]
+> - Pays for itself in ==[N] months==
+> - [The qualitative unlock — e.g. "frees 2 data engineers from pipeline babysitting to ship revenue work"]
+> *Based on [Company]'s own numbers: [1-line of the key inputs]. Full derivation available.*
 
 ## Current-State Baseline
+
 *What the status quo actually costs per year. Every line sourced or labeled [confirm].*
 
 | Cost driver | Annual cost | Basis / source |
@@ -103,6 +134,8 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 | **Total status-quo cost / yr** | **$[…]** | |
 
 ## Airbyte Cost Projection
+
+
 *Capacity-based for Pro/Flex — model against the customer's volume **and its growth**, since that's where predictable pricing wins.*
 
 | Year | Volume (rows/GB) | Airbyte cost (capacity) | Competitor cost (consumption, if modeled) |
@@ -113,7 +146,7 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 
 Note the shape difference: capacity-based stays predictable as volume grows; consumption-based rises with it. **Confirm current pricing before finalizing exact figures.**
 
-## 3-Year TCO Comparison
+### 3-Year TCO Comparison
 *The head-to-head. Three columns the EB cares about.*
 
 | | Build it ourselves | Incumbent / competitor | Airbyte |
@@ -127,20 +160,13 @@ Note the shape difference: capacity-based stays predictable as volume grows; con
 Be honest about Airbyte's own costs (migration, ramp) — a case that shows zero switching cost isn't believed.
 
 ## Payback & Sensitivity
+
 - **Payback period:** [N] months — [the crossover where cumulative savings > cumulative Airbyte cost].
 - **Sensitivity:** which 1-2 inputs swing the case most? (Usually eng loaded-rate and volume growth.) State the range: "Payback is [N] months at the customer's stated eng cost; [M] months if that's 20% lower."
 - If the case only works under optimistic assumptions, **say so** — a fragile case handed to a CFO backfires.
 
-## One-Slide Summary (for the EB)
-*A clean, paste-into-a-deck block the SE can hand over. Plain language, three numbers, no jargon.*
-
-> **[Company] × Airbyte — the business case**
-> - Reclaims ==$[X]== over 3 years vs. [status quo / incumbent]
-> - Pays for itself in ==[N] months==
-> - [The qualitative unlock — e.g. "frees 2 data engineers from pipeline babysitting to ship revenue work"]
-> *Based on [Company]'s own numbers: [1-line of the key inputs]. Full derivation available.*
-
 ## Assumptions & Confirms
+
 - **Customer-confirmed inputs:** [list — these are solid]
 - **[confirm] inputs (SE must validate before this goes to the EB):** [list — the case is directional until these are nailed]
 - **Missing inputs that materially affect the result:** [list the 1–3 inputs whose absence changes the answer most — e.g., volume growth rate, true concurrency target, exact data-worker pricing. State clearly how the result would move if each is higher/lower.]
@@ -149,6 +175,11 @@ Be honest about Airbyte's own costs (migration, ramp) — a case that shows zero
 **Avoid false precision.** Use ranges for estimates and explain the sensitivity. If a number is derived from an assumed input, show the assumption. The EB should be able to see which numbers are solid and which are placeholders.
 
 ---
+
+## Source Coverage
+
+
+[biz-qual Metrics read, transcripts referenced (line counts), which discovery inputs are customer-confirmed vs. [confirm].]<!-- output-template:end -->
 
 ## Style
 

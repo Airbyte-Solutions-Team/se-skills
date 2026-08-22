@@ -11,6 +11,17 @@ description: >
   (Salesforce, Gong, meeting notes, Gmail, Slack) when those MCP integrations are configured.
 ---
 
+> [!info] Canonical output architecture for `pov-gsheet`
+> This skill follows the shared content-architecture contract. Produce the H2 sections below in this exact order; use H3 (`###`) for the listed sub-topics.
+>
+> **Canonical H2 order:**
+> 1. `Receipt`
+> 2. `Source Coverage`
+>
+> Source Coverage must be the **final H2**. The `At a Glance` block is an H3 under the title block (not a navigable section).
+>
+
+
 # POV Google Sheets Creator
 
 Creates pre-filled Airbyte POV Success Criteria Google Sheets for prospects. It gathers context

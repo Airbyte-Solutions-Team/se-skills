@@ -446,12 +446,12 @@ Every saving skill produces a markdown document that is read both in the raw `.m
 # <Customer> — <Skill Title>: <one-line verdict/descriptor>
 **Date:** June 18, 2026 · **Stage:** <stage> · **<key>:** <value>   ← ONE line, `·`-separated, long-form date
 
-### At a Glance
+### <Profile Summary — e.g. Decision Summary>
 - **Verdict:** <one line — wrap the headline figure in ==…==>
 - **<Label>:** <value> · **<Label>:** ==<key number>== · **<Label>:** <value>
 - **Top <blocker/risk/gap>:** <one line>
 
-**Jump to:** [At a Glance](#at-a-glance) · [<Section>](#slug) · … · [Source Coverage](#source-coverage)   ← Source Coverage is LAST
+**Jump to:** [<Section>](#slug) · … · [Source Coverage](#source-coverage)   ← Source Coverage is LAST
 
 ## <First body section>   ← lead with the decision content, not the audit trail
 ### <subsection>
@@ -461,19 +461,60 @@ Every saving skill produces a markdown document that is read both in the raw `.m
 …(anti-hallucination block — see Source Coverage Transparency)…
 ```
 
-**Source Coverage goes at the BOTTOM.** It is audit/evidence, not the lead — the reader wants the answer first, the trail last. Put the one-line "Source confidence" summary in the At-a-Glance decision card; place the full file list as the final content section (the web app also collapses audit sections, so low placement + collapse both defer it). This applies to **all** saving skills.
+**Source Coverage goes at the BOTTOM for report-producing skills.** It is audit/evidence, not the lead — the reader wants the answer first, the trail last. Put the one-line "Source confidence" summary in the profile-specific summary card; place the full file list as the final content section (the web app also collapses audit sections, so low placement + collapse both defer it). `objection-handler` includes Source Coverage only for customer-specific outputs; specialized non-report artifacts are exempt.
 
-- **The meta line under the H1 is ONE line.** Put the 2–4 most-scannable facts (date, stage, deal size, SE) on a single line joined by ` · `. **Never stack multiple `**Label:**` lines as separate paragraphs** — in markdown, adjacent lines with no blank line between them collapse into one flowing paragraph, and the web app renders that as an unreadable run-on blob. Everything else (attendees, contacts, meeting type, prerequisites, durations) belongs in the **At a Glance** list below, NOT in the header. If a fact needs its own row, make it an At-a-Glance bullet — a list item, not a loose paragraph.
-- **At a Glance** is a short labeled key/value list (3–6 lines) — the single most decision-relevant facts. It is NOT a table or a card; just bold `**Label:**` pairs, each as its own `- ` bullet (list items render as discrete rows; loose lines do not). Don't repeat the header's facts here — the meta line and At-a-Glance are complementary, not duplicative.
+- **The meta line under the H1 is ONE line.** Put the 2–4 most-scannable facts (date, stage, deal size, SE) on a single line joined by ` · `. **Never stack multiple `**Label:**` lines as separate paragraphs** — in markdown, adjacent lines with no blank line between them collapse into one flowing paragraph, and the web app renders that as an unreadable run-on blob. Everything else (attendees, contacts, meeting type, prerequisites, durations) belongs in the profile-specific summary list below, NOT in the header. If a fact needs its own row, make it a summary bullet — a list item, not a loose paragraph.
+- **The profile-specific summary** is a short labeled key/value list (3–6 lines) — the single most decision-relevant facts. It is NOT a table or a card; just bold `**Label:**` pairs, each as its own `- ` bullet (list items render as discrete rows; loose lines do not). Don't repeat the header's facts here — the meta line and summary are complementary, not duplicative. Legacy outputs may use `### At a Glance`.
 - **Jump to** is a one-line list of links to the document's `##` sections. The web app also auto-builds a sidebar from the headings, but the inline Jump-to keeps the raw `.md` navigable. Anchor slugs are lowercase, non-alphanumeric → `-` (e.g. `## Fit Verdict` → `#fit-verdict`).
+
+### Canonical content architecture (source of truth)
+
+The canonical H2/H3 structure for every saving skill is declared in `webapp/architecture.py`. The validator, the web-reader sidebar, and the skill prompts all consume that single source of truth. Skill output should follow this order:
+
+- **One H1** is the document title, followed by a single `**Date:** ...` meta line.
+- The profile-specific top-summary name (or legacy `### At a Glance`) is an H3 decision card under the title block — it is not a navigable H2.
+- `**Jump to:**` lists every H2 in document order, with `Source Coverage` last.
+- **H2 = major thought.** Every primary section is an H2. H3 (`###`) is used for sub-parts inside an H2.
+- **Source Coverage is the final H2 for report-producing skills.** `objection-handler` uses it only for customer-specific outputs; specialized non-report artifacts do not inherit this report section.
+- **Methodology terms** (MEDDPICC, the five questions, scorecard dimensions) belong inside a narrative H2, not as top-level sections.
+- **Consolidate related topics.** Closely related sub-topics become H3s under one H2 rather than separate H2s.
+- **The sidebar mirrors the Markdown source order exactly.** The reader no longer groups headings by intent (`Decision / Context / Execution`) and no longer reorders them.
+
+Per-skill canonical H2 order:
+
+
+
+| Skill | Canonical H2 order | Notes |
+|-------|--------------------|-------|
+| prep-call | Account Context → Call Strategy → Discovery Plan → Agenda → Watch Outs → Desired Next Step → Source Coverage |  |
+| post-call | Key Takeaways → Deal Impact → Scope & Technical Changes → Objections & Open Questions → Actions & Next Step → Coaching Observations → Source Coverage |  |
+| biz-qual | MEDDPICC Scorecard → Qualification Narrative → Movement & Deal Risks → Recommended Next Actions → Source Coverage |  |
+| tech-qual | Technical Fit Summary → Requirements & Architecture → Implementation Readiness → Risks & Open Items → Recommended Next Actions → Source Coverage |  |
+| deployment-model-qual | Deployment Verdict → Customer Constraints → Remaining Validation → Recommended Motion → Source Coverage |  |
+| connector-feasibility | System-by-System Fit → Coverage Gaps & Custom Work → Risks & Constraints → Validation Questions → Recommended Next Steps → Source Coverage |  |
+| deal-assessment | Trajectory & What Changed → Deal Thesis → Stakeholders & Qualification → Close Path Blockers & Loss Risks → Recommended Actions & Coaching → Source Coverage |  |
+| poc-plan | POC Objective → Success Criteria → Scope & Architecture → Mutual Commitments & Roles → Timeline & Milestones → Access & Prerequisites → Risks & Mitigations → Exit Results Review → Open Items → Source Coverage |  |
+| roi-business-case | One-Slide EB View → Current-State Baseline → Airbyte Cost Projection → Payback & Sensitivity → Assumptions & Confirms → Source Coverage |  |
+| mutual-close-plan | Path to Signature → Two-Sided Responsibilities → Critical Path & Risks → Mutual Agreement Ask → Source Coverage |  |
+| account-refresher | Who's Who → Story So Far → Current State → Open Items → Watch Outs → Source Coverage |  |
+| next-move | Why This Move → Ranked Next Moves → Don't Do Yet → Workflow State → Evidence Gaps & External Actions → Source Coverage |  |
+| internal-prep | Relevant Deal Context → Alignment & Asks → Decisions Required → Source Coverage |  |
+| coverage-handoff | Deal Snapshot → Who's Who → Story So Far → Current State → In-Flight Commitments → Open Items → Technical Threads → Access & Escalation → Source Coverage |  |
+| objection-handler | What's True → Talk Track → Follow-Up Questions → Fit & Route Boundary | Source Coverage is used when the response references customer-specific evidence. It is not required for generic snippets. |
+| follow-up-email | *structured exception — no standalone canonical H2 order* | Email is a specialized artifact; do not force Markdown report architecture. |
+| full-qual | *structured exception — no standalone canonical H2 order* | full-qual orchestrates biz-qual and tech-qual; it does not emit a standalone Markdown report. |
+| pov-gsheet | Receipt → Source Coverage | Sheet artifact with a lightweight receipt and source coverage; not a normal report. |
+| worker-analysis | *structured exception — no standalone canonical H2 order* | Worker analysis is a specialized report with its own page architecture. |
+
+Legacy headings are preserved through the `aliases` map in `webapp/architecture.py`. Older outputs that use those headings remain openable and are not reclassified as corrupt; they are flagged as `is_legacy` and skip the strict Source-Coverage-must-be-last rule.
 
 ### Decision-First Layout (analytical skills)
 
 The **analytical skills** — `tech-qual`, `biz-qual`, `deal-assessment`, `deployment-model-qual`, `connector-feasibility`, `poc-plan` — produce reports a busy SE or leader reads to make a call. Structure them so the doc answers, **in this order**: *(1) Should we proceed? (2) Why? (3) What could block us? (4) What do we do next? (5) What's the evidence?* The reader should get the answer in ~10 seconds and only descend for detail. This is a layer ON TOP of the top-of-document structure above — it does not replace each skill's signature sections, it standardizes the **head** and the **high-value tables**.
 
-**1. Decision Card.** The `At a Glance` block for an analytical skill IS the decision card — lead with the judgment, not metadata. Use these labels (adapt wording per skill; omit lines that don't apply):
+**1. Decision Card.** The profile-specific summary block for an analytical skill IS the decision card — lead with the judgment, not metadata. Legacy outputs may use `### At a Glance`. Use these labels (adapt wording per skill; omit lines that don't apply):
 ```markdown
-### At a Glance
+### <Profile Summary — e.g. Decision Summary>
 - **Verdict / Fit:** <🟢/🟡/🔴 pill + 3–6 word headline>
 - **Recommended motion:** <the one next move — e.g. "Proceed to CDK workshop">
 - **Primary risk:** <the single biggest thing that could blow itup — one line>
@@ -514,7 +555,7 @@ Status legend stays 🟢 strong/viable · 🟡 needs validation/caveat · 🔴 w
 ### Heading rule (required for the index to work)
 
 - **Every top-level section is an H2 (`##`).** The web app sidebar and the Jump-to index only anchor headings. Never skip from H1 straight to H3 for a primary section.
-- Use **H3 (`###`)** for sub-parts. `At a Glance` is an H3 (it sits under the title block, not a navigable section).
+- Use **H3 (`###`)** for sub-parts. The profile-specific summary is an H3 under the title block, not a navigable section; legacy outputs may use `### At a Glance`.
 - Don't go deeper than H3 in output.
 
 ### Callouts (verdicts, risks, blockers, questions)
@@ -547,9 +588,9 @@ Probability **==40–60%==**, deal size ==$88K==, latency ==13h → 15min==, ==3
 ### Exemptions
 
 - **`follow-up-email` is fully exempt** — it's a customer-facing email, not a report. No At-a-Glance, no Jump-to, no TOC headings, no callouts, no Decision-First layout. Keep its existing email structure.
-- **`next-move` leads with a lightweight Decision Card** — as the SE workflow router ("what do I do next?"), its recommendation IS the deliverable, so it now leads with an **At-a-Glance card** (`Recommended Next Move`/`Confidence`/`Stage`/`Top Blocker` → hero tiles) + a `### Current read` narrative + the `[!blocker]`/`[!risk]` override callouts, followed by decision-first sections (Why This Move → Ranked Next Moves → Don't Do Yet → Workflow State → Context Inventory → Gaps → External Actions → Source Coverage). It stays exempt from the *full* analytical apparatus (MEDDPICC scorecard, formal decision tables) — the card + ranked-move cards are enough for a router. (Reclassified 2026-07-02 from light-touch.)
-- **`objection-handler` and `account-refresher` are light-touch** — already short and scannable. They may use a callout for severity, and account-refresher's "10-Second Version" already serves as a decision card, but the full Decision-First layout (scorecard, decision tables) is optional, not required.
-- **`internal-prep` adopts the Decision Card concept lightly** — its four sub-templates (ae-sync, forecast, exec-readout, deal-review) already have tight At-a-Glance blocks; align their labels to the decision-card spirit (lead with the judgment/ask) but they keep their own per-type section structure.
+- **`next-move` leads with a lightweight Decision Card** — as the SE workflow router ("what do I do next?"), its recommendation IS the deliverable, so it now leads with a **Recommendation summary card** (`Recommended Next Move`/`Confidence`/`Stage`/`Top Blocker` → hero tiles) + a `### Current read` narrative + the `[!blocker]`/`[!risk]` override callouts, followed by decision-first sections (Why This Move → Ranked Next Moves → Don't Do Yet → Workflow State → Context Inventory → Gaps → External Actions → Source Coverage). It stays exempt from the *full* analytical apparatus (MEDDPICC scorecard, formal decision tables) — the card + ranked-move cards are enough for a router. (Reclassified 2026-07-02 from light-touch.)
+- **`objection-handler` and `account-refresher` are light-touch** — already short and scannable. They may use a callout for severity, and account-refresher's **Account Snapshot** already serves as a decision card, but the full Decision-First layout (scorecard, decision tables) is optional, not required.
+- **`internal-prep` adopts the Decision Card concept lightly** — its four sub-templates (ae-sync, forecast, exec-readout, deal-review) already have tight Meeting / Decision Summary blocks; align their labels to the decision-card spirit (lead with the judgment/ask) but they keep their own per-type section structure.
 - **The six analytical skills** (`tech-qual`, `biz-qual`, `deal-assessment`, `deployment-model-qual`, `connector-feasibility`, `poc-plan`) **fully adopt** the Decision-First Layout above.
 
 ### Backward compatibility
@@ -560,7 +601,7 @@ The web app degrades gracefully: documents predating this contract still get an 
 
 ## Confidence & Assumptions (all skills)
 
-Every analytical or decision output states, near the top (inside or just under At-a-Glance):
+Every analytical or decision output states, near the top (inside or just under its profile-specific summary):
 
 - **Working assumptions** — anything the read depends on that isn't confirmed. Written as an SE would say it, e.g. "Assuming the 05.20 architecture is still current" or "Assuming SFDC Amount reflects the live scope."
 - **What would change this** — the one or two facts that, if different, flip the verdict. e.g. "If Flex is now GA, the deployment verdict changes."
@@ -580,7 +621,7 @@ When a skill processes large source material (transcripts, multi-doc synthesis),
 
 ### The rule
 
-**Every skill that synthesizes from external sources should include a "Source Coverage" section as the final content section of its output**, stating:
+**Every report-producing skill that synthesizes from external sources should include a "Source Coverage" section as the final content section of its output**, stating:
 - Which files were read
 - For long transcripts: line count read / total line count
 - For multi-doc synthesis: list of files actually opened
@@ -607,7 +648,7 @@ If a skill claims to do thorough work but reads only part of a source, this sect
 ### Fail loud on missing sources/tools (don't silently degrade)
 
 Graceful degradation must be *visible*, not silent. Source Coverage MUST list each expected source/tool as `used` or `unavailable` (never omit an unavailable one). If a **load-bearing** source was unavailable:
-1. Cap the At-a-Glance confidence (a metadata-only read is never High confidence), and
+1. Cap the profile-specific summary confidence (a metadata-only read is never High confidence), and
 2. Say so in the lead, in one clause — e.g. "assessed from registry metadata only; prod failure data was unavailable, so reliability risks are unverified."
 
 A confident-looking doc built on a fraction of the intended evidence is worse than an honest partial one.
@@ -811,7 +852,7 @@ When a skill consumes DS1–DS4 or the objection reference, include a single bul
 
 > - **Reference data freshness:** connector registry cache 2026-07-08 (6 days old, fresh); airbyte-platform repo 2026-07-01 (13 days old, stale); objection reference 2026-07-14 (0 days old, fresh).
 
-If any source is **stale** (older than its threshold) or **missing**, add a `[!warning]` callout in `## At a Glance` or `## Source Coverage` stating: "Product reference data is stale or unavailable; verify current availability, entitlements, and positioning before relying on these product claims." Cap the At-a-Glance confidence accordingly — a recommendation built on stale product data is never High confidence.
+If any source is **stale** (older than its threshold) or **missing**, add a `[!warning]` callout in the profile-specific summary H3 or `## Source Coverage` stating: "Product reference data is stale or unavailable; verify current availability, entitlements, and positioning before relying on these product claims." Cap the profile-specific summary confidence accordingly — a recommendation built on stale product data is never High confidence.
 
 The webapp will also compute freshness from file mtimes and show its own banner, but the skill must still be transparent in the document it produces.
 
@@ -885,7 +926,7 @@ The fragments below are referenced from multiple `SKILL.md` files. When a skill-
 
 ### Output format reference
 
-Saving skills produce a Markdown document that follows the shared `Output Document Format` above: top-of-document title/meta line, `### At a Glance`, `**Jump to:**` index, `##` body sections, and a final `## Source Coverage` audit section. Use callouts (`[!verdict]`, `[!risk]`, `[!blocker]`, `[!info]`) only for genuinely decision-relevant moments, wrap 3–6 key figures in `==…==`, and keep `Source Coverage` at the bottom.
+Report-producing saving skills produce a Markdown document that follows the shared `Output Document Format` above: top-of-document title/meta line, a profile-specific summary H3 (legacy outputs may use `### At a Glance`), `**Jump to:**` index, `##` body sections, and a final `## Source Coverage` audit section. Use callouts (`[!verdict]`, `[!risk]`, `[!blocker]`, `[!info]`) only for genuinely decision-relevant moments, wrap 3–6 key figures in `==…==`, and keep `Source Coverage` at the bottom. `objection-handler` includes that section only for customer-specific outputs; specialized non-report artifacts are exempt.
 
 ### Pre-flight source check (qualification and synthesis skills)
 

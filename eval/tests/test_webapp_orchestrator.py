@@ -47,19 +47,27 @@ VALID_BIZ_QUAL = """# Acme — biz-qual: viable
 **Date:** 2026-07-01 · **Skill:** biz-qual
 
 ## At a Glance
-- **Verdict:** viable
+- **Overall:** viable
+- **Recommended Motion:** run tech-qual
 
 ## MEDDPICC Scorecard
 | Letter | Status |
 |---|---|
 | M | green |
 
-## Source Coverage
-- synthetic
-
+## Qualification Narrative
 Customer stakeholders described the current process, measurable pain, decision
 criteria, timeline, budget context, implementation risks, and the agreed next
 steps for validating these assumptions with the buying team.
+
+## Movement and Deal Risks
+ok
+
+## Recommended Next Actions
+- run tech-qual
+
+## Source Coverage
+- synthetic
 """
 
 
@@ -73,6 +81,18 @@ VALID_TECH_QUAL = """# Acme — tech-qual: green
 
 ## Technical Fit Summary
 ok
+
+## Requirements and Architecture
+ok
+
+## Implementation Readiness
+ok
+
+## Risks and Open Items
+ok
+
+## Recommended Next Actions
+- run poc-plan
 
 ## Source Coverage
 - synthetic

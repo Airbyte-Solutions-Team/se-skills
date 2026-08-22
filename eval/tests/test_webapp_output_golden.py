@@ -35,6 +35,18 @@ SAMPLE_MD = """# Acme — tech-qual: missing critical input
 ## Technical Fit Summary
 Not enough technical input to qualify.
 
+## Requirements and Architecture
+TBD — needs discovery on sources, destinations, and volume.
+
+## Implementation Readiness
+TBD — no engineering sponsor or timeline identified.
+
+## Risks and Open Items
+Missing discovery on use cases, volume, and existing stack.
+
+## Recommended Next Actions
+- Schedule deep-dive with data engineering.
+
 ## Source Coverage
 - synthetic
 """

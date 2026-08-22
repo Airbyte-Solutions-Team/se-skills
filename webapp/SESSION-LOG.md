@@ -2,10 +2,26 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 20, 2026 — HEAD 2dcb547 on `devin/1787243567-source-policy-validation-semantics`. Authoritative advisory-choice handling and strict qualification-document usability are implemented in this slice._
+_Last updated: August 21, 2026 — HEAD `6ecc754` on `devin/1787273787-ux010-content-architecture`.
 
 
 ## Built this session (newest first — see `git log`)
+
+- **Legacy Deal Assessment H2 ownership correction (August 21).** Preserved raw peer-H2 boundaries for legacy POV extraction, updated regressions to the production output layout, and verified that only the raw `Need` body contributes connector lineage.
+
+- **Live summary-guidance reconciliation (August 21).** Replaced stale profile-summary references in producer instructions and shared playbook guidance, aligned all internal-prep mode templates, kept the POV sheet's validated `At a Glance` receipt summary as the registry truth, renamed Coverage Handoff comments, and added a regression guard against live legacy summary headings.
+
+- **Round-3 architecture and POV restoration (August 21).** Unified reader summary filtering with promotion, synchronized producer callouts and stale guidance with the registry, removed the duplicate post-call attendee subsection, restored Deal Assessment Driver/Need/Urgency extraction (including legacy H2s), and narrowly restored Need connector mining. Added callout, reader round-trip, and POV regressions.
+
+- **Skill-specific producer audit contracts (August 21).** Replaced the repeated decision-evidence sentence with source-specific Source Coverage audit trails, removed it where real POC/account/connector contracts already follow, and added genuine coaching, desired-next-step, and deferred-action guidance. Extended the architecture regression to reject the replacement filler.
+
+- **Round-2 content architecture corrections (August 21).** Profile-specific summaries now lead every Markdown producer with parser-readable labeled rows, and the reader recognizes/promotes each current profile name while preserving legacy `At a Glance`. POC, deal-assessment, account-refresher, and Coverage Handoff contracts now keep content under its semantic owner; the real Coverage Handoff HTML template is tested against the registry. POV context extraction now preserves H2/H3 ownership and restricts objectives, technical scope, and success criteria to their intended subsections, with canonical and legacy regression fixtures.
+
+- **Producer template review fixes (August 21).** Merged rich guidance into canonical H3s across all 15 saving skills, removed every filler stub and redundant same-name subsection, added profile-specific summary headings, corrected reader-facing display names and Jump-to anchors, and synchronized the registry callouts and playbook. Collapsed prep-call's duplicate `What We Already Know` topic, removed post-call's redundant Architecture/Requirements H3s in favor of Technical Notes, and aligned connector, deal-assessment, POC, and objection-handler H3 groups with their actual producer prose.
+
+- **Authoritative producer templates and validation architecture (August 21).** Reworked every saving skill's marked output-template region and Jump-to links to follow the canonical H2 order, corrected post-call Deal Impact ordering, synchronized the playbook table, and kept Source Coverage conditional for generic objection handling. Added machine-checkable template/playbook tests, restored AE-led discovery MEDDPICC H3 validation, and retained legacy alias compatibility while distinguishing mixed-generation drift from historical documents.
+
+- **Cross-skill output content architecture and canonical H2/H3 contract (August 21).** Added `webapp/architecture.py` as the single source of truth for every saving skill's canonical section order, H3 groupings, and legacy heading aliases. The web reader sidebar now mirrors Markdown source order exactly (Source Coverage always last) instead of grouping by intent; `webapp/static/app.js` no longer uses `tocGroup` / `TOC_GROUP_ORDER`. `output_schema.py` derives `SkillOutputSchema` from the canonical architecture, canonicalizes legacy headings on parse, marks old outputs as `is_legacy` rather than corrupt, and enforces Source-Coverage-last. All saving `SKILL.md` files now include a canonical architecture callout; `_se-playbook.md` records the per-skill H2 order and legacy alias policy. New regression tests in `eval/tests/test_architecture.py` cover canonical order, alias soundness, fixture source-coverage-last, and the sidebar source-order change. UI cache-bust bumped in `static/index.html`.
 
 - **Authoritative advisory-choice handling and qualification evidence thresholds (August 20).** Choice acknowledgements now remain mandatory even when deterministic prerequisite overrides are requested, are canonicalized from the current plan before entering prompts, job signatures, and run metadata, and distinguish running-job reuse. Deal Assessment qualification evidence now requires strict UTF-8, a Markdown heading, and at least 200 substantive non-heading characters.
 

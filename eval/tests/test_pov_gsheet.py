@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+import output_schema
 
 from pov_gsheet_context import (
     PovContext,
@@ -30,6 +31,9 @@ from pov_gsheet_context import (
     _find_connectors,
     _load_external_evidence,
     _merge_external_evidence,
+    _extract_business_objectives,
+    _extract_technical_scope,
+    _extract_success_criteria,
     _resolve_se_config,
     build_context,
 )
@@ -250,40 +254,78 @@ def test_legacy_relative_layout_paths(tmp_path: Path) -> None:
 
 
 def _write_deal_assessment(customers_dir: Path, account: str, opp: str | None) -> None:
-    """Create a fake deal-assessment output that exercises extraction."""
-    if opp:
-        root = customers_dir / account / "opportunities" / opp / "outputs" / "deal-assessment"
-    else:
-        root = customers_dir / account / "outputs" / "deal-assessment"
+    """Create a canonical deal output with technical-looking decoy text."""
+    root = customers_dir / account / "opportunities" / opp / "outputs" / "deal-assessment"
     root.mkdir(parents=True)
-    md = root / "deal-assessment-2026-07-10.md"
-    md.write_text(
-        textwrap.dedent(
-            """\
-            # TestCo — Deal Assessment
-            **Date:** July 10, 2026 · **Status:** updated
+    (root / "deal-assessment-2026-07-10.md").write_text(textwrap.dedent("""\
+        # TestCo — Deal Assessment
+        **Date:** July 10, 2026
 
-            ### At a Glance
-            - **Verdict:** viable
-            - **Probability:** medium
+        ### Decision Summary / Bottom Line
+        - **Verdict:** viable
+        - **Probability:** medium
 
-            ## Driver
-            The VP of Data wants to replace brittle Fivetran pipelines.
+        ## Deal Thesis
+        ### Driver
+        The VP of Data wants to replace brittle Fivetran pipelines.
+        ### Need
+        Reliable hourly syncs from Salesforce, Postgres, and NetSuite into Snowflake.
 
-            ## Need
-            Reliable hourly syncs from Salesforce, Postgres, and NetSuite into Snowflake.
+        ## Close Path Blockers & Loss Risks
+        ### What Would Close It
+        - A clean InfoSec sign-off on the Enterprise Flex VPC architecture.
+        - A 2-week POV that proves reliability on Postgres and Salesforce.
 
-            ## What Would Close It
-            - A clean InfoSec sign-off on the Enterprise Flex VPC architecture.
-            - A 2-week POV that proves reliability on Postgres and Salesforce.
-            - Mutual close plan with the VP of Data and CFO.
+        ## Recommended Actions & Coaching
+        ### Coaching Observations
+        - Do not turn positive feedback into a success criterion.
 
-            ## Source Coverage
-            - deal-assessment
-            """
-        ),
-        encoding="utf-8",
-    )
+        ## Source Coverage
+        - deal-assessment
+        """), encoding="utf-8")
+
+
+def _write_biz_qual(customers_dir: Path, account: str, opp: str) -> None:
+    root = customers_dir / account / "opportunities" / opp / "outputs" / "biz-qual"
+    root.mkdir(parents=True)
+    (root / "biz-qual-2026-07-10.md").write_text(textwrap.dedent("""\
+        # Business Qualification: TestCo
+        **Date:** July 10, 2026
+
+        ### Decision Summary
+        - **Overall:** strong
+        - **Recommended motion:** validate the POV
+
+        ## Qualification Narrative
+        ### Identify Pain
+        The data team spends two engineers each week repairing brittle pipelines.
+        ### Metrics
+        They need hourly syncs and want to reclaim 16 engineering hours per month.
+        ### Stakeholder Map
+        The VP of Data is the sponsor.
+
+        ## Source Coverage
+        - biz-qual
+        """), encoding="utf-8")
+
+
+def _write_poc_plan(customers_dir: Path, account: str, opp: str) -> None:
+    root = customers_dir / account / "opportunities" / opp / "outputs" / "poc-plan"
+    root.mkdir(parents=True)
+    (root / "poc-plan-2026-07-10.md").write_text(textwrap.dedent("""\
+        # POC Plan: TestCo
+        **Date:** July 10, 2026
+
+        ### POC Summary
+        - **POC proves:** reliable hourly syncs
+
+        ## Success Criteria
+        - Hourly sync completes within 15 minutes.
+        - InfoSec sign-off on the deployment.
+
+        ## Source Coverage
+        - poc-plan
+        """), encoding="utf-8")
 
 
 def _write_connector_feasibility(customers_dir: Path, account: str, opp: str | None) -> None:
@@ -302,10 +344,14 @@ def _write_connector_feasibility(customers_dir: Path, account: str, opp: str | N
             ### At a Glance
             - **Feasibility:** supported
 
-            ## Connector Coverage
+            ## System-by-System Fit
+            ### Fit Verdict
             - `source-postgres` is certified.
             - `source-salesforce` is certified.
+            - `source-netsuite` is certified.
             - `destination-snowflake` is certified.
+            ### Use Case Summary
+            - Validate hourly replication from Salesforce into Snowflake.
 
             ## Source Coverage
             - connector-feasibility
@@ -329,6 +375,8 @@ def test_context_builder_gathers_workspace_data(tmp_path: Path) -> None:
     }
     (tmp_path / ".se-config.yaml").write_text(yaml.safe_dump(cfg), encoding="utf-8")
     _write_deal_assessment(tmp_path / "customers", "TestCo", "default")
+    _write_biz_qual(tmp_path / "customers", "TestCo", "default")
+    _write_poc_plan(tmp_path / "customers", "TestCo", "default")
     _write_connector_feasibility(tmp_path / "customers", "TestCo", "default")
 
     ctx = build_context(account="TestCo", opp="default", workspace_arg=str(tmp_path))
@@ -338,7 +386,7 @@ def test_context_builder_gathers_workspace_data(tmp_path: Path) -> None:
     assert ctx.status == "complete"
 
     business = {o.objective for o in ctx.business_objectives}
-    assert "The VP of Data wants to replace brittle Fivetran pipelines." in business
+    assert "The data team spends two engineers each week repairing brittle pipelines." in business
 
     source_names = {s.name for s in ctx.technical_scope["sources"]}
     dest_names = {s.name for s in ctx.technical_scope["destinations"]}
@@ -349,9 +397,165 @@ def test_context_builder_gathers_workspace_data(tmp_path: Path) -> None:
 
     assert any("InfoSec sign-off" in c.feature_or_capability for c in ctx.success_criteria)
 
-    # Evidence lineage: Snowflake should cite both outputs it appeared in.
+    # Evidence lineage: Snowflake comes from the canonical connector output.
     snowflake = next(s for s in ctx.technical_scope["destinations"] if s.name == "Snowflake")
-    assert len(snowflake.sources) == 2
+    assert snowflake.sources == [
+        "TestCo/opportunities/default/outputs/connector-feasibility/"
+        "connector-feasibility-2026-07-10.md",
+        "TestCo/opportunities/default/outputs/deal-assessment/"
+        "deal-assessment-2026-07-10.md",
+    ]
+
+
+def test_h3_semantics_exclude_deal_actions_and_coaching(tmp_path: Path) -> None:
+    """Deal thesis context is retained while actions, risks, and coaching stay excluded."""
+    path = tmp_path / "deal-assessment.md"
+    text = textwrap.dedent(
+        """\
+        # Deal
+        ### Decision Summary / Bottom Line
+        - **Verdict:** at risk
+        ## Deal Thesis
+        ### Driver
+        The team wants faster pipelines.
+        ### Need
+        Move data from Salesforce into Snowflake.
+        ## Close Path Blockers & Loss Risks
+        ### What Would Close It
+        - Complete an executive review.
+        ## Recommended Actions & Coaching
+        ### Coaching Observations
+        - Ask for a dated next step.
+        ## Source Coverage
+        - synthetic
+        """
+    )
+    path.write_text(text, encoding="utf-8")
+    meta = output_schema.parse_output("deal-assessment", text)
+    objectives = _extract_business_objectives(meta, path, tmp_path)
+    technical = _extract_technical_scope(meta, path, tmp_path)
+    criteria = _extract_success_criteria(meta, path, tmp_path)
+    assert any("faster pipelines" in item.objective for item in objectives)
+    assert any("Salesforce into Snowflake" in item.objective for item in objectives)
+    assert not any("executive review" in item.objective for item in objectives)
+    assert not any("dated next step" in item.objective for item in objectives)
+    assert [system.name for system in technical["sources"]] == ["Salesforce"]
+    assert [system.name for system in technical["destinations"]] == ["Snowflake"]
+    assert technical["use_cases"] == []
+    assert technical["requirements"] == []
+    assert technical["dependencies"] == []
+    assert criteria == []
+
+
+def test_canonical_deal_assessment_business_context_is_extracted(tmp_path: Path) -> None:
+    """Deal Thesis Driver, Need, and Urgency are legitimate POV objectives."""
+    path = tmp_path / "deal-assessment.md"
+    text = textwrap.dedent(
+        """\
+        # Deal Assessment
+        ### Decision Summary / Bottom Line
+        - **Verdict:** viable
+        ## Deal Thesis
+        ### Driver
+        Reduce the data team's pipeline maintenance burden.
+        ### Need
+        Move Salesforce records into Snowflake without daily exports.
+        ### Urgency
+        The migration must be ready before the October planning cycle.
+        ## Close Path Blockers & Loss Risks
+        ### Loss Risks
+        The security review could slip.
+        ## Source Coverage
+        - synthetic
+        """
+    )
+    path.write_text(text, encoding="utf-8")
+    meta = output_schema.parse_output("deal-assessment", text)
+    objectives = _extract_business_objectives(meta, path, tmp_path)
+    assert [item.objective for item in objectives] == [
+        "Reduce the data team's pipeline maintenance burden.",
+        "Move Salesforce records into Snowflake without daily exports.",
+        "The migration must be ready before the October planning cycle.",
+    ]
+    assert not any("security review" in item.objective for item in objectives)
+
+
+def test_legacy_deal_assessment_h2_business_context_is_extracted(tmp_path: Path) -> None:
+    """Legacy peer H2 bodies remain separate in the production output layout."""
+    root = tmp_path / "TestCo" / "opportunities" / "default" / "outputs" / "deal-assessment"
+    root.mkdir(parents=True)
+    path = root / "deal-assessment-2026-07-10.md"
+    text = textwrap.dedent(
+        """\
+        # Deal Assessment
+        ## Driver
+        The team needs a reliable reverse ETL foundation.
+        ## Need
+        They need Salesforce data in Snowflake this quarter.
+        ## Urgency
+        The migration must be ready before the October planning cycle.
+        ## Source Coverage
+        - synthetic
+        """
+    )
+    path.write_text(text, encoding="utf-8")
+    meta = output_schema.parse_output("deal-assessment", text)
+    objectives = _extract_business_objectives(meta, path, tmp_path)
+    assert [item.objective for item in objectives] == [
+        "The team needs a reliable reverse ETL foundation.",
+        "They need Salesforce data in Snowflake this quarter.",
+        "The migration must be ready before the October planning cycle.",
+    ]
+
+
+def test_need_connector_mining_is_narrow(tmp_path: Path) -> None:
+    """Only the raw legacy Need body contributes connector names."""
+    root = tmp_path / "TestCo" / "opportunities" / "default" / "outputs" / "deal-assessment"
+    root.mkdir(parents=True)
+    path = root / "deal-assessment-2026-07-10.md"
+    text = textwrap.dedent(
+        """\
+        # Deal Assessment
+        ## Driver
+        The current Postgres estate needs modernization.
+        ## Need
+        Move data from Salesforce into Snowflake.
+        ## Urgency
+        The Postgres contract ends this quarter.
+        ## Source Coverage
+        - synthetic
+        """
+    )
+    path.write_text(text, encoding="utf-8")
+    meta = output_schema.parse_output("deal-assessment", text)
+    scope = _extract_technical_scope(meta, path, tmp_path)
+    assert [system.name for system in scope["sources"]] == ["Salesforce"]
+    assert [system.name for system in scope["destinations"]] == ["Snowflake"]
+    assert scope["requirements"] == []
+    assert scope["use_cases"] == []
+    assert scope["dependencies"] == []
+    assert "Postgres" not in {system.name for system in scope["sources"]}
+
+
+def test_h3_semantics_keep_legacy_qualification_evidence(tmp_path: Path) -> None:
+    """Legacy qualification nesting remains eligible for objective extraction."""
+    path = tmp_path / "biz-qual.md"
+    text = textwrap.dedent(
+        """\
+        # Qualification
+        ### At a Glance
+        - **Overall:** viable
+        ## Qualification Narrative
+        ### Identify Pain
+        The data team spends 16 hours each month repairing pipelines.
+        ## Source Coverage
+        - synthetic
+        """
+    )
+    path.write_text(text, encoding="utf-8")
+    meta = output_schema.parse_output("biz-qual", text)
+    objectives = _extract_business_objectives(meta, path, tmp_path)
+    assert any("16 hours" in item.objective for item in objectives)
 
 
 def test_context_builder_no_outputs_is_blocked(tmp_path: Path) -> None:

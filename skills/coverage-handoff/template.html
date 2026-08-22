@@ -14,7 +14,7 @@
   - Inject SFDC hard facts verbatim (stage, ARR, EB, champion, org/workspace IDs, dates).
   - Fill the coverage banner from the form context (SE out, covering SE, coverage window).
   - Infer past/upcoming meetings from transcripts + Salesforce (surface them in
-    "Where Things Stand" / "What's Open") — there is no dedicated form-fed section.
+    "Current State" / "Open Items") — there is no dedicated form-fed section.
   - Delete any section whose data is genuinely absent, OR mark it "None captured" — never invent.
   - Keep the .airbyte-auth-marker and .footer as-is.
 -->
@@ -147,7 +147,7 @@
   </div>
 </div>
 
-<!-- ====== HEADER + AT A GLANCE ====== -->
+<!-- ====== HEADER + COVERAGE SNAPSHOT ====== -->
 <div class="header">
   <div class="header-inner">
     <div>
@@ -174,8 +174,8 @@
 
 <div class="main">
 
-  <!-- 10-SECOND VERSION -->
-  <div class="section-title">The 10-Second Version</div>
+  <!-- COVERAGE SNAPSHOT -->
+  <div class="section-title">Coverage Snapshot</div>
   <div class="card full">
     <p>{{TEN_SECOND_SUMMARY}}</p>
   </div>
@@ -216,7 +216,7 @@
   </div>
 
   <!-- THE STORY SO FAR -->
-  <div class="section-title">The Story So Far</div>
+  <div class="section-title">Story So Far</div>
   <div class="card full">
     <ul>
       <!-- REPEAT: dated bullets, oldest to newest -->
@@ -225,22 +225,13 @@
   </div>
 
   <!-- WHERE THINGS STAND -->
-  <div class="section-title">Where Things Stand</div>
+  <div class="section-title">Current State</div>
   <div class="card full">
     <p>{{CURRENT_STATE_NARRATIVE}}</p>
     <div class="kv" style="margin-top:10px;"><span class="label">Last Contact</span><span class="value">{{LAST_CONTACT}}</span></div>
     <div class="kv"><span class="label">Use Case</span><span class="value">{{USE_CASE}}</span></div>
     <!-- If SFDC stage disagrees with reality, add a risk callout: -->
     <div class="callout risk">{{SFDC_VS_REALITY}}</div>
-  </div>
-
-  <!-- WHAT'S OPEN -->
-  <div class="section-title">What's Open</div>
-  <div class="card full">
-    <ul class="checklist">
-      <!-- REPEAT: open item, unanswered question, pending action -->
-      <li>{{OPEN_ITEM}}</li>
-    </ul>
   </div>
 
   <!-- IN-FLIGHT COMMITMENTS -->
@@ -255,8 +246,17 @@
     </table>
   </div>
 
+  <!-- WHAT'S OPEN -->
+  <div class="section-title">Open Items</div>
+  <div class="card full">
+    <ul class="checklist">
+      <!-- REPEAT: open item, unanswered question, pending action -->
+      <li>{{OPEN_ITEM}}</li>
+    </ul>
+  </div>
+
   <!-- LIVE TECHNICAL THREAD -->
-  <div class="section-title">Live Technical Thread</div>
+  <div class="section-title">Technical Threads</div>
   <div class="card full">
     <table>
       <thead><tr><th>Question / Blocker</th><th>State</th><th>Waiting On</th></tr></thead>
@@ -268,7 +268,7 @@
   </div>
 
   <!-- ACCESS & LOGISTICS -->
-  <div class="section-title">Access &amp; Logistics</div>
+  <div class="section-title">Access &amp; Escalation</div>
   <div class="card full">
     <div class="kv"><span class="label">SFDC Opportunity</span><span class="value">{{SFDC_LINK}}</span></div>
     <div class="kv"><span class="label">Airbyte Org ID</span><span class="value mono">{{ORG_ID}}</span></div>

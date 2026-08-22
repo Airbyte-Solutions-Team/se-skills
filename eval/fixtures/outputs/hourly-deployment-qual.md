@@ -2,7 +2,15 @@
 
 **Date:** 2026-07-01 · **Skill:** deployment-model-qual
 
-## The Five Qualifying Questions
+## At a Glance
+- **Verdict:** Cloud viable
+- **Recommended Motion:** Proceed to tech-qual and connector-feasibility.
+
+## Deployment Verdict
+
+**🟢 Cloud viable**
+
+## Customer Constraints
 
 | Question | Answer | Implication |
 |---|---|---|
@@ -12,10 +20,12 @@
 | BYOK/KMS | Not required | Cloud acceptable |
 | VPC isolation | None | Cloud viable |
 
-## Verdict
+## Remaining Validation
+- Confirm data residency if governance changes.
+- Validate security review scope.
 
-**🟢 Cloud viable**
-
-## Recommended Next Action
-
+## Recommended Motion
 - Proceed to tech-qual and connector-feasibility.
+
+## Source Coverage
+- Synthetic hourly transcript used for evaluation.

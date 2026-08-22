@@ -53,11 +53,11 @@ def test_post_call_partial_transcript_coverage(repo_root: Path) -> None:
 
 
 def test_post_call_missing_critical_section(repo_root: Path) -> None:
-    text = _load_fixture(repo_root, "post-call-brief.md").replace("## Action Items", "## Removed")
+    text = _load_fixture(repo_root, "post-call-brief.md").replace("## Actions & Next Step", "## Removed")
     meta = output_schema.parse_output("post-call", text, mode="brief")
     assert meta.valid is False
     assert meta.validation_status == "invalid"
-    assert any("action-items" in e for e in meta.validation_errors)
+    assert any("actions-and-next-step" in e for e in meta.validation_errors)
 
 
 def test_post_call_unresolved_template_placeholders(repo_root: Path) -> None:
@@ -114,6 +114,30 @@ def test_post_call_source_coverage_without_line_counts_is_invalid(repo_root: Pat
     assert any("line counts" in e for e in meta.validation_errors)
 
 
+def test_ae_led_discovery_requires_meddpicc_h3(repo_root: Path) -> None:
+    text = _load_fixture(repo_root, "post-call-full.md")
+    transcript = "The AE led a discovery call to review metrics and the economic buyer."
+    missing = output_schema.parse_output("post-call", text, transcript_text=transcript)
+    assert missing.valid is False
+    assert any("MEDDPICC" in error for error in missing.validation_errors)
+
+    with_meddpicc = text.replace(
+        "## Deal Impact\n",
+        "## Deal Impact\n\n### MEDDPICC Changes\n- M🟢 E🟡 D🟢 D🟡 P🟢 I🟢 C🟡 C🟢\n",
+    )
+    valid = output_schema.parse_output(
+        "post-call", with_meddpicc, transcript_text=transcript
+    )
+    assert valid.valid is True, valid.validation_errors
+
+
+def test_se_attended_call_does_not_require_meddpicc_h3(repo_root: Path) -> None:
+    text = _load_fixture(repo_root, "post-call-full.md")
+    transcript = "The SE attended a technical discovery call about architecture."
+    meta = output_schema.parse_output("post-call", text, transcript_text=transcript)
+    assert meta.valid is True, meta.validation_errors
+
+
 def test_sidecar_schema_version_change_reparses_and_rewrites(tmp_path: Path, repo_root: Path) -> None:
     md_path = tmp_path / "post-call.md"
     md_path.write_text(
@@ -123,7 +147,7 @@ def test_sidecar_schema_version_change_reparses_and_rewrites(tmp_path: Path, rep
     sidecar = md_path.with_suffix(".md.json")
     sidecar.write_text(
         json.dumps({
-            "schema_version": 1,
+            "schema_version": 2,
             "skill": "post-call",
             "valid": True,
             "validation_status": "valid",
@@ -135,7 +159,7 @@ def test_sidecar_schema_version_change_reparses_and_rewrites(tmp_path: Path, rep
 
     assert meta.valid is True
     rewritten = json.loads(sidecar.read_text(encoding="utf-8"))
-    assert rewritten["schema_version"] == 2
+    assert rewritten["schema_version"] == 3
     assert rewritten["validation_status"] == "valid"
 
 
@@ -154,12 +178,17 @@ def _reference_snapshot() -> list[dict[str, object]]:
     ]
 
 
-def _write_v1_sidecar(md_path: Path, snapshot_key: str, snapshot: list[dict[str, object]]) -> Path:
+def _write_v1_sidecar(
+    md_path: Path,
+    snapshot_key: str,
+    snapshot: list[dict[str, object]],
+    schema_version: int = 1,
+) -> Path:
     sidecar = md_path.with_suffix(md_path.suffix + ".json")
     sidecar.write_text(
         json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": schema_version,
                 "skill": "post-call",
                 "valid": False,
                 "validation_status": "invalid",
@@ -178,14 +207,19 @@ def test_v1_snapshot_survives_reparse_and_output_service_read(
     md_path.parent.mkdir(parents=True, exist_ok=True)
     md_path.write_text(_load_fixture(repo_root, "post-call-canonical.md"), encoding="utf-8")
     snapshot = _reference_snapshot()
-    sidecar = _write_v1_sidecar(md_path, "reference_freshness_at_generation", snapshot)
+    sidecar = _write_v1_sidecar(
+        md_path,
+        "reference_freshness_at_generation",
+        snapshot,
+        schema_version=2,
+    )
 
     metadata = output_schema.read_or_parse_sidecar(md_path, "post-call")
 
     assert metadata.valid is True
     assert metadata.validation_status == "valid"
     rewritten = json.loads(sidecar.read_text(encoding="utf-8"))
-    assert rewritten["schema_version"] == 2
+    assert rewritten["schema_version"] == 3
     assert json.dumps(
         rewritten["reference_freshness_at_generation"], separators=(",", ":")
     ) == json.dumps(snapshot, separators=(",", ":"))
@@ -236,7 +270,7 @@ def test_legacy_v1_snapshot_migrates_during_reparse(tmp_path: Path, repo_root: P
     rewritten = json.loads(sidecar.read_text(encoding="utf-8"))
 
     assert metadata.valid is True
-    assert rewritten["schema_version"] == 2
+    assert rewritten["schema_version"] == 3
     assert json.dumps(
         rewritten["reference_freshness_at_generation"], separators=(",", ":")
     ) == json.dumps(snapshot, separators=(",", ":"))
@@ -253,13 +287,11 @@ def _remove_section(text: str, heading: str) -> str:
 
 def test_post_call_conditional_sections_absent_legitimately(repo_root: Path) -> None:
     # Remove all conditional sections from the full fixture; the remaining required
-    # sections (including attendees and coaching observations) should still validate.
+    # sections should still validate.
     text = _load_fixture(repo_root, "post-call-full.md")
     for heading in [
-        "## Sources & Destinations",
-        "## Technical Notes",
-        "## MEDDPICC Quick Pass",
-        "## Open Questions / Follow-ups",
+        "## Scope & Technical Changes",
+        "## Coaching Observations",
     ]:
         text = _remove_section(text, heading)
     meta = output_schema.parse_output("post-call", text, mode="full")
@@ -269,27 +301,30 @@ def test_post_call_conditional_sections_absent_legitimately(repo_root: Path) -> 
 
 def test_post_call_conditional_section_present_but_empty_is_invalid(repo_root: Path) -> None:
     text = _load_fixture(repo_root, "post-call-full.md").replace(
-        "## Technical Notes\n- **Volume / scale / frequency:** 10M rows/day [stated]\n- **Deployment / infra / security:** VPC residency required",
-        "## Technical Notes",
+        "## Scope & Technical Changes",
+        "## Scope & Technical Changes\n",
+    )
+    # Replace the multi-line body up to the next H2 with an empty body.
+    text = re.sub(
+        r"## Scope & Technical Changes\n.*?^(?=## |\Z)",
+        "## Scope & Technical Changes\n\n",
+        text,
+        count=1,
+        flags=re.MULTILINE | re.DOTALL,
     )
     meta = output_schema.parse_output("post-call", text, mode="full")
     assert meta.valid is False
     assert meta.validation_status == "invalid"
-    assert any("technical-notes" in e.lower() for e in meta.validation_errors)
+    assert any("scope" in e.lower() for e in meta.validation_errors)
 
 
 def test_post_call_empty_expanded_heading_is_invalid(repo_root: Path) -> None:
-    text = _load_fixture(repo_root, "post-call-brief.md").replace(
-        "## Action Items",
-        "## Action Items and Decisions",
-    ).replace(
-        "- [ ] **SE** — Schedule technical deep-dive with security lead by June 14\n- [ ] **Champion** — Introduce SE to the security reviewer",
-        "",
-    )
+    text = _remove_section(_load_fixture(repo_root, "post-call-brief.md"), "## Actions & Next Step")
+    text = text.replace("## Source Coverage", "## Actions & Next Step — Final\n\n## Source Coverage")
     meta = output_schema.parse_output("post-call", text, mode="brief")
     assert meta.valid is False
     assert meta.validation_status == "invalid"
-    assert any("action-items" in e.lower() for e in meta.validation_errors)
+    assert any("actions" in e.lower() for e in meta.validation_errors)
 
 
 def test_post_call_malformed_sidecar_skill_mismatch(tmp_path: Path, repo_root: Path) -> None:
@@ -328,14 +363,12 @@ def test_post_call_missing_at_a_glance(repo_root: Path) -> None:
 
 
 def test_post_call_empty_required_section(repo_root: Path) -> None:
-    text = _load_fixture(repo_root, "post-call-brief.md").replace(
-        "## Action Items\n- [ ] **SE** — Schedule technical deep-dive with security lead by June 14\n- [ ] **Champion** — Introduce SE to the security reviewer\n",
-        "## Action Items\n",
-    )
+    text = _remove_section(_load_fixture(repo_root, "post-call-brief.md"), "## Actions & Next Step")
+    text = text.replace("## Source Coverage", "## Actions & Next Step\n\n## Source Coverage")
     meta = output_schema.parse_output("post-call", text, mode="brief")
     assert meta.valid is False
     assert meta.validation_status == "invalid"
-    assert any("action-items" in e.lower() for e in meta.validation_errors)
+    assert any("actions" in e.lower() for e in meta.validation_errors)
 
 
 def test_post_call_zero_source_coverage(repo_root: Path) -> None:

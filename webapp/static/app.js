@@ -360,6 +360,45 @@ function slugify(s) {
     .replace(/^-+|-+$/g, "");
 }
 
+// Profile-specific summary headings are deliberately explicit so the reader
+// can promote every current producer profile while retaining legacy outputs.
+const PROFILE_SUMMARY_NAMES = [
+  "Meeting Snapshot",
+  "Call Snapshot",
+  "Decision Summary",
+  "Decision Summary / Bottom Line",
+  "POC Summary",
+  "Business-Case Summary",
+  "Close Summary",
+  "Account Snapshot",
+  "Recommendation",
+  "Meeting / Decision Summary",
+  "Coverage Snapshot",
+  "Severity / Bottom Line",
+];
+
+function summaryHeadingLabelText(text) {
+  const value = (text || "").trim();
+  const match = PROFILE_SUMMARY_NAMES.find((name) => name.toLowerCase() === value.toLowerCase());
+  if (match) return match;
+  return /^at a glance$/i.test(value) ? "At a Glance" : "";
+}
+
+function isSummaryHeadingText(text) {
+  return Boolean(summaryHeadingLabelText(text))
+    || /^(?:\d+-second|current read|in (?:a )?nutshell)\b/i.test((text || "").trim());
+}
+
+function filterSummaryTocEntries(toc) {
+  return (toc || []).filter((t) => (t.level === 2 || t.level === 3)
+    && !isSummaryHeadingText(t.text));
+}
+
+function summaryHeadingLabel(section) {
+  const heading = section?.querySelector(":scope > h2, :scope > h3");
+  return summaryHeadingLabelText(heading?.textContent || "");
+}
+
 // Strip inline markdown to plain text (for TOC sidebar labels).
 function stripInline(s) {
   return (s || "")
@@ -2148,18 +2187,6 @@ function buildDocStatus(meta) {
   </div>`;
 }
 
-// Map a (concise) section title to a sidebar intent group. Order of groups is
-// fixed; anything unmatched falls into "Context" so nothing is dropped. Covers
-// both the analytical skills (deal-assessment, tech-qual, …) and account-refresher
-// ("Who's Who", "The Story So Far", "Watch-outs", …).
-function tocGroup(title) {
-  const t = (title || "").toLowerCase();
-  if (/at a glance|10-second|bottom line|current read|what would close|what would lose|deal blocker|where things stand|what changed|recommendation|fit verdict|verdict/.test(t)) return "Decision";
-  if (/next action|next step|next move|coaching|recommended|what'?s open|open question|watch-?out|risk|action|email|poc|plan|workshop|agenda/.test(t)) return "Execution";
-  return "Context";
-}
-const TOC_GROUP_ORDER = ["Decision", "Context", "Execution"];
-
 // Sections collapsed by default (audit / supporting detail). Matched on the H2.
 const COLLAPSE_DEFAULT = /source coverage|activity trajectory|meddpicc|coaching|appendix|raw|evidence reviewed/i;
 
@@ -2270,7 +2297,8 @@ async function openOutput(path, title, ctx) {
   const leadSection = sections[0];
   // The lead is the pre-first-H2 block (title meta + At-a-Glance). Promote it only
   // when it actually holds an At-a-Glance card and isn't itself an H2 section.
-  const leadIsGlance = leadSection && /at a glance/i.test(leadSection.textContent || "")
+  const leadSummaryLabel = summaryHeadingLabel(leadSection);
+  const leadIsGlance = leadSection && leadSummaryLabel
     && !leadSection.querySelector(":scope > h2.md-h2");
   let glancePromoted = false;
   if (leadIsGlance) {
@@ -2317,7 +2345,7 @@ async function openOutput(path, title, ctx) {
         `<div class="tile ${t.sev}"><div class="tile-label">${esc(t.label)}</div><div class="tile-value">${t.valHtml}</div></div>`
       ).join("");
       const restHtml = rest.length ? `<div class="exec-rest"><div class="kv-grid">${rest.join("")}</div></div>` : "";
-      execCardHtml = `<div class="exec-card"><div class="exec-card-eyebrow">Executive Assessment</div>`
+      execCardHtml = `<div class="exec-card"><div class="exec-card-eyebrow">${esc(leadSummaryLabel)}</div>`
         + `${readHtml}<div class="tile-grid">${tileHtml}</div>${restHtml}</div>`;
       glancePromoted = true;
       // The lead section's content (meta line + At-a-Glance) is now fully
@@ -2345,10 +2373,10 @@ async function openOutput(path, title, ctx) {
     }
   }
 
-  // Tag the section containing "At a Glance" so it gets the summary panel (only
+  // Tag the section containing a recognized summary heading so it gets the summary panel (only
   // reached if the glance wasn't promoted above — keeps backward behavior).
   for (const s of sections) {
-    if (/at a glance/i.test(s.querySelector("h2,h3")?.textContent || "")) s.classList.add("is-glance");
+    if (summaryHeadingLabel(s)) s.classList.add("is-glance");
   }
 
   // ── "**Lead.** detail" bullet sections → cards. RISK_SECTION (Watch-outs / What
@@ -2510,23 +2538,15 @@ async function openOutput(path, title, ctx) {
 
   const sheetHtml = sections.map((s) => s.outerHTML).join("");
 
-  // Sidebar index — H2/H3 only, concise labels, grouped by intent. H3s stay with
-  // their preceding H2's group. Empty groups are omitted; order is fixed.
-  // Drop the At-a-Glance entry from the index once it's promoted to the exec card
-  // (its in-sheet anchor no longer exists). Keep it otherwise (backward compat).
-  const tocEntries = toc.filter((t) => (t.level === 2 || t.level === 3)
-    && !(glancePromoted && /at a glance|\d+-second|current read|in (a )?nutshell/i.test(t.text)));
-  let lastH2Group = "Context";
-  const grouped = { Decision: [], Context: [], Execution: [] };
-  tocEntries.forEach((t) => {
-    const label = conciseLabel(t.text);
-    if (t.level === 2) lastH2Group = tocGroup(label);
-    const g = grouped[lastH2Group] || grouped["Context"];
-    g.push(`<a href="#toc-${t.id}" class="doc-toc-link lvl${t.level}">${esc(label)}</a>`);
-  });
-  const tocHtml = TOC_GROUP_ORDER
-    .filter((g) => grouped[g].length)
-    .map((g) => `<div class="doc-toc-group">${g}</div>${grouped[g].join("")}`)
+  // Sidebar index — H2/H3 only, concise labels, in document order. The sidebar
+  // mirrors the Markdown source exactly; H2s are primary navigation and immediately
+  // following H3s are indented beneath them. Grouping by intent (Decision / Context
+  // / Execution) is removed so the reader never contradicts the document order.
+  // Summary headings are lead metadata, not navigable sections. Filter them
+  // whether or not promotion found enough labels to build an executive card.
+  const tocEntries = filterSummaryTocEntries(toc);
+  const tocHtml = tocEntries
+    .map((t) => `<a href="#toc-${t.id}" class="doc-toc-link lvl${t.level}">${esc(conciseLabel(t.text))}</a>`)
     .join("");
 
   const backHref = ctx

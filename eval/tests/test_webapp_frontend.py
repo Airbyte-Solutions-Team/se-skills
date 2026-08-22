@@ -18,6 +18,73 @@ def test_app_js_parses_and_normalizes_output_meta(repo_root: Path) -> None:
     assert app_js.count("normalizeOutputMeta(") >= 4
 
 
+def test_profile_summary_is_promoted_with_profile_label(repo_root: Path) -> None:
+    """The reader recognizes current profiles and preserves their label."""
+    app_js = repo_root / "webapp" / "static" / "app.js"
+    script = f"""
+const fs = require("fs");
+const source = fs.readFileSync({str(app_js)!r}, "utf8");
+const list = source.match(/const PROFILE_SUMMARY_NAMES = \\[(.*?)\\];/s)[0];
+const helper = source.match(/function summaryHeadingLabelText\\(text\\) \\{{.*?\\n\\}}/s)[0];
+eval(list + "\\n" + helper);
+console.log(JSON.stringify({{
+  current: summaryHeadingLabelText("Call Snapshot"),
+  legacy: summaryHeadingLabelText("At a Glance"),
+  unrelated: summaryHeadingLabelText("Deal Thesis")
+}}));
+"""
+    result = subprocess.run(
+        ["node", "-e", script], check=True, capture_output=True, text=True
+    )
+    labels = json.loads(result.stdout)
+    assert labels == {
+        "current": "Call Snapshot",
+        "legacy": "At a Glance",
+        "unrelated": "",
+    }
+
+    app_text = app_js.read_text(encoding="utf-8")
+    assert "summaryHeadingLabel(leadSection)" in app_text
+    assert 'exec-card-eyebrow">${esc(leadSummaryLabel)}' in app_text
+
+
+def test_profile_summary_is_removed_from_sidebar_in_reader_round_trip(repo_root: Path) -> None:
+    """The TOC keeps body order while excluding promoted and unpromoted summaries."""
+    app_js = repo_root / "webapp" / "static" / "app.js"
+    script = f"""
+const fs = require("fs");
+const source = fs.readFileSync({str(app_js)!r}, "utf8");
+const names = source.match(/const PROFILE_SUMMARY_NAMES = \\[(.*?)\\];/s)[0];
+const label = source.match(/function summaryHeadingLabelText\\(text\\) \\{{.*?\\n\\}}/s)[0];
+const predicate = source.match(/function isSummaryHeadingText\\(text\\) \\{{.*?\\n\\}}/s)[0];
+const filter = source.match(/function filterSummaryTocEntries\\(toc\\) \\{{.*?\\n\\}}/s)[0];
+eval(names + "\\n" + label + "\\n" + predicate + "\\n" + filter);
+const toc = [
+  {{level: 3, text: "Call Snapshot", id: "call-snapshot"}},
+  {{level: 2, text: "Key Takeaways", id: "key-takeaways"}},
+  {{level: 3, text: "Attendees", id: "attendees"}},
+  {{level: 2, text: "Deal Impact", id: "deal-impact"}},
+  {{level: 3, text: "At a Glance", id: "at-a-glance"}}
+];
+if (summaryHeadingLabelText(toc[0].text) !== "Call Snapshot") {{
+  throw new Error("profile summary was not promoted with its profile label");
+}}
+console.log(JSON.stringify(filterSummaryTocEntries(toc)));
+"""
+    result = subprocess.run(
+        ["node", "-e", script], check=True, capture_output=True, text=True
+    )
+    entries = json.loads(result.stdout)
+    assert entries == [
+        {"level": 2, "text": "Key Takeaways", "id": "key-takeaways"},
+        {"level": 3, "text": "Attendees", "id": "attendees"},
+        {"level": 2, "text": "Deal Impact", "id": "deal-impact"},
+    ]
+
+    app_text = app_js.read_text(encoding="utf-8")
+    assert "const tocEntries = filterSummaryTocEntries(toc);" in app_text
+
+
 def test_doc_status_helper_behaves_truthfully_across_validation_states(repo_root: Path) -> None:
     """Exercise the pure status helper through Node rather than source matching."""
     helper = repo_root / "webapp" / "static" / "doc_status.js"

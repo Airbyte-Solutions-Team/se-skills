@@ -39,15 +39,35 @@ If user signals brief mode (`--brief`, `quick tech qual`, `tech summary`): produ
 
 ## Output Format
 
+
+> [!info] Canonical output architecture for `tech-qual`
+> This skill follows the shared content-architecture contract. Produce the H2 sections below in this exact order; use H3 (`###`) for the listed sub-topics.
+>
+> **Canonical H2 order:**
+> 1. `Technical Fit Summary`
+> 2. `Requirements & Architecture`
+> 3. `Implementation Readiness`
+> 4. `Risks & Open Items`
+> 5. `Recommended Next Actions`
+> 6. `Source Coverage`
+>
+> **H3 subtopics (when used):**
+> - under `Requirements & Architecture`: Technical Requirements & Scope, Data Sources & Destinations, Data Volume & Scale, Deployment Model, Security & Compliance, Current Stack & Integration Context
+> - under `Implementation Readiness`: Team & Implementation Readiness
+> - under `Risks & Open Items`: Technical Risks & Open Items, Questions Still Needed
+>
+> Source Coverage must be the **final H2** when required. The profile-specific summary block is an H3 under the title block (not a navigable section).
+
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---
 
+<!-- output-template:start -->
 # Technical Qualification: [Company Name]
 **Date:** [today's date, long form] · **SE owner:** [SE name]
 
-### At a Glance
-*Decision card — lead with the judgment (see `_se-playbook.md` → Decision-First Layout).*
+
+### Decision Summary
 - **Technical fit:** 🟢 Strong / 🟡 Moderate / 🔴 Weak / ⬜ Insufficient info — [3–6 word headline]
 - **Recommended motion:** [the one next move — e.g. "Proceed to POC scoping" / "Validate destination first"]
 - **Primary risk:** [the single biggest technical thing that could blow it up — one line]
@@ -57,11 +77,15 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 - **Compliance:** [omit if none in scope; else "N/A" or "compliance claims pending verification" if any cert/security line is unverified — see Security & Compliance]
 - **Source confidence:** [one line — N transcripts + SFDC + qual docs; "see Source Coverage"]
 
-**Jump to:** [At a Glance](#at-a-glance) · [Technical Fit Summary](#technical-fit-summary) · [Technical Requirements & Scope](#technical-requirements--scope) · [Data Sources & Destinations](#data-sources--destinations) · [Data Volume & Scale](#data-volume--scale) · [Deployment Model](#deployment-model) · [Security & Compliance](#security--compliance) · [Current Stack & Integration Context](#current-stack--integration-context) · [Team & Implementation Readiness](#team--implementation-readiness) · [Technical Risks & Open Items](#technical-risks--open-items) · [Questions Still Needed](#questions-still-needed) · [Recommended Next Actions](#recommended-next-actions) · [Source Coverage](#source-coverage)
 
-*(Section order is verdict-first, then architecture (sources → volume → deployment → security), then risks and actions. Source Coverage is the last content section — see `_se-playbook.md`.)*
+*Decision card — lead with the judgment (see `_se-playbook.md` → Decision-First Layout).*
+
+**Jump to:** [Technical Fit Summary](#technical-fit-summary) · [Requirements & Architecture](#requirements-architecture) · [Implementation Readiness](#implementation-readiness) · [Risks & Open Items](#risks-open-items) · [Recommended Next Actions](#recommended-next-actions) · [Source Coverage](#source-coverage)
+
+*(Use the canonical sections below; retain all facts, tables, and reasoning while nesting sub-topics under the relevant H2.)*
 
 ## Technical Fit Summary
+
 **Overall fit:** 🟢 Strong / 🟡 Moderate / 🔴 Weak / ⬜ Insufficient info
 
 **Pre-save fit gate:** Do not label the overall technical fit as `🟢 Strong` when any scorecard row is `⬜ Unknown` or `🔴 Weak` unless that row is explicitly a **solvable implementation risk** (not a critical blocker). If a critical requirement is unverified, cap the overall fit at `🟡 Moderate` or lower and make the recommended motion conditional on resolving the open item. An "Insufficient info" call is better than an inflated "Strong."
@@ -78,7 +102,8 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 | Integration complexity | 🟢 / 🟡 / 🔴 / ⬜ | [e.g. "1 custom CDK connector needed"] |
 | Team capability | 🟢 / 🟡 / 🔴 / ⬜ | [e.g. "capable integration owners; can self-serve"] |
 
-## Technical Requirements & Scope
+## Requirements & Architecture
+### Technical Requirements & Scope
 *The one-place scope snapshot — consolidates the key technical asks across all calls/docs so the SE doesn't have to reassemble them from per-call summaries. The detailed sections below expand each line. This is the canonical scope; if a later call revises a number, update it HERE.*
 
 | Dimension | Requirement |
@@ -97,8 +122,7 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 - **Pricing-model fit signal:** [e.g., "strongly prefers capacity-based/fixed-cost — easier board story" — quote if stated]
 - **Note:** Commercial ownership stays with `biz-qual` (economic buyer, budget, paper process). This line is the *technical sizing* that informs the quote — record what was stated, don't negotiate it here.
 
-## Data Sources & Destinations
-
+### Data Sources & Destinations
 **Sources (what data are they moving FROM):**
 | Source | Connector exists? | Notes |
 |--------|-------------------|-------|
@@ -112,7 +136,7 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 **Connector gaps:**
 - [ ] [Any sources or destinations not covered by Airbyte's catalog]
 
-## Data Volume & Scale
+### Data Volume & Scale
 - **Estimated rows/events per day:** 
 - **Number of pipelines / connections needed:** 
 - **Sync frequency required:** [Real-time / hourly / daily / weekly]
@@ -123,7 +147,7 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 - [Notes on whether this is within Airbyte's supported scale range]
 - [Flag any volume or latency requirements that could be a fit risk]
 
-## Deployment Model
+### Deployment Model
 *If `outputs/deployment-qual/deployment-qual-*.md` exists for this customer, summarize its verdict here and reference the doc — don't re-derive. Use this section for technical implications, not for re-qualifying.*
 
 - **Verdict (from deployment-qual):** [🟢 Cloud Pro viable / 🟡 with caveats / 🔴 not viable]
@@ -136,7 +160,7 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 **Assessment:**
 - [Notes on deployment fit and any constraints]
 
-## Security & Compliance
+### Security & Compliance
 - **Compliance requirements:** [SOC 2 / HIPAA / GDPR / PCI / ISO 27001 / other — flag whether real (handling regulated data) vs. aspirational]
 - **Data residency requirements:** 
 - **SSO/SAML required:** [Yes / No]
@@ -148,7 +172,7 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 > Every certification/security claim must be either:
 > (a) cited to an authoritative source with a date, or
 > (b) written as "believed — SE to verify with [team] before customer confirmation."
-> Never state a certification (SOC 2, HIPAA, region availability, etc.) as fact from memory. Separate `[customer requires]` from `[Airbyte supports — verified]` from `[Airbyte supports — unverified]`. If any compliance line is unverified, note it in the At-a-Glance ("compliance claims pending verification").
+> Never state a certification (SOC 2, HIPAA, region availability, etc.) as fact from memory. Separate `[customer requires]` from `[Airbyte supports — verified]` from `[Airbyte supports — unverified]`. If any compliance line is unverified, note it in the Decision Summary ("compliance claims pending verification").
 >
 > **Ground each security/compliance requirement in a NAMED entitlement (DS2), not memory.** Per `_se-playbook.md` → "Product & Connector Reference Data" (DS2 = `reference_data.repos.airbyte_platform`), the source of truth is the real `airbyte-commons-entitlements/src/main/kotlin/io/airbyte/commons/entitlements/models/EntitlementDefinitions.kt` — reading it is how you verify a capability exists. Map each requirement to its `feature-*` entitlement when one exists:
 > - SSO / identity federation → `feature-sso`
@@ -167,7 +191,7 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 > [!info] Keep entitlement feature-ids INTERNAL
 > The `feature-*` ids are internal reasoning only (guardrail per `_se-playbook.md`). Customer-facing prose says "available on Enterprise Flex" — never "gated behind `feature-privatelink`." Use the entitlement to ground your own verification; translate to plan/edition language for the customer.
 
-## Current Stack & Integration Context
+### Current Stack & Integration Context
 - **Current ETL/ELT tools:** [Fivetran / Stitch / custom / dbt / etc.]
 - **Orchestration layer:** [Airflow / Prefect / dbt Cloud / none]
 - **Data warehouse/lake:** 
@@ -179,14 +203,17 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 - [Notes on integration with existing tooling]
 - [Migration risks or dependencies]
 
-## Team & Implementation Readiness
+## Implementation Readiness
+
+### Team & Implementation Readiness
 - **Data engineering team size:** 
 - **Technical champion:** [name / role]
 - **Internal capacity for implementation:** [High / Medium / Low]
 - **Implementation timeline expectation:** 
 - **Need for professional services:** [Yes / No / Possibly]
 
-## Technical Risks & Open Items
+## Risks & Open Items
+### Technical Risks & Open Items
 Classify every item in this table into one of four buckets so the SE knows whether the deal is qualified, blocked, or merely unfinished:
 
 - **Confirmed fit** — validated against evidence; no residual uncertainty
@@ -203,7 +230,7 @@ Classify every item in this table into one of four buckets so the SE knows wheth
 > [!blocker] [Only if a High-severity blocker exists — e.g., air-gapped deployment not validated, or deployment model unresolved]
 > [State the hard blocker and what must be true to clear it. Omit this callout if no High-severity blocker.]
 
-## Questions Still Needed
+### Questions Still Needed
 *Decision table (per `_se-playbook.md`). Render `TBD` for Owner/Needed-By when the source doesn't state them — never invent a name or date.*
 
 | Open Question | Owner | Needed By | Why it matters | Status |
@@ -211,6 +238,7 @@ Classify every item in this table into one of four buckets so the SE knows wheth
 | [unanswered technical question] | [name or **TBD**] | [gate/date or **TBD**] | [decision it unblocks] | Open |
 
 ## Recommended Next Actions
+
 *Action table — each action has a goal, a definition of "done," and a fallback.*
 
 | # | Next Action | Goal | Success criteria | Fallback | Owner |
@@ -219,11 +247,13 @@ Classify every item in this table into one of four buckets so the SE knows wheth
 | 2 | [e.g., Walk through deployment architecture] | | | | |
 
 ## Source Coverage
+
+
 *Audit trail — last content section (progressive disclosure per `_se-playbook.md`).* [Transcripts read with line counts, prior qual docs consulted, MCP queries run, certification claims marked "needs verification" — see After Generating.]
 
 **DS2 product-truth (per `_se-playbook.md` → fail-loud):** report whether the `airbyte-platform` checkout (`reference_data.repos.airbyte_platform`) was used to verify entitlement claims in Security & Compliance — with the checkout date — e.g. "entitlement claims grounded in `EntitlementDefinitions.kt`, airbyte-platform checkout [date]"; or "airbyte-platform not available — compliance/entitlement claims reasoned from memory and marked 'verify with [team]', confidence capped." Never assert an entitlement you couldn't verify against the file.
 
----
+---<!-- output-template:end -->
 
 ## Style (tech-qual skill guidance — not part of output template)
 
@@ -301,7 +331,7 @@ Per `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → After Ge
 ```
 
 ### Source Coverage
-Include a Source Coverage section at the top reporting transcripts read (with line counts), prior qual docs consulted, MCP queries run (`list_connectors` etc.), and Airbyte certification claims marked as "needs verification."
+Include a final Source Coverage section reporting transcripts read (with line counts), prior qual docs consulted, MCP queries run (`list_connectors` etc.), and Airbyte certification claims marked as "needs verification."
 
 ### SE Identity
 Read `config_file` (per playbook → Workspace Paths) for the `[SE name]` field.

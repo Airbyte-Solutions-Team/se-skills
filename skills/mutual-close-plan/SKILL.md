@@ -43,7 +43,7 @@ Cite sources inline. Mark any step whose owner/date isn't customer-confirmed as 
 
 Default = full close plan (milestone table with owners+dates, the two-sided swimlane, risks, the mutual-agreement ask).
 
-If user signals brief mode (`--brief`, `just the steps`, `MAP summary`): produce only the At a Glance card + the milestone table (step / owner / date / status) + the target signature date. Skip the swimlane narrative and risk detail. See `_se-playbook.md` "Output Mode".
+If user signals brief mode (`--brief`, `just the steps`, `MAP summary`): produce only the Close Summary card + the milestone table (step / owner / date / status) + the target signature date. Skip the swimlane narrative and risk detail. See `_se-playbook.md` "Output Mode".
 
 ## Anchor to the compelling event (D2 — this is what makes a close plan real)
 
@@ -66,15 +66,29 @@ If there's **no** compelling event, say so plainly: the plan is then Airbyte-pac
 
 ## Output Format
 
+
+> [!info] Canonical output architecture for `mutual-close-plan`
+> This skill follows the shared content-architecture contract. Produce the H2 sections below in this exact order; use H3 (`###`) for the listed sub-topics.
+>
+> **Canonical H2 order:**
+> 1. `Path to Signature`
+> 2. `Two-Sided Responsibilities`
+> 3. `Critical Path & Risks`
+> 4. `Mutual Agreement Ask`
+> 5. `Source Coverage`
+>
+> Source Coverage must be the **final H2** when required. The profile-specific summary block is an H3 under the title block (not a navigable section).
+
 Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---
 
+<!-- output-template:start -->
 # Mutual Close Plan: [Company Name] × Airbyte
 **Date:** [today, long form] · **SE owner:** [SE name] · **AE:** [AE name] · **EB:** [name/role]
 
-### At a Glance
-*Decision card — lead with the target and the gating risk (see `_se-playbook.md` → Decision-First Layout).*
+
+### Close Summary
 - **Target signature date:** ==[date]== (anchored to [compelling event] on [date])
 - **Steps to signature:** ==[N]== · **Critical path:** [the step most likely to gate — e.g. "InfoSec review, 3-wk queue"]
 - **Timeline verdict:** [✅ fits before the event / ⚠️ tight — needs compression / 🔴 doesn't fit — event or scope must move]
@@ -82,12 +96,15 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 - **Single biggest risk to close:** [one line]
 - **Source confidence:** [one line — biz-qual Paper Process + transcripts; "see Source Coverage"]
 
-**Jump to:** [At a Glance](#at-a-glance) · [Source Coverage](#source-coverage) · [Path to Signature](#path-to-signature) · [Two-Sided Responsibilities](#two-sided-responsibilities) · [Critical Path & Risks](#critical-path--risks) · [The Mutual Agreement Ask](#the-mutual-agreement-ask)
 
-## Source Coverage
-[biz-qual Paper Process / EB read, poc-plan end date, transcripts referenced (line counts), which steps are customer-confirmed vs. [confirm].]
+*Decision card — lead with the target and the gating risk (see `_se-playbook.md` → Decision-First Layout).*
+
+**Jump to:** [Path to Signature](#path-to-signature) · [Two-Sided Responsibilities](#two-sided-responsibilities) · [Critical Path & Risks](#critical-path-risks) · [Mutual Agreement Ask](#mutual-agreement-ask) · [Source Coverage](#source-coverage)
+
+*(Use the canonical sections below; retain all facts, tables, and reasoning while nesting sub-topics under the relevant H2.)*
 
 ## Path to Signature
+
 *Backward-planned from the target date. Every row has an owner and a date. Status tracks live.*
 
 | # | Step | Owner (side) | Target date | Status | Notes / dependency |
@@ -102,6 +119,7 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 *Adapt rows to the customer's actual Paper Process — don't invent steps they didn't mention, and don't omit ones they did.*
 
 ## Two-Sided Responsibilities
+
 *The "mutual" in mutual action plan — make both sides' commitments explicit. This is a Sandler upfront contract applied to the close, not just the POC.*
 
 - **Airbyte commits to:** [e.g. deliver final business case by [date], provide SOC 2 report + security questionnaire responses within [N] days of request, AE to send order form by [date]]
@@ -109,6 +127,7 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 - **Shared checkpoints:** [e.g. weekly 15-min close-plan sync until signature]
 
 ## Critical Path & Risks
+
 - **Critical path:** the sequence of steps that determines the earliest possible signature. Name the single step most likely to gate (usually security review or procurement queue) and what compresses it.
 - **Risks to close:**
 
@@ -120,13 +139,19 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 
 - **If the timeline doesn't fit before the compelling event:** state it as the headline. Options: compress a step (e.g. parallelize security + procurement), move the go-live, or accept a slip — but decide it now, with the customer.
 
-## The Mutual Agreement Ask
+## Mutual Agreement Ask
+
 *A close plan is only real once the customer has agreed to it. End with the concrete ask.*
 > "Here's how I see the path from POC to go-live by [date]. Can we walk through it together, confirm the owners and dates on your side, and agree to a weekly 15-minute check-in until signature? If any of these dates don't work, I'd rather adjust the plan now than discover it in [target month]."
 
-If the plan is still a draft the customer hasn't seen, mark it ⬜ **not yet mutual** in At a Glance and make "review + agree with [EB/champion]" the next step.
+If the plan is still a draft the customer hasn't seen, mark it ⬜ **not yet mutual** in Close Summary and make "review + agree with [EB/champion]" the next step.
 
 ---
+
+## Source Coverage
+
+
+[biz-qual Paper Process / EB read, poc-plan end date, transcripts referenced (line counts), which steps are customer-confirmed vs. [confirm].]<!-- output-template:end -->
 
 ## Style
 

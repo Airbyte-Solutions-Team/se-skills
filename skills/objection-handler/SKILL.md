@@ -41,11 +41,40 @@ If user signals brief mode (`--brief`, `quick talk track`, `just the talk track`
 
 ## Output Format
 
+
+> [!info] Canonical output architecture for `objection-handler`
+> This skill follows the shared content-architecture contract. Produce the H2 sections below in this exact order; use H3 (`###`) for the listed sub-topics.
+>
+> **Canonical H2 order:**
+> 1. `What's True`
+> 2. `Talk Track`
+> 3. `Follow-Up Questions`
+> 4. `Fit & Route Boundary`
+>
+> **H3 subtopics (when used):**
+> - under `What's True`: Objection, What's Actually True
+> - under `Talk Track`: Talk Track Guidance
+> - under `Follow-Up Questions`: Follow-Up Questions Detail
+> - under `Fit & Route Boundary`: Fit & Route Guidance, Related Context
+>
+> Source Coverage is the **final H2** when required. The profile-specific summary block is an H3 under the title block (not a navigable section).
+
 This skill is **light-touch** under `_se-playbook.md` → Output Document Format (no At-a-Glance, no Jump-to — it's already short and scannable). The one required callout is the severity indicator at the top.
 
 ---
 
-### Objection: [restate it cleanly]
+<!-- output-template:start -->
+# Objection Handler: [Customer] — [Date]
+### Severity / Bottom Line
+- **Severity:** [Deal-killer / High / Medium / Low]
+- **Bottom line:** [one-line truthful response or route recommendation]
+- **Customer context:** [customer-specific evidence used, or **TBD**]
+
+
+**Jump to:** [What's True](#what-s-true) · [Talk Track](#talk-track) · [Follow-Up Questions](#follow-up-questions) · [Fit & Route Boundary](#fit-route-boundary)
+
+## What's True
+### Objection
 **Category:** [bucket from above]
 
 > [!blocker] [Category] — Deal-killer    ← use `[!blocker]` if Severity is Deal-killer or High
@@ -55,11 +84,16 @@ This skill is **light-touch** under `_se-playbook.md` → Output Document Format
 
 ---
 
-### What's actually true
+### What's Actually True
 Plain-language statement of Airbyte's actual capability/position on this. Do NOT spin. If the customer is right that we don't support something, say so. If they're misinformed, gently correct.
 
-### Talk Track (Voss moves — use what fits)
+## Talk Track
 
+State the customer concern, give the truthful product response, list the follow-up question, and route any unresolved gap to a named owner.
+
+
+
+### Talk Track Guidance
 Use the Voss moves that fit — mirror/label to defuse, a calibrated question to open it up, the substantive answer **last**. Don't force all four when a clean two-move response is stronger; a talk track that sounds scripted loses the room. Keep the moves as separate beats (not one collapsed paragraph) so the SE can deliver them in order. The ordering rule — substantive answer last — always holds; the four steps below are the full scaffold to draw from, not a quota to fill.
 
 #### Step 1 — Mirror
@@ -78,20 +112,32 @@ A "how" or "what" question that shifts the burden of analysis back to the custom
 NOW the actual answer. Specific, honest, 2-3 sentences max. This is what most SEs do as Step 1 — and it's why their answers don't land.
 > Example: "On lock-in specifically: Airbyte's connectors are open-source, your data lives in your warehouse, and the schemas/configs are exportable. If you ever wanted to leave, you'd rebuild the orchestration layer, not the integrations."
 
-### Follow-up questions to ask
+## Follow-Up Questions
+State the customer concern, give the truthful product response, list the follow-up question, and route any unresolved gap to a named owner.
+
+
+
+### Follow-Up Questions Detail
 2-3 questions that help qualify whether this objection is real or surfaceable. Often the stated objection isn't the real one.
 
-### If Cloud Pro can't resolve it — route, don't reflexively kill
+## Fit & Route Boundary
+### Fit & Route Guidance
 If this objection can't be met by Cloud Pro, check whether **Flex** solves it before treating it as a deal-killer:
 - **Data must stay in their VPC / data residency / VPC isolation / "our data can't share compute"** → **Enterprise Flex** (customer-hosted data plane). This is a *route*, not a kill. Confirm current Flex availability/terms for their region.
 - **Customer-managed KMS / BYOK, full control-plane-in-VPC, or true air-gap** → genuine Cloud-and-Flex boundary. There is **no currently-offered shape that meets this** — be upfront: this is a **park / no-fit today**. (Self-Managed Enterprise historically covered this but is **not currently offered**; may return.) Don't oversell Flex here, and don't route to a dead motion.
 - **A requirement no shape meets, or Flex unavailable for their region/segment** → park/escalate or disqualify. State it plainly.
 
-### Related context
+
+
+### Related Context
 - Link to relevant docs/resources if applicable
 - Note if this should be added to the customer's Notion Q&A page
 
 ---
+
+> Include `## Source Coverage` only when customer-specific evidence or reference sources were used; if included, keep it last.
+
+<!-- output-template:end -->
 
 ## Style
 

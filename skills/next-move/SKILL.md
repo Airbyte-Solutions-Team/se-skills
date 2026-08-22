@@ -64,7 +64,7 @@ Before recommending any skill, check whether a fresh, relevant artifact already 
 ### Missing-prerequisite flag
 A deliverable skill (`poc-plan`, `roi-business-case`, `mutual-close-plan`, `coverage-handoff`) may only be the top recommendation when the artifact chain supports it. If you are recommending one anyway — for example, because the user explicitly asked for it or because SFDC/local signals strongly demand it — you must **flag the missing prerequisites**:
 
-1. **At-a-Glance confidence line** must name the missing artifact(s): e.g., "Medium — `poc-plan` is conditional on completing `tech-qual` and `connector-feasibility`."
+1. **Recommendation summary confidence line** must name the missing artifact(s): e.g., "Medium — `poc-plan` is conditional on completing `tech-qual` and `connector-feasibility`."
 2. **Why This Move / Rationale** must state that the recommendation is conditional and that the missing artifact(s) must be completed first.
 3. **Don't do yet** must list the premature skill(s) and the missing gate(s).
 4. If confidence is actually low (thin evidence, stale artifacts, conflicting signals), default to the **evidence-gathering recommendation** instead of a conditional deliverable.
@@ -158,20 +158,38 @@ Any stage + objection raised on most recent call
 3. Stage-based recommendation
 4. Active objection (add-on, not override)
 
-**Conflicting signals — name the tension, don't force one tree path.** When signals genuinely collide (e.g. all quals exist but are >30 days stale AND a fresh objection landed; or SFDC stage says POC-scoping but the local artifacts say early-discovery), don't silently pick one branch. In the `Current read`, name the tension in one line and choose the move that **de-risks most**, stating the assumption behind the pick — e.g. "Stage says POC-scoping, but a 60-day-old biz-qual + a fresh pricing objection outrank that — recommend `deal-assessment` first to re-baseline, then `objection-handler`. Assumes the objection is real, not a negotiating feint." The recommendation still resolves to ONE top move in the At-a-Glance (keep those labels exactly — the reader keys on them); the conflict handling lives in the prose, not in new card fields.
+**Conflicting signals — name the tension, don't force one tree path.** When signals genuinely collide (e.g. all quals exist but are >30 days stale AND a fresh objection landed; or SFDC stage says POC-scoping but the local artifacts say early-discovery), don't silently pick one branch. In the `Current read`, name the tension in one line and choose the move that **de-risks most**, stating the assumption behind the pick — e.g. "Stage says POC-scoping, but a 60-day-old biz-qual + a fresh pricing objection outrank that — recommend `deal-assessment` first to re-baseline, then `objection-handler`. Assumes the objection is real, not a negotiating feint." The recommendation still resolves to ONE top move in the Recommendation summary (keep those labels exactly — the reader keys on them); the conflict handling lives in the prose, not in new card fields.
 
 ---
 
 ## Output Format
 
-*Lead with an H1 title (the web app reader uses the H1 as the page title), then a lightweight **At-a-Glance decision card**. next-move is **decision-first**: the recommendation is the lead, the audit trail is the tail. The web-app reader promotes the At-a-Glance block into a prominent hero card above the body, so the labels below are chosen to render as decision tiles — keep the wording.*
+
+> [!info] Canonical output architecture for `next-move`
+> This skill follows the shared content-architecture contract. Produce the H2 sections below in this exact order; use H3 (`###`) for the listed sub-topics.
+>
+> **Canonical H2 order:**
+> 1. `Why This Move`
+> 2. `Ranked Next Moves`
+> 3. `Dont Do Yet`
+> 4. `Workflow State`
+> 5. `Evidence Gaps And External Actions`
+> 6. `Source Coverage`
+
+> **H3 subtopics (when used):**
+> - under `Why This Move`: Current Read
+> - under `Evidence Gaps & External Actions`: Context Inventory, Gaps, External Actions
+>
+> Source Coverage must be the **final H2**. The profile-specific summary block is an H3 under the title block (not a navigable section).
+
+*Lead with an H1 title (the web app reader uses the H1 as the page title), then a lightweight **Recommendation summary card**. next-move is **decision-first**: the recommendation is the lead, the audit trail is the tail. The web-app reader promotes the recognized profile summary into a prominent hero card above the body, so the labels below are chosen to render as decision tiles — keep the wording.*
 
 ---
 
+<!-- output-template:start -->
 # SE Workflow: [Customer] — [Inferred Stage]
 **Date:** [today, long form] · **Stage:** [inferred stage] · **Days since activity:** [N] · **Sources:** [N] transcripts, [N] qual docs, memory [yes/no]
-
-### At a Glance
+### Recommendation
 - **Recommended Next Move:** [the ONE skill/action — e.g. "Run `deal-assessment`"]
 - **Confidence:** [High / Medium / Low] — [what it's pending on, one clause]
 - **Stage:** [🟢/🟡/🔴 + inferred stage]
@@ -179,29 +197,17 @@ Any stage + objection raised on most recent call
 - **Effort:** [quick / moderate / depends on source coverage]
 - **Expected output:** [what artifact the top move produces]
 
-### Current read
-[The TL;DR as 1–2 sentences of PROSE (not bullets): "[Customer] is in [stage]; the highest-value move is [X] because [why]. [Do-not caveat if any]." This is the one-liner a user copies into Slack — keep it tight and self-contained.]
+**Jump to:** [Why This Move](#why-this-move) · [Ranked Next Moves](#ranked-next-moves) · [Don't Do Yet](#don-t-do-yet) · [Workflow State](#workflow-state) · [Evidence Gaps & External Actions](#evidence-gaps-external-actions) · [Source Coverage](#source-coverage)
 
----
-
-> [!blocker] 🔴 Stalled / Blocked     ← use `[!blocker]` for a hard stall/block
-> 🔴 Stalled — [X days since last activity]
-> 🔴 Blocked — [memory cite + specific blocker]
-
-> [!risk] 🟡 Active objection     ← use `[!risk]` for an open objection
-> 🟡 Active objection — [from transcript]
-
-*(Only render the override callouts that actually apply; omit this block if none. These feed the reader's Top-Risks strip automatically.)*
-
----
+*(Use the canonical sections below; retain all facts, tables, and reasoning while nesting sub-topics under the relevant H2.)*
 
 ## Why This Move
-- **Rationale:** [1–2 sentences tying the top move to the specific gap or override it resolves]
-- **What it unblocks:** [the downstream work this enables]
-
----
+Explain the evidence-backed recommendation, the decision gap it closes, and any prerequisite that must be completed first.
+### Current Read
+Summarize the current deal state and the concrete evidence supporting the recommendation.
 
 ## Ranked Next Moves
+
 
 **1 · `[skill]` — [headline reason]**
 - **Priority:** High
@@ -223,6 +229,11 @@ Any stage + objection raised on most recent call
 ---
 
 ## Don't Do Yet
+List actions deliberately deferred, why acting now would be premature, and the concrete evidence or event that would unpark each action. Keep this separate from the recommended moves; do not disguise uncertainty as a next step.
+
+
+
+
 *Skills tempting but premature given current state (missing ≠ needed):*
 - **`[skill]`.** [Why not yet — e.g. "No deployment qualification yet; scoping `tech-qual` now risks an air-gap customer who can't use Cloud."]
 
@@ -231,13 +242,16 @@ Any stage + objection raised on most recent call
 ---
 
 ## Workflow State
+
+
 - **Inferred stage:** [from decision tree]
 - **Reasoning:** [1–2 sentences citing the specific artifacts/transcripts that put them here]
 - **SFDC vs. reality:** [the mismatch finding, if any — flag it assertively; omit the line if SFDC and local state agree or SFDC is unavailable]
 
 ---
 
-## Context Inventory
+## Evidence Gaps & External Actions
+### Context Inventory
 *What context exists to ground the recommendation. `Needed Now?` separates a true gap (**Yes**) from a not-yet artifact (**Later**) or an irrelevant one (**No**) — so missing ≠ todo.*
 
 | Artifact | Status | Date | Needed Now? |
@@ -253,7 +267,7 @@ Any stage + objection raised on most recent call
 
 ---
 
-## Gaps
+### Gaps
 *What's missing that should exist at this stage, sorted by whether it blocks the next move:*
 
 **Critical (blocks the next move):**
@@ -269,7 +283,7 @@ Any stage + objection raised on most recent call
 
 ---
 
-## External Actions
+### External Actions
 *Things to do that aren't a skill — but matter for moving the deal. Owner is a real person's name or **TBD** — never fabricate a name.*
 
 | Action | Owner | Why it matters | Definition of done |
@@ -282,12 +296,15 @@ Any stage + objection raised on most recent call
 ---
 
 ## Source Coverage
+
+
 *Per the Read-Depth Contract: report what was read in full vs. inventoried by metadata only.*
 - **Read in full:** [qual docs, memory files, most recent transcript — filenames + dates]
 - **Metadata only:** [older transcripts, large raw notes — filenames + line counts]
 - **Memory:** [records read, or "none matched"]
 
 ---
+<!-- output-template:end -->
 
 ## Style
 

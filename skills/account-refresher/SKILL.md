@@ -38,47 +38,64 @@ Apply **Source Coverage transparency** (report what you read) and **assertive SF
 
 ## Output Format
 
-Keep it to ~1 page. This is a briefing, not a report. Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
+The default deliverable is an approximately one-page briefing: concise enough to read in two minutes while preserving the account arc, current state, open items, and audit trail.
+
+
+> [!info] Canonical output architecture for `account-refresher`
+> This skill follows the shared content-architecture contract. Produce the H2 sections below in this exact order; use H3 (`###`) for the listed sub-topics.
+>
+> **Canonical H2 order:**
+> 1. `Who's Who`
+> 2. `Story So Far`
+> 3. `Current State`
+> 4. `Open Items`
+> 5. `Watch Outs`
+> 6. `Source Coverage`
+>
+> Source Coverage must be the **final H2** when required. The profile-specific summary block is an H3 under the title block (not a navigable section).
+
+Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → Output format reference.
 
 ---
 
-## Account Refresher: [Customer]
-**As of:** [today's date — long form per `_se-playbook.md`, e.g. June 11, 2026, NOT 2026-06-11] · **Source Coverage:** [1 line — what was read: N transcripts (most recent in full), qual docs, memory, SFDC opp]
-
-### At a Glance
+<!-- output-template:start -->
+# Account Refresher: [Customer]
+**As of:** [today's date — long form per `_se-playbook.md`, e.g. June 11, 2026, NOT 2026-06-11]
+### Account Snapshot
 - **Current state:** [one-liner — what's actively happening: POC? eval? stalled? negotiating?]
 - **Key players:** [EB name (role)] · **Champion:** [name (role)]
 - **Last touch:** [date + what happened] · ==[N] days ago==
 - **Open items:** ==[N]==
 
-**Jump to:** [Who's Who](#whos-who) · [The Story So Far](#the-story-so-far) · [Where Things Stand](#where-things-stand-right-now) · [What's Open](#whats-open) · [Watch-outs](#watch-outs)
+**Jump to:** [Who's Who](#who-s-who) · [Story So Far](#story-so-far) · [Current State](#current-state) · [Open Items](#open-items) · [Watch Outs](#watch-outs) · [Source Coverage](#source-coverage)
 
----
-
-### The 10-Second Version
-[2-3 sentences. What is this account, what are they evaluating Airbyte for, and where do things stand right now. The "if you only read one thing" summary.]
+*(Use the canonical sections below; retain all facts, tables, and reasoning while nesting sub-topics under the relevant H2.)*
 
 ## Who's Who
+
 | Person | Role | Side | Notes |
 |--------|------|------|-------|
 | [name] | [title] | Customer / Partner / Airbyte | [champion? EB? technical lead? quiet?] |
 
 *Pull from transcripts + SFDC `Champion__c`/`Economic_Buyer__c`/`Owner`. Flag if SFDC names someone who hasn't appeared in transcripts.*
 
-## The Story So Far
+## Story So Far
+
 [3-6 bullets, chronological. The arc of the relationship — how it started, key moments, what's been decided, what changed. Cite dates.]
 
-## Where Things Stand Right Now
+## Current State
+
 - **Current state:** [what's actively happening — POC? eval? stalled? negotiating?]
 - **SFDC says:** [stage, amount, close date, owner — and ⚠️ flag any mismatch with the local/transcript reality]
 - **Last contact:** [date + what happened] (==[N] days ago==)
 - **Use case / what they want:** [1-2 lines]
 
-## What's Open
+## Open Items
 - [ ] [Open item / unanswered question / pending action — who owns it]
 - [ ] [...]
 
-## Watch-outs
+## Watch Outs
+
 - [Anything that would bite you if you walked in cold — a sensitivity, a blocker, a competitor, a promise made]
 
 ---
@@ -88,21 +105,26 @@ Keep it to ~1 page. This is a briefing, not a report. Document structure follows
 
 ---
 
+## Source Coverage
+
+Audit trail: name every transcript or call summary read (lines read / total where available), qualification document, memory file, and Salesforce field or record consulted. Distinguish content read in full from metadata-only inventory, include source dates, and note anything requested but unavailable.
+<!-- output-template:end -->
+
 ## Style
 
-- **Fast and scannable.** This is read in the 2 minutes before a call. Lead with the 10-second version.
+- **Fast and scannable.** This is read in the 2 minutes before a call. Lead with the Account Snapshot.
 - **Facts, not judgment.** "Last call was 03.17; champion went quiet after" — not "this deal is at risk" (that's deal-assessment's call to make).
 - **Mark any read as a read.** Keep the light `[fact]`/`[inference]` split so the briefing never smuggles a judgment in as a fact: "Champion went quiet after 03.17 `[fact]`; may signal slipping priority `[inference — not a deal-health call, see deal-assessment]`." Facts get a date/source; inferences get the tag and stay out of deal-health territory.
 - **Cite dates and sources.** "Per the 04.01 transcript…", "SFDC stage = Negotiation as of [date]".
 - **Flag SFDC-vs-reality gaps** assertively but neutrally — state both, let the reader judge.
 - **Don't pad.** If the account is thin (one call, little history), the refresher is short. Say what's known, flag what isn't.
-- **Keep it lean — no gates, no dumps.** A refresher trades completeness for speed: do NOT add a validation checklist, a full Source Coverage dump, or a self-check gate, and do NOT exceed ~1 page. Thin input is valid — produce the short version, don't refuse.
+- **Keep it lean — no gates, no dumps.** A refresher trades completeness for speed: do NOT add a validation checklist or self-check gate, and do NOT exceed ~1 page. Keep the required Source Coverage section concise and factual. Thin input is valid — produce the short version, don't refuse.
 
 ## Output mode
 
 Default = the full ~1-page briefing above.
 
-If user signals brief mode (`--brief`, `just the gist`, `one-liner`): produce only the 10-Second Version + Last contact + top open item. See `_se-playbook.md` "Output Mode."
+If user signals brief mode (`--brief`, `just the gist`, `one-liner`): produce only the Account Snapshot, Last contact, and top open item. See `_se-playbook.md` "Output Mode."
 
 ## After Generating
 
