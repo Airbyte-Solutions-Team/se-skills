@@ -162,10 +162,10 @@ def _slugify(text: str) -> str:
 
 def test_profile_summary_names_match_reader(repo_root: Path) -> None:
     """The reader's explicit summary-name allowlist stays registry-synchronized."""
-    app_js = (repo_root / "webapp" / "static" / "app.js").read_text(encoding="utf-8")
+    reader_js = (repo_root / "webapp" / "static" / "reader.js").read_text(encoding="utf-8")
     match = re.search(
         r"const PROFILE_SUMMARY_NAMES = \[(.*?)\];",
-        app_js,
+        reader_js,
         flags=re.DOTALL,
     )
     assert match
@@ -560,9 +560,11 @@ def test_non_enforced_schema_is_unvalidated() -> None:
 
 def test_app_js_sidebar_uses_source_order_not_intent_groups(repo_root: Path) -> None:
     """Sidebar no longer groups by intent; it follows the Markdown source order."""
-    app_js = (repo_root / "webapp" / "static" / "app.js").read_text(encoding="utf-8")
-    assert "tocGroup(" not in app_js
-    assert "TOC_GROUP_ORDER" not in app_js
-    # Flat source-order links for H2/H3.
-    assert 'class="doc-toc-link lvl${t.level}"' in app_js
-    assert "tocEntries" in app_js
+    static = repo_root / "webapp" / "static"
+    app_js = (static / "app.js").read_text(encoding="utf-8")
+    reader_js = (static / "reader.js").read_text(encoding="utf-8")
+    assert "tocGroup(" not in app_js and "tocGroup(" not in reader_js
+    assert "TOC_GROUP_ORDER" not in app_js and "TOC_GROUP_ORDER" not in reader_js
+    # Flat source-order links for H2/H3, built by the shared reader module.
+    assert 'class="doc-toc-link lvl${t.level}"' in reader_js
+    assert "tocEntries" in reader_js

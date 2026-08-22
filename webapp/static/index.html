@@ -70,6 +70,9 @@
     })();
   </script>
   <script src="/doc_status.js?v=2026082103"></script>
-  <script src="/app.js?v=2026082404"></script>
+  <!-- reader.js owns every presentation transform of a rendered output and is
+       shared with the Output Gallery. It must load before app.js. -->
+  <script src="/reader.js?v=2026081901"></script>
+  <script src="/app.js?v=2026081901"></script>
 </body>
 </html>

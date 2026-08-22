@@ -79,6 +79,7 @@ def _build_local_services(app: FastAPI) -> None:
     from routes.accounts import router as accounts_router
     from routes.ask import router as ask_router
     from routes.feedback import router as feedback_router
+    from routes.gallery import router as gallery_router
     from routes.jobs import router as jobs_router
     from routes.outputs import router as outputs_router
     from routes.overview import router as overview_router
@@ -179,6 +180,9 @@ def _build_local_services(app: FastAPI) -> None:
     app.include_router(salesforce_router)
     app.include_router(ask_router)
     app.include_router(transcription_router)
+    # Developer-only: renders committed synthetic fixtures through the real
+    # reader path. Local mode only — never registered in hosted mode.
+    app.include_router(gallery_router)
 
 
 def _register_hosted_routers(app: FastAPI) -> None:

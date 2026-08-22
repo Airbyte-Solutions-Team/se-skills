@@ -488,9 +488,11 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 .show-more { display: inline-block; margin: 8px 0 4px; }
 .doc { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 36px 44px; }
 
-/* boxed sections in the open-output reader — each H2 section is its own card */
-/* ONE document sheet; sections divided inside it so it reads as one connected doc */
-.md-body .doc-sheet { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+/* The reader is a document, not a stack of cards. The sheet is a plain reading
+   surface: hierarchy comes from typography and whitespace, and a boxed surface
+   is reserved for genuinely high-signal content (summary card, verdict/risk/
+   blocker, callouts, audit trail). */
+.md-body .doc-sheet { background: transparent; border: none; border-radius: 0; }
 
 /* follow-up chat in a docked right-side panel — thread (scrolls) + ask bar (pinned bottom).
    Hidden by default so the document uses the full width; shown only when .doc-layout
@@ -542,24 +544,31 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 }
 .doc-action:hover { border-color: var(--accent); background: var(--panel-hover); }
 .doc-action.copied { border-color: var(--accent2); color: var(--accent2); }
-.md-body .doc-section {
-  padding: 38px 32px 34px;
-  border-top: 3px solid;
-  border-image: linear-gradient(
-    to right,
-    color-mix(in srgb, var(--line-strong) 62%, transparent),
-    color-mix(in srgb, var(--line) 38%, transparent) 62%,
-    transparent
-  ) 1;
-}
-.md-body .doc-section:first-child { border-top: none; }
+/* Ordinary narrative section: no border, no fill — just breathing room. */
+.md-body .doc-section { padding: 0; margin: 0 0 42px; }
+.md-body .doc-section:last-child { margin-bottom: 0; }
 .md-body .doc-section > :last-child { margin-bottom: 0; }
-/* a section's H2 acts as a header band inside the sheet */
-.md-body .doc-section .md-h2 { margin: 0 0 14px; padding-bottom: 10px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 8px; }
-.md-body .doc-section .md-h2::before { content: ""; width: 3px; height: 16px; background: var(--accent); border-radius: 2px; }
-/* the At-a-Glance section reads as a summary panel */
-.md-body .doc-section.is-glance { background: color-mix(in srgb, var(--accent) 6%, var(--panel)); }
+.md-body .doc-section .md-h2 { margin: 0 0 12px; display: flex; align-items: baseline; gap: 10px; }
+
+/* Sections that DO earn a surface: the summary panel, the audit trail, and the
+   three high-stakes deal sections (accented further down). */
+.md-body .doc-section.is-glance,
+.md-body .doc-section--role-evidence,
+.md-body .doc-section--blocker,
+.md-body .doc-section--win,
+.md-body .doc-section--risk {
+  padding: 24px 26px; border-radius: 14px;
+}
+.md-body .doc-section.is-glance { background: color-mix(in srgb, var(--accent) 6%, var(--panel)); border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--line)); }
 .md-body .doc-section.is-glance .md-h3 { margin-top: 0; color: var(--accent); text-transform: uppercase; letter-spacing: .5px; font-size: 12px; }
+
+/* Audit / provenance sections (Source Coverage, MEDDPICC, Coaching, evidence):
+   quieter than decision content, but never hidden and never dropped. */
+.md-body .doc-section--role-evidence { background: var(--panel2); border: 1px solid var(--line); }
+.md-body .doc-section--role-evidence > .md-h2 { font-size: 15px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 700; }
+.md-body .doc-section--role-evidence .md-p,
+.md-body .doc-section--role-evidence .md-list li { font-size: 13.5px; color: var(--muted); }
+.md-body .doc-section--role-evidence .md-list li strong { color: var(--text); }
 
 /* label/value definition grid — scannable instead of dense prose */
 .md-body .kv-grid { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; margin: 10px 0; }
@@ -719,10 +728,13 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 .doc-layout .md-body { max-width: 960px; }
 .md-body .md-h { line-height: 1.3; font-weight: 700; scroll-margin-top: 84px; letter-spacing: -0.01em; }
 .md-body .md-h1 { font-size: 26px; margin: 0 0 18px; padding-bottom: 12px; border-bottom: 2px solid var(--line); letter-spacing: -0.02em; }
-.md-body .md-h2 {
-  font-size: 19px; margin: 34px 0 12px; padding-top: 4px;
+/* Hierarchy: H2 is a clearly larger, tighter section title; H3 is a small
+   uppercase subsection label; body prose sits between them in weight. */
+.md-body .md-h2 { font-size: 22px; margin: 34px 0 12px; letter-spacing: -0.015em; }
+.md-body .md-h3 {
+  font-size: 12.5px; margin: 24px 0 8px; color: var(--muted);
+  font-weight: 700; text-transform: uppercase; letter-spacing: .07em;
 }
-.md-body .md-h3 { font-size: 15px; margin: 22px 0 8px; color: var(--accent); font-weight: 600; }
 .md-body .md-h:first-child { margin-top: 0; }
 .md-body .md-p { margin: 12px 0; }
 .md-body .md-list { margin: 10px 0 14px; padding-left: 24px; }
@@ -743,6 +755,12 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 .md-body code { background: var(--panel2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .md-body .md-pre { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; overflow: auto; margin: 14px 0; }
 .md-body .md-pre code { background: none; border: none; padding: 0; }
+/* Any table the reader did not reshape stays a table — wrapped in its own
+   scroll region so a wide generic table can never clip or push the page wider
+   than the viewport. Focusable so it is reachable by keyboard. */
+.md-body .md-table-wrap { margin: 16px 0; max-width: 100%; overflow-x: auto; border-radius: 10px; }
+.md-body .md-table-wrap:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.md-body .md-table-wrap > .md-table { margin: 0; min-width: 100%; width: max-content; max-width: none; }
 .md-body .md-table { border-collapse: separate; border-spacing: 0; width: 100%; margin: 16px 0; font-size: 14px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
 .md-body .md-table th, .md-body .md-table td { border-bottom: 1px solid color-mix(in srgb, var(--line) 55%, transparent); padding: 13px 16px; text-align: left; vertical-align: top; overflow-wrap: break-word; }
 .md-body .md-table tr:last-child td { border-bottom: none; }
@@ -799,11 +817,87 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
   100% { background: transparent; }
 }
 
-/* narrow: drop the TOC sidebar */
+/* ── connector / system records ────────────────────────────────────────── */
+/* A recognized Connector Feasibility table becomes one record per system so
+   every field (availability, fit, confidence, top risk) stays visible instead
+   of being squeezed into a clipped right-most column. */
+.md-body .sys-records { display: flex; flex-direction: column; gap: 12px; margin: 16px 0; }
+.md-body .sys-record { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; min-width: 0; }
+.md-body .sys-record-title { font-weight: 650; font-size: 15px; line-height: 1.35; margin-bottom: 10px; overflow-wrap: anywhere; }
+.md-body .sys-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px 18px; }
+.md-body .sys-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.md-body .sys-field-k { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+.md-body .sys-field-v { font-size: 13.5px; line-height: 1.45; overflow-wrap: anywhere; }
+
+/* ── people ────────────────────────────────────────────────────────────── */
+/* One person per row: name prominent, role/title secondary. */
+.md-body .people { display: flex; flex-direction: column; margin: 12px 0; }
+.md-body .person {
+  display: grid; grid-template-columns: minmax(130px, 210px) minmax(0, 1fr);
+  gap: 2px 20px; padding: 9px 0;
+  border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
+}
+.md-body .person:first-child { border-top: none; }
+.md-body .person-name { font-weight: 650; font-size: 14.5px; overflow-wrap: anywhere; }
+.md-body .person-role { color: var(--muted); font-size: 13.5px; line-height: 1.5; min-width: 0; }
+
+/* ── actions ───────────────────────────────────────────────────────────── */
+/* The committed action reads first; owner/date/status stay scannable but
+   subordinate. */
+.md-body .md-list.action-list { list-style: none; padding-left: 0; margin: 12px 0; }
+.md-body .action-list > li.action {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px;
+  margin: 0; padding: 10px 0;
+  border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
+}
+.md-body .action-list > li.action:first-child { border-top: none; }
+.md-body .action-text { flex: 1 1 320px; min-width: 0; font-size: 14.5px; line-height: 1.55; }
+.md-body .action-meta { display: flex; flex-wrap: wrap; gap: 6px; }
+.md-body .action-chip {
+  display: inline-flex; align-items: baseline; gap: 6px;
+  border: 1px solid var(--line); background: var(--panel2); border-radius: 999px; padding: 2px 10px;
+}
+.md-body .action-chip-k { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+.md-body .action-chip-v { font-size: 12.5px; color: var(--text); }
+
+/* ── discovery questions ───────────────────────────────────────────────── */
+/* The question stays prominent; "why this matters" / "listen for" support it.
+   Order always follows the Markdown (Must-Ask groups come first there). */
+.md-body .md-list.qa-list { list-style: none; padding-left: 0; margin: 12px 0; }
+.md-body .qa-list > li { margin: 0; padding: 11px 0; border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent); }
+.md-body .qa-list > li:first-child { border-top: none; }
+.md-body .qa-list > li > strong:first-child { display: block; font-size: 14.5px; font-weight: 650; line-height: 1.45; margin-bottom: 3px; }
+.md-body .qa-list > li em { color: var(--muted); font-style: normal; font-size: 13px; }
+
+/* ── thesis / point-of-view lead ───────────────────────────────────────── */
+.md-body .thesis { margin: 12px 0 16px; }
+.md-body .thesis-head { font-size: 17px; font-weight: 650; line-height: 1.45; letter-spacing: -.01em; }
+.md-body .thesis-body { margin-top: 6px; font-size: 14.5px; line-height: 1.65; }
+.md-body .md-p.thesis-note { color: var(--muted); font-size: 13px; margin-top: 8px; }
+
+/* narrow: drop the TOC sidebar, then stack the components that use columns */
 @media (max-width: 860px) {
   .doc-layout { grid-template-columns: 1fr; }
   .doc-toc { display: none; }
   .doc { padding: 24px 22px; }
+}
+@media (max-width: 700px) {
+  main:has(.doc-layout) { padding-top: 24px; }
+  .md-body .doc-section { margin-bottom: 32px; }
+  .md-body .doc-section.is-glance,
+  .md-body .doc-section--role-evidence,
+  .md-body .doc-section--blocker,
+  .md-body .doc-section--win,
+  .md-body .doc-section--risk { padding: 18px 16px; }
+  .md-body .md-h2 { font-size: 19px; }
+  .md-body .exec-card { padding: 16px 16px; }
+  .md-body .tile-grid { grid-template-columns: 1fr; }
+  .md-body .kv-grid { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .md-body .kv-k { white-space: normal; }
+  .md-body .kv + .kv { margin-top: 8px; }
+  .md-body .person { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .md-body .sys-fields { grid-template-columns: minmax(0, 1fr); }
+  .md-body .action-text { flex-basis: 100%; }
 }
 .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--muted); border-top-color: var(--warn); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 8px; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -1108,14 +1202,14 @@ a.live-btn { text-decoration: none; display: inline-flex; align-items: center; }
 .feedback-panel .feedback-toggle.active { border-color: var(--accent); color: var(--accent); }
 
 /* ── Section-level callout accents for high-stakes deal sections ────────── */
-.md-body .doc-section--blocker { border-left: 3px solid var(--danger); background: color-mix(in srgb, var(--danger) 6%, var(--panel)); }
-.md-body .doc-section--blocker > .md-h2::before { background: var(--danger); }
+/* Status color carries meaning only: these three surfaces are a real blocker, a
+   real path-to-win and a real risk section. The section heading also states the
+   meaning in words, so the color is never the only signal. */
+.md-body .doc-section--blocker { border: 1px solid color-mix(in srgb, var(--danger) 30%, var(--line)); border-left: 3px solid var(--danger); background: color-mix(in srgb, var(--danger) 6%, var(--panel)); }
 .md-body .doc-section--blocker > .sec-body > p:first-of-type > strong:first-child,
 .md-body .doc-section--blocker > .sec-body > .risk-card.blocker .risk-card-title { color: var(--danger); }
-.md-body .doc-section--win { border-left: 3px solid var(--accent2); background: color-mix(in srgb, var(--accent2) 6%, var(--panel)); }
-.md-body .doc-section--win > .md-h2::before { background: var(--accent2); }
-.md-body .doc-section--risk { border-left: 3px solid var(--warn); background: color-mix(in srgb, var(--warn) 6%, var(--panel)); }
-.md-body .doc-section--risk > .md-h2::before { background: var(--warn); }
+.md-body .doc-section--win { border: 1px solid color-mix(in srgb, var(--accent2) 30%, var(--line)); border-left: 3px solid var(--accent2); background: color-mix(in srgb, var(--accent2) 6%, var(--panel)); }
+.md-body .doc-section--risk { border: 1px solid color-mix(in srgb, var(--warn) 30%, var(--line)); border-left: 3px solid var(--warn); background: color-mix(in srgb, var(--warn) 6%, var(--panel)); }
 
 /* Keep legacy validation-banner hidden if any stray markup still carries it. */
 .validation-banner { display: none; }
@@ -1317,3 +1411,25 @@ a.live-btn { text-decoration: none; display: inline-flex; align-items: center; }
 .hosted-opps { margin: -8px 0 16px; color: var(--muted); font-size: 13px; }
 .hosted-opps a { color: var(--accent); text-decoration: none; margin-right: 8px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+/* ── Output Gallery (developer preview of the reader visual system) ────── */
+.gallery-note { margin: -6px 0 14px; font-size: 13px; }
+.gallery-width { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; }
+.gallery-width select { font: inherit; font-size: 13px; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+.gallery-picker { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 22px; }
+.gallery-tab {
+  font: inherit; font-size: 12.5px; cursor: pointer; display: inline-flex; align-items: baseline; gap: 8px;
+  background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 999px; padding: 6px 13px;
+}
+.gallery-tab:hover { border-color: var(--accent); }
+.gallery-tab.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); font-weight: 600; }
+.gallery-tab-meta { color: var(--muted); font-size: 11px; }
+/* Width harness: reviewing narrow layout without resizing the window. */
+.gallery-doc.width-narrow, .gallery-doc.width-tablet {
+  border: 1px dashed var(--line-strong); border-radius: 12px; padding: 14px; overflow: hidden;
+}
+.gallery-doc.width-narrow { max-width: 420px; }
+.gallery-doc.width-tablet { max-width: 780px; }
+.gallery-doc.width-narrow .doc-layout,
+.gallery-doc.width-tablet .doc-layout { grid-template-columns: minmax(0, 1fr); }
+.gallery-doc.width-narrow .doc-toc { display: none; }

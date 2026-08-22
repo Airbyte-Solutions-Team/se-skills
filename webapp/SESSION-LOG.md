@@ -2,10 +2,12 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 21, 2026 — HEAD `6ecc754` on `devin/1787273787-ux010-content-architecture`.
+_Last updated: August 22, 2026 — HEAD `eb079b1` on `devin/1787370446-ux011-visual-design-system`.
 
 
 ## Built this session (newest first — see `git log`)
+
+- **Output visual design system, shared reader module, and Output Gallery (August 22).** Extracted every reader presentation transformation out of `static/app.js` into `static/reader.js`, a single module used by both the reader and the new gallery, so `/api/output/render` stays the only Markdown boundary and no second renderer exists. Redesigned the document CSS around typography and spacing instead of uniform cards: ordinary sections are borderless, and surfaces/status color are reserved for the profile summary, verdicts, blockers, risks, wins, and the quiet Source Coverage audit trail. Added structure-driven component treatment — confident canonical connector tables become vertical per-system records (all other tables stay tables in a scrollable wrapper), people lists become one person per row, action lists lead with the action and demote owner/due/status to chips, labeled facts become label/value pairs, and question sections lead with the question. Added responsive rules so narrow widths stack summary data, people, records, and tables without page overflow. New local-only `/api/gallery/*` routes serve an allowlist of committed synthetic fixtures (`eval/fixtures/gallery/`, one per saving skill plus long/short edge cases) to `static/gallery.html`, which renders them through the production path with a desktop/tablet/narrow width switcher. New `eval/tests/test_webapp_reader.py` exercises the pure classifiers through Node and the real DOM behavior through headless Chrome (summary/sidebar predicate parity, source-order sidebar, Source Coverage last, connector vs generic tables, callout semantics and the risk strip, content preservation, sanitization of hostile content, and every fixture rendering cleanly); the existing frontend tests now target `reader.js`. UI cache-bust bumped in `static/index.html`.
 
 - **Legacy Deal Assessment H2 ownership correction (August 21).** Preserved raw peer-H2 boundaries for legacy POV extraction, updated regressions to the production output layout, and verified that only the raw `Need` body contributes connector lineage.
 

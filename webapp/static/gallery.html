@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Output Gallery — SE Skills</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='7'%20fill='%23151a24'/%3E%3Ctext%20x='16'%20y='22'%20font-family='Inter,system-ui,sans-serif'%20font-size='19'%20font-weight='700'%20fill='%234263eb'%20text-anchor='middle'%3ES%3C/text%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+  <link rel="stylesheet" href="/style.css" id="css-link" />
+</head>
+<body>
+  <header>
+    <div class="bar">
+      <a href="/" class="brand">Solutions Team Hub</a>
+      <nav class="crumbs"><span>Output Gallery</span></nav>
+      <div class="bar-right">
+        <button id="theme-toggle" class="theme-toggle" title="Toggle light/dark" aria-label="Toggle theme">🌙</button>
+      </div>
+    </div>
+  </header>
+
+  <main id="view">
+    <div class="row">
+      <h1>Output Gallery</h1>
+      <div class="row-actions row-actions--doc">
+        <span class="row-actions-spacer"></span>
+        <label class="gallery-width">
+          <span class="muted">Width</span>
+          <select id="gallery-width">
+            <option value="full">Desktop (full)</option>
+            <option value="narrow">Narrow (420px)</option>
+            <option value="tablet">Tablet (780px)</option>
+          </select>
+        </label>
+      </div>
+    </div>
+    <p class="muted gallery-note">
+      Synthetic fixtures rendered through the production reader path
+      (<code>/api/output/render</code> → <code>reader.js</code>). No customer data.
+    </p>
+    <div id="gallery-error" class="status err hidden"></div>
+    <div class="gallery-picker" id="gallery-picker"></div>
+    <div id="gallery-doc" class="gallery-doc"></div>
+  </main>
+
+  <script src="/reader.js?v=2026081901"></script>
+  <script src="/gallery.js?v=2026081901"></script>
+</body>
+</html>
