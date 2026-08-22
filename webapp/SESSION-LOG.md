@@ -2,10 +2,12 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 21, 2026 — HEAD `e0d22fc` on `devin/1787273787-ux010-content-architecture`.
+_Last updated: August 21, 2026 — HEAD `6e0628e` on `devin/1787273787-ux010-content-architecture`.
 
 
 ## Built this session (newest first — see `git log`)
+
+- **Live summary-guidance reconciliation (August 21).** Replaced stale profile-summary references in producer instructions and shared playbook guidance, aligned all internal-prep mode templates, kept the POV sheet's validated `At a Glance` receipt summary as the registry truth, renamed Coverage Handoff comments, and added a regression guard against live legacy summary headings.
 
 - **Round-3 architecture and POV restoration (August 21).** Unified reader summary filtering with promotion, synchronized producer callouts and stale guidance with the registry, removed the duplicate post-call attendee subsection, restored Deal Assessment Driver/Need/Urgency extraction (including legacy H2s), and narrowly restored Need connector mining. Added callout, reader round-trip, and POV regressions.
 
