@@ -574,3 +574,95 @@ def test_narrow_layout_rules_exist_for_every_new_component(repo_root: Path) -> N
     # Discovery groups differ by weight only, and must never force overflow.
     assert ".qa-group--primary" in css and ".qa-group--supporting" in css
     assert ".md-body .qa-group { min-width: 0; }" in css
+
+
+def _chrome_bin() -> str:
+    chrome = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
+    if not chrome:
+        if os.environ.get("CI"):
+            pytest.fail("no Chrome/Chromium binary on the CI runner; gallery viewport coverage cannot silently skip")
+        pytest.skip("no Chrome binary available for DOM behavior tests")
+    return chrome
+
+
+def test_gallery_width_selection_is_a_real_viewport_for_production_media_queries(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    """The 420px selection must make the production @media rules actually fire.
+
+    The gallery renders into an iframe, so narrowing it narrows a real viewport:
+    `.kv-grid` stacks inside the frame while the wide outer page keeps two
+    columns, using only the production stylesheet (no gallery-only rules).
+    """
+    chrome = _chrome_bin()
+    css = (repo_root / "webapp" / "static" / "style.css").as_posix()
+    body = '<div class="md-body"><div class="kv-grid"><div class="kv"><div class="kv-k">Key</div><div class="kv-v">Value</div></div></div></div>'
+    harness = tmp_path / "viewport.html"
+    frame_html = (
+        '<!doctype html><html data-theme="dark"><head><meta charset="utf-8">'
+        f'<link rel="stylesheet" href="file://{css}"></head><body><main>{body}</main></body></html>'
+    )
+    harness.write_text(
+        '<!doctype html><html data-theme="dark"><head><meta charset="utf-8">'
+        f'<link rel="stylesheet" href="file://{css}"></head><body>'
+        f'<pre id="out"></pre><main>{body}</main>'
+        '<iframe id="frame" class="gallery-frame" style="width:420px"></iframe>'
+        "<script>\n"
+        f"const frameHtml = {json.dumps(frame_html)};\n"
+        "const f = document.getElementById('frame');\n"
+        "const d = f.contentDocument;\n"
+        "d.open(); d.write(frameHtml); d.close();\n"
+        "function cols(doc) { return getComputedStyle(doc.querySelector('.kv-grid')).gridTemplateColumns; }\n"
+        "setTimeout(() => {\n"
+        "  document.getElementById('out').textContent = JSON.stringify({\n"
+        "    frameWidth: f.contentWindow.innerWidth,\n"
+        "    frameCols: cols(d),\n"
+        "    outerCols: cols(document),\n"
+        "    outerWidth: innerWidth,\n"
+        "  });\n"
+        "}, 500);\n"
+        "</script></body></html>",
+        encoding="utf-8",
+    )
+    dom = subprocess.run(
+        [
+            chrome,
+            "--headless=new",
+            "--disable-gpu",
+            "--no-sandbox",
+            "--allow-file-access-from-files",
+            f"--user-data-dir={tmp_path / 'profile'}",
+            "--window-size=1400,900",
+            "--virtual-time-budget=5000",
+            "--dump-dom",
+            f"file://{harness}",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    payload = dom[dom.index('<pre id="out">') + len('<pre id="out">'):]
+    payload = payload[: payload.index("</pre>")]
+    for entity, char in (("&lt;", "<"), ("&gt;", ">"), ("&quot;", '"'), ("&amp;", "&")):
+        payload = payload.replace(entity, char)
+    data = json.loads(payload)
+
+    # The frame's own viewport is the selected width (minus its 1px preview border).
+    assert 400 < data["frameWidth"] <= 420, data
+    assert data["outerWidth"] > 700, data
+    # Inside the frame the narrow breakpoint applies: one column.
+    assert len(data["frameCols"].split()) == 1, data
+    # The outer page is wide, so the same markup keeps the label/value columns.
+    assert len(data["outerCols"].split()) == 2, data
+
+
+def test_gallery_has_no_gallery_specific_responsive_rules(repo_root: Path) -> None:
+    """Truthfulness: the frame must inherit production breakpoints, not copies."""
+    css = (repo_root / "webapp" / "static" / "style.css").read_text(encoding="utf-8")
+    assert ".gallery-doc.width-narrow" not in css and ".gallery-doc.width-tablet" not in css
+    for block in re.findall(r"@media[^{]*\{(?:[^{}]|\{[^{}]*\})*\}", css):
+        assert ".gallery" not in block
+
+    gallery_js = (repo_root / "webapp" / "static" / "gallery.js").read_text(encoding="utf-8")
+    assert 'href="/style.css"' in gallery_js
+    assert 'narrow: "420px"' in gallery_js and 'tablet: "780px"' in gallery_js

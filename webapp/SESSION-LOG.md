@@ -2,10 +2,12 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 25, 2026 — HEAD `e59822a` on `devin/1787370446-ux011-visual-design-system`.
+_Last updated: August 25, 2026 — HEAD `270c4b1` on `devin/1787370446-ux011-visual-design-system`.
 
 
 ## Built this session (newest first — see `git log`)
+
+- **Gallery width preview is a real viewport (August 25).** The Output Gallery now renders the document inside an iframe that loads the same production `style.css`, so selecting 420px or 780px gives the preview its own viewport and the production responsive breakpoints actually apply — previously the selector only narrowed a container, leaving viewport media queries dormant and labeled facts squeezed. No gallery-specific responsive rules were added (the previous `.gallery-doc.width-*` container rules are gone), theme toggling propagates into the frame, and the frame height tracks its content. A headless-Chrome behavioral test asserts the frame's own `innerWidth` and that `.kv-grid` stacks inside the frame while the wide outer page keeps two columns; a second test guards against gallery-specific media rules reappearing.
 
 - **Canonical Prep Call gallery fixture and Discovery Plan grouping (August 25).** Replaced the mislabeled `prep-call` gallery fixture (it carried Internal Prep headings) with a synthetic canonical Prep Call output: `Meeting Snapshot` plus Account Context → Call Strategy → Discovery Plan → Agenda → Watch Outs → Desired Next Step → Source Coverage, including the real Discovery Plan H3 groups. Added a structural reader treatment (`upgradeDiscoveryGroups`) that ranks the `Must-Ask Questions` group as primary and leaves its sibling question groups subordinate, recognized only from the section's own H2 and its sibling H3s — no prose inspection, no reordering, no text added or removed. New behavioral tests cover the fixture-vs-registry architecture, the primary/supporting split, the safe fallback when the structure is incomplete or the must-ask group sits outside a discovery section, and order/content preservation. Fresh cache-bust for `reader.js`/`app.js`/`gallery.js`.
 

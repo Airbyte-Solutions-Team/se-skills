@@ -1444,12 +1444,11 @@ a.live-btn { text-decoration: none; display: inline-flex; align-items: center; }
 .gallery-tab:hover { border-color: var(--accent); }
 .gallery-tab.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); font-weight: 600; }
 .gallery-tab-meta { color: var(--muted); font-size: 11px; }
-/* Width harness: reviewing narrow layout without resizing the window. */
-.gallery-doc.width-narrow, .gallery-doc.width-tablet {
-  border: 1px dashed var(--line-strong); border-radius: 12px; padding: 14px; overflow: hidden;
+/* Width preview: the document renders inside an iframe, so the selected width is
+   a real viewport and the production breakpoints below apply to it. The frame
+   loads this same stylesheet, so there are deliberately no gallery-specific
+   responsive rules to keep in sync. */
+.gallery-frame {
+  display: block; width: 100%; border: 1px dashed var(--line-strong); border-radius: 12px;
+  background: var(--bg); color-scheme: normal;
 }
-.gallery-doc.width-narrow { max-width: 420px; }
-.gallery-doc.width-tablet { max-width: 780px; }
-.gallery-doc.width-narrow .doc-layout,
-.gallery-doc.width-tablet .doc-layout { grid-template-columns: minmax(0, 1fr); }
-.gallery-doc.width-narrow .doc-toc { display: none; }

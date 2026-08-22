@@ -4,6 +4,12 @@
  * real skill output uses: POST /api/output/render (server Markdown → sanitized
  * HTML) → seReader.buildReaderDocument (presentation transforms). There is no
  * second renderer here; if the gallery looks right, the reader looks right.
+ *
+ * The preview lives in an iframe so the width selector produces a real, isolated
+ * viewport: production `@media` breakpoints in the shared /style.css evaluate
+ * against the selected width exactly as they would in a 420px browser window.
+ * No gallery-specific responsive rules exist — the frame loads the same
+ * stylesheet the app does.
  */
 "use strict";
 
@@ -50,13 +56,72 @@ async function renderMarkdown(md) {
   return (await res.json()).html;
 }
 
+const FRAME_WIDTHS = { full: "100%", narrow: "420px", tablet: "780px" };
+
+function currentTheme() {
+  return document.documentElement.getAttribute("data-theme") || "dark";
+}
+
+function previewFrame() {
+  return docBox.querySelector("iframe.gallery-frame");
+}
+
 function applyWidth() {
-  docBox.classList.remove("width-narrow", "width-tablet");
-  if (widthSel.value === "narrow") docBox.classList.add("width-narrow");
-  if (widthSel.value === "tablet") docBox.classList.add("width-tablet");
+  const frame = previewFrame();
+  if (frame) frame.style.width = FRAME_WIDTHS[widthSel.value] || FRAME_WIDTHS.full;
+}
+
+function syncFrameHeight(frame) {
+  const d = frame.contentDocument;
+  if (!d || !d.documentElement) return;
+  frame.style.height = d.documentElement.scrollHeight + "px";
+}
+
+// The frame is a real browsing context loading the production stylesheet, so the
+// document inside it is laid out for its own width — that is the whole point of
+// the width selector. Its height tracks the content because the outer page owns
+// scrolling.
+function writeFrame(bodyHtml) {
+  const frame = previewFrame() || (() => {
+    const el = document.createElement("iframe");
+    el.className = "gallery-frame";
+    el.title = "Rendered output preview";
+    docBox.innerHTML = "";
+    docBox.appendChild(el);
+    return el;
+  })();
+  const d = frame.contentDocument;
+  d.open();
+  d.write(
+    '<!doctype html><html data-theme="' + currentTheme() + '"><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+    '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">' +
+    '<link rel="stylesheet" href="/style.css">' +
+    "</head><body><main>" + bodyHtml + "</main></body></html>"
+  );
+  d.close();
+  wireDocument(d);
+  if (window.ResizeObserver) {
+    new ResizeObserver(() => syncFrameHeight(frame)).observe(d.documentElement);
+  }
+  d.addEventListener("click", () => setTimeout(() => syncFrameHeight(frame), 0));
+  // The stylesheet loads asynchronously, so measure again once it applies.
+  if (frame.contentWindow) {
+    frame.contentWindow.addEventListener("load", () => syncFrameHeight(frame));
+  }
+  syncFrameHeight(frame);
+  applyWidth();
+  return frame;
+}
+
+function applyFrameTheme() {
+  const frame = previewFrame();
+  const d = frame && frame.contentDocument;
+  if (d && d.documentElement) d.documentElement.setAttribute("data-theme", currentTheme());
 }
 
 function wireDocument(root) {
+  const ownerDoc = root.ownerDocument || root;
   root.querySelectorAll(".doc-section.collapsible > .md-h2").forEach((h2) => {
     h2.onclick = (e) => {
       if (e.target.closest("a")) return;
@@ -72,11 +137,11 @@ function wireDocument(root) {
   root.querySelectorAll(".doc-toc-link").forEach((a) => {
     a.onclick = (e) => {
       e.preventDefault();
-      reveal(document.getElementById(a.getAttribute("href").slice(5)));
+      reveal(ownerDoc.getElementById(a.getAttribute("href").slice(5)));
     };
   });
   root.querySelectorAll(".risk-item").forEach((b) => {
-    b.onclick = () => reveal(document.getElementById(b.dataset.riskTarget || ""));
+    b.onclick = () => reveal(ownerDoc.getElementById(b.dataset.riskTarget || ""));
   });
 }
 
@@ -85,11 +150,10 @@ async function openFixture(name, title) {
   picker.querySelectorAll(".gallery-tab").forEach((b) => {
     b.classList.toggle("active", b.dataset.name === name);
   });
-  docBox.innerHTML = `<p class="muted">Rendering ${esc(name)}…</p>`;
   const md = await getText("/api/gallery/fixture?name=" + encodeURIComponent(name));
   const serverHtml = await renderMarkdown(md);
   const doc = window.seReader.buildReaderDocument(serverHtml, { title });
-  docBox.innerHTML = `
+  writeFrame(`
     <div class="row"><h1>${esc(doc.docTitle)}</h1></div>
     <div class="doc-layout">
       ${doc.tocHtml ? `<aside class="doc-toc"><div class="doc-toc-head">On this page</div>${doc.tocHtml}</aside>` : ""}
@@ -98,9 +162,7 @@ async function openFixture(name, title) {
         ${doc.riskStripHtml}
         <div class="doc-sheet">${doc.sheetHtml}</div>
       </article>
-    </div>`;
-  wireDocument(docBox);
-  applyWidth();
+    </div>`);
   location.hash = "#" + name;
 }
 
@@ -119,6 +181,7 @@ async function main() {
       const next = document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light";
       localStorage.setItem("se-hub-theme", next);
       applyTheme(next);
+      applyFrameTheme();
     };
   }
   const { fixtures } = await getJson("/api/gallery/fixtures");

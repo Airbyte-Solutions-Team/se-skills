@@ -30,8 +30,8 @@
           <span class="muted">Width</span>
           <select id="gallery-width">
             <option value="full">Desktop (full)</option>
-            <option value="narrow">Narrow (420px)</option>
-            <option value="tablet">Tablet (780px)</option>
+            <option value="narrow">Narrow viewport (420px)</option>
+            <option value="tablet">Tablet viewport (780px)</option>
           </select>
         </label>
       </div>
@@ -39,13 +39,15 @@
     <p class="muted gallery-note">
       Synthetic fixtures rendered through the production reader path
       (<code>/api/output/render</code> → <code>reader.js</code>). No customer data.
+      The preview renders in an iframe, so the selected width is a real viewport and the
+      production responsive breakpoints in <code>style.css</code> apply to it.
     </p>
     <div id="gallery-error" class="status err hidden"></div>
     <div class="gallery-picker" id="gallery-picker"></div>
     <div id="gallery-doc" class="gallery-doc"></div>
   </main>
 
-  <script src="/reader.js?v=2026082501"></script>
-  <script src="/gallery.js?v=2026082501"></script>
+  <script src="/reader.js?v=2026082601"></script>
+  <script src="/gallery.js?v=2026082601"></script>
 </body>
 </html>
