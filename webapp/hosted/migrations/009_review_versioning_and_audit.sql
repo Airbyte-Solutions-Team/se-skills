@@ -754,14 +754,27 @@ GRANT EXECUTE ON FUNCTION public.abandon_output_correction(UUID, BOOLEAN, TEXT) 
 -- ---------------------------------------------------------------------------
 -- Orphaned-correction cleanup (worker role)
 -- ---------------------------------------------------------------------------
+-- Two kinds of row need reconciling, and both may point at a private object:
+--
+--   orphaned  -> the request knew the object existed and could not delete it
+--   pending   -> the request died between reserve and commit/abandon (or its
+--                upload failed ambiguously), so object existence is unknown
+--
+-- A `pending` row is only eligible once it is older than `p_pending_grace`,
+-- which bounds how long an in-flight request is protected from its own cleanup.
+-- Claiming one flips it to `orphaned` inside the same locked transaction, and
+-- `commit_output_correction` only accepts `pending`, so a late commit for a
+-- reconciled reservation fails instead of pointing a version at a deleted
+-- object. `committed` rows are never eligible.
+DROP FUNCTION IF EXISTS public.claim_orphaned_correction_upload(TEXT, INTEGER);
+
 CREATE OR REPLACE FUNCTION public.claim_orphaned_correction_upload(
     p_worker_id TEXT,
-    p_max_attempts INTEGER DEFAULT 10
+    p_max_attempts INTEGER DEFAULT 10,
+    p_pending_grace INTERVAL DEFAULT INTERVAL '30 minutes'
 )
 RETURNS TABLE(
     reservation_id UUID,
-    org_id UUID,
-    output_id UUID,
     content_storage_path TEXT,
     created_by UUID,
     cleanup_attempts INTEGER
@@ -773,9 +786,19 @@ AS $$
 DECLARE
     v_id UUID;
 BEGIN
+    IF p_worker_id IS NULL OR length(p_worker_id) = 0 THEN
+        RAISE EXCEPTION 'worker id is required' USING ERRCODE = 'SE005';
+    END IF;
+    IF p_pending_grace IS NULL OR p_pending_grace < INTERVAL '1 minute' THEN
+        RAISE EXCEPTION 'pending grace must be at least one minute' USING ERRCODE = 'SE005';
+    END IF;
+
     SELECT u.id INTO v_id
     FROM public.output_correction_uploads u
-    WHERE u.state = 'orphaned'
+    WHERE (
+              u.state = 'orphaned'
+              OR (u.state = 'pending' AND u.updated_at < now() - p_pending_grace)
+          )
       AND u.cleanup_attempts < p_max_attempts
       -- A claim is a lease, so a second worker (or a restarted one) cannot
       -- delete the same private object concurrently. Once the lease expires the
@@ -791,22 +814,26 @@ BEGIN
     END IF;
 
     UPDATE public.output_correction_uploads u
-    SET cleanup_attempts = u.cleanup_attempts + 1,
+    SET state = 'orphaned',
+        cleanup_attempts = u.cleanup_attempts + 1,
         cleanup_claimed_by = p_worker_id,
         cleanup_claimed_at = now(),
         updated_at = now()
     WHERE u.id = v_id;
 
+    -- Only what the worker needs to delete the object: it never sees the
+    -- organization, the output, the payload hash, or the request id, and it has
+    -- no direct SELECT on the ledger.
     RETURN QUERY
-    SELECT u.id, u.org_id, u.output_id, u.content_storage_path, u.created_by, u.cleanup_attempts
+    SELECT u.id, u.content_storage_path, u.created_by, u.cleanup_attempts
     FROM public.output_correction_uploads u
     WHERE u.id = v_id;
 END;
 $$;
 
-ALTER FUNCTION public.claim_orphaned_correction_upload(TEXT, INTEGER) OWNER TO app_admin;
-REVOKE ALL ON FUNCTION public.claim_orphaned_correction_upload(TEXT, INTEGER) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.claim_orphaned_correction_upload(TEXT, INTEGER) TO app_worker;
+ALTER FUNCTION public.claim_orphaned_correction_upload(TEXT, INTEGER, INTERVAL) OWNER TO app_admin;
+REVOKE ALL ON FUNCTION public.claim_orphaned_correction_upload(TEXT, INTEGER, INTERVAL) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.claim_orphaned_correction_upload(TEXT, INTEGER, INTERVAL) TO app_worker;
 
 CREATE OR REPLACE FUNCTION public.finalize_correction_cleanup(
     p_reservation_id UUID,
@@ -831,4 +858,5 @@ ALTER FUNCTION public.finalize_correction_cleanup(UUID, TEXT) OWNER TO app_admin
 REVOKE ALL ON FUNCTION public.finalize_correction_cleanup(UUID, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.finalize_correction_cleanup(UUID, TEXT) TO app_worker;
 
-GRANT SELECT ON TABLE public.output_correction_uploads TO app_worker;
+-- `app_worker` reaches the ledger only through the two functions above.
+REVOKE ALL ON TABLE public.output_correction_uploads FROM app_worker;

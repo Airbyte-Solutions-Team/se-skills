@@ -1099,6 +1099,274 @@ async def test_cleanup_delete_failure_leaves_retryable_orphan_evidence(
         )
 
 
+async def _reserve_without_finishing(
+    user_pool: asyncpg.Pool,
+    fx: ReviewFixture,
+    *,
+    request_id: uuid.UUID,
+    payload_hash: str = "a" * 64,
+) -> dict[str, Any]:
+    """Reserve a correction and then stop, as a dying request process would.
+
+    This drives the same `reserve_output_correction` function the API calls, over
+    a tenant-scoped `app_user` connection, and never reaches commit or abandon.
+    """
+    async with user_pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT set_config('app.context_token', $1, true)", _context_token(fx.user_id)
+            )
+            raw = await conn.fetchval(
+                "SELECT public.reserve_output_correction($1, $2, NULL, $3, $4)",
+                fx.output_id,
+                fx.account_id,
+                request_id,
+                payload_hash,
+            )
+    return json.loads(raw) if isinstance(raw, str) else raw
+
+
+def _store_then_raise(backend: Any, exc: BaseException) -> Any:
+    """Return an `upload` that really stores the object and then fails.
+
+    This is the realistic ambiguous case: the private object exists even though
+    the caller only ever sees an error.
+    """
+    original = backend.upload
+
+    async def _upload(*args: Any, **kwargs: Any) -> None:
+        await original(*args, **kwargs)
+        raise exc
+
+    return _upload
+
+
+async def _age_reservations(admin_pool: asyncpg.Pool, interval: str = "2 hours") -> None:
+    """Push every reservation past the stale-`pending` grace period."""
+    async with admin_pool.acquire() as conn:
+        await conn.execute(
+            f"UPDATE public.output_correction_uploads "
+            f"SET updated_at = now() - INTERVAL '{interval}'"
+        )
+
+
+async def _run_worker_cleanup(worker_pool: asyncpg.Pool, backend: Any, name: str) -> bool:
+    """Run one real worker maintenance cycle as the `app_worker` role."""
+    from hosted.post_call_orchestrator import PostCallExecutor
+    from hosted.worker import Worker
+
+    class _UnusedRuntime:
+        async def execute(self, job: Any, cancellation: Any) -> Any:
+            raise AssertionError("cleanup cycles must not invoke the runtime")
+
+    executor = PostCallExecutor(_UnusedRuntime(), db_pool=worker_pool, storage_backend=backend)
+    worker = Worker(worker_pool, executor=executor, worker_name=name, timeout_seconds=30)
+    return await worker.cleanup_next_correction_upload()
+
+
+async def test_ambiguous_upload_failure_deletes_the_stored_object(
+    app_client: TestClient,
+    admin_pool: asyncpg.Pool,
+    backend: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An upload error does not prove the object is absent.
+
+    The backend stores the object and then raises, which is what a lost response
+    on an accepted write looks like. The request must delete the object and only
+    then close the reservation as `aborted`.
+    """
+    fx = await _seed_reviewable_output(admin_pool, backend)
+    monkeypatch.setattr(
+        backend, "upload", _store_then_raise(backend, _hs().StorageError("connection reset"))
+    )
+    assert _correct(app_client, fx, base_version_id=None).status_code == 503
+
+    async with admin_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT state, content_storage_path FROM public.output_correction_uploads "
+            "WHERE output_id = $1",
+            fx.output_id,
+        )
+        assert await conn.fetchval(
+            "SELECT count(*) FROM public.output_versions WHERE output_id = $1", fx.output_id
+        ) == 0
+    assert row["state"] == "aborted"
+    assert f"{_hs().OUTPUTS_BUCKET}:{row['content_storage_path']}" not in backend.objects
+
+
+async def test_ambiguous_upload_failure_keeps_orphan_evidence_when_delete_fails(
+    app_client: TestClient,
+    admin_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    backend: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the compensating delete also fails, the object must stay accounted for."""
+    fx = await _seed_reviewable_output(admin_pool, backend)
+
+    async def _fail_delete(*args: Any, **kwargs: Any) -> None:
+        raise _hs().StorageError("delete unavailable")
+
+    monkeypatch.setattr(
+        backend, "upload", _store_then_raise(backend, _hs().StorageError("connection reset"))
+    )
+    monkeypatch.setattr(backend, "delete", _fail_delete)
+    assert _correct(app_client, fx, base_version_id=None).status_code == 503
+
+    async with admin_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id, state, content_storage_path FROM public.output_correction_uploads "
+            "WHERE output_id = $1",
+            fx.output_id,
+        )
+    assert row["state"] == "orphaned"
+    key = f"{_hs().OUTPUTS_BUCKET}:{row['content_storage_path']}"
+    assert key in backend.objects
+
+    monkeypatch.undo()
+    assert await _run_worker_cleanup(worker_pool, backend, "cleanup-upload") is True
+    assert key not in backend.objects
+    async with admin_pool.acquire() as conn:
+        assert await conn.fetchval(
+            "SELECT state FROM public.output_correction_uploads WHERE id = $1", row["id"]
+        ) == "aborted"
+
+
+async def test_crash_after_reserve_before_upload_is_reconciled_after_restart(
+    app_client: TestClient,
+    admin_pool: asyncpg.Pool,
+    user_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    backend: Any,
+) -> None:
+    """A reservation written just before the process died must not stay `pending`.
+
+    While the request could still be in flight the reservation is protected. Once
+    it is older than the grace period a restarted worker reconciles it, and no
+    object exists to delete.
+    """
+    fx = await _seed_reviewable_output(admin_pool, backend)
+    reservation = await _reserve_without_finishing(
+        user_pool, fx, request_id=uuid.uuid4()
+    )
+
+    async with admin_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id, state, content_storage_path FROM public.output_correction_uploads "
+            "WHERE output_id = $1",
+            fx.output_id,
+        )
+    assert str(row["id"]) == reservation["reservation_id"]
+    assert row["state"] == "pending"
+    assert f"{_hs().OUTPUTS_BUCKET}:{row['content_storage_path']}" not in backend.objects
+
+    # A fresh reservation is not cleanup work: the grace period protects it.
+    assert await _run_worker_cleanup(worker_pool, backend, "cleanup-early") is False
+
+    await _age_reservations(admin_pool)
+    assert await _run_worker_cleanup(worker_pool, backend, "cleanup-restart") is True
+    async with admin_pool.acquire() as conn:
+        assert await conn.fetchval(
+            "SELECT state FROM public.output_correction_uploads WHERE id = $1", row["id"]
+        ) == "aborted"
+
+
+async def test_crash_after_object_write_before_commit_is_reconciled(
+    app_client: TestClient,
+    admin_pool: asyncpg.Pool,
+    user_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    backend: Any,
+) -> None:
+    """A written object with no committed version must be removed after restart."""
+    fx = await _seed_reviewable_output(admin_pool, backend)
+    request_id = uuid.uuid4()
+    reservation = await _reserve_without_finishing(user_pool, fx, request_id=request_id)
+    # The object exists, exactly as it would if the process died between the
+    # upload and the commit.
+    await _upload(
+        backend,
+        fx.user_id,
+        reservation["content_storage_path"],
+        _corrected_markdown("Never committed"),
+        _hs().OUTPUTS_BUCKET,
+    )
+
+    async with admin_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id, state, content_storage_path FROM public.output_correction_uploads "
+            "WHERE output_id = $1",
+            fx.output_id,
+        )
+    assert row["state"] == "pending"
+    key = f"{_hs().OUTPUTS_BUCKET}:{row['content_storage_path']}"
+    assert key in backend.objects
+
+    await _age_reservations(admin_pool)
+    assert await _run_worker_cleanup(worker_pool, backend, "cleanup-written") is True
+    assert key not in backend.objects
+    async with admin_pool.acquire() as conn:
+        assert await conn.fetchval(
+            "SELECT state FROM public.output_correction_uploads WHERE id = $1", row["id"]
+        ) == "aborted"
+        assert await conn.fetchval(
+            "SELECT count(*) FROM public.output_versions WHERE output_id = $1", fx.output_id
+        ) == 0
+
+    # A retry of the reconciled key cannot commit a version against a deleted
+    # object; the caller has to submit a new correction.
+    replay = _correct(app_client, fx, base_version_id=None, request_id=request_id)
+    assert replay.status_code == 409
+    # And the same content under a fresh key still works.
+    assert _correct(app_client, fx, base_version_id=None).status_code == 201
+
+
+async def test_committed_correction_is_never_cleanup_eligible(
+    app_client: TestClient,
+    admin_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    backend: Any,
+) -> None:
+    """Cleanup must never touch the object behind a committed version."""
+    correction = _correct(
+        app_client,
+        await _seed_reviewable_output(admin_pool, backend),
+        base_version_id=None,
+    )
+    assert correction.status_code == 201
+    version_id = uuid.UUID(correction.json()["correction"]["output_version_id"])
+
+    await _age_reservations(admin_pool)
+    assert await _run_worker_cleanup(worker_pool, backend, "cleanup-committed") is False
+
+    async with admin_pool.acquire() as conn:
+        path = await conn.fetchval(
+            "SELECT content_storage_path FROM public.output_versions WHERE id = $1", version_id
+        )
+        assert await conn.fetchval(
+            "SELECT state FROM public.output_correction_uploads WHERE id = $1", version_id
+        ) == "committed"
+    assert f"{_hs().OUTPUTS_BUCKET}:{path}" in backend.objects
+
+
+async def test_worker_role_reaches_the_ledger_only_through_functions(
+    worker_pool: asyncpg.Pool,
+) -> None:
+    """`app_worker` has no direct access to correction reservations."""
+    async with worker_pool.acquire() as conn:
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await conn.fetch("SELECT * FROM public.output_correction_uploads")
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await conn.execute("DELETE FROM public.output_correction_uploads")
+        # The narrow claim function still works, and returns only the fields the
+        # worker needs to delete an object.
+        claim = await conn.fetch(
+            "SELECT * FROM public.claim_orphaned_correction_upload($1)", "privilege-probe"
+        )
+    assert claim == []
+
+
 # ---------------------------------------------------------------------------
 # Audit
 # ---------------------------------------------------------------------------

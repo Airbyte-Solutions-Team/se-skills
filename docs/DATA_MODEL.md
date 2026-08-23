@@ -291,10 +291,23 @@ durable, recoverable evidence instead of an untracked object.
 | `state` | `pending`, `committed`, `aborted`, `orphaned` |
 | `cleanup_attempts` / `cleanup_claimed_by` / `cleanup_claimed_at` | Lease-bound retryable cleanup of an orphaned object |
 
-Not readable or writable by `app_user`; only the review functions and the
-lease-bound `claim_orphaned_correction_upload(...)` /
-`finalize_orphaned_correction_cleanup(...)` path touch it. The claim is a lease,
-so two workers cannot concurrently delete the same private object.
+Not readable or writable by `app_user` or `app_worker`; only the review functions
+and the lease-bound `claim_orphaned_correction_upload(...)` /
+`finalize_correction_cleanup(...)` path touch it. The claim is a lease, so two
+workers cannot concurrently delete the same private object, and it returns only
+the reservation id, Storage path, owning user, and attempt count the worker needs.
+
+Two states are cleanup work. `orphaned` means the request knew the object existed
+and could not delete it. `pending` means the request never reached commit or
+abandon — a dead process, or an upload whose outcome is unknown because the write
+can be accepted while the response is lost. A `pending` reservation becomes
+eligible only once it is older than a bounded grace period (30 minutes), and
+claiming it flips it to `orphaned` in the same locked transaction; since
+`commit_output_correction` accepts only `pending`, a late commit for a reconciled
+reservation fails instead of pointing a version at a deleted object. `committed`
+reservations are never eligible. The worker runs this in the same maintenance
+cycle as generated-output tombstone cleanup, so a restart rediscovers any
+reservation whose lease has expired.
 
 ### `integration_connections` (future-facing)
 

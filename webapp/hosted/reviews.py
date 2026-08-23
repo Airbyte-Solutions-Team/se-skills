@@ -508,20 +508,22 @@ async def _abandon_reservation(
         )
 
 
-async def _compensate_failed_commit(
+async def _discard_uncommitted_object(
     request: Request,
     org: OrgContext,
     *,
     output_id: uuid.UUID,
     reservation_id: uuid.UUID,
     storage_path: str,
-    skip_delete: bool,
+    reason: str,
+    skip_delete: bool = False,
 ) -> None:
     """Undo an uncommitted correction upload and close out its reservation.
 
-    The uploaded object is deleted so a failed commit leaves no orphan. When the
-    delete itself fails the reservation is marked `orphaned`, which is durable,
-    retryable cleanup evidence rather than a silent leak.
+    The object is deleted so a failed correction leaves no orphan, and only a
+    confirmed delete (or a confirmed absence) marks the reservation `aborted`.
+    Anything else marks it `orphaned`: durable, retryable cleanup evidence rather
+    than a claim that customer content is gone when it may not be.
     """
     deleted = True
     if not skip_delete:
@@ -539,7 +541,7 @@ async def _compensate_failed_commit(
                 type(cleanup_exc).__name__,
             )
     await _abandon_reservation(
-        request, org, reservation_id, object_deleted=deleted, reason="commit_failed"
+        request, org, reservation_id, object_deleted=deleted, reason=reason
     )
 
 
@@ -630,8 +632,17 @@ async def submit_output_correction(
             )
         except storage.StorageError as exc:
             logger.warning("Correction upload failed for output %s: %s", output_id, type(exc).__name__)
-            await _abandon_reservation(
-                request, org, reservation_id, object_deleted=True, reason="upload_failed"
+            # An upload error does not prove the object is absent: the write can
+            # be accepted and the response lost. Existence is unknown, so the
+            # object is deleted and the reservation only becomes `aborted` once
+            # that delete confirms it.
+            await _discard_uncommitted_object(
+                request,
+                org,
+                output_id=output_id,
+                reservation_id=reservation_id,
+                storage_path=storage_path,
+                reason="upload_failed",
             )
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -660,12 +671,13 @@ async def submit_output_correction(
                 json.dumps(sidecar),
             )
     except asyncpg.PostgresError as exc:
-        await _compensate_failed_commit(
+        await _discard_uncommitted_object(
             request,
             org,
             output_id=output_id,
             reservation_id=reservation_id,
             storage_path=storage_path,
+            reason="commit_failed",
             skip_delete=already_committed,
         )
         raise _map_db_error(exc) from None
@@ -673,12 +685,13 @@ async def submit_output_correction(
         logger.error(
             "Correction commit failed for output %s: %s", output_id, type(exc).__name__
         )
-        await _compensate_failed_commit(
+        await _discard_uncommitted_object(
             request,
             org,
             output_id=output_id,
             reservation_id=reservation_id,
             storage_path=storage_path,
+            reason="commit_failed",
             skip_delete=already_committed,
         )
         raise HTTPException(
