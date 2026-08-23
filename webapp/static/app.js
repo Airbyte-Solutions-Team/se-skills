@@ -3841,7 +3841,7 @@ function _renderHostedReview() {
         <button class="primary" id="review-submit">Submit correction</button>
       </div>
       <div id="review-editor-status" class="status hidden"></div>
-      <div id="review-preview-pane" class="doc-sheet review-preview hidden"></div>
+      <div id="review-preview-pane" class="md-body review-preview hidden"></div>
     </section>` : `
     <section class="review-editor review-editor--historical">
       <div class="callout callout-note"><div class="callout-title">Historical version</div>
@@ -3892,6 +3892,15 @@ function _renderHostedReview() {
   _wireHostedReview();
 }
 
+function _wireReviewCollapsibles(root) {
+  root.querySelectorAll(".doc-section.collapsible > .md-h2").forEach((h2) => {
+    h2.onclick = (e) => {
+      if (e.target.closest("a")) return;
+      h2.closest(".doc-section").classList.toggle("collapsed");
+    };
+  });
+}
+
 function _reviewStatus(id, message, kind) {
   const el = document.getElementById(id);
   if (!el) return;
@@ -3905,12 +3914,7 @@ function _wireHostedReview() {
   view.querySelectorAll(".review-version").forEach((b) => {
     b.onclick = () => _selectHostedReviewVersion(b.dataset.versionRef);
   });
-  view.querySelectorAll(".doc-section.collapsible > .md-h2").forEach((h2) => {
-    h2.onclick = (e) => {
-      if (e.target.closest("a")) return;
-      h2.closest(".doc-section").classList.toggle("collapsed");
-    };
-  });
+  _wireReviewCollapsibles(view);
 
   const draftEl = document.getElementById("review-markdown");
   if (draftEl) draftEl.oninput = () => { r.draft = draftEl.value; };
@@ -4018,8 +4022,11 @@ async function _previewHostedCorrection() {
     // `res.html` is the same sanitized fragment the reader renders; the reader
     // transforms are presentation-only and add no new HTML from the draft.
     const doc = window.seReader.buildReaderDocument(addMdClasses(res.html || ""), { title: r.state.output.title });
-    pane.innerHTML = doc.sheetHtml;
+    // Same structure as the saved-document article: the collapsible styling is
+    // scoped to `.md-body`, so the sheet has to sit inside it to read correctly.
+    pane.innerHTML = `${doc.execCardHtml}${doc.riskStripHtml}<div class="doc-sheet">${doc.sheetHtml}</div>`;
     pane.classList.remove("hidden");
+    _wireReviewCollapsibles(pane);
     _reviewStatus("review-editor-status", "", "ok");
   } catch (e) {
     _reviewStatus("review-editor-status", e.message || "Could not render the preview", "err");

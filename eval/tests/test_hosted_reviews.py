@@ -269,6 +269,25 @@ async def test_review_state_starts_at_generated_v0_needing_review(
     assert body["activity"] == []
 
 
+async def test_session_route_resolves_the_verified_user_and_org(
+    app_client: TestClient, admin_pool: asyncpg.Pool, backend: Any
+) -> None:
+    """`/api/auth/session` is the first call the hosted UI makes.
+
+    It calls `require_org` directly instead of through FastAPI's dependency
+    injection, so the verified user has to be resolved explicitly — otherwise
+    every hosted page (including the review entry point) renders an error card.
+    """
+    fx = await _seed_reviewable_output(admin_pool, backend)
+    response = app_client.get("/api/auth/session", headers=fx.headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["user"]["id"] == str(fx.user_id)
+    assert body["org"]["id"] == str(fx.org_id)
+    assert body["membership"]["role"]
+    assert app_client.get("/api/auth/session").status_code == 401
+
+
 async def test_generated_version_content_is_rendered_from_trusted_path(
     app_client: TestClient, admin_pool: asyncpg.Pool, backend: Any
 ) -> None:

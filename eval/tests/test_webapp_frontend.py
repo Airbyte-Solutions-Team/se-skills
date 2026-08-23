@@ -176,6 +176,15 @@ def test_hosted_review_ui_escapes_review_text_and_reuses_reader_pipeline(repo_ro
     assert "/versions/${encodeURIComponent(ref)}/content" in app_js
     assert "/preview`" in app_js
 
+    # The correction preview is structured exactly like the saved-document
+    # article: the collapsible-section styling is scoped to `.md-body`, so a
+    # bare `.doc-sheet` pane would show every collapsed section's summary line
+    # on top of its own body. Its sections are wired for expand/collapse too.
+    assert 'id="review-preview-pane" class="md-body review-preview hidden"' in app_js
+    assert '<div class="doc-sheet">${doc.sheetHtml}</div>`' in app_js
+    assert "_wireReviewCollapsibles(pane)" in app_js
+    assert app_js.count("function _wireReviewCollapsibles(root)") == 1
+
     # The browser never supplies identity, Storage paths, or provenance.
     review_block = app_js.split("// ---- Hosted output review (Slice 6A)")[1]
     for forbidden in (

@@ -22,10 +22,12 @@ header { border-bottom: 1px solid var(--line); background: var(--panel); positio
    main:has(.doc-layout) rule below. */
 body:has(.doc-layout) .bar { max-width: 1500px; }
 .brand { color: var(--text); text-decoration: none; font-weight: 700; letter-spacing: .2px; }
-.crumbs { color: var(--muted); font-size: 14px; }
+/* Crumbs shrink (and ellipsize) rather than pushing the right-hand controls off
+   the viewport on narrow windows. */
+.crumbs { color: var(--muted); font-size: 14px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .crumbs a { color: var(--accent); text-decoration: none; }
 .crumbs span.sep { margin: 0 8px; color: var(--line); }
-.bar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.bar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
 .help-link { color: var(--accent); text-decoration: none; font-size: 14px; border: 1px solid var(--line); padding: 6px 12px; border-radius: 8px; }
 .help-link:hover { border-color: var(--accent); }
 .theme-toggle { background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 15px; line-height: 1; cursor: pointer; }
