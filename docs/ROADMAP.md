@@ -270,7 +270,7 @@ This is the source of truth for productionalization slices and progress. Each sl
 
 ## Slice 5B2B1: Deployment foundation
 
-**Status:** `In Progress`
+**Status:** `Complete` (PR 46)
 
 **Product outcome:** The repository contains a fail-closed foundation for a dedicated worker host, pinned sandbox artifacts, deterministic image release tooling, and offline/gated smoke validation.
 
@@ -299,7 +299,11 @@ This is the source of truth for productionalization slices and progress. Each sl
 
 ## Slice 5B2B2: Real environment provisioning and live smoke validation
 
-**Status:** `Proposed`
+**Status:** `Proposed` — explicitly on Product Owner hold.
+
+No real environment provisioning, provider selection, live deployment, live
+Anthropic call, or production artifact publication happens until the deferred
+deployment inputs below are approved by the Product Owner.
 
 **Scope:** Select and provision the cloud host, network, registry, secrets,
 observability, and approved image/rootfs; apply the role; run the live smoke;
@@ -327,10 +331,36 @@ handshake test remain explicit 5B2B2 work.
 
 ## Slice 6A: Review, correction, approval, versioning, and audit
 
-**Status:** `Proposed`
+**Status:** `In Progress` — implemented on the open Slice 6A pull request; this
+slice is complete only after that pull request merges.
 
-**Scope:** Review/correction UI and API, output versions, approval state,
-organization-preserving audit events, and deterministic export provenance.
+**Product outcome:** An authenticated active member of the beta organization can
+open a hosted `post-call` output, read the immutable generated version (V0),
+comment on an exact version, submit a validated correction as a new immutable
+version, and approve the exact current version, with an append-only audit trail.
+
+**Scope:**
+- Hosted review API: review state, per-version content, comment, correction,
+  approval, and in-memory correction preview.
+- `output_versions` correction chain with a single root, a single child per
+  version, and output-row locking as the serialization point.
+- Corrections validated by the authoritative `output_schema.parse_output`
+  `post-call` contract using the server-authored mode and the generation-time
+  transcript; missing transcript context fails closed.
+- Narrow `SECURITY DEFINER` mutation functions (migration `009`) that derive the
+  actor from the signed tenant context; `app_user` keeps no direct write access
+  to `outputs`, `output_versions`, `reviews`, or `audit_events`.
+- Correction upload ledger plus compensation and leased cleanup so a
+  Storage-success/DB-failure path leaves no untracked private object.
+- Identifier-only `audit_events` for comment, correct, and approve.
+- Hosted review UI reusing the production renderer and `reader.js`.
+
+**Dependencies:** Slice 3, Slice 5B2A.
+
+**Non-goals:**
+- No export (Slice 6B).
+- No admin/onboarding surface, no generic audit-admin UI.
+- No additional hosted skills: only `post-call` is correctable.
 
 ## Slice 6B: Exports, admin/onboarding, observability, and beta launch readiness
 

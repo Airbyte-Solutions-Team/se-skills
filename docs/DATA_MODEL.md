@@ -220,9 +220,12 @@ Review/correction/approval actions on an output. `output_version_id` is null whe
 | `user_id` (FK to users) | Reviewer |
 | `action` | `approve`, `comment`, `correct` |
 | `comment` | Text |
+| `request_id` (unique per output/action) | Idempotency key supplied by the caller so a retried comment/correction/approval cannot create a second row |
 | `created_at` | Timestamp |
 
-RLS on `org_id`.
+RLS on `org_id` for reads. `app_user` has no direct `INSERT`/`UPDATE`/`DELETE`:
+rows are written only by the narrow `SECURITY DEFINER` functions in migration
+`009`, which derive `user_id` from the signed tenant context.
 
 ### `output_versions`
 
@@ -234,13 +237,21 @@ Append-only versions of an output. A correction creates a new version with a cor
 | `org_id` (FK, indexed) | Organization owner |
 | `output_id` (FK) | Parent output |
 | `previous_version_id` (FK, nullable) | Previous version in the chain |
-| `corrected_by` (FK to users) | User who made the correction |
+| `created_by` (FK to users) | User who made the correction, derived server-side from the signed tenant context |
 | `content_storage_path` | Private object-storage key for this version's Markdown |
 | `sidecar` | JSON: validation status, source coverage, etc. for this version |
 | `change_summary` | Brief description of what changed |
+| `request_id` (unique per output) | Idempotency key for the correction request |
 | `created_at` | Timestamp |
 
-RLS on `org_id`. The original `outputs.content_storage_path` and `outputs.sidecar` are immutable and represent the generated evidence (version 0). The first correction references the original `output_id` with `previous_version_id` null; subsequent corrections reference the prior `output_versions` row. An `approve` action may have `output_version_id` null (approving the original) or reference a specific corrected version. The final reviewed state is reconstructable from the original output and the chain of `output_versions` and `reviews`.
+RLS on `org_id` for reads; writes go only through the migration `009`
+`SECURITY DEFINER` functions. Partial unique indexes enforce a single root
+(`previous_version_id IS NULL`) and a single child per version, so the chain is
+linear and a branched chain fails closed. The parent `outputs` row is locked
+`FOR UPDATE` inside those functions, which is the serialization point for
+concurrent corrections on the same base version.
+
+The original `outputs.content_storage_path` and `outputs.sidecar` are immutable and represent the generated evidence (version 0). The first correction references the original `output_id` with `previous_version_id` null; subsequent corrections reference the prior `output_versions` row. An `approve` action may have `output_version_id` null (approving the original) or reference a specific corrected version. The final reviewed state is reconstructable from the original output and the chain of `output_versions` and `reviews`.
 
 ### `audit_events`
 
@@ -255,10 +266,35 @@ Provenance and audit trail.
 | `entity_type` | Table/entity name |
 | `entity_id` | Affected record id |
 | `request_id` | Request/correlation id |
-| `metadata` | JSON: IP, user agent, diff, etc.; must not contain secrets or raw customer content |
+| `metadata` | JSON: identifiers only (output id, version id, previous version id, review id, request id, action). Never Markdown, comment bodies, transcript text, prompts, model responses, account names, Storage paths, signed URLs, raw sidecars, or credentials |
 | `created_at` | Timestamp |
 
-RLS on `org_id`. Audit events may be append-only or protected by admin policy.
+RLS on `org_id` for reads only. Rows are written exclusively by the review
+`SECURITY DEFINER` functions in the same transaction as the review evidence they
+describe, so the trail is append-only and cannot be forged or rewritten by
+`app_user`. Slice 6A writes `output.comment`, `output.correct`, and
+`output.approve` events. There is no audit-admin UI.
+
+### `output_correction_uploads`
+
+A correction reserves its version id and server-generated Storage path before the
+private object is uploaded, so a Storage-success/DB-failure path always leaves
+durable, recoverable evidence instead of an untracked object.
+
+| Column | Purpose |
+|---|---|
+| `id` (PK) | Reservation id |
+| `org_id` / `output_id` / `base_version_id` | Trusted context derived server-side |
+| `reserved_version_id` | Version id the commit will use |
+| `content_storage_path` | Server-generated private key for this version |
+| `payload_hash` | SHA-256 of replacement Markdown plus change summary, bound to `request_id` for idempotency |
+| `state` | `pending`, `committed`, `aborted`, `orphaned` |
+| `cleanup_attempts` / `cleanup_claimed_by` / `cleanup_claimed_at` | Lease-bound retryable cleanup of an orphaned object |
+
+Not readable or writable by `app_user`; only the review functions and the
+lease-bound `claim_orphaned_correction_upload(...)` /
+`finalize_orphaned_correction_cleanup(...)` path touch it. The claim is a lease,
+so two workers cannot concurrently delete the same private object.
 
 ### `integration_connections` (future-facing)
 

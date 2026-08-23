@@ -5,6 +5,23 @@ const crumbs = document.getElementById("crumbs");
 // Hosted-mode token, if any, is sent on all API calls.
 let HOSTED_TOKEN = null;
 
+// Error bodies are either `{detail: "text"}`, a structured detail (the hosted
+// review validator returns a message plus bounded validation errors), or
+// FastAPI's request-validation list. All three become readable plain text.
+function errorDetailText(payload) {
+  const detail = (payload || {}).detail;
+  if (!detail) return "";
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((d) => (typeof d === "string" ? d : d && d.msg) || "").filter(Boolean).join("\n");
+  }
+  if (typeof detail === "object") {
+    const lines = [detail.message, ...(Array.isArray(detail.validation_errors) ? detail.validation_errors : [])];
+    return lines.filter((line) => typeof line === "string" && line).join("\n");
+  }
+  return "";
+}
+
 const api = async (path, opts = {}) => {
   if (HOSTED_TOKEN) {
     opts = {
@@ -16,7 +33,7 @@ const api = async (path, opts = {}) => {
     };
   }
   const r = await fetch(path, opts);
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+  if (!r.ok) throw new Error(errorDetailText(await r.json().catch(() => ({}))) || r.statusText);
   return r.headers.get("content-type")?.includes("application/json") ? r.json() : r.text();
 };
 const esc = (s) => (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -3084,6 +3101,9 @@ async function route() {
         const opportunityId = decodeURIComponent(parts[5]);
         return pageHostedAccountOpportunity(accountId, opportunityId);
       }
+      if (parts[4] === "outputs" && parts[5]) {
+        return pageHostedOutputReview(accountId, decodeURIComponent(parts[5]));
+      }
       return pageHostedAccount(accountId);
     }
     if (h === "/hosted") return pageHosted();
@@ -3695,7 +3715,7 @@ async function pageHostedAccountOpportunity(accountId, opportunityId) {
 
 async function pageHostedAccount(accountId, initialOpportunityId) {
   if (!HOSTED_TOKEN) return pageHostedSignIn();
-  let session, account, opportunities, transcripts;
+  let session, account, opportunities, transcripts, outputs;
   try {
     session = await api("/api/auth/session");
     const accounts = (await api("/api/hosted/accounts")).accounts || [];
@@ -3705,6 +3725,7 @@ async function pageHostedAccount(accountId, initialOpportunityId) {
       ? `/api/hosted/accounts/${encodeURIComponent(accountId)}/opportunities/${encodeURIComponent(initialOpportunityId)}/transcripts`
       : `/api/hosted/accounts/${encodeURIComponent(accountId)}/transcripts`;
     transcripts = (await api(url)).transcripts || [];
+    outputs = (await api(`/api/hosted/accounts/${encodeURIComponent(accountId)}/outputs`)).outputs || [];
   } catch (e) {
     return _hostedError(e);
   }
@@ -3725,8 +3746,364 @@ async function pageHostedAccount(accountId, initialOpportunityId) {
       ${renderHostedUploadForm(accountId, initialOpportunityId || "", opportunities)}
       <h3>Transcripts</h3>
       ${renderHostedTranscriptList(transcripts, accountId, initialOpportunityId || "")}
+      <h3>Outputs to review</h3>
+      ${renderHostedOutputList(outputs, accountId)}
     </div>`;
   _wireHostedUpload(accountId, initialOpportunityId || "");
+}
+
+// ---- Hosted output review (Slice 6A) --------------------------------------
+// Read/correct/approve for a hosted post-call output. The document itself is
+// rendered by the shared server renderer + reader.js pipeline, so the hosted
+// reader is visually identical to the local one; only the review chrome
+// (version rail, activity, editor) is new here.
+let HOSTED_REVIEW = null;
+
+const HOSTED_REVIEW_GENERATED_REF = "generated";
+
+function _newRequestId() {
+  if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
+  // Fallback for older browsers: random hex laid out as a v4 UUID.
+  const b = new Uint8Array(16);
+  (window.crypto || {}).getRandomValues?.(b);
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const hex = [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function _reviewVersionRef(version) {
+  return version.id || HOSTED_REVIEW_GENERATED_REF;
+}
+
+function _hostedReviewBase() {
+  const r = HOSTED_REVIEW;
+  return `/api/hosted/accounts/${encodeURIComponent(r.accountId)}/outputs/${encodeURIComponent(r.outputId)}`;
+}
+
+function _reviewWhen(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? iso : d.toLocaleString();
+}
+
+function _reviewActivityLine(entry, versionLabels) {
+  const who = entry.user_email || "Unknown reviewer";
+  const target = versionLabels[entry.output_version_id || HOSTED_REVIEW_GENERATED_REF] || "a version";
+  const verb = { comment: "commented on", correct: "corrected", approve: "approved" }[entry.action] || entry.action;
+  const body = entry.action === "comment" && entry.comment
+    ? `<div class="review-activity-body">${esc(entry.comment)}</div>` : "";
+  return `<li class="review-activity-item">
+    <div class="review-activity-head">
+      <span class="review-activity-actor">${esc(who)}</span>
+      <span class="review-activity-verb">${esc(verb)}</span>
+      <span class="review-activity-target">${esc(target)}</span>
+      <span class="review-activity-when">${esc(_reviewWhen(entry.created_at))}</span>
+    </div>${body}
+  </li>`;
+}
+
+function _renderHostedReview() {
+  const r = HOSTED_REVIEW;
+  const state = r.state;
+  const versions = state.versions || [];
+  const currentRef = state.current_version_id || HOSTED_REVIEW_GENERATED_REF;
+  const selectedRef = r.selectedRef || currentRef;
+  const isCurrent = selectedRef === currentRef;
+  const labels = {};
+  versions.forEach((v) => { labels[_reviewVersionRef(v)] = v.label; });
+  const approved = state.review_state === "approved";
+
+  const rail = versions.map((v) => {
+    const ref = _reviewVersionRef(v);
+    const current = ref === currentRef;
+    return `<button class="review-version${ref === selectedRef ? " selected" : ""}" data-version-ref="${esc(ref)}">
+      <span class="review-version-label">${esc(v.label)}</span>
+      <span class="review-version-tag ${current ? "current" : "historical"}">${current ? "Current" : "Historical"}</span>
+      <span class="review-version-meta">${esc(_reviewWhen(v.created_at))}${v.created_by_email ? " · " + esc(v.created_by_email) : ""}</span>
+      ${v.change_summary ? `<span class="review-version-summary">${esc(v.change_summary)}</span>` : ""}
+    </button>`;
+  }).join("");
+
+  const activity = (state.activity || []).length
+    ? `<ul class="review-activity">${state.activity.map((e) => _reviewActivityLine(e, labels)).join("")}</ul>`
+    : `<div class="empty">No review activity yet.</div>`;
+
+  const editor = isCurrent ? `
+    <section class="review-editor">
+      <h3>Correct ${esc(labels[selectedRef] || "this version")}</h3>
+      <label class="sr-only" for="review-markdown">Replacement Markdown</label>
+      <textarea id="review-markdown" rows="18" spellcheck="false">${esc(r.draft != null ? r.draft : r.markdown)}</textarea>
+      <label class="sr-only" for="review-change-summary">What changed</label>
+      <input type="text" id="review-change-summary" maxlength="500" placeholder="What changed (required)" value="${esc(r.changeSummary || "")}" />
+      <div class="review-editor-actions">
+        <button class="secondary" id="review-preview">Preview</button>
+        <button class="primary" id="review-submit">Submit correction</button>
+      </div>
+      <div id="review-editor-status" class="status hidden"></div>
+      <div id="review-preview-pane" class="doc-sheet review-preview hidden"></div>
+    </section>` : `
+    <section class="review-editor review-editor--historical">
+      <div class="callout callout-note"><div class="callout-title">Historical version</div>
+      <div class="callout-body">Corrections and approval apply to the current version only. You can still comment on this version.</div></div>
+    </section>`;
+
+  view.innerHTML = `
+    <div class="hosted-page review-page">
+      <div class="row">
+        <div>
+          <h1>${esc(state.output.title || "Output")}</h1>
+          <p class="sub">${esc(state.output.skill || "")} · generated ${esc(_reviewWhen(state.output.generated_at))}</p>
+        </div>
+        <div class="row-actions">
+          <span class="review-state-badge ${approved ? "approved" : "needs-review"}">${approved ? "Approved" : "Needs review"}</span>
+          <button class="primary small" id="review-approve"${approved || !isCurrent ? " disabled" : ""}>Approve ${esc(labels[currentRef] || "current version")}</button>
+        </div>
+      </div>
+      <div class="review-layout">
+        <aside class="review-rail">
+          <div class="review-rail-head">Versions</div>
+          ${rail}
+        </aside>
+        <article class="md-body review-doc">
+          ${r.docHtml.execCardHtml}
+          ${r.docHtml.riskStripHtml}
+          <div class="doc-sheet">${r.docHtml.sheetHtml}</div>
+        </article>
+        <aside class="review-side">
+          <div class="review-rail-head">Activity</div>
+          ${activity}
+          <form id="review-comment-form" class="review-comment">
+            <label class="sr-only" for="review-comment-body">Comment on ${esc(labels[selectedRef] || "this version")}</label>
+            <textarea id="review-comment-body" rows="3" maxlength="4000" placeholder="Comment on ${esc(labels[selectedRef] || "this version")}"></textarea>
+            <button type="submit" class="secondary small">Add comment</button>
+          </form>
+          <div id="review-comment-status" class="status hidden"></div>
+        </aside>
+      </div>
+      ${editor}
+    </div>`;
+
+  setCrumbs([
+    { label: "Airbyte", href: "#/hosted" },
+    { label: "Account", href: `#/hosted/accounts/${encodeURIComponent(r.accountId)}` },
+    { label: "Review" },
+  ]);
+  _wireHostedReview();
+}
+
+function _reviewStatus(id, message, kind) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.className = `status ${kind || "ok"}`;
+  el.textContent = message;
+  if (!message) el.classList.add("hidden");
+}
+
+function _wireHostedReview() {
+  const r = HOSTED_REVIEW;
+  view.querySelectorAll(".review-version").forEach((b) => {
+    b.onclick = () => _selectHostedReviewVersion(b.dataset.versionRef);
+  });
+  view.querySelectorAll(".doc-section.collapsible > .md-h2").forEach((h2) => {
+    h2.onclick = (e) => {
+      if (e.target.closest("a")) return;
+      h2.closest(".doc-section").classList.toggle("collapsed");
+    };
+  });
+
+  const draftEl = document.getElementById("review-markdown");
+  if (draftEl) draftEl.oninput = () => { r.draft = draftEl.value; };
+  const summaryEl = document.getElementById("review-change-summary");
+  if (summaryEl) summaryEl.oninput = () => { r.changeSummary = summaryEl.value; };
+
+  const previewBtn = document.getElementById("review-preview");
+  if (previewBtn) previewBtn.onclick = () => _previewHostedCorrection();
+  const submitBtn = document.getElementById("review-submit");
+  if (submitBtn) submitBtn.onclick = () => _submitHostedCorrection();
+
+  const approveBtn = document.getElementById("review-approve");
+  if (approveBtn) approveBtn.onclick = () => _approveHostedVersion();
+
+  const commentForm = document.getElementById("review-comment-form");
+  if (commentForm) {
+    commentForm.onsubmit = (ev) => { ev.preventDefault(); _addHostedComment(); };
+  }
+}
+
+async function _loadHostedReviewVersion(ref) {
+  const r = HOSTED_REVIEW;
+  const content = await api(`${_hostedReviewBase()}/versions/${encodeURIComponent(ref)}/content`);
+  r.markdown = content.markdown || "";
+  r.docHtml = window.seReader.buildReaderDocument(addMdClasses(content.html || ""), { title: r.state.output.title });
+  r.selectedRef = ref;
+}
+
+async function _selectHostedReviewVersion(ref) {
+  const r = HOSTED_REVIEW;
+  if (!r || ref === r.selectedRef) return;
+  try {
+    await _loadHostedReviewVersion(ref);
+    // A version switch abandons the previous draft on purpose: a correction is
+    // always a replacement of the version being viewed.
+    r.draft = null;
+    _renderHostedReview();
+  } catch (e) {
+    _reviewStatus("review-comment-status", e.message || "Could not load that version", "err");
+  }
+}
+
+async function _refreshHostedReviewState({ keepDraft } = {}) {
+  const r = HOSTED_REVIEW;
+  r.state = await api(`${_hostedReviewBase()}/review`);
+  const currentRef = r.state.current_version_id || HOSTED_REVIEW_GENERATED_REF;
+  if (!keepDraft) r.draft = null;
+  await _loadHostedReviewVersion(currentRef);
+  _renderHostedReview();
+}
+
+async function _addHostedComment() {
+  const r = HOSTED_REVIEW;
+  const bodyEl = document.getElementById("review-comment-body");
+  const body = (bodyEl?.value || "").trim();
+  if (!body) return;
+  try {
+    const result = await api(`${_hostedReviewBase()}/comments`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        target_version_id: r.selectedRef === HOSTED_REVIEW_GENERATED_REF ? null : r.selectedRef,
+        body,
+        request_id: _newRequestId(),
+      }),
+    });
+    r.state = result.review;
+    _renderHostedReview();
+    _reviewStatus("review-comment-status", "Comment added", "ok");
+  } catch (e) {
+    _reviewStatus("review-comment-status", e.message || "Could not add the comment", "err");
+  }
+}
+
+async function _approveHostedVersion() {
+  const r = HOSTED_REVIEW;
+  const currentRef = r.state.current_version_id || HOSTED_REVIEW_GENERATED_REF;
+  try {
+    const result = await api(`${_hostedReviewBase()}/approvals`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        target_version_id: currentRef === HOSTED_REVIEW_GENERATED_REF ? null : currentRef,
+        request_id: _newRequestId(),
+      }),
+    });
+    r.state = result.review;
+    _renderHostedReview();
+    _reviewStatus("review-comment-status", "Approved", "ok");
+  } catch (e) {
+    _reviewStatus("review-comment-status", e.message || "Could not approve this version", "err");
+  }
+}
+
+async function _previewHostedCorrection() {
+  const r = HOSTED_REVIEW;
+  const markdown = r.draft != null ? r.draft : r.markdown;
+  try {
+    const res = await api(`${_hostedReviewBase()}/preview`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ markdown }),
+    });
+    const pane = document.getElementById("review-preview-pane");
+    // `res.html` is the same sanitized fragment the reader renders; the reader
+    // transforms are presentation-only and add no new HTML from the draft.
+    const doc = window.seReader.buildReaderDocument(addMdClasses(res.html || ""), { title: r.state.output.title });
+    pane.innerHTML = doc.sheetHtml;
+    pane.classList.remove("hidden");
+    _reviewStatus("review-editor-status", "", "ok");
+  } catch (e) {
+    _reviewStatus("review-editor-status", e.message || "Could not render the preview", "err");
+  }
+}
+
+async function _submitHostedCorrection() {
+  const r = HOSTED_REVIEW;
+  const markdown = r.draft != null ? r.draft : r.markdown;
+  const changeSummary = (r.changeSummary || "").trim();
+  if (!changeSummary) {
+    _reviewStatus("review-editor-status", "Describe what changed before submitting.", "err");
+    return;
+  }
+  const baseRef = r.state.current_version_id;
+  // The idempotency key is stable per attempt, so a retry of the same request
+  // (double click, dropped response) cannot create a second version.
+  r.requestId = r.requestId || _newRequestId();
+  try {
+    const result = await api(`${_hostedReviewBase()}/corrections`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        base_version_id: baseRef || null,
+        markdown,
+        change_summary: changeSummary,
+        request_id: r.requestId,
+      }),
+    });
+    r.requestId = null;
+    r.state = result.review;
+    r.draft = null;
+    r.changeSummary = "";
+    await _loadHostedReviewVersion(r.state.current_version_id || HOSTED_REVIEW_GENERATED_REF);
+    _renderHostedReview();
+    _reviewStatus("review-editor-status", "Correction saved as the new current version.", "ok");
+  } catch (e) {
+    // A stale base keeps the unsaved draft: the reviewer can reconcile against
+    // the version that landed instead of losing their edit.
+    const msg = e.message || "Could not save the correction";
+    r.requestId = null;
+    _reviewStatus("review-editor-status", msg, "err");
+    if (/changed since you loaded it|inconsistent/i.test(msg)) {
+      const el = document.getElementById("review-editor-status");
+      const btn = document.createElement("button");
+      btn.className = "secondary small";
+      btn.textContent = "Refresh versions (keeps your draft)";
+      btn.onclick = () => _refreshHostedReviewState({ keepDraft: true });
+      el.appendChild(document.createElement("br"));
+      el.appendChild(btn);
+    }
+  }
+}
+
+async function pageHostedOutputReview(accountId, outputId) {
+  if (!HOSTED_TOKEN) return pageHostedSignIn();
+  view.innerHTML = `<div class="empty-box"><div class="empty-icon">⏳</div><div class="empty-title">Loading review…</div></div>`;
+  HOSTED_REVIEW = {
+    accountId,
+    outputId,
+    state: null,
+    selectedRef: null,
+    markdown: "",
+    draft: null,
+    changeSummary: "",
+    requestId: null,
+    docHtml: null,
+  };
+  try {
+    HOSTED_REVIEW.state = await api(`${_hostedReviewBase()}/review`);
+    await _loadHostedReviewVersion(HOSTED_REVIEW.state.current_version_id || HOSTED_REVIEW_GENERATED_REF);
+  } catch (e) {
+    return _hostedError(e);
+  }
+  _renderHostedReview();
+}
+
+function renderHostedOutputList(outputs, accountId) {
+  if (!outputs.length) return `<div class="empty">No validated outputs yet.</div>`;
+  return `<div class="hosted-list">${outputs.map((o) => `
+    <a class="card" href="#/hosted/accounts/${encodeURIComponent(accountId)}/outputs/${encodeURIComponent(o.id)}">
+      <span class="name">${esc(o.title || o.skill)}</span>
+      <span class="meta">${esc(o.skill)} · ${esc(_reviewWhen(o.generated_at))}</span>
+    </a>`).join("")}</div>`;
 }
 
 function _hostedError(e) {
