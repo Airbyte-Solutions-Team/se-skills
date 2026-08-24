@@ -208,6 +208,35 @@ def test_hosted_review_ui_escapes_review_text_and_reuses_reader_pipeline(repo_ro
     assert "_refreshHostedReviewState({ keepDraft: true })" in review_block
 
 
+def test_hosted_export_controls_follow_the_approved_current_version(repo_root: Path) -> None:
+    """Export is offered only for the approved current version.
+
+    The server is authoritative, but a button that looks available while reading a
+    historical version invites the reviewer to believe they exported what is on
+    screen. Both buttons, both tooltips, and the status line therefore share one
+    `canExport` condition, and the request body stays limited to a format and an
+    idempotency key.
+    """
+    app_js = (repo_root / "webapp" / "static" / "app.js").read_text(encoding="utf-8")
+    subprocess.run(["node", "--check", str(repo_root / "webapp" / "static" / "app.js")], check=True)
+
+    assert "const canExport = approved && isCurrent;" in app_js
+    assert app_js.count("${canExport ?") == 6
+    assert '${approved ? "" : " disabled"}' not in app_js
+    assert "exportBlockedWhy" in app_js
+
+    export_block = app_js.split("async function _exportHostedOutput(format, button)")[1].split("\n}\n")[0]
+    assert 'JSON.stringify({ format, request_id: _newRequestId() })' in export_block
+    for forbidden in ("org_id", "version_id", "storage_path", "created_by"):
+        assert forbidden not in export_block, forbidden
+
+    # Bounded loading and failure states, and the filename comes from the server.
+    assert 'button.textContent = "Exporting…";' in export_block
+    assert 'r.headers.get("content-disposition")' in export_block
+    assert "URL.revokeObjectURL" in export_block
+    assert "button.disabled = false;" in export_block
+
+
 def test_api_error_detail_is_readable_for_structured_validation_failures(repo_root: Path) -> None:
     """A structured 422 detail becomes readable text instead of `[object Object]`.
 

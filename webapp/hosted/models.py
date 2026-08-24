@@ -5,7 +5,7 @@ import json
 import re
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -385,6 +385,20 @@ class OutputApprovalCreate(BaseModel):
     model_config = {"extra": "forbid"}
 
     target_version_id: uuid.UUID | None = None
+    request_id: uuid.UUID
+
+
+class OutputExportCreate(BaseModel):
+    """Bounded export intent for the approved current version of an output.
+
+    The browser chooses a format and an idempotency key and nothing else: the
+    version, its approval, the organization, the actor, and the Storage path are
+    all derived server-side.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    format: Literal["md", "pdf"]
     request_id: uuid.UUID
 
 

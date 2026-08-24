@@ -20,7 +20,7 @@ Airbyte Solutions Engineers who are members of the beta organization.
 4. **Run `post-call` asynchronously.** User invokes the hosted `post-call` skill from the SPA. The API enqueues a job. A worker picks up the job, runs the skill in an isolated sandbox, and writes the validated output to private storage.
 5. **Review validated output.** The output reader shows the generated Markdown, validation status, source coverage, and reference-freshness warnings.
 6. **Correct / approve.** The SE adds a comment, correction, or approval; feedback is persisted and linked to the output.
-7. **Export.** The SE downloads PDF/MD or exports to internal HTML.
+7. **Export.** Once the current version is approved, the SE downloads it as Markdown or PDF. Export always targets the approved current version, so a later correction withdraws export until that correction is approved.
 
 ## Product boundaries
 

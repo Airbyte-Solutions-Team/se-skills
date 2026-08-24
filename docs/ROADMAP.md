@@ -331,8 +331,7 @@ handshake test remain explicit 5B2B2 work.
 
 ## Slice 6A: Review, correction, approval, versioning, and audit
 
-**Status:** `In Progress` — implemented on the open Slice 6A pull request; this
-slice is complete only after that pull request merges.
+**Status:** `Complete` — merged in pull request #52.
 
 **Product outcome:** An authenticated active member of the beta organization can
 open a hosted `post-call` output, read the immutable generated version (V0),
@@ -358,27 +357,72 @@ version, and approve the exact current version, with an append-only audit trail.
 **Dependencies:** Slice 3, Slice 5B2A.
 
 **Non-goals:**
-- No export (Slice 6B).
+- No export (Slice 6B1).
 - No admin/onboarding surface, no generic audit-admin UI.
 - No additional hosted skills: only `post-call` is correctable.
 
-## Slice 6B: Exports, admin/onboarding, observability, and beta launch readiness
+## Slice 6B1: Approved-output export and export audit
+
+**Status:** `In Progress` — implemented on the open Slice 6B1 pull request; this
+slice is complete only after that pull request merges.
+
+**Product outcome:** An authenticated active member can download the exact
+approved current version of a hosted `post-call` output as Markdown or PDF,
+completing the reviewed-output workflow through export.
+
+**Scope:**
+- `POST /api/hosted/accounts/{account_id}/outputs/{output_id}/exports`, where the
+  browser supplies only a `md`/`pdf` format and an idempotency key.
+- `public.authorize_output_export` snapshots the current version, validity,
+  tombstone state, approval, and trusted Storage path under an output-row lock;
+  rendering then proceeds against that immutable version.
+- Markdown is returned byte for byte; the PDF is derived from those same bytes
+  through the shared `nh3` allowlist and an in-process ReportLab renderer with
+  bounded document limits (no headless Chrome, no subprocess).
+- Exports are on demand and ephemeral: nothing is persisted, and there is no
+  signed or public URL.
+- Identifier-only `output_export` audit events recorded via a narrow
+  `SECURITY DEFINER` function only after the returned bytes exist.
+- Export controls on the hosted review page, enabled only when the current
+  version is approved.
+
+**Dependencies:** Slice 6A.
+
+**Acceptance criteria:**
+- Approving V0 exports V0; a later correction blocks export until the correction
+  itself is approved; approving a historical version never authorizes export.
+- Comments do not revoke approval.
+- Forged organization, actor, Storage path, version, provenance, or validation
+  fields in the request body are rejected, and cross-organization access is
+  indistinguishable from a missing output.
+- `app_user` cannot write `audit_events` directly; export audit metadata carries
+  only organization, actor, output, version, request id, format, and timestamp.
+- Replaying a request id is idempotent; reusing it for different intent is a
+  conflict; a Storage or renderer failure records no successful export.
+
+**Non-goals:**
+- No persisted export artifacts, share links, or hosted Git push.
+- No admin/onboarding surface or broader audit coverage (Slice 6B2).
+
+## Slice 6B2: Admin/onboarding, broader audit, observability, retention, and beta launch readiness
 
 **Status:** `Proposed`
 
-**Product outcome:** SEs can review, correct, approve, and export the hosted `post-call` output, completing the first end-to-end beta workflow.
+**Product outcome:** The hosted beta is operable: members are onboarded and
+administered, activity is auditable and observable, retention is enforced, and
+the launch checklist is complete.
 
 **Scope:**
-- PDF/Markdown exports, admin and onboarding flows, production metrics/logging,
-  launch checklist, retention, and beta operations.
+- Admin and onboarding flows, production metrics/logging, retention, launch
+  checklist, and beta operations.
+- Audit coverage extended beyond review and export to upload and run.
 
-**Dependencies:** Slice 3, Slice 5B.
+**Dependencies:** Slice 3, Slice 5B, Slice 6B1.
 
 **Acceptance criteria:**
 - End-to-end workflow: sign in → create account → upload transcript → run `post-call` → review → correct/approve → export.
 - Review/correction history is persisted and visible.
 - Audit events cover upload, run, review, export.
-- Exports use the same `nh3` allowlist as local to avoid unsanitized HTML; secrets are redacted, and customer content only appears where the artifact is intended to contain it.
 - `reviews` and `output_versions` to `outputs` preserve `org_id` and are enforced by the database; cross-org references fail at the DB boundary and in application authorization tests.
 - Beta launch checklist (security review, observability, runbook) is complete.
 

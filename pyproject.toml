@@ -33,6 +33,12 @@ hosted = [
     "python-multipart>=0.0.12",
     "fastapi>=0.100",
     "uvicorn[standard]>=0.30.0",
+    # The hosted reader, review preview, and export all render Markdown through
+    # `md_render` (markdown + nh3 sanitizer); hosted PDF export renders in-process
+    # with reportlab instead of the local headless-Chrome pipeline.
+    "markdown>=3.5",
+    "nh3>=0.2.18",
+    "reportlab>=4.0",
 ]
 
 [tool.pytest.ini_options]
