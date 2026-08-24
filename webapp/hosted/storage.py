@@ -35,12 +35,17 @@ OUTPUTS_BUCKET = "outputs"
 
 # Postgres role names used as the `role` claim of the server-signed Storage JWT.
 # `app_storage` carries a user subject and inherits the active-membership
-# contract. `app_storage_maintenance` carries an *organization* subject and may
-# only delete objects under that organization's path in the outputs bucket, so
-# cleanup of an abandoned private object never depends on the historical actor
-# still being an active member.
+# contract. `app_storage_maintenance` carries an *organization* subject plus the
+# exact object being reconciled, and may only delete that one object under that
+# organization's path in the outputs bucket, so cleanup of an abandoned private
+# object never depends on the historical actor still being an active member.
 STORAGE_ROLE = "app_storage"
 MAINTENANCE_ROLE = "app_storage_maintenance"
+
+# JWT claim naming the single object a maintenance token may act on. The
+# maintenance policies require `storage.objects.name` to equal it, so the
+# credential cannot reach any other output even inside its own organization.
+MAINTENANCE_OBJECT_CLAIM = "maintenance_object"
 
 
 class StorageError(Exception):
@@ -108,9 +113,12 @@ class StorageBackend:
     ) -> None:
         """Delete an abandoned output object as the Storage maintenance identity.
 
-        Authorization is org-scoped rather than user-scoped: *path* must live
-        under *org_id* in the outputs bucket. No membership is consulted, so a
+        Authorization is object-scoped rather than user-scoped: the credential is
+        minted for exactly *path*, which must live under *org_id* in the outputs
+        bucket, and it authorizes nothing else. No membership is consulted, so a
         deactivated correction author cannot pin customer content in Storage.
+        *path* comes from the trusted cleanup claim or tombstone row, never from
+        a request body.
         """
         raise NotImplementedError
 
@@ -148,28 +156,43 @@ class SupabaseStorageBackend(StorageBackend):
         self.jwt_secret = config.SUPABASE_JWT_SECRET
         self.client = httpx.AsyncClient(timeout=30)
 
-    def _storage_token(self, subject: uuid.UUID, role: str = STORAGE_ROLE) -> str:
+    def _storage_token(
+        self,
+        subject: uuid.UUID,
+        role: str = STORAGE_ROLE,
+        maintenance_object: str | None = None,
+    ) -> str:
         """Return a short-lived JWT for a dedicated Storage role.
 
         The subject is a user id for `app_storage` and an organization id for
         `app_storage_maintenance`; the bucket policies read it via `auth.uid()`.
+        A maintenance token additionally carries `maintenance_object`, the exact
+        object being reconciled, which the maintenance policies require `name` to
+        equal — so the credential is scoped to one object rather than to the
+        organization's outputs.
         """
         now = datetime.now(timezone.utc).timestamp()
-        return jwt.encode(
-            {
-                "sub": str(subject),
-                "role": role,
-                "iat": now,
-                "exp": now + 60,
-            },
-            self.jwt_secret,
-            algorithm="HS256",
-        )
+        claims: dict[str, str | float] = {
+            "sub": str(subject),
+            "role": role,
+            "iat": now,
+            "exp": now + 60,
+        }
+        if maintenance_object is not None:
+            claims[MAINTENANCE_OBJECT_CLAIM] = maintenance_object
+        return jwt.encode(claims, self.jwt_secret, algorithm="HS256")
 
-    def _headers(self, user_id: uuid.UUID, role: str = STORAGE_ROLE) -> dict[str, str]:
+    def _headers(
+        self,
+        user_id: uuid.UUID,
+        role: str = STORAGE_ROLE,
+        maintenance_object: str | None = None,
+    ) -> dict[str, str]:
         return {
             "apikey": self.anon_key,
-            "Authorization": f"Bearer {self._storage_token(user_id, role)}",
+            "Authorization": (
+                f"Bearer {self._storage_token(user_id, role, maintenance_object)}"
+            ),
         }
 
     async def upload(
@@ -265,7 +288,8 @@ class SupabaseStorageBackend(StorageBackend):
         url = f"{self.base_url}/storage/v1/object/{bucket}/{path}"
         try:
             response = await self.client.delete(
-                url, headers=self._headers(org_id, MAINTENANCE_ROLE)
+                url,
+                headers=self._headers(org_id, MAINTENANCE_ROLE, maintenance_object=path),
             )
         except httpx.HTTPError as exc:
             logger.warning(

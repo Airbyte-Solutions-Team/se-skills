@@ -297,9 +297,11 @@ and the lease-bound `claim_orphaned_correction_upload(...)` /
 workers cannot concurrently delete the same private object, and it returns only
 the reservation id, Storage path, owning `org_id`, and attempt count the worker
 needs. The org id rather than the correction author is deliberate: the worker
-deletes the private object with the org-scoped `app_storage_maintenance` Storage
-identity (outputs bucket, matching org path, delete-only), so cleanup does not
-depend on the author still being an active member. The same maintenance identity
+deletes the private object with the `app_storage_maintenance` Storage identity,
+whose token carries the organization plus the exact claimed Storage path and is
+authorized only for that one object in the `outputs` bucket, so cleanup does not
+depend on the author still being an active member and cannot touch any other
+output. The same maintenance identity
 is used for the pre-existing generated-output tombstone cleanup; that lifecycle
 is otherwise unchanged.
 

@@ -1514,17 +1514,29 @@ async def test_maintenance_delete_refuses_cross_org_and_non_output_targets(
 async def test_maintenance_storage_token_is_org_scoped_and_server_only(
     hosted_env: dict[str, str], app_client: TestClient, admin_pool: asyncpg.Pool, backend: Any
 ) -> None:
-    """The maintenance JWT carries the org as subject and never reaches clients."""
+    """The maintenance JWT names the org and the one object, and stays server-side."""
     import jwt as pyjwt
 
     from hosted import storage as storage_module
 
     org_id = uuid.uuid4()
+    target = f"{org_id}/acct/transcript/output/versions/{uuid.uuid4()}/output.md"
     supabase_backend = storage_module.SupabaseStorageBackend()
-    token = supabase_backend._storage_token(org_id, storage_module.MAINTENANCE_ROLE)
+    token = supabase_backend._storage_token(
+        org_id, storage_module.MAINTENANCE_ROLE, maintenance_object=target
+    )
     claims = pyjwt.decode(token, hosted_env["SUPABASE_JWT_SECRET"], algorithms=["HS256"])
     assert claims["role"] == storage_module.MAINTENANCE_ROLE == "app_storage_maintenance"
     assert claims["sub"] == str(org_id)
+    assert claims[storage_module.MAINTENANCE_OBJECT_CLAIM] == target
+
+    # A normal `app_storage` token never carries the maintenance claim.
+    user_claims = pyjwt.decode(
+        supabase_backend._storage_token(uuid.uuid4()),
+        hosted_env["SUPABASE_JWT_SECRET"],
+        algorithms=["HS256"],
+    )
+    assert storage_module.MAINTENANCE_OBJECT_CLAIM not in user_claims
 
     # No browser-visible surface carries the storage secret or a storage token.
     fx = await _seed_reviewable_output(admin_pool, backend)
@@ -1539,30 +1551,36 @@ async def test_maintenance_storage_token_is_org_scoped_and_server_only(
         assert "Authorization" not in response.headers
 
 
-async def test_maintenance_role_policies_are_outputs_delete_only(
+async def test_maintenance_role_policies_are_scoped_to_the_exact_target_object(
     superuser_pool: asyncpg.Pool, admin_pool: asyncpg.Pool
 ) -> None:
     """Exercise the real Storage policies as the maintenance role.
 
-    The identity may delete an output object under its own org path even when the
-    original author's membership is inactive, and may not read, insert, update,
-    or reach transcripts, other buckets, or another organization.
+    The credential minted for one abandoned object may delete exactly that object
+    even when the original author's membership is inactive, and may not read or
+    delete any other output in the same organization, reach another organization,
+    transcripts, or another bucket, or insert or update anything.
     """
     user_id, org_id, _ = await _seed_member(admin_pool, f"maint-{uuid.uuid4().hex[:8]}@airbyte.io")
     other_org = uuid.uuid4()
     path = f"{org_id}/acct/transcript/output/output.md"
+    sibling_path = f"{org_id}/acct/transcript/other-output/output.md"
     other_path = f"{other_org}/acct/transcript/output/output.md"
     transcript_path = f"{org_id}/acct/transcript.txt"
     await _deactivate(admin_pool, user_id)
 
-    def _claims(subject: uuid.UUID) -> str:
-        return json.dumps({"sub": str(subject)})
+    def _claims(subject: uuid.UUID, target: str | None = path) -> str:
+        claims: dict[str, str] = {"sub": str(subject)}
+        if target is not None:
+            claims["maintenance_object"] = target
+        return json.dumps(claims)
 
     async with superuser_pool.acquire() as conn:
         await conn.execute(
             "INSERT INTO storage.objects (bucket_id, name) VALUES ('outputs', $1), "
-            "('outputs', $2), ('transcripts', $3)",
+            "('outputs', $2), ('outputs', $3), ('transcripts', $4)",
             path,
+            sibling_path,
             other_path,
             transcript_path,
         )
@@ -1583,15 +1601,33 @@ async def test_maintenance_role_policies_are_outputs_delete_only(
                 "SELECT pg_has_role($1, 'app_storage_maintenance', 'USAGE')", member
             ) is False
 
-    async def _as_maintenance(subject: uuid.UUID, sql: str, *args: Any) -> str:
+    async def _as_maintenance(
+        subject: uuid.UUID, sql: str, *args: Any, target: str | None = path
+    ) -> str:
         async with superuser_pool.acquire() as conn:
             async with conn.transaction():
                 await conn.execute("SET LOCAL ROLE app_storage_maintenance")
                 await conn.execute("SET LOCAL search_path = 'auth, storage, public'")
                 await conn.execute(
-                    "SELECT set_config('request.jwt.claims', $1, true)", _claims(subject)
+                    "SELECT set_config('request.jwt.claims', $1, true)",
+                    _claims(subject, target),
                 )
                 return await conn.execute(sql, *args)
+
+    async def _visible_as_maintenance(
+        subject: uuid.UUID, name: str, target: str | None = path
+    ) -> bool:
+        async with superuser_pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute("SET LOCAL ROLE app_storage_maintenance")
+                await conn.execute("SET LOCAL search_path = 'auth, storage, public'")
+                await conn.execute(
+                    "SELECT set_config('request.jwt.claims', $1, true)",
+                    _claims(subject, target),
+                )
+                return await conn.fetchval(
+                    "SELECT EXISTS (SELECT 1 FROM storage.objects WHERE name = $1)", name
+                )
 
     async def _exists(bucket: str, name: str) -> bool:
         async with superuser_pool.acquire() as conn:
@@ -1639,14 +1675,28 @@ async def test_maintenance_role_policies_are_outputs_delete_only(
     await _as_maintenance(other_org, "DELETE FROM storage.objects WHERE name = $1", path)
     assert await _exists("outputs", path) is True
 
-    # The allowed case: this org's outputs object, with no active membership.
+    # The credential is scoped to the exact claimed object: an unrelated valid
+    # output in the *same* organization is neither readable nor deletable.
+    assert await _visible_as_maintenance(org_id, sibling_path) is False
+    await _as_maintenance(org_id, "DELETE FROM storage.objects WHERE name = $1", sibling_path)
+    assert await _exists("outputs", sibling_path) is True
+
+    # A token without the object claim authorizes nothing at all.
+    assert await _visible_as_maintenance(org_id, path, target=None) is False
+    await _as_maintenance(org_id, "DELETE FROM storage.objects WHERE name = $1", path, target=None)
+    assert await _exists("outputs", path) is True
+
+    # The allowed case: the exact claimed object, with no active membership. The
+    # pre-delete lookup the Storage API performs is visible for this object only.
+    assert await _visible_as_maintenance(org_id, path) is True
     await _as_maintenance(org_id, "DELETE FROM storage.objects WHERE name = $1", path)
     assert await _exists("outputs", path) is False
+    assert await _exists("outputs", sibling_path) is True
 
     async with superuser_pool.acquire() as conn:
         await conn.execute(
             "DELETE FROM storage.objects WHERE name = ANY($1::text[])",
-            [path, other_path, transcript_path],
+            [path, sibling_path, other_path, transcript_path],
         )
 
 
