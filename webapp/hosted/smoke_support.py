@@ -50,6 +50,15 @@ class SmokeStorage:
         del user_id
         self._objects.pop(f"{bucket}:{path}", None)
 
+    async def delete_for_maintenance(
+        self,
+        org_id: uuid.UUID | None,
+        path: str,
+        bucket: str = storage.OUTPUTS_BUCKET,
+    ) -> None:
+        del org_id
+        self._objects.pop(f"{bucket}:{path}", None)
+
 
 class _Acquire:
     def __init__(self, connection: "SmokeConnection") -> None:

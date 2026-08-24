@@ -295,7 +295,13 @@ Not readable or writable by `app_user` or `app_worker`; only the review function
 and the lease-bound `claim_orphaned_correction_upload(...)` /
 `finalize_correction_cleanup(...)` path touch it. The claim is a lease, so two
 workers cannot concurrently delete the same private object, and it returns only
-the reservation id, Storage path, owning user, and attempt count the worker needs.
+the reservation id, Storage path, owning `org_id`, and attempt count the worker
+needs. The org id rather than the correction author is deliberate: the worker
+deletes the private object with the org-scoped `app_storage_maintenance` Storage
+identity (outputs bucket, matching org path, delete-only), so cleanup does not
+depend on the author still being an active member. The same maintenance identity
+is used for the pre-existing generated-output tombstone cleanup; that lifecycle
+is otherwise unchanged.
 
 Two states are cleanup work. `orphaned` means the request knew the object existed
 and could not delete it. `pending` means the request never reached commit or

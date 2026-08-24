@@ -1368,6 +1368,289 @@ async def test_worker_role_reaches_the_ledger_only_through_functions(
 
 
 # ---------------------------------------------------------------------------
+# Storage maintenance identity
+# ---------------------------------------------------------------------------
+
+async def _deactivate(admin_pool: asyncpg.Pool, user_id: uuid.UUID) -> None:
+    """Deactivate every membership of a user, as offboarding does."""
+    async with admin_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE public.memberships SET active = FALSE WHERE user_id = $1", user_id
+        )
+
+
+def _no_user_scoped_delete(backend: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail the test if cleanup falls back to the user-scoped delete path."""
+
+    async def _forbidden(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("cleanup must not use the user-scoped Storage delete")
+
+    monkeypatch.setattr(backend, "delete", _forbidden)
+
+
+async def test_orphan_cleanup_succeeds_after_the_correction_author_is_deactivated(
+    app_client: TestClient,
+    admin_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    backend: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A deactivated author must not be able to pin private customer content.
+
+    The reservation becomes a durable `orphaned` row with the object present, the
+    author is then offboarded, and the real worker cleanup path still deletes the
+    object and finalizes the reservation. It never touches the user-scoped
+    delete, so no membership row is consulted.
+    """
+    fx = await _seed_reviewable_output(admin_pool, backend)
+
+    async def _fail_delete(*args: Any, **kwargs: Any) -> None:
+        raise _hs().StorageError("delete unavailable")
+
+    monkeypatch.setattr(
+        backend, "upload", _store_then_raise(backend, _hs().StorageError("connection reset"))
+    )
+    monkeypatch.setattr(backend, "delete", _fail_delete)
+    assert _correct(app_client, fx, base_version_id=None).status_code == 503
+    monkeypatch.undo()
+
+    async with admin_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id, state, content_storage_path FROM public.output_correction_uploads "
+            "WHERE output_id = $1",
+            fx.output_id,
+        )
+    assert row["state"] == "orphaned"
+    key = f"{_hs().OUTPUTS_BUCKET}:{row['content_storage_path']}"
+    assert key in backend.objects
+
+    await _deactivate(admin_pool, fx.user_id)
+    _no_user_scoped_delete(backend, monkeypatch)
+    assert await _run_worker_cleanup(worker_pool, backend, "cleanup-offboarded") is True
+    assert key not in backend.objects
+
+    async with admin_pool.acquire() as conn:
+        assert await conn.fetchval(
+            "SELECT state FROM public.output_correction_uploads WHERE id = $1", row["id"]
+        ) == "aborted"
+
+
+async def test_stale_pending_cleanup_succeeds_after_the_author_is_deactivated(
+    app_client: TestClient,
+    admin_pool: asyncpg.Pool,
+    user_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    backend: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same holds for a crashed request that never reached commit."""
+    fx = await _seed_reviewable_output(admin_pool, backend)
+    reservation = await _reserve_without_finishing(user_pool, fx, request_id=uuid.uuid4())
+    await _upload(
+        backend,
+        fx.user_id,
+        reservation["content_storage_path"],
+        _corrected_markdown("Never committed"),
+        _hs().OUTPUTS_BUCKET,
+    )
+    key = f"{_hs().OUTPUTS_BUCKET}:{reservation['content_storage_path']}"
+    assert key in backend.objects
+
+    await _age_reservations(admin_pool)
+    await _deactivate(admin_pool, fx.user_id)
+    _no_user_scoped_delete(backend, monkeypatch)
+    assert await _run_worker_cleanup(worker_pool, backend, "cleanup-offboarded-pending") is True
+    assert key not in backend.objects
+    async with admin_pool.acquire() as conn:
+        assert await conn.fetchval(
+            "SELECT state FROM public.output_correction_uploads WHERE id = $1",
+            uuid.UUID(reservation["reservation_id"]),
+        ) == "aborted"
+
+
+async def test_correction_claim_never_exposes_the_author_identity(
+    admin_pool: asyncpg.Pool, worker_pool: asyncpg.Pool, backend: Any, app_client: TestClient
+) -> None:
+    """The worker receives the org that scopes the token, not the author."""
+    async with worker_pool.acquire() as conn:
+        result = await conn.fetchval(
+            "SELECT pg_get_function_result(p.oid) FROM pg_proc p "
+            "JOIN pg_namespace n ON n.oid = p.pronamespace "
+            "WHERE n.nspname = 'public' "
+            "AND p.proname = 'claim_orphaned_correction_upload' LIMIT 1"
+        )
+    assert "org_id" in result
+    assert "created_by" not in result
+
+
+async def test_maintenance_delete_refuses_cross_org_and_non_output_targets(
+    app_client: TestClient, admin_pool: asyncpg.Pool, backend: Any
+) -> None:
+    """The backend enforces the same narrow contract the SQL policies do."""
+    user_id, org_id, _ = await _seed_member(
+        admin_pool, f"maint-{uuid.uuid4().hex[:8]}@airbyte.io"
+    )
+    other_org = uuid.uuid4()
+    path = f"{org_id}/{uuid.uuid4()}/{uuid.uuid4()}/{uuid.uuid4()}/output.md"
+    await _upload(backend, user_id, path, "content", _hs().OUTPUTS_BUCKET)
+
+    # Wrong bucket, another org's path, an unparsable prefix, and a missing
+    # identity are all refused before any request is made.
+    with pytest.raises(_hs().StorageAuthError):
+        await backend.delete_for_maintenance(org_id, path, bucket=_hs().DEFAULT_BUCKET)
+    with pytest.raises(_hs().StorageAuthError):
+        await backend.delete_for_maintenance(other_org, path)
+    with pytest.raises(_hs().StorageAuthError):
+        await backend.delete_for_maintenance(org_id, "not-a-uuid/output.md")
+    with pytest.raises(_hs().StorageAuthError):
+        await backend.delete_for_maintenance(None, path)
+    assert f"{_hs().OUTPUTS_BUCKET}:{path}" in backend.objects
+
+    # Only the matching org path is allowed.
+    await backend.delete_for_maintenance(org_id, path)
+    assert f"{_hs().OUTPUTS_BUCKET}:{path}" not in backend.objects
+
+
+async def test_maintenance_storage_token_is_org_scoped_and_server_only(
+    hosted_env: dict[str, str], app_client: TestClient, admin_pool: asyncpg.Pool, backend: Any
+) -> None:
+    """The maintenance JWT carries the org as subject and never reaches clients."""
+    import jwt as pyjwt
+
+    from hosted import storage as storage_module
+
+    org_id = uuid.uuid4()
+    supabase_backend = storage_module.SupabaseStorageBackend()
+    token = supabase_backend._storage_token(org_id, storage_module.MAINTENANCE_ROLE)
+    claims = pyjwt.decode(token, hosted_env["SUPABASE_JWT_SECRET"], algorithms=["HS256"])
+    assert claims["role"] == storage_module.MAINTENANCE_ROLE == "app_storage_maintenance"
+    assert claims["sub"] == str(org_id)
+
+    # No browser-visible surface carries the storage secret or a storage token.
+    fx = await _seed_reviewable_output(admin_pool, backend)
+    for response in (
+        app_client.get(fx.url(""), headers=fx.headers),
+        app_client.get(fx.url("/versions"), headers=fx.headers),
+        app_client.get(fx.url("/audit"), headers=fx.headers),
+    ):
+        body = response.text
+        assert hosted_env["SUPABASE_JWT_SECRET"] not in body
+        assert storage_module.MAINTENANCE_ROLE not in body
+        assert "Authorization" not in response.headers
+
+
+async def test_maintenance_role_policies_are_outputs_delete_only(
+    superuser_pool: asyncpg.Pool, admin_pool: asyncpg.Pool
+) -> None:
+    """Exercise the real Storage policies as the maintenance role.
+
+    The identity may delete an output object under its own org path even when the
+    original author's membership is inactive, and may not read, insert, update,
+    or reach transcripts, other buckets, or another organization.
+    """
+    user_id, org_id, _ = await _seed_member(admin_pool, f"maint-{uuid.uuid4().hex[:8]}@airbyte.io")
+    other_org = uuid.uuid4()
+    path = f"{org_id}/acct/transcript/output/output.md"
+    other_path = f"{other_org}/acct/transcript/output/output.md"
+    transcript_path = f"{org_id}/acct/transcript.txt"
+    await _deactivate(admin_pool, user_id)
+
+    def _claims(subject: uuid.UUID) -> str:
+        return json.dumps({"sub": str(subject)})
+
+    async with superuser_pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO storage.objects (bucket_id, name) VALUES ('outputs', $1), "
+            "('outputs', $2), ('transcripts', $3)",
+            path,
+            other_path,
+            transcript_path,
+        )
+
+        # Grants: SELECT + DELETE on storage.objects, nothing else.
+        privileges = {
+            row["privilege_type"]
+            for row in await conn.fetch(
+                "SELECT privilege_type FROM information_schema.role_table_grants "
+                "WHERE grantee = 'app_storage_maintenance' AND table_schema = 'storage' "
+                "AND table_name = 'objects'"
+            )
+        }
+        assert privileges == {"SELECT", "DELETE"}
+        # The maintenance role is not reachable from the app roles.
+        for member in ("app_user", "app_worker"):
+            assert await conn.fetchval(
+                "SELECT pg_has_role($1, 'app_storage_maintenance', 'USAGE')", member
+            ) is False
+
+    async def _as_maintenance(subject: uuid.UUID, sql: str, *args: Any) -> str:
+        async with superuser_pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute("SET LOCAL ROLE app_storage_maintenance")
+                await conn.execute("SET LOCAL search_path = 'auth, storage, public'")
+                await conn.execute(
+                    "SELECT set_config('request.jwt.claims', $1, true)", _claims(subject)
+                )
+                return await conn.execute(sql, *args)
+
+    async def _exists(bucket: str, name: str) -> bool:
+        async with superuser_pool.acquire() as conn:
+            return await conn.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM storage.objects "
+                "WHERE bucket_id = $1 AND name = $2)",
+                bucket,
+                name,
+            )
+
+    # A deactivated author's `app_storage` identity can no longer delete: this is
+    # the failure mode the maintenance identity exists to close.
+    async with superuser_pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("SET LOCAL ROLE app_storage")
+            await conn.execute("SET LOCAL search_path = 'auth, storage, public'")
+            await conn.execute(
+                "SELECT set_config('request.jwt.claims', $1, true)", _claims(user_id)
+            )
+            await conn.execute("DELETE FROM storage.objects WHERE name = $1", path)
+    assert await _exists("outputs", path) is True
+
+    # Insert and update are denied outright (no privilege at all).
+    for sql, args in (
+        (
+            "INSERT INTO storage.objects (bucket_id, name) VALUES ('outputs', $1)",
+            (f"{org_id}/acct/transcript/output/injected.md",),
+        ),
+        ("UPDATE storage.objects SET name = 'x' WHERE name = $1", (path,)),
+    ):
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await _as_maintenance(org_id, sql, *args)
+
+    # Transcripts, another bucket, and another org are invisible and untouchable.
+    for bucket, name in (
+        ("transcripts", transcript_path),
+        ("outputs", other_path),
+    ):
+        await _as_maintenance(
+            org_id, "DELETE FROM storage.objects WHERE bucket_id = $1 AND name = $2", bucket, name
+        )
+        assert await _exists(bucket, name) is True
+
+    # A cross-org token cannot reach this org's object either.
+    await _as_maintenance(other_org, "DELETE FROM storage.objects WHERE name = $1", path)
+    assert await _exists("outputs", path) is True
+
+    # The allowed case: this org's outputs object, with no active membership.
+    await _as_maintenance(org_id, "DELETE FROM storage.objects WHERE name = $1", path)
+    assert await _exists("outputs", path) is False
+
+    async with superuser_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM storage.objects WHERE name = ANY($1::text[])",
+            [path, other_path, transcript_path],
+        )
+
+
+# ---------------------------------------------------------------------------
 # Audit
 # ---------------------------------------------------------------------------
 

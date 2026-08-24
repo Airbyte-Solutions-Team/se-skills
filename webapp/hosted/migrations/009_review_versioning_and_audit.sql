@@ -766,7 +766,12 @@ GRANT EXECUTE ON FUNCTION public.abandon_output_correction(UUID, BOOLEAN, TEXT) 
 -- `commit_output_correction` only accepts `pending`, so a late commit for a
 -- reconciled reservation fails instead of pointing a version at a deleted
 -- object. `committed` rows are never eligible.
+-- Both overloads are dropped first: the original two-argument signature, and the
+-- three-argument one, whose return columns changed (`org_id` instead of
+-- `created_by`) and which `CREATE OR REPLACE` therefore cannot redefine in a
+-- database where an earlier version of this migration already ran.
 DROP FUNCTION IF EXISTS public.claim_orphaned_correction_upload(TEXT, INTEGER);
+DROP FUNCTION IF EXISTS public.claim_orphaned_correction_upload(TEXT, INTEGER, INTERVAL);
 
 CREATE OR REPLACE FUNCTION public.claim_orphaned_correction_upload(
     p_worker_id TEXT,
@@ -776,7 +781,7 @@ CREATE OR REPLACE FUNCTION public.claim_orphaned_correction_upload(
 RETURNS TABLE(
     reservation_id UUID,
     content_storage_path TEXT,
-    created_by UUID,
+    org_id UUID,
     cleanup_attempts INTEGER
 )
 LANGUAGE plpgsql
@@ -821,11 +826,14 @@ BEGIN
         updated_at = now()
     WHERE u.id = v_id;
 
-    -- Only what the worker needs to delete the object: it never sees the
-    -- organization, the output, the payload hash, or the request id, and it has
-    -- no direct SELECT on the ledger.
+    -- Only what the worker needs to delete the object: the reservation, its
+    -- Storage path, the organization that scopes the maintenance Storage token,
+    -- and the attempt count. It never sees the output, the payload hash, the
+    -- request id, or the correction author, and it has no direct SELECT on the
+    -- ledger. The org id replaces `created_by` deliberately: deletion is
+    -- authorized by the org path, so a deactivated author cannot block cleanup.
     RETURN QUERY
-    SELECT u.id, u.content_storage_path, u.created_by, u.cleanup_attempts
+    SELECT u.id, u.content_storage_path, u.org_id, u.cleanup_attempts
     FROM public.output_correction_uploads u
     WHERE u.id = v_id;
 END;

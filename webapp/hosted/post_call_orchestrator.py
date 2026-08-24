@@ -828,8 +828,8 @@ class PostCallOrchestrator:
             )
 
         try:
-            await self.storage.delete(
-                requester_id, content_storage_path, bucket=storage.OUTPUTS_BUCKET
+            await self.storage.delete_for_maintenance(
+                org_id, content_storage_path, bucket=storage.OUTPUTS_BUCKET
             )
         except storage.ObjectNotFound:
             pass
@@ -882,7 +882,7 @@ class PostCallOrchestrator:
         to still be running.
         """
         content_storage_path: str | None = None
-        requester_id: uuid.UUID | None = None
+        org_id: uuid.UUID | None = None
         async with self.db_pool.acquire() as conn:
             try:
                 row = await conn.fetchrow(
@@ -905,11 +905,11 @@ class PostCallOrchestrator:
             return False
 
         content_storage_path = row["content_storage_path"]
-        requester_id = row["requester_id"]
+        org_id = row["org_id"]
 
         try:
-            await self.storage.delete(
-                requester_id, content_storage_path, bucket=storage.OUTPUTS_BUCKET
+            await self.storage.delete_for_maintenance(
+                org_id, content_storage_path, bucket=storage.OUTPUTS_BUCKET
             )
         except storage.ObjectNotFound:
             pass
@@ -976,11 +976,11 @@ class PostCallOrchestrator:
 
         output_id = row["output_id"]
         content_storage_path = row["content_storage_path"]
-        requester_id = row["requester_id"]
+        org_id = row["org_id"]
 
         try:
-            await self.storage.delete(
-                requester_id, content_storage_path, bucket=storage.OUTPUTS_BUCKET
+            await self.storage.delete_for_maintenance(
+                org_id, content_storage_path, bucket=storage.OUTPUTS_BUCKET
             )
         except storage.ObjectNotFound:
             pass
@@ -1060,8 +1060,8 @@ class PostCallOrchestrator:
 
         reservation_id = row["reservation_id"]
         try:
-            await self.storage.delete(
-                row["created_by"],
+            await self.storage.delete_for_maintenance(
+                row["org_id"],
                 row["content_storage_path"],
                 bucket=storage.OUTPUTS_BUCKET,
             )
