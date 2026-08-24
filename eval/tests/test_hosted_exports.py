@@ -583,6 +583,33 @@ async def test_renderer_failure_is_redacted_and_leaves_no_audit(
     assert _export(app_client, fx).status_code == 200
 
 
+async def test_undecodable_stored_bytes_fail_closed_without_an_audit(
+    app_client: TestClient, admin_pool: asyncpg.Pool, backend: Any
+) -> None:
+    """Bytes that are not valid UTF-8 are refused, never repaired into a PDF."""
+    fx = await _seed_reviewable_output(admin_pool, backend)
+    assert _approve(app_client, fx).status_code == 201
+
+    async def _stream() -> Any:
+        yield b"# Heading\n\nbroken \xff\xfe tail\n"
+
+    await backend.delete(fx.user_id, fx.content_storage_path, bucket=_hs().OUTPUTS_BUCKET)
+    await backend.upload(
+        fx.user_id,
+        fx.content_storage_path,
+        _stream(),
+        "text/plain; charset=utf-8",
+        bucket=_hs().OUTPUTS_BUCKET,
+    )
+    response = _export(app_client, fx, fmt="pdf")
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert len(detail) < 200
+    for secret in (fx.content_storage_path, str(fx.org_id), "0xff", "utf-8 codec"):
+        assert secret not in detail
+    assert await _audit_exports(admin_pool, fx.output_id) == []
+
+
 # ---------------------------------------------------------------------------
 # Concurrency
 # ---------------------------------------------------------------------------

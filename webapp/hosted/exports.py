@@ -168,9 +168,19 @@ async def create_output_export(
         extension = "md"
     else:
         try:
-            body = pdf_export.render_markdown_pdf(
-                markdown_bytes.decode("utf-8", errors="replace")
-            )
+            # Strict decoding: bytes that are not valid UTF-8 are not the reviewed
+            # document, and replacing the invalid sequences would put text into the
+            # PDF that nobody approved. So the export fails instead, and Markdown
+            # still returns the stored bytes untouched.
+            markdown_text = markdown_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            logger.warning("Export PDF decode failed for output %s", output_id)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="This output could not be read as text for PDF export. Export as Markdown instead.",
+            ) from None
+        try:
+            body = pdf_export.render_markdown_pdf(markdown_text)
         except pdf_export.PdfFontCoverageError as exc:
             # Failing closed keeps the PDF honest: the reviewed characters are
             # never substituted, and Markdown still carries them exactly.

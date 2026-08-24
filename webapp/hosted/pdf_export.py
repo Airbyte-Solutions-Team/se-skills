@@ -29,16 +29,26 @@ images, the same paths on Homebrew/macOS boxes), covering Latin, Greek, Cyrillic
 and the common symbol ranges.
 
 Whichever family ends up active, the renderer never rewrites reviewed text to fit
-it: every run of text is checked against the active font's actual coverage (the
-TrueType cmap, or CP1252 for the built-in fallback) and a character the font
-cannot represent raises `PdfRenderError`. So a PDF export either carries the
-approved characters or fails; it never substitutes them. Markdown export always
-carries the exact approved bytes, so a document outside the font's coverage
-(CJK, emoji) is still exportable through Markdown.
+it: every run of text is checked against the coverage of the face that will
+actually draw it, and a character that face cannot represent raises
+`PdfFontCoverageError`. Per-face matters because the DejaVu cmaps differ between
+regular, bold, oblique, bold-oblique, and mono, so a character present in the
+regular face can be missing from the oblique one; checking one face would let
+italic or heading text reach the page as a missing glyph. A PDF export therefore
+either carries the approved characters or fails; it never substitutes them.
+Markdown export always carries the exact approved bytes, so a document outside
+the font's coverage (CJK, emoji) is still exportable through Markdown.
 
-Deployment therefore has to provide the DejaVu family for any content beyond
-CP1252 — `fonts-dejavu-core` on the hosted image. `unicode_font_status()` reports
-what the running process resolved so a preflight can assert it.
+The DejaVu family is a hosted runtime requirement for any content beyond CP1252
+(`fonts-dejavu-core` on Debian/Ubuntu). `unicode_font_status()` reports what the
+running process resolved so a preflight can assert it; wiring that preflight into
+live provisioning belongs to Slice 5B2B2.
+
+Bounds
+------
+Rendering work is bounded by the Markdown byte ceiling, an element-count ceiling,
+a nesting-depth ceiling raised before CPython's own recursion limit, and the
+table-column ceiling that switches a wide table to a stacked layout.
 """
 from __future__ import annotations
 
@@ -71,6 +81,10 @@ import md_render
 MAX_MARKDOWN_BYTES = 400_000
 _MAX_NODES = 40_000
 _MAX_TABLE_COLUMNS = 12
+
+# Nesting ceiling for the recursive translation. Sanitized Markdown nests far
+# below this; hitting it has to be a bounded error rather than a `RecursionError`.
+_MAX_DEPTH = 24
 
 # The PDF carries no document-level metadata derived from customer content: the
 # reviewed body is the artifact, and the title/author fields stay neutral.
@@ -167,12 +181,47 @@ _FONT_COVERAGE = _register_unicode_fonts()
 UNICODE_FONTS = bool(_FONT_COVERAGE)
 _BODY_FONT = "SEBody" if UNICODE_FONTS else "Helvetica"
 _BOLD_FONT = "SEBody-Bold" if UNICODE_FONTS else "Helvetica-Bold"
+_ITALIC_FONT = "SEBody-Italic" if UNICODE_FONTS else "Helvetica-Oblique"
+_BOLD_ITALIC_FONT = "SEBody-BoldItalic" if UNICODE_FONTS else "Helvetica-BoldOblique"
 _MONO_FONT = "SEMono" if UNICODE_FONTS else "Courier"
 
-# Coverage of the faces text can actually be drawn with. `None` means the
-# built-in fallback family, whose encoding is CP1252.
-_BODY_COVERAGE = _FONT_COVERAGE.get("SEBody")
-_MONO_COVERAGE = _FONT_COVERAGE.get("SEMono")
+
+@dataclass(frozen=True)
+class _Face:
+    """Which registered face will actually draw a run of text.
+
+    Coverage differs between the faces of one family, so a run has to be checked
+    against the face ReportLab will draw it with rather than against the regular
+    face.
+    """
+
+    bold: bool = False
+    italic: bool = False
+    mono: bool = False
+
+    def styled(self, markup: str) -> "_Face":
+        if markup == "b":
+            return _Face(True, self.italic, self.mono)
+        if markup == "i":
+            return _Face(self.bold, True, self.mono)
+        return self
+
+
+_BODY_FACE = _Face()
+_BOLD_FACE = _Face(bold=True)
+_MONO_FACE = _Face(mono=True)
+
+
+def _font_for(face: _Face) -> str:
+    if face.mono:
+        return _MONO_FONT
+    if face.bold and face.italic:
+        return _BOLD_ITALIC_FONT
+    if face.bold:
+        return _BOLD_FONT
+    if face.italic:
+        return _ITALIC_FONT
+    return _BODY_FONT
 
 
 def unicode_font_status() -> FontStatus:
@@ -186,9 +235,10 @@ def unicode_font_status() -> FontStatus:
 
 
 def _unrepresentable(text: str, coverage: frozenset[int] | None) -> int:
-    """Count characters the active face cannot draw.
+    """Count characters the face cannot draw.
 
-    Whitespace is exempt: layout consumes it rather than drawing a glyph.
+    Whitespace is exempt: layout consumes it rather than drawing a glyph. A
+    `None` coverage means a built-in Type 1 face, whose encoding is CP1252.
     """
     missing = 0
     for char in text:
@@ -205,9 +255,9 @@ def _unrepresentable(text: str, coverage: frozenset[int] | None) -> int:
     return missing
 
 
-def _checked(text: str, coverage: frozenset[int] | None) -> str:
+def _checked(text: str, face: _Face) -> str:
     """Return reviewed text unchanged, or fail closed rather than mutate it."""
-    missing = _unrepresentable(text, coverage)
+    missing = _unrepresentable(text, _FONT_COVERAGE.get(_font_for(face)))
     if missing:
         raise PdfFontCoverageError(
             f"document contains {missing} character(s) the export font cannot "
@@ -257,48 +307,80 @@ class _FragmentParser(HTMLParser):
         self._stack[-1].children.append(data)
 
 
-def _escape(text: str) -> str:
-    return html.escape(_checked(text, _BODY_COVERAGE), quote=True)
+def _escape(text: str, face: _Face) -> str:
+    return html.escape(_checked(text, face), quote=True)
 
 
-def _inline(node: _Node) -> str:
-    """Render inline content as escaped text plus allowlisted ReportLab markup."""
+def _image_text(node: _Node) -> str:
+    """Describe an image by its reviewed text only.
+
+    The renderer never fetches an image: `src` may point anywhere, and an export
+    must not make a network request. The alt and title text is reviewed content
+    though, so it is carried into the PDF inertly instead of being dropped, and
+    an image with neither still leaves a marker so the reader sees the omission.
+    """
+    alt = " ".join(node.attrs.get("alt", "").split())
+    title = " ".join(node.attrs.get("title", "").split())
+    if alt and title and title != alt:
+        return f"[image: {alt} — {title}]"
+    return f"[image: {alt or title}]" if alt or title else "[image]"
+
+
+def _inline(node: _Node, face: _Face = _BODY_FACE, depth: int = 0) -> str:
+    """Render inline content as escaped text plus allowlisted ReportLab markup.
+
+    `face` is the face the enclosing style draws with, so every run is coverage
+    checked against the font that will actually render it.
+    """
+    if depth > _MAX_DEPTH:
+        raise PdfRenderError("document nests too deeply to render")
     parts: list[str] = []
     for child in node.children:
         if isinstance(child, str):
-            parts.append(_escape(child))
+            parts.append(_escape(child, face))
             continue
         tag = child.tag
         if tag == "br":
             parts.append("<br/>")
             continue
+        if tag == "img":
+            parts.append(_escape(_image_text(child), face))
+            continue
         if tag in _VOID_TAGS:
             continue
-        inner = _inline(child)
         if tag == "code":
-            _checked(_plain_text(child), _MONO_COVERAGE)
-            parts.append(f'<font face="{_MONO_FONT}">{inner}</font>')
-        elif tag == "a":
+            mono = _Face(face.bold, face.italic, True)
+            inner = _inline(child, mono, depth + 1)
+            parts.append(f'<font face="{_font_for(mono)}">{inner}</font>')
+            continue
+        if tag == "a":
+            inner = _inline(child, face, depth + 1)
             href = child.attrs.get("href", "").strip()
             if href.lower().startswith(_ALLOWED_LINK_SCHEMES):
-                parts.append(f'<link href="{_escape(href)}" color="#1558b0">{inner}</link>')
+                parts.append(f'<link href="{_escape(href, face)}" color="#1558b0">{inner}</link>')
             else:
                 parts.append(inner)
-        elif tag in _INLINE_MARKUP:
+            continue
+        if tag in _INLINE_MARKUP:
             markup = _INLINE_MARKUP[tag]
+            inner = _inline(child, face.styled(markup), depth + 1)
             parts.append(f"<{markup}>{inner}</{markup}>")
-        else:
-            parts.append(inner)
+            continue
+        parts.append(_inline(child, face, depth + 1))
     return "".join(parts)
 
 
-def _plain_text(node: _Node) -> str:
+def _plain_text(node: _Node, depth: int = 0) -> str:
+    if depth > _MAX_DEPTH:
+        raise PdfRenderError("document nests too deeply to render")
     parts: list[str] = []
     for child in node.children:
         if isinstance(child, str):
             parts.append(child)
+        elif child.tag == "img":
+            parts.append(_image_text(child))
         else:
-            parts.append(_plain_text(child))
+            parts.append(_plain_text(child, depth + 1))
     return "".join(parts)
 
 
@@ -346,6 +428,22 @@ def _styles() -> dict[str, ParagraphStyle]:
     return styles
 
 
+def _caption_flowables(table: _Node, styles: dict[str, ParagraphStyle]) -> list:
+    """Carry `<caption>` text into the PDF instead of dropping it."""
+    style = ParagraphStyle(
+        "caption", parent=styles["td"], spaceBefore=4, spaceAfter=3,
+        textColor=colors.HexColor("#333333"),
+    )
+    flow: list = []
+    for child in table.children:
+        if not isinstance(child, _Node) or child.tag != "caption":
+            continue
+        text = _inline(child, _BOLD_FACE).strip()
+        if text:
+            flow.append(Paragraph(f"<b>{text}</b>", style))
+    return flow
+
+
 def _rows(table: _Node) -> list[_Node]:
     rows: list[_Node] = []
     for child in table.children:
@@ -370,7 +468,7 @@ def _stacked_table_flowables(
     """
     label_style = ParagraphStyle("cell", parent=styles["td"], leftIndent=10, spaceAfter=2)
     row_style = ParagraphStyle("cellrow", parent=styles["td"], spaceBefore=4, spaceAfter=2)
-    headers = [_inline(cell).strip() for cell in cell_rows[0]] if header else []
+    headers = [_inline(cell, _BOLD_FACE).strip() for cell in cell_rows[0]] if header else []
     body_rows = cell_rows[1:] if header else cell_rows
     flow: list = []
     if headers:
@@ -389,9 +487,10 @@ def _stacked_table_flowables(
 
 
 def _table_flowable(node: _Node, styles: dict[str, ParagraphStyle]) -> list:
+    caption = _caption_flowables(node, styles)
     rows = _rows(node)
     if not rows:
-        return []
+        return caption
     cell_rows: list[list[_Node]] = []
     header = False
     for row in rows:
@@ -402,15 +501,17 @@ def _table_flowable(node: _Node, styles: dict[str, ParagraphStyle]) -> list:
             header = True
         cell_rows.append(cells)
     if not cell_rows:
-        return []
+        return caption
     if max(len(row) for row in cell_rows) > _MAX_TABLE_COLUMNS:
-        return _stacked_table_flowables(cell_rows, header, styles)
+        return caption + _stacked_table_flowables(cell_rows, header, styles)
     data: list[list[Paragraph]] = []
     for index, cells in enumerate(cell_rows):
-        style = styles["th"] if (header and index == 0) else styles["td"]
-        data.append([Paragraph(_inline(cell) or "&nbsp;", style) for cell in cells])
+        head = header and index == 0
+        style = styles["th"] if head else styles["td"]
+        face = _BOLD_FACE if head else _BODY_FACE
+        data.append([Paragraph(_inline(cell, face) or "&nbsp;", style) for cell in cells])
     if not data:
-        return []
+        return caption
     columns = max(len(row) for row in data)
     for row in data:
         while len(row) < columns:
@@ -428,12 +529,14 @@ def _table_flowable(node: _Node, styles: dict[str, ParagraphStyle]) -> list:
         style_commands.append(("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2a2f36")))
     flowable = Table(data, colWidths=[width] * columns, repeatRows=1 if header else 0)
     flowable.setStyle(TableStyle(style_commands))
-    return [flowable, Spacer(1, 8)]
+    return caption + [flowable, Spacer(1, 8)]
 
 
 def _list_flowables(
     node: _Node, styles: dict[str, ParagraphStyle], depth: int, ordered: bool
 ) -> list:
+    if depth > _MAX_DEPTH:
+        raise PdfRenderError("document nests too deeply to render")
     flow: list = []
     counter = 0
     for item in node.children:
@@ -465,15 +568,18 @@ def _list_flowables(
 
 
 def _blocks(node: _Node, styles: dict[str, ParagraphStyle], depth: int = 0) -> list:
+    if depth > _MAX_DEPTH:
+        raise PdfRenderError("document nests too deeply to render")
     flow: list = []
     for child in node.children:
         if isinstance(child, str):
             if child.strip():
-                flow.append(Paragraph(_escape(child.strip()), styles["body"]))
+                flow.append(Paragraph(_escape(child.strip(), _BODY_FACE), styles["body"]))
             continue
         tag = child.tag
         if tag in _HEADINGS:
-            text = _inline(child).strip()
+            # Headings draw with the bold face, so their runs are checked there.
+            text = _inline(child, _BOLD_FACE).strip()
             if text:
                 flow.append(Paragraph(text, styles[tag]))
         elif tag == "p":
@@ -486,16 +592,18 @@ def _blocks(node: _Node, styles: dict[str, ParagraphStyle], depth: int = 0) -> l
             flow.extend(_table_flowable(child, styles))
         elif tag == "hr":
             flow.append(HRFlowable(width="100%", color=colors.HexColor("#dddddd"), spaceAfter=8))
+        elif tag == "img":
+            flow.append(Paragraph(_escape(_image_text(child), _BODY_FACE), styles["body"]))
         elif tag == "pre":
-            text = _checked(_plain_text(child).rstrip("\n"), _MONO_COVERAGE)
+            text = _checked(_plain_text(child).rstrip("\n"), _MONO_FACE)
             if text:
                 flow.append(Preformatted(text, styles["code"]))
                 flow.append(Spacer(1, 6))
         elif tag == "blockquote":
-            for quoted in _blocks(child, styles, depth):
+            for quoted in _blocks(child, styles, depth + 1):
                 flow.append(quoted)
         elif tag in _BLOCK_CONTAINERS:
-            flow.extend(_blocks(child, styles, depth))
+            flow.extend(_blocks(child, styles, depth + 1))
         elif tag in _VOID_TAGS:
             continue
         else:

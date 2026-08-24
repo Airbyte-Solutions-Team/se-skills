@@ -89,14 +89,24 @@ by the Ansible package under `deploy/ansible/`.
   `nh3` allowlist and an in-process ReportLab renderer with bounded document
   limits — no headless Chrome and no subprocess in the hosted path. Nothing is
   persisted and no signed or public URL is issued.
-  The PDF renderer never rewrites reviewed text to fit its own limits: it checks
-  the active font's real glyph coverage and refuses the PDF (`422`, with Markdown
-  still exact) rather than substituting characters, and a table wider than the
-  grid ceiling becomes labelled per-row blocks instead of losing columns. A
-  hosted deployment therefore ships the DejaVu family (`fonts-dejavu-core`);
+  The PDF renderer never rewrites reviewed text to fit its own limits. Every run
+  is checked against the real glyph coverage of the face that will draw it —
+  regular, bold, italic, bold-italic, or monospace, since a family's faces have
+  different cmaps — and a gap refuses the PDF (`422`, with Markdown still exact)
+  rather than substituting or blanking characters. A table wider than the grid
+  ceiling becomes labelled per-row blocks instead of losing columns; `<img>`
+  alt/title and `<caption>` text is carried into the PDF inertly, never fetched
+  and never dropped; stored bytes that are not valid UTF-8 refuse the PDF instead
+  of being decoded with replacements. Rendering is bounded by the Markdown byte
+  ceiling (`MAX_MARKDOWN_BYTES`), an element-count ceiling, and a nesting-depth
+  ceiling that raises `PdfRenderError` before CPython's recursion limit.
+  Content beyond CP1252 therefore requires the DejaVu family
+  (`fonts-dejavu-core` on Debian/Ubuntu) in the hosted runtime;
   `pdf_export.unicode_font_status()` reports what a process resolved, and CI runs
   `scripts/hosted_extra_smoke.py` in an environment built from the `hosted` extra
   alone to prove the import, render, and font contract without the `dev` extra.
+  Provisioning that font package in a live deployment, and asserting it in a
+  startup preflight, is Slice 5B2B2 work and is not done here.
 - Export rendering (PDF, internal HTML) from stored output content.
 
 ### Job ledger / queue (Slice 4)

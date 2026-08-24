@@ -160,29 +160,92 @@ def test_missing_unicode_font_fails_closed_instead_of_rewriting_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """With only the built-in CP1252 family, non-CP1252 text is refused."""
-    monkeypatch.setattr(pdf_export, "_BODY_COVERAGE", None)
-    monkeypatch.setattr(pdf_export, "_MONO_COVERAGE", None)
+    monkeypatch.setattr(pdf_export, "_FONT_COVERAGE", {})
     with pytest.raises(pdf_export.PdfFontCoverageError):
         pdf_export.render_markdown_pdf("Checkmark ✓ and Привет")
     # CP1252 content is unaffected, so the fallback still exports normally.
     assert pdf_export.render_markdown_pdf("Plain café text").startswith(b"%PDF-")
 
 
-def test_font_coverage_gap_is_refused_for_code_spans(
-    monkeypatch: pytest.MonkeyPatch,
+# Coverage wide enough for every character these tests use, so the only reason a
+# run can fail is the face deliberately narrowed to ASCII.
+_WIDE_COVERAGE = frozenset(range(0x2800))
+_ASCII_COVERAGE = frozenset(range(0x80))
+
+_FACE_FONTS = {
+    "regular": pdf_export._BODY_FONT,
+    "bold": pdf_export._BOLD_FONT,
+    "italic": pdf_export._ITALIC_FONT,
+    "bold_italic": pdf_export._BOLD_ITALIC_FONT,
+    "mono": pdf_export._MONO_FONT,
+}
+
+
+def _narrow_one_face(monkeypatch: pytest.MonkeyPatch, role: str) -> None:
+    """Give every face wide coverage except `role`, which drops to ASCII.
+
+    Real family faces have different cmaps, so this reproduces the case the
+    renderer has to survive: a character the regular face can draw but the face
+    ReportLab actually uses for that run cannot.
+    """
+    coverage = {
+        font: (_ASCII_COVERAGE if name == role else _WIDE_COVERAGE)
+        for name, font in _FACE_FONTS.items()
+    }
+    monkeypatch.setattr(pdf_export, "_FONT_COVERAGE", coverage)
+
+
+@pytest.mark.parametrize(
+    "markdown,role",
+    [
+        pytest.param("Plain Привет line", "regular", id="regular_body_run"),
+        pytest.param("**Привет** bolded", "bold", id="bold_run"),
+        pytest.param("*Привет* italicised", "italic", id="italic_run"),
+        pytest.param("***Привет*** both", "bold_italic", id="bold_italic_run"),
+        pytest.param("## Heading Привет", "bold", id="heading_draws_with_bold_face"),
+        pytest.param(
+            "| Привет |\n| --- |\n| plain |\n",
+            "bold",
+            id="table_header_draws_with_bold_face",
+        ),
+        pytest.param("Inline `Привет` code", "mono", id="code_span_run"),
+        pytest.param("```\nПривет\n```\n", "mono", id="code_block_run"),
+        pytest.param("**bold `Привет` span**", "mono", id="code_span_inside_bold"),
+    ],
+)
+def test_each_run_is_checked_against_the_face_that_draws_it(
+    monkeypatch: pytest.MonkeyPatch, markdown: str, role: str
 ) -> None:
-    """Monospace runs are checked against the monospace face's own coverage."""
-    monkeypatch.setattr(pdf_export, "_MONO_COVERAGE", frozenset(range(0x7F)))
+    """A gap in the face used for a run is refused, not blanked or substituted."""
+    _narrow_one_face(monkeypatch, role)
     with pytest.raises(pdf_export.PdfFontCoverageError):
-        pdf_export.render_markdown_pdf("Inline `Привет` code")
-    with pytest.raises(pdf_export.PdfFontCoverageError):
-        pdf_export.render_markdown_pdf("```\nПривет\n```\n")
+        pdf_export.render_markdown_pdf(markdown)
+
+
+@pytest.mark.parametrize(
+    "markdown,role",
+    [
+        pytest.param("**Привет** bolded", "italic", id="bold_run_ignores_italic_gap"),
+        pytest.param("*Привет* italicised", "bold", id="italic_run_ignores_bold_gap"),
+        pytest.param("Inline `Привет` code", "regular", id="code_run_ignores_body_gap"),
+    ],
+)
+@pytest.mark.skipif(
+    not pdf_export.UNICODE_FONTS,
+    reason="the built-in CP1252 family cannot draw the sample text at all",
+)
+def test_a_gap_in_an_unused_face_does_not_block_the_export(
+    monkeypatch: pytest.MonkeyPatch, markdown: str, role: str
+) -> None:
+    """The check follows the drawing face, so an unrelated gap is not fatal."""
+    _narrow_one_face(monkeypatch, role)
+    assert pdf_export.render_markdown_pdf(markdown).startswith(b"%PDF-")
 
 
 def test_font_coverage_error_message_carries_no_reviewed_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(pdf_export, "_BODY_COVERAGE", None)
+    monkeypatch.setattr(pdf_export, "_FONT_COVERAGE", {})
     with pytest.raises(pdf_export.PdfFontCoverageError) as raised:
         pdf_export.render_markdown_pdf("Secret ✓ line")
     message = str(raised.value)
@@ -217,6 +280,74 @@ def test_render_markdown_pdf_returns_a_pdf_document() -> None:
     ],
 )
 def test_bounded_documents_still_render(markdown: str) -> None:
+    assert pdf_export.render_markdown_pdf(markdown).startswith(b"%PDF-")
+
+
+@pytest.mark.parametrize(
+    "markdown,present",
+    [
+        pytest.param(
+            '![Diagram of the funnel](https://example.com/f.png "Q3 funnel")',
+            ["Diagram of the funnel", "Q3 funnel"],
+            id="image_alt_and_title_are_kept",
+        ),
+        pytest.param(
+            "Text with ![inline alt](https://example.com/i.png) inside.",
+            ["inline alt", "Text with", "inside."],
+            id="inline_image_alt_is_kept_with_its_surroundings",
+        ),
+        pytest.param(
+            "![](https://example.com/bare.png)",
+            ["[image]"],
+            id="image_without_text_still_leaves_a_marker",
+        ),
+        pytest.param(
+            "<table><caption>Pipeline totals</caption><tr><td>row</td></tr></table>",
+            ["Pipeline totals", "row"],
+            id="table_caption_is_kept",
+        ),
+    ],
+)
+def test_image_and_caption_text_cannot_silently_disappear(
+    markdown: str, present: list[str]
+) -> None:
+    """Alt, title, and caption text is reviewed content, so it reaches the PDF."""
+    text = _flowable_text(markdown)
+    for needle in present:
+        assert needle in text, needle
+    assert pdf_export.render_markdown_pdf(markdown).startswith(b"%PDF-")
+
+
+def test_image_sources_are_never_fetched_or_linked() -> None:
+    """The renderer describes an image; it never reaches for its bytes."""
+    markdown = '![alt](javascript:alert(1) "t")\n\n![ok](https://example.com/x.png)'
+    text = _flowable_text(markdown)
+    assert "javascript:" not in text
+    assert "https://example.com/x.png" not in text
+    assert "<link" not in text
+    assert "<img" not in text
+
+
+def test_deeply_nested_content_is_refused_before_recursion_fails() -> None:
+    """Nesting past the depth ceiling is a bounded error, not a RecursionError."""
+    depth = pdf_export._MAX_DEPTH + 40
+    nested_inline = "<em>" * depth + "deep" + "</em>" * depth
+    with pytest.raises(pdf_export.PdfRenderError):
+        pdf_export.render_markdown_pdf(nested_inline)
+    nested_blocks = "<div>" * depth + "<p>deep</p>" + "</div>" * depth
+    with pytest.raises(pdf_export.PdfRenderError):
+        pdf_export.render_markdown_pdf(nested_blocks)
+    nested_quotes = "\n\n".join(">" * n + " quoted" for n in range(1, depth))
+    with pytest.raises(pdf_export.PdfRenderError):
+        pdf_export.render_markdown_pdf(nested_quotes)
+
+
+def test_normally_nested_content_stays_within_the_depth_ceiling() -> None:
+    """Ordinary reviewed structure is nowhere near the ceiling."""
+    markdown = (
+        "# Heading\n\n> quoted **bold `code`** text\n>\n> - item\n>   - nested\n"
+        ">     - deeper\n\n| a | b |\n| --- | --- |\n| **x** | `y` |\n"
+    )
     assert pdf_export.render_markdown_pdf(markdown).startswith(b"%PDF-")
 
 
