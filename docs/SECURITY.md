@@ -30,6 +30,7 @@ evidence, and canonical rootfs hashing are additional deployment checks. See
 - Supabase (or another operational provider chosen and approved for the beta) provides identity, relational data, and object storage.
 - Workers are semi-trusted: they resolve authorized inputs and manage sandbox lifecycle. The sandbox runtime is untrusted and receives no Postgres credentials, Storage credentials, model keys, or browser-supplied paths.
 - External APIs (model provider, Gong, Salesforce, etc.) are third-party boundaries.
+- A hosted export request carries only a format enum and an idempotency key. The organization, actor, exact current version, its approval state, and the private Storage path are derived inside Postgres by `public.authorize_output_export` under an output-row lock, so a browser cannot select a version, a path, a provenance value, or a validation result. Reads use the same user-scoped `app_storage` identity as the reader — no maintenance role and no service-role credential — and the `output_export` audit row is appended by a narrow `SECURITY DEFINER` function that revalidates the actor and the organization/output/version relationship rather than trusting the API. Because the audit row is written only after the returned bytes exist, a Storage or renderer failure records no successful export.
 
 ## Organization isolation
 
@@ -121,6 +122,7 @@ evidence, and canonical rootfs hashing are additional deployment checks. See
 - Data retention and deletion policies are defined per organization.
 - When an account or organization is deleted, all associated objects and outputs are removed or moved to a hold prefix according to policy.
 - Exports to internal.airbyte.ai or PDF use the same `md_render.py` + `nh3` sanitization used locally; no raw unsanitized HTML is emitted.
+- The hosted export of an approved output (Slice 6B1) is on demand and ephemeral: the response body is the only artifact, nothing is persisted, and no signed or public URL is issued. Markdown is returned byte for byte because the reviewed artifact is the record; the PDF is derived from those same bytes through the shared `nh3` allowlist and rendered in process by ReportLab with bounded page, table, and nesting limits, so hostile HTML, event handlers, and non-allowlisted URL schemes cannot survive into the PDF and the hosted path adds no browser, subprocess, or filesystem dependency. The download filename is built only from the output id and version ordinal — never an account, opportunity, or document title — because filenames travel into shared folders and mail subjects.
 - The hosted runtime does not retain customer data between jobs; ephemeral workspace is destroyed.
 
 ## Explicit merge-blocking security invariants

@@ -78,6 +78,17 @@ by the Ansible package under `deploy/ansible/`.
   preview, and the comment/correction/approval mutations
   (`POST .../comments`, `POST .../corrections`, `POST .../approvals`).
 - Audit logging of user-facing actions.
+- Hosted export of an approved output (Slice 6B1):
+  `POST .../outputs/{output_id}/exports` returns the exact approved current
+  version as Markdown or PDF. The browser sends only a format and an idempotency
+  key; the organization, actor, current version, approval state, and private
+  Storage path come from `public.authorize_output_export` under an output-row
+  lock, and the authorized version is immutable, so no lock is held across the
+  Storage read or the render. Markdown is byte-for-byte the reviewed artifact;
+  the PDF is derived from those same bytes through the shared `md_render` +
+  `nh3` allowlist and an in-process ReportLab renderer with bounded document
+  limits — no headless Chrome and no subprocess in the hosted path. Nothing is
+  persisted and no signed or public URL is issued.
 - Export rendering (PDF, internal HTML) from stored output content.
 
 ### Job ledger / queue (Slice 4)

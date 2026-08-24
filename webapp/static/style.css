@@ -1487,6 +1487,12 @@ a.live-btn { text-decoration: none; display: inline-flex; align-items: center; }
 .review-editor textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
 .review-editor-actions { display: flex; gap: 10px; }
 .review-preview { margin-top: 6px; }
+/* Export (Slice 6B1): a compact pair of actions next to the approval control. */
+.review-export { display: inline-flex; gap: 8px; flex-wrap: wrap; }
+.review-export-row { margin: -6px 0 10px; }
+.review-export-row .status { margin: 0; }
 @media (max-width: 1000px) {
   .review-layout { grid-template-columns: minmax(0, 1fr); }
+  .review-export { width: 100%; }
+  .review-export button { flex: 1; }
 }

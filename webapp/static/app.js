@@ -3813,6 +3813,10 @@ function _renderHostedReview() {
   const labels = {};
   versions.forEach((v) => { labels[_reviewVersionRef(v)] = v.label; });
   const approved = state.review_state === "approved";
+  const canExport = approved && isCurrent;
+  const exportBlockedWhy = approved
+    ? `Only ${esc(labels[currentRef] || "the current version")} can be exported.`
+    : "Approve the current version to export.";
 
   const rail = versions.map((v) => {
     const ref = _reviewVersionRef(v);
@@ -3858,7 +3862,14 @@ function _renderHostedReview() {
         <div class="row-actions">
           <span class="review-state-badge ${approved ? "approved" : "needs-review"}">${approved ? "Approved" : "Needs review"}</span>
           <button class="primary small" id="review-approve"${approved || !isCurrent ? " disabled" : ""}>Approve ${esc(labels[currentRef] || "current version")}</button>
+          <span class="review-export">
+            <button class="secondary small" id="review-export-md"${canExport ? "" : " disabled"} title="${canExport ? "Download the approved Markdown" : exportBlockedWhy}">Export MD</button>
+            <button class="secondary small" id="review-export-pdf"${canExport ? "" : " disabled"} title="${canExport ? "Download the approved PDF" : exportBlockedWhy}">Export PDF</button>
+          </span>
         </div>
+      </div>
+      <div class="row review-export-row">
+        <div id="review-export-status" class="status${canExport ? " hidden" : ""}">${canExport ? "" : exportBlockedWhy}</div>
       </div>
       <div class="review-layout">
         <aside class="review-rail">
@@ -3928,6 +3939,11 @@ function _wireHostedReview() {
 
   const approveBtn = document.getElementById("review-approve");
   if (approveBtn) approveBtn.onclick = () => _approveHostedVersion();
+
+  const exportMdBtn = document.getElementById("review-export-md");
+  if (exportMdBtn) exportMdBtn.onclick = () => _exportHostedOutput("md", exportMdBtn);
+  const exportPdfBtn = document.getElementById("review-export-pdf");
+  if (exportPdfBtn) exportPdfBtn.onclick = () => _exportHostedOutput("pdf", exportPdfBtn);
 
   const commentForm = document.getElementById("review-comment-form");
   if (commentForm) {
@@ -4006,6 +4022,44 @@ async function _approveHostedVersion() {
     _reviewStatus("review-comment-status", "Approved", "ok");
   } catch (e) {
     _reviewStatus("review-comment-status", e.message || "Could not approve this version", "err");
+  }
+}
+
+// Export sends only a format and an idempotency key: the server picks the exact
+// approved current version, so the browser can never ask for a stale one.
+async function _exportHostedOutput(format, button) {
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = "Exporting…";
+  _reviewStatus("review-export-status", "", "ok");
+  try {
+    const r = await fetch(`${_hostedReviewBase()}/exports`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(HOSTED_TOKEN ? { "Authorization": `Bearer ${HOSTED_TOKEN}` } : {}),
+      },
+      body: JSON.stringify({ format, request_id: _newRequestId() }),
+    });
+    if (!r.ok) {
+      throw new Error(errorDetailText(await r.json().catch(() => ({}))) || r.statusText);
+    }
+    const blob = await r.blob();
+    const disposition = r.headers.get("content-disposition") || "";
+    const match = disposition.match(/filename="([^"]+)"/);
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = match ? match[1] : `output.${format}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    _reviewStatus("review-export-status", `Downloaded ${format.toUpperCase()}`, "ok");
+  } catch (e) {
+    _reviewStatus("review-export-status", e.message || "Could not export this output", "err");
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
   }
 }
 

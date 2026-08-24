@@ -273,7 +273,13 @@ RLS on `org_id` for reads only. Rows are written exclusively by the review
 `SECURITY DEFINER` functions in the same transaction as the review evidence they
 describe, so the trail is append-only and cannot be forged or rewritten by
 `app_user`. Slice 6A writes `output.comment`, `output.correct`, and
-`output.approve` events. There is no audit-admin UI.
+`output.approve` events; Slice 6B1 adds `output_export`, whose metadata is the
+organization, actor, output id, exact exported version id (null for the
+generated version), request id, format, and timestamp — never the exported
+bytes, the filename, or the Storage path. An export event exists only if the
+returned artifact was produced, and replaying the same request id for the same
+output, version, and format does not append a second row. There is no
+audit-admin UI.
 
 ### `output_correction_uploads`
 
@@ -344,6 +350,7 @@ RLS on `org_id` plus scope checks. Rotation and refresh are handled by a credent
 - The original generated `outputs` row and its Markdown/sidecar are immutable. It serves as the generation evidence (version 0).
 - User corrections create new `output_versions` rows. Each version references its parent `output_id` and, for a correction chain, `previous_version_id`. The first correction may have `previous_version_id` null because it follows the original `outputs` row.
 - An `approve` action may have `output_version_id` null (approving the original generated output) or reference a specific corrected `output_versions` row.
+- Export targets the chain leaf only: `public.authorize_output_export` locks the `outputs` row, resolves the current version, and requires an `approve` row for exactly that version, so an approval of the generated version or of any superseded version never authorizes an export of a later one. Comments do not affect approval. Historical versions stay readable but are never export targets.
 - The final reviewed state can be reconstructed from the original `outputs` row and the chain of `output_versions` and `reviews`.
 - Correcting an output must never overwrite the original generation evidence.
 
