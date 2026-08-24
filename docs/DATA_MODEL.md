@@ -281,6 +281,22 @@ returned artifact was produced, and replaying the same request id for the same
 output, version, and format does not append a second row. There is no
 audit-admin UI.
 
+Slice 6B2A extends the same boundary to the remaining user actions:
+`transcript_upload` and `transcript_delete` (written by `app_admin`-owned
+`AFTER INSERT`/`AFTER DELETE` triggers on `public.transcripts`, so metadata and
+evidence share one transaction and delete evidence outlives the row it
+describes) and `job_run_requested` / `job_cancel_requested` (written inside
+`public.enqueue_job` and `public.request_job_cancellation` on the branch that
+changes durable job state). Their metadata is identifiers only — account,
+opportunity, transcript, job, and `skill` — with no filename, Storage path,
+transcript content, source manifest, payload, or idempotency key, and
+`request_id` stays null because these actions carry no UUID request id. A
+partial unique index on `(org_id, action, entity_id)` for those four actions is
+the database-side backstop against duplicate evidence from a retry or a
+concurrent request. Worker lifecycle stays out of this table: `jobs` and
+`job_attempts` remain the operational lifecycle and provenance ledger, and the
+job actions record the authenticated user's request rather than each attempt.
+
 ### `output_correction_uploads`
 
 A correction reserves its version id and server-generated Storage path before the

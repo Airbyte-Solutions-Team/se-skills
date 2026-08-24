@@ -363,8 +363,7 @@ version, and approve the exact current version, with an append-only audit trail.
 
 ## Slice 6B1: Approved-output export and export audit
 
-**Status:** `In Progress` — implemented on the open Slice 6B1 pull request; this
-slice is complete only after that pull request merges.
+**Status:** `Complete` — merged in pull request #53.
 
 **Product outcome:** An authenticated active member can download the exact
 approved current version of a hosted `post-call` output as Markdown or PDF,
@@ -402,22 +401,70 @@ completing the reviewed-output workflow through export.
 
 **Non-goals:**
 - No persisted export artifacts, share links, or hosted Git push.
-- No admin/onboarding surface or broader audit coverage (Slice 6B2).
+- No admin/onboarding surface or broader audit coverage (Slice 6B2A/6B2B).
 
-## Slice 6B2: Admin/onboarding, broader audit, observability, retention, and beta launch readiness
+## Slice 6B2A: Hosted user-action audit completeness
+
+**Status:** `In Progress` — implemented on the open Slice 6B2A pull request; this
+slice is complete only after that pull request merges.
+
+**Product outcome:** Every customer-data and execution action a hosted member
+can take — upload a transcript, delete one, request a `post-call` run, cancel a
+run — leaves durable, identifier-only audit evidence, closing the gap left by
+review (Slice 6A) and export (Slice 6B1).
+
+**Scope:**
+- Migration `012` adds four stable actions: `transcript_upload`,
+  `transcript_delete`, `job_run_requested`, `job_cancel_requested`.
+- Transcript evidence is written by `app_admin`-owned `AFTER INSERT`/`AFTER
+  DELETE` triggers on `public.transcripts`, so metadata and its audit event
+  commit or roll back together and no application write can bypass it.
+- `public.enqueue_job` records one `job_run_requested` in the transaction that
+  creates the durable job row; `public.request_job_cancellation` records one
+  `job_cancel_requested` only on the branch that actually changes job state.
+- A partial unique index on `(org_id, action, entity_id)` is the database-side
+  backstop against duplicate lifecycle evidence.
+
+**Dependencies:** Slice 3, Slice 5B2A, Slice 6A, Slice 6B1.
+
+**Acceptance criteria:**
+- Validation, Storage, or transaction failure records nothing; a repeated delete,
+  an idempotent enqueue replay, an idempotency conflict, an already-cancelled
+  job, a terminal job, and a lost transition race add no second event.
+- Actor comes from the signed tenant context and organization from trusted rows;
+  forged request fields and forged context tokens cannot affect audit identity.
+- Metadata carries only organization, actor, action, entity, and
+  account/opportunity/transcript/job/skill references — no filenames, Storage
+  paths, transcript content, source manifests, payloads, or idempotency strings.
+- Delete evidence survives the transcript row it describes.
+- `app_user` cannot insert, update, or delete `audit_events`; `app_worker` gains
+  no audit or tenant-table access.
+- Worker lifecycle (claim, heartbeat, retry, outcome) records no audit events:
+  `jobs` and `job_attempts` remain the operational ledger.
+
+**Non-goals:**
+- No admin console, audit search UI, or membership management.
+- No retention periods or purges (a later destructive-data decision).
+- No observability provider, deployment, or launch work (Slice 6B2B).
+- No `memberships.role` permission contract: an authoritative admin/se/viewer
+  hierarchy is a Product Owner decision, and all four actions are available to
+  any active member today.
+
+## Slice 6B2B: Admin/onboarding, observability, retention, and beta launch readiness
 
 **Status:** `Proposed`
 
 **Product outcome:** The hosted beta is operable: members are onboarded and
-administered, activity is auditable and observable, retention is enforced, and
-the launch checklist is complete.
+administered, activity is observable, retention is enforced, and the launch
+checklist is complete.
 
 **Scope:**
-- Admin and onboarding flows, production metrics/logging, retention, launch
-  checklist, and beta operations.
-- Audit coverage extended beyond review and export to upload and run.
+- Admin and onboarding flows (including the `memberships.role` permission
+  contract), production metrics/logging, retention, launch checklist, and beta
+  operations.
+- Any user-facing audit surface built on the Slice 6B2A evidence.
 
-**Dependencies:** Slice 3, Slice 5B, Slice 6B1.
+**Dependencies:** Slice 3, Slice 5B, Slice 6B1, Slice 6B2A.
 
 **Acceptance criteria:**
 - End-to-end workflow: sign in → create account → upload transcript → run `post-call` → review → correct/approve → export.
