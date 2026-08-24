@@ -171,6 +171,14 @@ async def create_output_export(
             body = pdf_export.render_markdown_pdf(
                 markdown_bytes.decode("utf-8", errors="replace")
             )
+        except pdf_export.PdfFontCoverageError as exc:
+            # Failing closed keeps the PDF honest: the reviewed characters are
+            # never substituted, and Markdown still carries them exactly.
+            logger.warning("Export PDF font coverage gap for output %s: %s", output_id, type(exc).__name__)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="This output has characters the PDF font cannot render. Export as Markdown to keep the exact text.",
+            ) from None
         except pdf_export.PdfRenderError as exc:
             logger.warning("Export PDF render failed for output %s: %s", output_id, type(exc).__name__)
             raise HTTPException(

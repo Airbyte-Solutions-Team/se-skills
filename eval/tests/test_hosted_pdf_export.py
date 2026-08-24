@@ -101,12 +101,6 @@ def test_reviewed_material_survives_rendering() -> None:
             [],
             id="ordered_and_nested_lists_are_preserved",
         ),
-        pytest.param(
-            "Unicode: café — ✓ Привет Ωμέγα",
-            ["café", "✓", "Привет"] if pdf_export.UNICODE_FONTS else ["Unicode:"],
-            [],
-            id="unicode_is_preserved_when_unicode_fonts_exist",
-        ),
     ],
 )
 def test_translation_is_faithful_and_inert(
@@ -117,6 +111,90 @@ def test_translation_is_faithful_and_inert(
         assert needle in text, needle
     for needle in absent:
         assert needle not in text, needle
+
+
+def _wide_table_markdown(columns: int) -> str:
+    header = "| " + " | ".join(f"H{n}" for n in range(1, columns + 1)) + " |"
+    divider = "| " + " | ".join(["---"] * columns) + " |"
+    row = "| " + " | ".join(f"cell-{n}" for n in range(1, columns + 1)) + " |"
+    return "\n".join([header, divider, row, ""])
+
+
+def test_wide_tables_keep_every_reviewed_cell() -> None:
+    """A table wider than the grid ceiling must not lose reviewed content."""
+    columns = pdf_export._MAX_TABLE_COLUMNS + 8
+    text = _flowable_text(_wide_table_markdown(columns))
+    for n in range(1, columns + 1):
+        assert f"H{n}" in text, f"header {n} disappeared"
+        assert f"cell-{n}" in text, f"cell {n} disappeared"
+
+
+def test_wide_tables_still_render_to_pdf() -> None:
+    body = pdf_export.render_markdown_pdf(_wide_table_markdown(30))
+    assert body.startswith(b"%PDF-")
+
+
+def test_tables_within_the_ceiling_stay_a_grid() -> None:
+    """The stacked fallback only applies past the ceiling."""
+    parser = pdf_export._FragmentParser()
+    parser.feed(pdf_export.md_render.markdown_to_body_html(_wide_table_markdown(4)))
+    parser.close()
+    flow = pdf_export._blocks(parser.root, pdf_export._styles())
+    assert any(isinstance(flowable, Table) for flowable in flow)
+
+
+def test_unicode_is_preserved_or_refused_never_substituted() -> None:
+    """Reviewed characters are either rendered or rejected, never replaced."""
+    markdown = "Unicode: café — ✓ Привет Ωμέγα"
+    if pdf_export.UNICODE_FONTS:
+        text = _flowable_text(markdown)
+        for needle in ("café", "✓", "Привет", "Ωμέγα"):
+            assert needle in text, needle
+        assert "?" not in text
+    else:
+        with pytest.raises(pdf_export.PdfFontCoverageError):
+            pdf_export.render_markdown_pdf(markdown)
+
+
+def test_missing_unicode_font_fails_closed_instead_of_rewriting_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With only the built-in CP1252 family, non-CP1252 text is refused."""
+    monkeypatch.setattr(pdf_export, "_BODY_COVERAGE", None)
+    monkeypatch.setattr(pdf_export, "_MONO_COVERAGE", None)
+    with pytest.raises(pdf_export.PdfFontCoverageError):
+        pdf_export.render_markdown_pdf("Checkmark ✓ and Привет")
+    # CP1252 content is unaffected, so the fallback still exports normally.
+    assert pdf_export.render_markdown_pdf("Plain café text").startswith(b"%PDF-")
+
+
+def test_font_coverage_gap_is_refused_for_code_spans(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Monospace runs are checked against the monospace face's own coverage."""
+    monkeypatch.setattr(pdf_export, "_MONO_COVERAGE", frozenset(range(0x7F)))
+    with pytest.raises(pdf_export.PdfFontCoverageError):
+        pdf_export.render_markdown_pdf("Inline `Привет` code")
+    with pytest.raises(pdf_export.PdfFontCoverageError):
+        pdf_export.render_markdown_pdf("```\nПривет\n```\n")
+
+
+def test_font_coverage_error_message_carries_no_reviewed_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(pdf_export, "_BODY_COVERAGE", None)
+    with pytest.raises(pdf_export.PdfFontCoverageError) as raised:
+        pdf_export.render_markdown_pdf("Secret ✓ line")
+    message = str(raised.value)
+    assert "Secret" not in message
+    assert "✓" not in message
+
+
+def test_font_status_reports_what_the_process_resolved() -> None:
+    status = pdf_export.unicode_font_status()
+    assert status.unicode_fonts is pdf_export.UNICODE_FONTS
+    assert status.body_font == ("SEBody" if pdf_export.UNICODE_FONTS else "Helvetica")
+    assert status.searched_dirs == pdf_export._FONT_DIRS
 
 
 def test_render_markdown_pdf_returns_a_pdf_document() -> None:

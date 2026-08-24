@@ -100,3 +100,35 @@ jobs:
           name: eval-reports-${{ github.run_id }}-${{ github.run_attempt }}
           path: eval/results/
           if-no-files-found: ignore
+
+  hosted-extra:
+    name: Verify the hosted extra alone runs the export path
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install the Unicode font family a hosted deployment provides
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends fonts-dejavu-core
+
+      - name: Create an isolated hosted-only environment
+        run: |
+          set -euo pipefail
+          uv venv .venv-hosted
+          VIRTUAL_ENV=.venv-hosted uv pip install ".[hosted]"
+
+      - name: Import and render through the hosted export path
+        run: .venv-hosted/bin/python scripts/hosted_extra_smoke.py

@@ -26,11 +26,19 @@ ReportLab's built-in Type 1 fonts only cover CP1252, which would silently turn a
 checkmark or CJK text into the wrong glyphs. So a DejaVu TrueType family is
 registered when the host provides one (`fonts-dejavu-core` on Debian/Ubuntu
 images, the same paths on Homebrew/macOS boxes), covering Latin, Greek, Cyrillic
-and the common symbol ranges. Without those files the renderer falls back to
-Helvetica and replaces characters the built-in encoding cannot represent with
-`?`, so degraded text is visibly degraded instead of quietly wrong. Scripts
-outside DejaVu's coverage (CJK, emoji) still degrade; Markdown export always
-carries the exact approved bytes.
+and the common symbol ranges.
+
+Whichever family ends up active, the renderer never rewrites reviewed text to fit
+it: every run of text is checked against the active font's actual coverage (the
+TrueType cmap, or CP1252 for the built-in fallback) and a character the font
+cannot represent raises `PdfRenderError`. So a PDF export either carries the
+approved characters or fails; it never substitutes them. Markdown export always
+carries the exact approved bytes, so a document outside the font's coverage
+(CJK, emoji) is still exportable through Markdown.
+
+Deployment therefore has to provide the DejaVu family for any content beyond
+CP1252 — `fonts-dejavu-core` on the hosted image. `unicode_font_status()` reports
+what the running process resolved so a preflight can assert it.
 """
 from __future__ import annotations
 
@@ -92,9 +100,6 @@ _INLINE_MARKUP = {
 _ALLOWED_LINK_SCHEMES = ("http://", "https://", "mailto:", "tel:")
 _BULLETS = ("\u2022", "\u25e6", "\u2023")
 
-# Character the built-in Helvetica fallback uses for text it cannot encode.
-_UNSUPPORTED_CHAR = "?"
-
 _FONT_DIRS = (
     "/usr/share/fonts/truetype/dejavu",
     "/usr/share/fonts/dejavu",
@@ -111,17 +116,42 @@ _FONT_FILES = {
 }
 
 
-def _register_unicode_fonts() -> bool:
-    """Register the DejaVu family when the host provides it."""
+class PdfRenderError(Exception):
+    """The approved Markdown could not be rendered within hosted bounds."""
+
+
+class PdfFontCoverageError(PdfRenderError):
+    """The active font cannot represent characters the approved text contains."""
+
+
+@dataclass(frozen=True)
+class FontStatus:
+    """What font family this process resolved, for deployment preflight."""
+
+    unicode_fonts: bool
+    body_font: str
+    mono_font: str
+    searched_dirs: tuple[str, ...]
+
+
+def _register_unicode_fonts() -> dict[str, frozenset[int]]:
+    """Register the DejaVu family when the host provides it, with its coverage.
+
+    The returned mapping is empty when no usable family was found, which leaves
+    the renderer on ReportLab's built-in CP1252 fonts.
+    """
     for directory in _FONT_DIRS:
         base = Path(directory)
         if not all((base / name).is_file() for name in _FONT_FILES.values()):
             continue
+        coverage: dict[str, frozenset[int]] = {}
         try:
             for font_name, file_name in _FONT_FILES.items():
-                pdfmetrics.registerFont(TTFont(font_name, str(base / file_name)))
+                font = TTFont(font_name, str(base / file_name))
+                pdfmetrics.registerFont(font)
+                coverage[font_name] = frozenset(font.face.charToGlyph)
         except Exception:  # noqa: BLE001 - unreadable font files are not fatal
-            return False
+            return {}
         pdfmetrics.registerFontFamily(
             "SEBody",
             normal="SEBody",
@@ -129,33 +159,61 @@ def _register_unicode_fonts() -> bool:
             italic="SEBody-Italic",
             boldItalic="SEBody-BoldItalic",
         )
-        return True
-    return False
+        return coverage
+    return {}
 
 
-UNICODE_FONTS = _register_unicode_fonts()
+_FONT_COVERAGE = _register_unicode_fonts()
+UNICODE_FONTS = bool(_FONT_COVERAGE)
 _BODY_FONT = "SEBody" if UNICODE_FONTS else "Helvetica"
 _BOLD_FONT = "SEBody-Bold" if UNICODE_FONTS else "Helvetica-Bold"
 _MONO_FONT = "SEMono" if UNICODE_FONTS else "Courier"
 
+# Coverage of the faces text can actually be drawn with. `None` means the
+# built-in fallback family, whose encoding is CP1252.
+_BODY_COVERAGE = _FONT_COVERAGE.get("SEBody")
+_MONO_COVERAGE = _FONT_COVERAGE.get("SEMono")
 
-def _coerce(text: str) -> str:
-    """Keep text honest under the built-in font's narrow encoding."""
-    if UNICODE_FONTS:
-        return text
-    coerced: list[str] = []
+
+def unicode_font_status() -> FontStatus:
+    """Report the font family this process resolved, for deployment preflight."""
+    return FontStatus(
+        unicode_fonts=UNICODE_FONTS,
+        body_font=_BODY_FONT,
+        mono_font=_MONO_FONT,
+        searched_dirs=_FONT_DIRS,
+    )
+
+
+def _unrepresentable(text: str, coverage: frozenset[int] | None) -> int:
+    """Count characters the active face cannot draw.
+
+    Whitespace is exempt: layout consumes it rather than drawing a glyph.
+    """
+    missing = 0
     for char in text:
-        try:
-            char.encode("cp1252")
-        except UnicodeEncodeError:
-            coerced.append(_UNSUPPORTED_CHAR)
-        else:
-            coerced.append(char)
-    return "".join(coerced)
+        if char.isspace():
+            continue
+        if coverage is None:
+            try:
+                char.encode("cp1252")
+            except UnicodeEncodeError:
+                missing += 1
+            continue
+        if ord(char) not in coverage:
+            missing += 1
+    return missing
 
 
-class PdfRenderError(Exception):
-    """The approved Markdown could not be rendered within hosted bounds."""
+def _checked(text: str, coverage: frozenset[int] | None) -> str:
+    """Return reviewed text unchanged, or fail closed rather than mutate it."""
+    missing = _unrepresentable(text, coverage)
+    if missing:
+        raise PdfFontCoverageError(
+            f"document contains {missing} character(s) the export font cannot "
+            "represent; export as Markdown to keep the exact text"
+        )
+    return text
 
 
 @dataclass
@@ -200,7 +258,7 @@ class _FragmentParser(HTMLParser):
 
 
 def _escape(text: str) -> str:
-    return html.escape(_coerce(text), quote=True)
+    return html.escape(_checked(text, _BODY_COVERAGE), quote=True)
 
 
 def _inline(node: _Node) -> str:
@@ -218,6 +276,7 @@ def _inline(node: _Node) -> str:
             continue
         inner = _inline(child)
         if tag == "code":
+            _checked(_plain_text(child), _MONO_COVERAGE)
             parts.append(f'<font face="{_MONO_FONT}">{inner}</font>')
         elif tag == "a":
             href = child.attrs.get("href", "").strip()
@@ -299,20 +358,57 @@ def _rows(table: _Node) -> list[_Node]:
     return rows
 
 
+def _stacked_table_flowables(
+    cell_rows: list[list[_Node]], header: bool, styles: dict[str, ParagraphStyle]
+) -> list:
+    """Render a table too wide for the page without dropping any cell.
+
+    A grid wider than `_MAX_TABLE_COLUMNS` cannot stay legible across a letter
+    page, and silently trimming columns would remove reviewed evidence from the
+    export. So each row becomes a labelled block instead: every cell keeps its
+    text, in source order, under its header label when the table has one.
+    """
+    label_style = ParagraphStyle("cell", parent=styles["td"], leftIndent=10, spaceAfter=2)
+    row_style = ParagraphStyle("cellrow", parent=styles["td"], spaceBefore=4, spaceAfter=2)
+    headers = [_inline(cell).strip() for cell in cell_rows[0]] if header else []
+    body_rows = cell_rows[1:] if header else cell_rows
+    flow: list = []
+    if headers:
+        flow.append(Paragraph("<b>Columns</b>", row_style))
+        for position, label in enumerate(headers, start=1):
+            flow.append(Paragraph(f"{position}. {label or '&nbsp;'}", label_style))
+    for index, cells in enumerate(body_rows, start=1):
+        flow.append(Paragraph(f"<b>Row {index}</b>", row_style))
+        for position, cell in enumerate(cells):
+            label = headers[position] if position < len(headers) else ""
+            label = label or f"Column {position + 1}"
+            value = _inline(cell).strip() or "&nbsp;"
+            flow.append(Paragraph(f"<b>{label}:</b> {value}", label_style))
+    flow.append(Spacer(1, 8))
+    return flow
+
+
 def _table_flowable(node: _Node, styles: dict[str, ParagraphStyle]) -> list:
     rows = _rows(node)
     if not rows:
         return []
-    data: list[list[Paragraph]] = []
+    cell_rows: list[list[_Node]] = []
     header = False
-    for index, row in enumerate(rows):
+    for row in rows:
         cells = [c for c in row.children if isinstance(c, _Node) and c.tag in ("td", "th")]
         if not cells:
             continue
-        if index == 0 and all(cell.tag == "th" for cell in cells):
+        if not cell_rows and all(cell.tag == "th" for cell in cells):
             header = True
+        cell_rows.append(cells)
+    if not cell_rows:
+        return []
+    if max(len(row) for row in cell_rows) > _MAX_TABLE_COLUMNS:
+        return _stacked_table_flowables(cell_rows, header, styles)
+    data: list[list[Paragraph]] = []
+    for index, cells in enumerate(cell_rows):
         style = styles["th"] if (header and index == 0) else styles["td"]
-        data.append([Paragraph(_inline(cell) or "&nbsp;", style) for cell in cells[:_MAX_TABLE_COLUMNS]])
+        data.append([Paragraph(_inline(cell) or "&nbsp;", style) for cell in cells])
     if not data:
         return []
     columns = max(len(row) for row in data)
@@ -391,7 +487,7 @@ def _blocks(node: _Node, styles: dict[str, ParagraphStyle], depth: int = 0) -> l
         elif tag == "hr":
             flow.append(HRFlowable(width="100%", color=colors.HexColor("#dddddd"), spaceAfter=8))
         elif tag == "pre":
-            text = _coerce(_plain_text(child).rstrip("\n"))
+            text = _checked(_plain_text(child).rstrip("\n"), _MONO_COVERAGE)
             if text:
                 flow.append(Preformatted(text, styles["code"]))
                 flow.append(Spacer(1, 6))

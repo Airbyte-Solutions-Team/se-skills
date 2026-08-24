@@ -6,6 +6,7 @@ narrow SECURITY DEFINER export functions. All data is synthetic.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from typing import Any
@@ -580,6 +581,239 @@ async def test_renderer_failure_is_redacted_and_leaves_no_audit(
     assert await _audit_exports(admin_pool, fx.output_id) == []
     # Markdown still exports: the failure is confined to the PDF renderer.
     assert _export(app_client, fx).status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Concurrency
+# ---------------------------------------------------------------------------
+
+async def _tenant_conn(conn: asyncpg.Connection, user_id: uuid.UUID) -> None:
+    """Adopt a tenant identity on a raw connection, as the API does per request."""
+    await conn.execute("SELECT set_config('app.context_token', $1, true)", _context_token(user_id))
+
+
+async def _land_correction(
+    dsn: str,
+    backend: Any,
+    fx: ReviewFixture,
+    *,
+    base_version_id: uuid.UUID | None,
+    markdown: str,
+) -> uuid.UUID:
+    """Commit a correction through the definer functions, without the HTTP route.
+
+    A barrier that fires inside an in-flight request runs on the API's own event
+    loop, where a nested `TestClient` call would deadlock and a pooled
+    connection from the test's loop cannot be used. So this opens its own
+    connection on whichever loop calls it, and walks the same reserve → upload →
+    commit path the route walks.
+    """
+    payload_hash = hashlib.sha256(markdown.encode("utf-8")).hexdigest()
+    conn = await asyncpg.connect(dsn)
+    try:
+        async with conn.transaction():
+            await _tenant_conn(conn, fx.user_id)
+            reserved = json.loads(
+                await conn.fetchval(
+                    "SELECT public.reserve_output_correction($1, $2, $3, $4, $5)",
+                    fx.output_id,
+                    fx.account_id,
+                    base_version_id,
+                    uuid.uuid4(),
+                    payload_hash,
+                )
+            )
+
+        async def _stream() -> Any:
+            yield markdown.encode("utf-8")
+
+        await backend.upload(
+            fx.user_id,
+            reserved["content_storage_path"],
+            _stream(),
+            "text/plain; charset=utf-8",
+            bucket=_hs().OUTPUTS_BUCKET,
+        )
+        async with conn.transaction():
+            await _tenant_conn(conn, fx.user_id)
+            committed = json.loads(
+                await conn.fetchval(
+                    "SELECT public.commit_output_correction($1, $2, $3)",
+                    uuid.UUID(reserved["reservation_id"]),
+                    "Raced correction",
+                    json.dumps(
+                        {"skill": "post-call", "mode": "full", "validation_status": "valid"}
+                    ),
+                )
+            )
+    finally:
+        await conn.close()
+    return uuid.UUID(committed["output_version_id"])
+
+
+async def test_a_correction_landing_mid_export_cannot_change_the_exported_bytes(
+    app_client: TestClient,
+    admin_pool: asyncpg.Pool,
+    hosted_env: dict[str, str],
+    backend: Any,
+    monkeypatch: Any,
+) -> None:
+    """The authorized version is a snapshot: the export finishes on that version.
+
+    The barrier is the Storage read, which happens after the authorization
+    transaction has committed and released the output row — the widest window a
+    correction has to interleave. It must not retarget the in-flight export, and
+    the audit row must name the version whose bytes were actually returned.
+    """
+    fx = await _seed_reviewable_output(admin_pool, backend)
+    assert _approve(app_client, fx).status_code == 201
+
+    original_download = backend.download
+    landed: list[uuid.UUID] = []
+
+    async def _correct_then_download(*args: Any, **kwargs: Any) -> Any:
+        if not landed:
+            landed.append(
+                await _land_correction(
+                    hosted_env["DATABASE_URL"],
+                    backend,
+                    fx,
+                    base_version_id=None,
+                    markdown=_corrected_markdown("Landed mid-export."),
+                )
+            )
+        return await original_download(*args, **kwargs)
+
+    monkeypatch.setattr(backend, "download", _correct_then_download)
+    response = _export(app_client, fx)
+    monkeypatch.setattr(backend, "download", original_download)
+
+    assert landed
+    assert response.status_code == 200
+    # The bytes are the authorized version's, not the correction that landed.
+    assert response.content.decode("utf-8") == _generated_markdown()
+    assert response.headers["content-disposition"].endswith('-v0.md"')
+    rows = await _audit_exports(admin_pool, fx.output_id)
+    assert len(rows) == 1
+    assert rows[0]["metadata"]["output_version_id"] is None
+
+    # The correction is now current and unapproved, so the next export is refused.
+    blocked = _export(app_client, fx)
+    assert blocked.status_code == 409
+    assert len(await _audit_exports(admin_pool, fx.output_id)) == 1
+
+
+async def test_export_authorization_serializes_against_a_concurrent_correction(
+    app_client: TestClient,
+    admin_pool: asyncpg.Pool,
+    user_pool: asyncpg.Pool,
+    hosted_env: dict[str, str],
+    backend: Any,
+) -> None:
+    """A correction cannot interleave inside the authorization snapshot.
+
+    The open snapshot holds the output row, so a concurrent correction waits for
+    it instead of landing between the approval check and the returned Storage
+    path. Blocking is what makes the snapshot atomic.
+    """
+    fx = await _seed_reviewable_output(admin_pool, backend)
+    assert _approve(app_client, fx).status_code == 201
+
+    async with user_pool.acquire() as holder, user_pool.acquire() as contender:
+        transaction = holder.transaction()
+        await transaction.start()
+        await _tenant_conn(holder, fx.user_id)
+        snapshot = json.loads(
+            await holder.fetchval(
+                "SELECT public.authorize_output_export($1, $2, 'md', $3)",
+                fx.output_id,
+                fx.account_id,
+                uuid.uuid4(),
+            )
+        )
+        assert snapshot["output_version_id"] is None
+
+        with pytest.raises(asyncpg.QueryCanceledError):
+            async with contender.transaction():
+                await _tenant_conn(contender, fx.user_id)
+                await contender.execute("SET LOCAL statement_timeout = '500ms'")
+                await contender.fetchval(
+                    "SELECT public.reserve_output_correction($1, $2, $3, $4, $5)",
+                    fx.output_id,
+                    fx.account_id,
+                    None,
+                    uuid.uuid4(),
+                    hashlib.sha256(b"raced").hexdigest(),
+                )
+        await transaction.rollback()
+
+    # With the snapshot released, the correction lands and supersedes the approval.
+    await _land_correction(
+        hosted_env["DATABASE_URL"],
+        backend,
+        fx,
+        base_version_id=None,
+        markdown=_corrected_markdown("After the race."),
+    )
+    assert _export(app_client, fx).status_code == 409
+    assert await _audit_exports(admin_pool, fx.output_id) == []
+
+
+async def test_an_unapproved_leaf_cannot_slip_through_a_concurrent_approval(
+    app_client: TestClient,
+    admin_pool: asyncpg.Pool,
+    user_pool: asyncpg.Pool,
+    hosted_env: dict[str, str],
+    backend: Any,
+) -> None:
+    """An in-flight approval cannot authorize an export before it commits.
+
+    The barrier is an approval held open in its own transaction. Export
+    authorization contends for the same output row, so it can only observe the
+    approval once it is durable — never a half-applied one.
+    """
+    fx = await _seed_reviewable_output(admin_pool, backend)
+    version_id = await _land_correction(
+        hosted_env["DATABASE_URL"],
+        backend,
+        fx,
+        base_version_id=None,
+        markdown=_corrected_markdown(),
+    )
+
+    async with user_pool.acquire() as approver, user_pool.acquire() as exporter:
+        transaction = approver.transaction()
+        await transaction.start()
+        await _tenant_conn(approver, fx.user_id)
+        await approver.fetchval(
+            "SELECT public.approve_output_version($1, $2, $3, $4)",
+            fx.output_id,
+            fx.account_id,
+            version_id,
+            uuid.uuid4(),
+        )
+
+        with pytest.raises(asyncpg.QueryCanceledError):
+            async with exporter.transaction():
+                await _tenant_conn(exporter, fx.user_id)
+                await exporter.execute("SET LOCAL statement_timeout = '500ms'")
+                await exporter.fetchval(
+                    "SELECT public.authorize_output_export($1, $2, 'md', $3)",
+                    fx.output_id,
+                    fx.account_id,
+                    uuid.uuid4(),
+                )
+        await transaction.rollback()
+
+    # The rolled-back approval leaves the leaf unapproved, so export stays closed.
+    assert _export(app_client, fx).status_code == 409
+    assert await _audit_exports(admin_pool, fx.output_id) == []
+
+    assert _approve(app_client, fx, target_version_id=str(version_id)).status_code == 201
+    allowed = _export(app_client, fx)
+    assert allowed.status_code == 200
+    rows = await _audit_exports(admin_pool, fx.output_id)
+    assert [row["metadata"]["output_version_id"] for row in rows] == [str(version_id)]
 
 
 # ---------------------------------------------------------------------------

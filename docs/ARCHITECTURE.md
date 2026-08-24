@@ -89,6 +89,14 @@ by the Ansible package under `deploy/ansible/`.
   `nh3` allowlist and an in-process ReportLab renderer with bounded document
   limits — no headless Chrome and no subprocess in the hosted path. Nothing is
   persisted and no signed or public URL is issued.
+  The PDF renderer never rewrites reviewed text to fit its own limits: it checks
+  the active font's real glyph coverage and refuses the PDF (`422`, with Markdown
+  still exact) rather than substituting characters, and a table wider than the
+  grid ceiling becomes labelled per-row blocks instead of losing columns. A
+  hosted deployment therefore ships the DejaVu family (`fonts-dejavu-core`);
+  `pdf_export.unicode_font_status()` reports what a process resolved, and CI runs
+  `scripts/hosted_extra_smoke.py` in an environment built from the `hosted` extra
+  alone to prove the import, render, and font contract without the `dev` extra.
 - Export rendering (PDF, internal HTML) from stored output content.
 
 ### Job ledger / queue (Slice 4)
