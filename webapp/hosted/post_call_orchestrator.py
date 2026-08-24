@@ -53,6 +53,11 @@ MAX_SIDECAR_BYTES = 1024 * 1024
 INPUT_DIR_MODE = 0o555
 INPUT_FILE_MODE = 0o444
 CLEANUP_LEASE_SECONDS = 60
+CORRECTION_CLEANUP_MAX_ATTEMPTS = 10
+# How long a `pending` correction reservation is protected from its own request's
+# cleanup path. Beyond this, the request is assumed dead and the reservation is
+# reconciled, which bounds how long an untracked private object can survive.
+CORRECTION_PENDING_GRACE_SECONDS = 1800
 
 
 class RuntimeOutputError(ValueError):
@@ -823,8 +828,8 @@ class PostCallOrchestrator:
             )
 
         try:
-            await self.storage.delete(
-                requester_id, content_storage_path, bucket=storage.OUTPUTS_BUCKET
+            await self.storage.delete_for_maintenance(
+                org_id, content_storage_path, bucket=storage.OUTPUTS_BUCKET
             )
         except storage.ObjectNotFound:
             pass
@@ -877,7 +882,7 @@ class PostCallOrchestrator:
         to still be running.
         """
         content_storage_path: str | None = None
-        requester_id: uuid.UUID | None = None
+        org_id: uuid.UUID | None = None
         async with self.db_pool.acquire() as conn:
             try:
                 row = await conn.fetchrow(
@@ -900,11 +905,11 @@ class PostCallOrchestrator:
             return False
 
         content_storage_path = row["content_storage_path"]
-        requester_id = row["requester_id"]
+        org_id = row["org_id"]
 
         try:
-            await self.storage.delete(
-                requester_id, content_storage_path, bucket=storage.OUTPUTS_BUCKET
+            await self.storage.delete_for_maintenance(
+                org_id, content_storage_path, bucket=storage.OUTPUTS_BUCKET
             )
         except storage.ObjectNotFound:
             pass
@@ -971,11 +976,11 @@ class PostCallOrchestrator:
 
         output_id = row["output_id"]
         content_storage_path = row["content_storage_path"]
-        requester_id = row["requester_id"]
+        org_id = row["org_id"]
 
         try:
-            await self.storage.delete(
-                requester_id, content_storage_path, bucket=storage.OUTPUTS_BUCKET
+            await self.storage.delete_for_maintenance(
+                org_id, content_storage_path, bucket=storage.OUTPUTS_BUCKET
             )
         except storage.ObjectNotFound:
             pass
@@ -1010,6 +1015,89 @@ class PostCallOrchestrator:
                 worker_id,
             )
             raise CleanupError("discovered tombstone row was not finalized")
+
+        return True
+
+    async def cleanup_next_correction_upload(
+        self,
+        worker_id: str,
+        max_attempts: int = CORRECTION_CLEANUP_MAX_ATTEMPTS,
+        pending_grace_seconds: int = CORRECTION_PENDING_GRACE_SECONDS,
+    ) -> bool:
+        """Reconcile one correction upload that never became a version.
+
+        Claims either an `orphaned` reservation (the request knew the object
+        existed and could not delete it) or a stale `pending` one (the request
+        died before commit, so object existence is unknown), deletes the private
+        object, and finalizes the ledger row. A failed delete leaves the row
+        claimable again once the lease expires, so cleanup survives restarts.
+        Committed versions are never eligible.
+        """
+        if not worker_id or not isinstance(worker_id, str):
+            raise CleanupError("worker_id is required")
+        if pending_grace_seconds < 60:
+            raise CleanupError("pending_grace_seconds must be at least 60")
+
+        async with self.db_pool.acquire() as conn:
+            try:
+                row = await conn.fetchrow(
+                    "SELECT * FROM public.claim_orphaned_correction_upload("
+                    "$1, $2, make_interval(secs => $3))",
+                    worker_id,
+                    max_attempts,
+                    float(pending_grace_seconds),
+                )
+            except asyncpg.PostgresError as exc:
+                logger.warning(
+                    "claim_orphaned_correction_upload failed for worker %s: %s",
+                    worker_id,
+                    type(exc).__name__,
+                )
+                raise CleanupError("failed to claim correction upload") from exc
+
+        if row is None or row["content_storage_path"] is None:
+            return False
+
+        reservation_id = row["reservation_id"]
+        try:
+            await self.storage.delete_for_maintenance(
+                row["org_id"],
+                row["content_storage_path"],
+                bucket=storage.OUTPUTS_BUCKET,
+            )
+        except storage.ObjectNotFound:
+            pass
+        except storage.StorageError as exc:
+            logger.warning(
+                "Storage delete failed for correction upload %s: %s",
+                reservation_id,
+                type(exc).__name__,
+            )
+            raise CleanupError("failed to delete correction storage object") from exc
+
+        async with self.db_pool.acquire() as conn:
+            try:
+                finalized = await conn.fetchval(
+                    "SELECT public.finalize_correction_cleanup($1, $2)",
+                    reservation_id,
+                    worker_id,
+                )
+            except asyncpg.PostgresError as exc:
+                logger.warning(
+                    "finalize_correction_cleanup failed for %s worker %s: %s",
+                    reservation_id,
+                    worker_id,
+                    type(exc).__name__,
+                )
+                raise CleanupError("failed to finalize correction cleanup") from exc
+
+        if not finalized:
+            logger.warning(
+                "finalize_correction_cleanup returned false for %s worker %s",
+                reservation_id,
+                worker_id,
+            )
+            raise CleanupError("correction upload row was not finalized")
 
         return True
 
@@ -1497,3 +1585,6 @@ class PostCallExecutor:
         lease_seconds: int = CLEANUP_LEASE_SECONDS,
     ) -> bool:
         return await self.orchestrator.cleanup_next_tombstone(worker_id, lease_seconds)
+
+    async def cleanup_next_correction_upload(self, worker_id: str) -> bool:
+        return await self.orchestrator.cleanup_next_correction_upload(worker_id)

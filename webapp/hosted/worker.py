@@ -103,8 +103,29 @@ class Worker:
             )
             return False
 
+    async def cleanup_next_correction_upload(self) -> bool:
+        """If the executor supports it, reconcile one correction upload.
+
+        Mirrors `cleanup_next_tombstone`: a correction that never became a
+        version can leave a private object behind, and this is the operational
+        path that removes it. Failures are logged and suppressed so cleanup never
+        blocks job processing; the reservation stays claimable after its lease
+        expires, so a restarted worker rediscovers it.
+        """
+        if not hasattr(self.executor, "cleanup_next_correction_upload"):
+            return False
+        try:
+            return await self.executor.cleanup_next_correction_upload(self.worker_name)
+        except Exception as exc:
+            logger.warning(
+                "Worker %s correction cleanup failed: %s",
+                self.worker_name,
+                type(exc).__name__,
+            )
+            return False
+
     async def run(self) -> None:
-        """Poll until stopped, recovering expired leases and cleaning tombstones."""
+        """Poll until stopped, recovering leases and cleaning abandoned evidence."""
         logger.info("Worker %s started", self.worker_name)
         while not self._stop.is_set():
             try:
@@ -114,6 +135,12 @@ class Worker:
                 cleaned = await self.cleanup_next_tombstone()
                 if cleaned:
                     logger.debug("Worker %s cleaned one tombstone", self.worker_name)
+                corrected = await self.cleanup_next_correction_upload()
+                if corrected:
+                    logger.debug(
+                        "Worker %s cleaned one correction upload", self.worker_name
+                    )
+                cleaned = cleaned or corrected
                 processed = await self.process_one()
                 if not processed and not cleaned and not recovered:
                     await asyncio.wait_for(self._stop.wait(), timeout=self.poll_interval)
@@ -125,9 +152,10 @@ class Worker:
         logger.info("Worker %s stopped", self.worker_name)
 
     async def run_once(self) -> bool:
-        """Run a single poll cycle: recover, clean tombstones, and claim work."""
+        """Run a single poll cycle: recover, clean up, and claim work."""
         await self.recover_expired_leases()
         await self.cleanup_next_tombstone()
+        await self.cleanup_next_correction_upload()
         return await self.process_one()
 
     async def recover_expired_leases(self) -> int:

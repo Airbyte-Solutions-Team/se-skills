@@ -1549,6 +1549,17 @@ async def test_cleanup_failure_leaves_tombstone_and_cancels_job(
                 raise hosted_storage.StorageError("injected storage delete failure")
             return await super().delete(user_id, path, bucket)
 
+        async def delete_for_maintenance(
+            self,
+            org_id: uuid.UUID | None,
+            path: str,
+            bucket: str = hosted_storage.OUTPUTS_BUCKET,
+        ) -> None:
+            self._delete_calls += 1
+            if self._delete_calls == self._fail_after:
+                raise hosted_storage.StorageError("injected storage delete failure")
+            return await super().delete_for_maintenance(org_id, path, bucket)
+
     user_id, org_id, account_id, transcript_id, _ = await _seed_job_ready_org(admin_pool)
     failing_backend = FailingDeleteMemoryBackend(admin_pool=admin_pool, fail_after=1)
     await _upload_transcript_content(
@@ -1828,6 +1839,17 @@ async def test_tombstone_cleanup_retry_after_storage_delete_failure(
             if self._delete_calls == self._fail_after:
                 raise hosted_storage.StorageError("injected storage delete failure")
             return await super().delete(user_id, path, bucket)
+
+        async def delete_for_maintenance(
+            self,
+            org_id: uuid.UUID | None,
+            path: str,
+            bucket: str = hosted_storage.OUTPUTS_BUCKET,
+        ) -> None:
+            self._delete_calls += 1
+            if self._delete_calls == self._fail_after:
+                raise hosted_storage.StorageError("injected storage delete failure")
+            return await super().delete_for_maintenance(org_id, path, bucket)
 
     user_id, org_id, account_id, transcript_id, _ = await _seed_job_ready_org(admin_pool)
     output_id = uuid.uuid4()
@@ -2133,6 +2155,17 @@ class _FailingDeleteMemoryBackend(hosted_storage.MemoryStorageBackend):
         if self._delete_calls == self._fail_after:
             raise hosted_storage.StorageError("injected storage delete failure")
         return await super().delete(user_id, path, bucket)
+
+    async def delete_for_maintenance(
+        self,
+        org_id: uuid.UUID | None,
+        path: str,
+        bucket: str = hosted_storage.OUTPUTS_BUCKET,
+    ) -> None:
+        self._delete_calls += 1
+        if self._delete_calls == self._fail_after:
+            raise hosted_storage.StorageError("injected storage delete failure")
+        return await super().delete_for_maintenance(org_id, path, bucket)
 
 
 async def _create_tombstone_output(

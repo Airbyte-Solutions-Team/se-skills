@@ -17,9 +17,11 @@ def _auth_config(request: Request) -> JSONResponse:
 
 async def _session(request: Request) -> JSONResponse:
     # Lazy import keeps the local app free of optional hosted deps.
-    from .auth import require_org
+    from .auth import require_org, require_user
 
-    org = await require_org(request)
+    # Called directly rather than through FastAPI's dependency injection, so the
+    # verified user has to be resolved explicitly before the org lookup.
+    org = await require_org(request, await require_user(request))
     return JSONResponse(
         {
             "user": {"id": str(org.user.id), "email": org.user.email},
@@ -35,7 +37,7 @@ def add_hosted_routers(app: FastAPI) -> None:
         return
 
     from fastapi import APIRouter
-    from . import accounts, jobs, outputs, storage, transcripts
+    from . import accounts, jobs, outputs, reviews, storage, transcripts
 
     app.state.storage_backend = storage.get_backend()
 
@@ -48,3 +50,4 @@ def add_hosted_routers(app: FastAPI) -> None:
     app.include_router(jobs.router)
     app.include_router(transcripts.router)
     app.include_router(outputs.router)
+    app.include_router(reviews.router)

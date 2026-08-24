@@ -72,6 +72,11 @@ by the Ansible package under `deploy/ansible/`.
 - Listing an account's jobs (`GET /api/hosted/accounts/{account_id}/jobs`) and fetching job detail (`GET /api/hosted/jobs/{job_id}`).
 - Requesting job cancellation (`POST /api/hosted/jobs/{job_id}/cancel`).
 - Serving the static SPA and rendered output content.
+- Hosted output review (Slice 6A): review state and per-version content
+  (`GET .../outputs/{output_id}/review`,
+  `GET .../outputs/{output_id}/versions/{version_ref}/content`), correction
+  preview, and the comment/correction/approval mutations
+  (`POST .../comments`, `POST .../corrections`, `POST .../approvals`).
 - Audit logging of user-facing actions.
 - Export rendering (PDF, internal HTML) from stored output content.
 

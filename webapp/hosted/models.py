@@ -309,6 +309,85 @@ class JobCreate(BaseModel):
         return value
 
 
+def _reject_control_characters(value: str, field: str) -> str:
+    """Reject NUL and other C0/C1 control characters except tab/newline."""
+    for ch in value:
+        if ch in ("\t", "\n", "\r"):
+            continue
+        if ord(ch) < 0x20 or 0x7F <= ord(ch) <= 0x9F:
+            raise ValueError(f"{field} contains invalid control characters")
+    return value
+
+
+class OutputCommentCreate(BaseModel):
+    """Plain-text comment on an exact version of an output.
+
+    The browser supplies only review data: which version is being commented on,
+    the comment text, and an idempotency key. Organization, actor, and content
+    provenance are derived server-side.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    target_version_id: uuid.UUID | None = None
+    body: str = Field(..., min_length=1, max_length=4000)
+    request_id: uuid.UUID
+
+    @field_validator("body")
+    @classmethod
+    def _validate_body(cls, value: str) -> str:
+        value = _reject_control_characters(value, "Comment")
+        value = value.strip()
+        if not value:
+            raise ValueError("Comment must not be empty")
+        return value
+
+
+class OutputCorrectionCreate(BaseModel):
+    """Replacement Markdown for the current version of an output."""
+
+    model_config = {"extra": "forbid"}
+
+    base_version_id: uuid.UUID | None = None
+    markdown: str = Field(..., min_length=1, max_length=400_000)
+    change_summary: str | None = Field(default=None, max_length=2000)
+    request_id: uuid.UUID
+
+    @field_validator("markdown")
+    @classmethod
+    def _validate_markdown(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("Correction contains invalid control characters")
+        if not value.strip():
+            raise ValueError("Correction must not be empty")
+        return value
+
+    @field_validator("change_summary")
+    @classmethod
+    def _validate_change_summary(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = _reject_control_characters(value, "Change summary").strip()
+        return value or None
+
+
+class OutputCorrectionPreview(BaseModel):
+    """Draft correction Markdown rendered for preview only."""
+
+    model_config = {"extra": "forbid"}
+
+    markdown: str = Field(default="", max_length=400_000)
+
+
+class OutputApprovalCreate(BaseModel):
+    """Approval of an exact version of an output."""
+
+    model_config = {"extra": "forbid"}
+
+    target_version_id: uuid.UUID | None = None
+    request_id: uuid.UUID
+
+
 def slugify(name: str) -> str:
     s = re.sub(r"[^A-Za-z0-9]+", "-", name.strip()).strip("-").lower()
     return s[:80] or "unnamed"

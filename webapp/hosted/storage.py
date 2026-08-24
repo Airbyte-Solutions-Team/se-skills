@@ -33,6 +33,20 @@ logger = logging.getLogger(__name__)
 DEFAULT_BUCKET = "transcripts"
 OUTPUTS_BUCKET = "outputs"
 
+# Postgres role names used as the `role` claim of the server-signed Storage JWT.
+# `app_storage` carries a user subject and inherits the active-membership
+# contract. `app_storage_maintenance` carries an *organization* subject plus the
+# exact object being reconciled, and may only delete that one object under that
+# organization's path in the outputs bucket, so cleanup of an abandoned private
+# object never depends on the historical actor still being an active member.
+STORAGE_ROLE = "app_storage"
+MAINTENANCE_ROLE = "app_storage_maintenance"
+
+# JWT claim naming the single object a maintenance token may act on. The
+# maintenance policies require `storage.objects.name` to equal it, so the
+# credential cannot reach any other output even inside its own organization.
+MAINTENANCE_OBJECT_CLAIM = "maintenance_object"
+
 
 class StorageError(Exception):
     """Base class for storage backend failures."""
@@ -44,6 +58,28 @@ class ObjectNotFound(StorageError):
 
 class StorageAuthError(StorageError):
     """Raised when the caller is not authorized for the requested object."""
+
+
+def check_maintenance_target(org_id: uuid.UUID | None, path: str, bucket: str) -> None:
+    """Reject anything the Storage maintenance policies would not authorize.
+
+    Enforced in the backend as well as in SQL so the narrow contract holds for
+    the memory backend and for any caller mistake: outputs bucket only, and the
+    object's leading org path segment must equal the token subject.
+    """
+    if not org_id:
+        raise StorageAuthError("Missing organization identity")
+    if bucket != OUTPUTS_BUCKET:
+        raise StorageAuthError("Maintenance deletion is limited to the outputs bucket")
+    parts = path.split("/")
+    if not parts or not parts[0]:
+        raise StorageAuthError("Invalid object path")
+    try:
+        path_org = uuid.UUID(parts[0])
+    except ValueError as exc:
+        raise StorageAuthError("Invalid organization segment") from exc
+    if path_org != org_id:
+        raise StorageAuthError("Object is outside the maintenance organization path")
 
 
 class StorageBackend:
@@ -70,6 +106,20 @@ class StorageBackend:
         self, user_id: uuid.UUID, path: str, bucket: str = DEFAULT_BUCKET
     ) -> None:
         """Delete the object at *path* in *bucket*."""
+        raise NotImplementedError
+
+    async def delete_for_maintenance(
+        self, org_id: uuid.UUID, path: str, bucket: str = OUTPUTS_BUCKET
+    ) -> None:
+        """Delete an abandoned output object as the Storage maintenance identity.
+
+        Authorization is object-scoped rather than user-scoped: the credential is
+        minted for exactly *path*, which must live under *org_id* in the outputs
+        bucket, and it authorizes nothing else. No membership is consulted, so a
+        deactivated correction author cannot pin customer content in Storage.
+        *path* comes from the trusted cleanup claim or tombstone row, never from
+        a request body.
+        """
         raise NotImplementedError
 
     async def list_prefix(
@@ -106,24 +156,43 @@ class SupabaseStorageBackend(StorageBackend):
         self.jwt_secret = config.SUPABASE_JWT_SECRET
         self.client = httpx.AsyncClient(timeout=30)
 
-    def _storage_token(self, user_id: uuid.UUID) -> str:
-        """Return a short-lived JWT for the dedicated Storage role."""
-        now = datetime.now(timezone.utc).timestamp()
-        return jwt.encode(
-            {
-                "sub": str(user_id),
-                "role": "app_storage",
-                "iat": now,
-                "exp": now + 60,
-            },
-            self.jwt_secret,
-            algorithm="HS256",
-        )
+    def _storage_token(
+        self,
+        subject: uuid.UUID,
+        role: str = STORAGE_ROLE,
+        maintenance_object: str | None = None,
+    ) -> str:
+        """Return a short-lived JWT for a dedicated Storage role.
 
-    def _headers(self, user_id: uuid.UUID) -> dict[str, str]:
+        The subject is a user id for `app_storage` and an organization id for
+        `app_storage_maintenance`; the bucket policies read it via `auth.uid()`.
+        A maintenance token additionally carries `maintenance_object`, the exact
+        object being reconciled, which the maintenance policies require `name` to
+        equal — so the credential is scoped to one object rather than to the
+        organization's outputs.
+        """
+        now = datetime.now(timezone.utc).timestamp()
+        claims: dict[str, str | float] = {
+            "sub": str(subject),
+            "role": role,
+            "iat": now,
+            "exp": now + 60,
+        }
+        if maintenance_object is not None:
+            claims[MAINTENANCE_OBJECT_CLAIM] = maintenance_object
+        return jwt.encode(claims, self.jwt_secret, algorithm="HS256")
+
+    def _headers(
+        self,
+        user_id: uuid.UUID,
+        role: str = STORAGE_ROLE,
+        maintenance_object: str | None = None,
+    ) -> dict[str, str]:
         return {
             "apikey": self.anon_key,
-            "Authorization": f"Bearer {self._storage_token(user_id)}",
+            "Authorization": (
+                f"Bearer {self._storage_token(user_id, role, maintenance_object)}"
+            ),
         }
 
     async def upload(
@@ -209,6 +278,35 @@ class SupabaseStorageBackend(StorageBackend):
         if response.status_code >= 400:
             logger.warning(
                 "Storage delete failed for path %s: status %s", path, response.status_code
+            )
+            raise StorageError("Storage delete failed")
+
+    async def delete_for_maintenance(
+        self, org_id: uuid.UUID, path: str, bucket: str = OUTPUTS_BUCKET
+    ) -> None:
+        check_maintenance_target(org_id, path, bucket)
+        url = f"{self.base_url}/storage/v1/object/{bucket}/{path}"
+        try:
+            response = await self.client.delete(
+                url,
+                headers=self._headers(org_id, MAINTENANCE_ROLE, maintenance_object=path),
+            )
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "Storage maintenance delete request failed for path %s: %s",
+                path,
+                type(exc).__name__,
+            )
+            raise StorageError("Storage delete failed") from exc
+        if response.status_code in (401, 403):
+            raise StorageAuthError("Storage denied maintenance deletion")
+        if response.status_code == 404:
+            raise ObjectNotFound("Object not found in storage")
+        if response.status_code >= 400:
+            logger.warning(
+                "Storage maintenance delete failed for path %s: status %s",
+                path,
+                response.status_code,
             )
             raise StorageError("Storage delete failed")
 
@@ -336,6 +434,18 @@ class MemoryStorageBackend(StorageBackend):
         self, user_id: uuid.UUID | None, path: str, bucket: str = DEFAULT_BUCKET
     ) -> None:
         await self._validate(user_id, path)
+        key = f"{bucket}:{path}"
+        if key not in self.objects:
+            raise ObjectNotFound("Object not found")
+        del self.objects[key]
+        self.content_types.pop(key, None)
+
+    async def delete_for_maintenance(
+        self, org_id: uuid.UUID, path: str, bucket: str = OUTPUTS_BUCKET
+    ) -> None:
+        # Mirrors the maintenance policies: outputs bucket, org path segment
+        # equal to the token subject, and no membership lookup at all.
+        check_maintenance_target(org_id, path, bucket)
         key = f"{bucket}:{path}"
         if key not in self.objects:
             raise ObjectNotFound("Object not found")

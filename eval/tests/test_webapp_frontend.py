@@ -149,3 +149,90 @@ console.log(JSON.stringify({{issue: result.issues[0].text, escaped: docStatus.es
     assert "window.docStatus.escapeHtml(warnTitle)" in app_js
     assert 'title="${warnTitle}' not in app_js
     assert app_js.count("safeWarnTitle") >= 4
+
+
+def test_hosted_review_ui_escapes_review_text_and_reuses_reader_pipeline(repo_root: Path) -> None:
+    """The hosted review surface renders review text as escaped plain text.
+
+    Comment bodies, change summaries, and reviewer emails are user-authored, so
+    they must only ever reach the DOM through `esc()`. Version content and the
+    correction preview must go through the server renderer + `reader.js`, never
+    through a second in-browser Markdown path.
+    """
+    app_js = (repo_root / "webapp" / "static" / "app.js").read_text(encoding="utf-8")
+    subprocess.run(["node", "--check", str(repo_root / "webapp" / "static" / "app.js")], check=True)
+
+    assert "async function pageHostedOutputReview(accountId, outputId)" in app_js
+    assert 'if (parts[4] === "outputs" && parts[5])' in app_js
+
+    # User-authored review text is escaped everywhere it is rendered.
+    assert 'class="review-activity-body">${esc(entry.comment)}' in app_js
+    assert "${esc(v.change_summary)}" in app_js
+    assert "${esc(who)}" in app_js
+    assert "${esc(r.draft != null ? r.draft : r.markdown)}" in app_js
+
+    # Version content and the preview reuse the shared sanitized pipeline.
+    assert app_js.count("window.seReader.buildReaderDocument(addMdClasses(") == 2
+    assert "/versions/${encodeURIComponent(ref)}/content" in app_js
+    assert "/preview`" in app_js
+
+    # The correction preview is structured exactly like the saved-document
+    # article: the collapsible-section styling is scoped to `.md-body`, so a
+    # bare `.doc-sheet` pane would show every collapsed section's summary line
+    # on top of its own body. Its sections are wired for expand/collapse too.
+    assert 'id="review-preview-pane" class="md-body review-preview hidden"' in app_js
+    assert '<div class="doc-sheet">${doc.sheetHtml}</div>`' in app_js
+    assert "_wireReviewCollapsibles(pane)" in app_js
+    assert app_js.count("function _wireReviewCollapsibles(root)") == 1
+
+    # The browser never supplies identity, Storage paths, or provenance.
+    review_block = app_js.split("// ---- Hosted output review (Slice 6A)")[1]
+    for forbidden in (
+        "org_id",
+        "user_id",
+        "created_by:",
+        "content_storage_path",
+        "validation_status:",
+        "sidecar",
+        "storage_path",
+    ):
+        assert forbidden not in review_block, forbidden
+
+    # Corrections and approvals target an exact version and carry an
+    # idempotency key so a retry cannot duplicate a version or an approval.
+    assert "base_version_id: baseRef || null" in review_block
+    assert "r.requestId = r.requestId || _newRequestId();" in review_block
+    assert "target_version_id: currentRef === HOSTED_REVIEW_GENERATED_REF ? null : currentRef," in review_block
+
+    # A stale-base conflict keeps the unsaved draft.
+    assert "_refreshHostedReviewState({ keepDraft: true })" in review_block
+
+
+def test_api_error_detail_is_readable_for_structured_validation_failures(repo_root: Path) -> None:
+    """A structured 422 detail becomes readable text instead of `[object Object]`.
+
+    The hosted correction endpoint returns `{message, validation_errors}`, so the
+    shared `api()` helper must flatten object and list details.
+    """
+    app_js_path = repo_root / "webapp" / "static" / "app.js"
+    script = f"""
+const src = require("fs").readFileSync({str(app_js_path)!r}, "utf8");
+const start = src.indexOf("function errorDetailText");
+const end = src.indexOf("const api = async");
+eval(src.slice(start, end));
+console.log(JSON.stringify({{
+  text: errorDetailText({{detail: "plain"}}),
+  structured: errorDetailText({{detail: {{message: "Correction does not satisfy the output contract", validation_errors: ["Missing section: Source Coverage"]}}}}),
+  list: errorDetailText({{detail: [{{msg: "field required"}}]}}),
+  empty: errorDetailText({{}})
+}}));
+"""
+    result = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+    data = json.loads(result.stdout)
+    assert data["text"] == "plain"
+    assert data["structured"].splitlines() == [
+        "Correction does not satisfy the output contract",
+        "Missing section: Source Coverage",
+    ]
+    assert data["list"] == "field required"
+    assert data["empty"] == ""
