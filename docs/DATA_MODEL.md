@@ -287,10 +287,13 @@ Slice 6B2A extends the same boundary to the remaining user actions:
 evidence share one transaction and delete evidence outlives the row it
 describes) and `job_run_requested` / `job_cancel_requested` (written inside
 `public.enqueue_job` and `public.request_job_cancellation` on the branch that
-changes durable job state). Their metadata is identifiers only — account,
-opportunity, transcript, job, and `skill` — with no filename, Storage path,
-transcript content, source manifest, payload, or idempotency key, and
-`request_id` stays null because these actions carry no UUID request id. A
+changes durable job state). Their metadata is server-side identifiers only —
+account, opportunity, transcript, job — so every recorded value is a UUID and no
+client-supplied string can reach the audit log. `jobs.skill` is excluded on
+purpose: the hosted API still accepts it as unconstrained client text, and audit
+metadata must not carry a browser-controlled value. There is no filename,
+Storage path, transcript content, source manifest, payload, or idempotency key,
+and `request_id` stays null because these actions carry no UUID request id. A
 partial unique index on `(org_id, action, entity_id)` for those four actions is
 the database-side backstop against duplicate evidence from a retry or a
 concurrent request. Worker lifecycle stays out of this table: `jobs` and

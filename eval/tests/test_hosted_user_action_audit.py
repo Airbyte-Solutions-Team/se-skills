@@ -93,6 +93,16 @@ def _metadata(record: asyncpg.Record) -> dict[str, Any]:
     return json.loads(raw) if isinstance(raw, str) else dict(raw)
 
 
+def _is_uuid(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
 def _assert_no_customer_data(record: asyncpg.Record) -> None:
     blob = str(dict(record))
     for marker in _LEAK_MARKERS:
@@ -670,11 +680,12 @@ def _job_body(
     transcript_id: uuid.UUID,
     opportunity_id: uuid.UUID | None = None,
     idempotency_key: str | None = None,
+    skill: str = "post-call",
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
         "account_id": str(account_id),
         "transcript_id": str(transcript_id),
-        "skill": "post-call",
+        "skill": skill,
     }
     if opportunity_id is not None:
         body["opportunity_id"] = str(opportunity_id)
@@ -710,9 +721,47 @@ async def test_run_request_records_one_event_tied_to_the_job(
         "account_id": str(account_id),
         "transcript_id": str(transcript_id),
         "opportunity_id": None,
-        "skill": "post-call",
     }
     _assert_no_customer_data(event)
+
+
+async def test_hostile_skill_value_cannot_reach_audit_metadata(
+    app_client: TestClient, admin_pool: asyncpg.Pool
+) -> None:
+    """`JobCreate.skill` is unconstrained client text, so it is excluded from
+    audit metadata: a customer-data marker or oversized value sent in that field
+    reaches `public.jobs` but never `public.audit_events`.
+    """
+    user_id, org_id, account_id, transcript_id, _ = await _seed_job_org(
+        admin_pool, "audit-run-hostile-skill@airbyte.io"
+    )
+    hostile = "Acme Confidential Corp — renewal at risk " + ("A" * 4096)
+
+    response = app_client.post(
+        f"/api/hosted/accounts/{account_id}/jobs",
+        json=_job_body(account_id, transcript_id, skill=hostile),
+        headers=_auth_header(user_id, "audit-run-hostile-skill@airbyte.io"),
+    )
+    assert response.status_code == 201
+    job_id = uuid.UUID(response.json()["id"])
+
+    events = await _events(admin_pool, org_id, "job_run_requested")
+    assert len(events) == 1
+    metadata = _metadata(events[0])
+    assert "skill" not in metadata
+    assert set(metadata) == {"job_id", "account_id", "transcript_id", "opportunity_id"}
+    assert all(value is None or _is_uuid(value) for value in metadata.values())
+    _assert_no_customer_data(events[0])
+
+    headers = _auth_header(user_id, "audit-run-hostile-skill@airbyte.io")
+    assert (
+        app_client.post(f"/api/hosted/jobs/{job_id}/cancel", headers=headers).status_code
+        == 204
+    )
+    cancels = await _events(admin_pool, org_id, "job_cancel_requested")
+    assert len(cancels) == 1
+    assert "skill" not in _metadata(cancels[0])
+    _assert_no_customer_data(cancels[0])
 
 
 async def test_idempotent_replay_records_no_second_event(
@@ -906,7 +955,7 @@ async def test_cancelling_queued_job_records_one_event(
     assert event["entity_type"] == "jobs"
     assert event["entity_id"] == job_id
     assert _metadata(event)["transcript_id"] == str(transcript_id)
-    assert _metadata(event)["skill"] == "post-call"
+    assert "skill" not in _metadata(event)
     _assert_no_customer_data(event)
 
 

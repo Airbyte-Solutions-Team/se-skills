@@ -23,11 +23,12 @@
 -- `job_run_requested`/`job_cancel_requested` record the authenticated user's
 -- request, not every internal attempt, heartbeat, retry, or outcome.
 --
--- Audit metadata carries safe identifiers only: organization, actor, action,
--- entity, and the account/opportunity/transcript/job/skill references needed to
--- follow the workflow. No transcript content, filenames, Storage paths, source
--- manifests, payloads, prompts, generated Markdown, errors, tokens, or
--- browser-supplied idempotency strings.
+-- Audit metadata carries server-side identifiers only: organization, actor,
+-- action, entity, and the account/opportunity/transcript/job UUIDs needed to
+-- follow the workflow. Every recorded metadata value is a UUID, so no
+-- client-supplied string can reach the audit log. No transcript content,
+-- filenames, Storage paths, source manifests, payloads, prompts, generated
+-- Markdown, errors, tokens, `jobs.skill`, or idempotency strings.
 
 ALTER TABLE public.audit_events DROP CONSTRAINT IF EXISTS audit_events_action_check;
 ALTER TABLE public.audit_events ADD CONSTRAINT audit_events_action_check
@@ -149,8 +150,10 @@ CREATE TRIGGER audit_transcript_delete
 -- Job audit metadata
 --
 -- One helper for both job actions so the metadata contract is written once:
--- durable job id plus the account/transcript/opportunity/skill references
--- needed to follow the workflow. No payload, source manifest, Storage path,
+-- durable job id plus the account/transcript/opportunity UUIDs needed to follow
+-- the workflow. `jobs.skill` is deliberately excluded: the hosted API still
+-- accepts it as unconstrained client text, and audit metadata must not carry a
+-- value the browser controls. No payload, source manifest, Storage path,
 -- idempotency key, error, or token accounting.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION app_private.record_job_action_audit(
@@ -160,8 +163,7 @@ CREATE OR REPLACE FUNCTION app_private.record_job_action_audit(
     p_job_id UUID,
     p_account_id UUID,
     p_transcript_id UUID,
-    p_opportunity_id UUID,
-    p_skill TEXT
+    p_opportunity_id UUID
 )
 RETURNS VOID
 LANGUAGE plpgsql
@@ -180,15 +182,18 @@ BEGIN
             'job_id', p_job_id,
             'account_id', p_account_id,
             'transcript_id', p_transcript_id,
-            'opportunity_id', p_opportunity_id,
-            'skill', p_skill
+            'opportunity_id', p_opportunity_id
         )
     );
 END;
 $$;
 
-ALTER FUNCTION app_private.record_job_action_audit(UUID, UUID, TEXT, UUID, UUID, UUID, UUID, TEXT) OWNER TO app_admin;
-REVOKE ALL ON FUNCTION app_private.record_job_action_audit(UUID, UUID, TEXT, UUID, UUID, UUID, UUID, TEXT) FROM PUBLIC;
+-- Drop the earlier eight-argument shape if a pre-review install created it, so
+-- reapplying this migration cannot leave a skill-carrying overload behind.
+DROP FUNCTION IF EXISTS app_private.record_job_action_audit(UUID, UUID, TEXT, UUID, UUID, UUID, UUID, TEXT);
+
+ALTER FUNCTION app_private.record_job_action_audit(UUID, UUID, TEXT, UUID, UUID, UUID, UUID) OWNER TO app_admin;
+REVOKE ALL ON FUNCTION app_private.record_job_action_audit(UUID, UUID, TEXT, UUID, UUID, UUID, UUID) FROM PUBLIC;
 
 -- ---------------------------------------------------------------------------
 -- Post-call run request audit
@@ -285,7 +290,7 @@ BEGIN
         IF v_job_id IS NOT NULL THEN
             PERFORM app_private.record_job_action_audit(
                 v_org_id, v_user_id, 'job_run_requested', v_job_id, p_account_id,
-                p_transcript_id, p_opportunity_id, p_skill
+                p_transcript_id, p_opportunity_id
             );
             job_id := v_job_id;
             job_status := v_job_status;
@@ -344,7 +349,7 @@ BEGIN
 
     PERFORM app_private.record_job_action_audit(
         v_org_id, v_user_id, 'job_run_requested', v_job_id, p_account_id,
-        p_transcript_id, p_opportunity_id, p_skill
+        p_transcript_id, p_opportunity_id
     );
 
     job_id := v_job_id;
@@ -411,7 +416,7 @@ BEGIN
         END IF;
         PERFORM app_private.record_job_action_audit(
             v_job.org_id, v_user_id, 'job_cancel_requested', v_job.id,
-            v_job.account_id, v_job.transcript_id, v_job.opportunity_id, v_job.skill
+            v_job.account_id, v_job.transcript_id, v_job.opportunity_id
         );
         RETURN true;
     END IF;
@@ -428,7 +433,7 @@ BEGIN
     END IF;
     PERFORM app_private.record_job_action_audit(
         v_job.org_id, v_user_id, 'job_cancel_requested', v_job.id,
-        v_job.account_id, v_job.transcript_id, v_job.opportunity_id, v_job.skill
+        v_job.account_id, v_job.transcript_id, v_job.opportunity_id
     );
     RETURN true;
 END;

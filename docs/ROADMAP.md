@@ -434,8 +434,10 @@ review (Slice 6A) and export (Slice 6B1).
 - Actor comes from the signed tenant context and organization from trusted rows;
   forged request fields and forged context tokens cannot affect audit identity.
 - Metadata carries only organization, actor, action, entity, and
-  account/opportunity/transcript/job/skill references — no filenames, Storage
-  paths, transcript content, source manifests, payloads, or idempotency strings.
+  account/opportunity/transcript/job UUIDs, so no client-supplied string can
+  reach the audit log — no filenames, Storage paths, transcript content, source
+  manifests, payloads, idempotency strings, or the browser-supplied `skill`
+  value (a closed hosted-skill allowlist is Slice 6B2B).
 - Delete evidence survives the transcript row it describes.
 - `app_user` cannot insert, update, or delete `audit_events`; `app_worker` gains
   no audit or tenant-table access.
@@ -449,6 +451,12 @@ review (Slice 6A) and export (Slice 6B1).
 - No `memberships.role` permission contract: an authoritative admin/se/viewer
   hierarchy is a Product Owner decision, and all four actions are available to
   any active member today.
+- No closed hosted-skill allowlist: `JobCreate.skill` remains unconstrained
+  client text, so this slice keeps it out of audit metadata instead of
+  constraining it (Slice 6B2B).
+- No recovery for the inherited transcript-delete window (Storage object deleted,
+  metadata row retained, no delete event): a bounded reconciliation slice before
+  launch.
 
 ## Slice 6B2B: Admin/onboarding, observability, retention, and beta launch readiness
 
