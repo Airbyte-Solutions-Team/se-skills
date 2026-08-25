@@ -103,6 +103,28 @@ class Worker:
             )
             return False
 
+    async def cleanup_next_transcript_tombstone(self) -> bool:
+        """If the executor supports it, reconcile one tombstoned transcript.
+
+        A transcript deletion is committed as a tombstone before any Storage
+        call, so this is the path that removes the private object. Failures are
+        logged and suppressed so cleanup never blocks job processing; the row
+        stays claimable once its lease expires, so a restarted worker retries it.
+        """
+        if not hasattr(self.executor, "cleanup_next_transcript_tombstone"):
+            return False
+        try:
+            return await self.executor.cleanup_next_transcript_tombstone(
+                self.worker_name, CLEANUP_LEASE_SECONDS
+            )
+        except Exception as exc:
+            logger.warning(
+                "Worker %s transcript cleanup failed: %s",
+                self.worker_name,
+                type(exc).__name__,
+            )
+            return False
+
     async def cleanup_next_correction_upload(self) -> bool:
         """If the executor supports it, reconcile one correction upload.
 
@@ -135,12 +157,17 @@ class Worker:
                 cleaned = await self.cleanup_next_tombstone()
                 if cleaned:
                     logger.debug("Worker %s cleaned one tombstone", self.worker_name)
+                purged = await self.cleanup_next_transcript_tombstone()
+                if purged:
+                    logger.debug(
+                        "Worker %s cleaned one transcript tombstone", self.worker_name
+                    )
                 corrected = await self.cleanup_next_correction_upload()
                 if corrected:
                     logger.debug(
                         "Worker %s cleaned one correction upload", self.worker_name
                     )
-                cleaned = cleaned or corrected
+                cleaned = cleaned or purged or corrected
                 processed = await self.process_one()
                 if not processed and not cleaned and not recovered:
                     await asyncio.wait_for(self._stop.wait(), timeout=self.poll_interval)
@@ -155,6 +182,7 @@ class Worker:
         """Run a single poll cycle: recover, clean up, and claim work."""
         await self.recover_expired_leases()
         await self.cleanup_next_tombstone()
+        await self.cleanup_next_transcript_tombstone()
         await self.cleanup_next_correction_upload()
         return await self.process_one()
 

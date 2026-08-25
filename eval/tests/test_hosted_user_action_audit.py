@@ -369,7 +369,7 @@ async def test_audit_actor_is_the_authenticated_user_not_a_request_field(
 # ---------------------------------------------------------------------------
 
 
-async def test_delete_records_one_event_that_survives_the_transcript_row(
+async def test_delete_records_one_event_at_tombstone_time(
     app_client: TestClient, admin_pool: asyncpg.Pool
 ) -> None:
     user_id, org_id, account_id = await _seed_upload_ready_org(
@@ -383,7 +383,7 @@ async def test_delete_records_one_event_that_survives_the_transcript_row(
         f"/api/hosted/accounts/{account_id}/transcripts/{transcript_id}",
         headers=_auth_header(user_id, "audit-delete@airbyte.io"),
     )
-    assert response.status_code == 204
+    assert response.status_code == 202
 
     events = await _events(admin_pool, org_id, "transcript_delete")
     assert len(events) == 1
@@ -398,13 +398,16 @@ async def test_delete_records_one_event_that_survives_the_transcript_row(
     _assert_no_customer_data(event)
 
     async with admin_pool.acquire() as conn:
-        # The evidence outlives the row it describes.
-        assert (
-            await conn.fetchval(
-                "SELECT count(*) FROM public.transcripts WHERE id = $1", transcript_id
-            )
-            == 0
+        # The row survives as the tombstoned provenance anchor, and the event
+        # describes the accepted request, not a completed Storage purge.
+        row = await conn.fetchrow(
+            "SELECT tombstoned_at, cleanup_state, delete_requested_by"
+            " FROM public.transcripts WHERE id = $1",
+            transcript_id,
         )
+        assert row["tombstoned_at"] is not None
+        assert row["cleanup_state"] == "pending"
+        assert row["delete_requested_by"] == user_id
         assert (
             await conn.fetchval(
                 "SELECT count(*) FROM public.audit_events WHERE entity_id = $1",
@@ -414,46 +417,12 @@ async def test_delete_records_one_event_that_survives_the_transcript_row(
         )
 
 
-async def test_storage_delete_failure_records_no_delete_event(
+async def test_tombstone_failure_records_no_delete_event(
     app_client: TestClient, admin_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    user_id, org_id, account_id = await _seed_upload_ready_org(
-        admin_pool, "audit-delete-storage@airbyte.io"
-    )
-    upload = _upload(app_client, user_id, "audit-delete-storage@airbyte.io", account_id)
-    transcript_id = uuid.UUID(upload.json()["id"])
-
-    from hosted import storage as storage_module
-
-    async def failing_delete(*args: Any, **kwargs: Any) -> None:
-        raise storage_module.StorageError("storage delete failed")
-
-    monkeypatch.setattr(
-        app_client.app.state.storage_backend, "delete", failing_delete
-    )
-    response = app_client.delete(
-        f"/api/hosted/accounts/{account_id}/transcripts/{transcript_id}",
-        headers=_auth_header(user_id, "audit-delete-storage@airbyte.io"),
-    )
-    assert response.status_code == 502
-
-    assert await _events(admin_pool, org_id, "transcript_delete") == []
-    async with admin_pool.acquire() as conn:
-        assert (
-            await conn.fetchval(
-                "SELECT count(*) FROM public.transcripts WHERE id = $1", transcript_id
-            )
-            == 1
-        )
-
-
-async def test_metadata_delete_failure_after_storage_success_records_no_event(
-    app_client: TestClient, admin_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Inherited weakness, made explicit: Storage delete happens before the
-    metadata transaction, so a failed metadata transaction leaves an orphaned
-    metadata row whose object is gone. The API reports the failure and records
-    no delete evidence.
+    """Deletion is now one database transaction, so its failure is total: the
+    transcript stays visible, no Storage call was ever made, and no delete
+    evidence exists.
     """
     from asyncpg.connection import Connection
 
@@ -462,22 +431,30 @@ async def test_metadata_delete_failure_after_storage_success_records_no_event(
     )
     upload = _upload(app_client, user_id, "audit-delete-dbfail@airbyte.io", account_id)
     transcript_id = uuid.UUID(upload.json()["id"])
-    original_execute = Connection.execute
+    original_fetchval = Connection.fetchval
 
-    async def fake_execute(self: Any, query: str, *args: Any, **kwargs: Any) -> Any:
-        if "DELETE FROM public.transcripts" in query:
-            raise RuntimeError("metadata delete failed")
-        return await original_execute(self, query, *args, **kwargs)
+    async def fake_fetchval(self: Any, query: str, *args: Any, **kwargs: Any) -> Any:
+        if "request_transcript_deletion" in query:
+            raise asyncpg.exceptions.DeadlockDetectedError("tombstone failed")
+        return await original_fetchval(self, query, *args, **kwargs)
 
-    monkeypatch.setattr(Connection, "execute", fake_execute)
+    monkeypatch.setattr(Connection, "fetchval", fake_fetchval)
     response = app_client.delete(
         f"/api/hosted/accounts/{account_id}/transcripts/{transcript_id}",
         headers=_auth_header(user_id, "audit-delete-dbfail@airbyte.io"),
     )
-    monkeypatch.setattr(Connection, "execute", original_execute)
+    monkeypatch.setattr(Connection, "fetchval", original_fetchval)
 
     assert response.status_code == 500
     assert await _events(admin_pool, org_id, "transcript_delete") == []
+    async with admin_pool.acquire() as conn:
+        assert (
+            await conn.fetchval(
+                "SELECT tombstoned_at FROM public.transcripts WHERE id = $1",
+                transcript_id,
+            )
+            is None
+        )
 
 
 async def test_repeated_and_foreign_deletes_record_no_extra_event(
@@ -494,8 +471,10 @@ async def test_repeated_and_foreign_deletes_record_no_extra_event(
     url = f"/api/hosted/accounts/{account_id}/transcripts/{transcript_id}"
     headers = _auth_header(user_id, "audit-delete-repeat@airbyte.io")
 
-    assert app_client.delete(url, headers=headers).status_code == 204
-    assert app_client.delete(url, headers=headers).status_code == 404
+    assert app_client.delete(url, headers=headers).status_code == 202
+    replay = app_client.delete(url, headers=headers)
+    assert replay.status_code == 202
+    assert replay.json()["status"] == "already_deleted"
     assert len(await _events(admin_pool, org_id, "transcript_delete")) == 1
 
     # A member of another org cannot delete it (already gone) or a live one.
@@ -569,6 +548,8 @@ async def test_direct_app_user_transcript_dml_cannot_bypass_the_audit(
 ) -> None:
     """Direct metadata DML is audited too, and DML without a signed tenant
     context is refused by row-level security, so there is no unaudited path.
+    Deletion is no longer expressible as direct DML at all: `app_user` lost the
+    DELETE privilege, so the tombstone function is the only way to delete.
     """
     user_id, org_id, _ = await _seed_member(admin_pool, "audit-direct@airbyte.io")
     account_id = await _seed_account(admin_pool, org_id, user_id)
@@ -602,12 +583,31 @@ async def test_direct_app_user_transcript_dml_cannot_bypass_the_audit(
                 _context_token(user_id),
             )
             await conn.execute(insert, *args)
+
+        # A direct hard delete cannot skip the tombstone, its audit event, or the
+        # Storage cleanup it schedules: `app_user` lost the DELETE privilege, and
+        # the reconciliation guard rejects the statement even where the privilege
+        # survives, so the row is still there afterwards either way.
+        async with conn.transaction():
             await conn.execute(
-                "DELETE FROM public.transcripts WHERE id = $1", transcript_id
+                "SELECT set_config('app.context_token', $1, true)",
+                _context_token(user_id),
             )
+            with pytest.raises(asyncpg.PostgresError):
+                await conn.execute(
+                    "DELETE FROM public.transcripts WHERE id = $1", transcript_id
+                )
+
+    async with admin_pool.acquire() as conn:
+        assert (
+            await conn.fetchval(
+                "SELECT count(*) FROM public.transcripts WHERE id = $1", transcript_id
+            )
+            == 1
+        )
 
     events = await _events(admin_pool, org_id)
-    assert [e["action"] for e in events] == ["transcript_upload", "transcript_delete"]
+    assert [e["action"] for e in events] == ["transcript_upload"]
     for event in events:
         assert event["user_id"] == user_id
         _assert_no_customer_data(event)

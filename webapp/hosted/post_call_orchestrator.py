@@ -1018,6 +1018,115 @@ class PostCallOrchestrator:
 
         return True
 
+    async def cleanup_next_transcript_tombstone(
+        self,
+        worker_id: str,
+        lease_seconds: int = CLEANUP_LEASE_SECONDS,
+    ) -> bool:
+        """Reconcile the private object of one logically deleted transcript.
+
+        The transcript row is the durable record of the deletion request: the API
+        tombstones it before any Storage call, so this loop is what actually
+        removes the bytes. The claim function hands back only the transcript id,
+        the organization id, and the trusted Storage path, and the maintenance
+        credential minted from them reaches that single object. A failed or
+        ambiguous delete releases the claim with cleanup still `pending`, so the
+        transcript stays hidden, the deletion audit stays singular, and a
+        restarted worker retries; cleanup is only marked `complete` once the
+        object is known to be gone.
+        """
+        if not worker_id or not isinstance(worker_id, str):
+            raise CleanupError("worker_id is required")
+        if lease_seconds <= 0 or lease_seconds > 3600:
+            raise CleanupError("lease_seconds must be between 1 and 3600")
+
+        async with self.db_pool.acquire() as conn:
+            try:
+                row = await conn.fetchrow(
+                    "SELECT * FROM public.claim_next_transcript_cleanup($1, $2)",
+                    worker_id,
+                    lease_seconds,
+                )
+            except asyncpg.PostgresError as exc:
+                logger.warning(
+                    "claim_next_transcript_cleanup failed for worker %s: %s",
+                    worker_id,
+                    type(exc).__name__,
+                )
+                raise CleanupError("failed to claim transcript cleanup") from exc
+
+        if row is None or row["storage_path"] is None:
+            return False
+
+        transcript_id = row["transcript_id"]
+        try:
+            await self.storage.delete_for_maintenance(
+                row["org_id"],
+                row["storage_path"],
+                bucket=storage.DEFAULT_BUCKET,
+            )
+        except storage.ObjectNotFound:
+            pass
+        except storage.StorageError as exc:
+            await self._release_transcript_cleanup(
+                transcript_id, worker_id, type(exc).__name__
+            )
+            logger.warning(
+                "Storage delete failed for tombstoned transcript %s: %s",
+                transcript_id,
+                type(exc).__name__,
+            )
+            raise CleanupError("failed to delete tombstoned transcript object") from exc
+
+        async with self.db_pool.acquire() as conn:
+            try:
+                finalized = await conn.fetchval(
+                    "SELECT public.finalize_transcript_cleanup($1, $2)",
+                    transcript_id,
+                    worker_id,
+                )
+            except asyncpg.PostgresError as exc:
+                logger.warning(
+                    "finalize_transcript_cleanup failed for %s worker %s: %s",
+                    transcript_id,
+                    worker_id,
+                    type(exc).__name__,
+                )
+                raise CleanupError("failed to finalize transcript cleanup") from exc
+
+        if not finalized:
+            logger.warning(
+                "finalize_transcript_cleanup returned false for %s worker %s",
+                transcript_id,
+                worker_id,
+            )
+            raise CleanupError("transcript cleanup row was not finalized")
+
+        return True
+
+    async def _release_transcript_cleanup(
+        self,
+        transcript_id: uuid.UUID,
+        worker_id: str,
+        reason: str,
+    ) -> None:
+        """Drop the cleanup claim so another attempt can retry the Storage delete."""
+        async with self.db_pool.acquire() as conn:
+            try:
+                await conn.fetchval(
+                    "SELECT public.release_transcript_cleanup($1, $2, $3)",
+                    transcript_id,
+                    worker_id,
+                    reason,
+                )
+            except asyncpg.PostgresError as exc:
+                logger.warning(
+                    "release_transcript_cleanup failed for %s worker %s: %s",
+                    transcript_id,
+                    worker_id,
+                    type(exc).__name__,
+                )
+
     async def cleanup_next_correction_upload(
         self,
         worker_id: str,
@@ -1585,6 +1694,15 @@ class PostCallExecutor:
         lease_seconds: int = CLEANUP_LEASE_SECONDS,
     ) -> bool:
         return await self.orchestrator.cleanup_next_tombstone(worker_id, lease_seconds)
+
+    async def cleanup_next_transcript_tombstone(
+        self,
+        worker_id: str,
+        lease_seconds: int = CLEANUP_LEASE_SECONDS,
+    ) -> bool:
+        return await self.orchestrator.cleanup_next_transcript_tombstone(
+            worker_id, lease_seconds
+        )
 
     async def cleanup_next_correction_upload(self, worker_id: str) -> bool:
         return await self.orchestrator.cleanup_next_correction_upload(worker_id)

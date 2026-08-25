@@ -156,6 +156,21 @@ class TranscriptList(BaseModel):
     transcripts: list[TranscriptOut]
 
 
+class TranscriptDeletionAccepted(BaseModel):
+    """Result of a logical transcript deletion request.
+
+    `status` is `accepted` for the request that created the tombstone and
+    `already_deleted` for an idempotent replay. `cleanup_state` reports physical
+    Storage reconciliation: `pending` until the private object has actually been
+    removed, `complete` afterwards. An accepted deletion never claims the bytes
+    are already gone.
+    """
+
+    transcript_id: uuid.UUID
+    status: str
+    cleanup_state: str
+
+
 class JobAttemptOut(BaseModel):
     id: uuid.UUID
     attempt_number: int

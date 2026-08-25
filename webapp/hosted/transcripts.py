@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import codecs
+import json
 import logging
 import re
 import uuid
@@ -14,7 +15,12 @@ from fastapi.responses import StreamingResponse
 
 from . import config, models, storage
 from .auth import require_org, tenant_connection
-from .models import OrgContext, TranscriptList, TranscriptOut
+from .models import (
+    OrgContext,
+    TranscriptDeletionAccepted,
+    TranscriptList,
+    TranscriptOut,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -311,6 +317,7 @@ async def list_account_transcripts(
                    size_bytes, mime_type, uploaded_by, created_at, updated_at
             FROM public.transcripts
             WHERE account_id = $1 AND org_id = $2 AND opportunity_id IS NULL
+              AND tombstoned_at IS NULL
             ORDER BY created_at DESC
             """,
             account_id,
@@ -433,14 +440,18 @@ async def download_account_transcript(
     return await _download_transcript(request, account_id, None, transcript_id, org)
 
 
-@router.delete("/accounts/{account_id}/transcripts/{transcript_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/accounts/{account_id}/transcripts/{transcript_id}",
+    response_model=TranscriptDeletionAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def delete_account_transcript(
     request: Request,
     account_id: uuid.UUID,
     transcript_id: uuid.UUID,
     org: Annotated[OrgContext, Depends(require_org)],
-) -> None:
-    await _delete_transcript(request, account_id, None, transcript_id, org)
+) -> TranscriptDeletionAccepted:
+    return await _delete_transcript(request, account_id, None, transcript_id, org)
 
 
 @router.get("/accounts/{account_id}/opportunities/{opportunity_id}/transcripts", response_model=TranscriptList)
@@ -457,6 +468,7 @@ async def list_opportunity_transcripts(
                    size_bytes, mime_type, uploaded_by, created_at, updated_at
             FROM public.transcripts
             WHERE account_id = $1 AND opportunity_id = $2 AND org_id = $3
+              AND tombstoned_at IS NULL
             ORDER BY created_at DESC
             """,
             account_id,
@@ -581,7 +593,8 @@ async def download_opportunity_transcript(
 
 @router.delete(
     "/accounts/{account_id}/opportunities/{opportunity_id}/transcripts/{transcript_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=TranscriptDeletionAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
 )
 async def delete_opportunity_transcript(
     request: Request,
@@ -589,8 +602,10 @@ async def delete_opportunity_transcript(
     opportunity_id: uuid.UUID,
     transcript_id: uuid.UUID,
     org: Annotated[OrgContext, Depends(require_org)],
-) -> None:
-    await _delete_transcript(request, account_id, opportunity_id, transcript_id, org)
+) -> TranscriptDeletionAccepted:
+    return await _delete_transcript(
+        request, account_id, opportunity_id, transcript_id, org
+    )
 
 
 async def _load_transcript(
@@ -600,7 +615,13 @@ async def _load_transcript(
     opportunity_id: uuid.UUID | None,
     org_id: uuid.UUID,
 ) -> asyncpg.Record:
-    """Fetch a transcript row guarded by account/opportunity/org membership."""
+    """Fetch a live transcript row guarded by account/opportunity/org membership.
+
+    A logically deleted (tombstoned) transcript is treated as non-existent, so
+    download and delete replay behave the same as for an unknown id. RLS already
+    hides tombstones from `app_user`; the predicate is repeated here so the
+    intent is visible at the query.
+    """
     if opportunity_id is None:
         row = await conn.fetchrow(
             """
@@ -608,6 +629,7 @@ async def _load_transcript(
                    size_bytes, mime_type, uploaded_by, created_at, updated_at, storage_path
             FROM public.transcripts
             WHERE id = $1 AND account_id = $2 AND org_id = $3 AND opportunity_id IS NULL
+              AND tombstoned_at IS NULL
             """,
             transcript_id,
             account_id,
@@ -620,6 +642,7 @@ async def _load_transcript(
                    size_bytes, mime_type, uploaded_by, created_at, updated_at, storage_path
             FROM public.transcripts
             WHERE id = $1 AND account_id = $2 AND opportunity_id = $3 AND org_id = $4
+              AND tombstoned_at IS NULL
             """,
             transcript_id,
             account_id,
@@ -685,47 +708,56 @@ async def _delete_transcript(
     opportunity_id: uuid.UUID | None,
     transcript_id: uuid.UUID,
     org: OrgContext,
-) -> None:
-    backend = request.app.state.storage_backend
+) -> TranscriptDeletionAccepted:
+    """Request logical deletion of a transcript.
 
-    async with tenant_connection(request, org) as conn:
-        if opportunity_id is not None:
-            await _require_opportunity_in_account(conn, opportunity_id, account_id, org.org_id)
-        else:
-            await _require_account_in_org(conn, account_id, org.org_id)
-        row = await _load_transcript(conn, transcript_id, account_id, opportunity_id, org.org_id)
-        storage_path = row["storage_path"]
-
-    # Delete the private Storage object first. If this fails, the metadata row
-    # is unchanged and the transcript remains listable.
+    Deletion is a database mutation, not a Storage operation: one transaction
+    authorizes the request, tombstones the row, and records the
+    `transcript_delete` audit event. The transcript is hidden from every
+    user-facing path as soon as that transaction commits, and the private Storage
+    object is removed afterwards by the worker's reconciliation loop. The
+    response is therefore `202 Accepted` with the reconciliation state, never a
+    claim that the bytes are already gone.
+    """
+    pool: asyncpg.Pool = request.app.state.hosted_user_pool
     try:
-        await backend.delete(org.user.id, storage_path)
-    except storage.ObjectNotFound:
-        # Already gone; continue to clean up metadata.
-        pass
-    except storage.StorageAuthError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Storage access denied",
-        ) from exc
-    except storage.StorageError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Could not delete transcript from storage",
-        ) from exc
-
-    # Then delete the metadata row. If this transaction fails, the Storage object
-    # is already gone; the API reports failure rather than claiming success.
-    try:
-        async with tenant_connection(request, org) as conn:
-            await conn.execute(
-                "DELETE FROM public.transcripts WHERE id = $1 AND org_id = $2",
+        async with pool.acquire() as conn:
+            result = await conn.fetchval(
+                "SELECT public.request_transcript_deletion($1, $2, $3, $4)",
+                org.context_token,
+                account_id,
+                opportunity_id,
                 transcript_id,
-                org.org_id,
             )
-    except Exception as delete_exc:
-        logger.warning("Failed to delete transcript metadata %s: %s", transcript_id, delete_exc)
+    except asyncpg.PostgresError as exc:
+        if exc.sqlstate == "SE021":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Transcript has a queued or running job",
+            ) from exc
+        if exc.sqlstate == "SE020":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Transcript not found",
+            ) from exc
+        logger.warning(
+            "Transcript deletion request failed for %s: %s",
+            transcript_id,
+            type(exc).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Delete failed",
-        ) from delete_exc
+        ) from exc
+
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Delete failed",
+        )
+    payload = json.loads(result) if isinstance(result, str) else dict(result)
+    return TranscriptDeletionAccepted(
+        transcript_id=uuid.UUID(str(payload["transcript_id"])),
+        status=str(payload["status"]),
+        cleanup_state=str(payload["cleanup_state"]),
+    )
