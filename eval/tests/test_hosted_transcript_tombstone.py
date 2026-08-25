@@ -448,7 +448,7 @@ async def test_enqueue_after_tombstone_is_rejected_by_the_database(
     app_client: TestClient, admin_pool: asyncpg.Pool, user_pool: asyncpg.Pool
 ) -> None:
     """The API hides the transcript (404), and `enqueue_job` independently
-    refuses it (SE021) so no caller of the function can bypass the tombstone.
+    refuses it (SE023) so no caller of the function can bypass the tombstone.
     """
     fx = await _upload(app_client, admin_pool)
     assert _delete(app_client, fx).status_code == 202
@@ -477,7 +477,7 @@ async def test_enqueue_after_tombstone_is_rejected_by_the_database(
                 fx["account_id"],
                 fx["transcript_id"],
             )
-    assert exc_info.value.sqlstate == "SE021"
+    assert exc_info.value.sqlstate == "SE023"
 
     async with admin_pool.acquire() as conn:
         assert await conn.fetchval("SELECT count(*) FROM public.jobs") == 0

@@ -179,7 +179,7 @@ async def create_job(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Idempotency key reused with different scope",
             ) from exc
-        if exc.sqlstate == "SE021":
+        if exc.sqlstate == "SE023":
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Transcript has been deleted",

@@ -137,6 +137,7 @@ DROP TRIGGER IF EXISTS audit_transcript_delete ON public.transcripts;
 --   SE020  transcript not accessible (missing, wrong account/opportunity,
 --          another organization, or no active membership — indistinguishable)
 --   SE021  a queued or running job still references the transcript
+--   SE023  enqueue attempted against a tombstoned transcript
 CREATE OR REPLACE FUNCTION public.request_transcript_deletion(
     p_context_token TEXT,
     p_account_id UUID,
@@ -319,7 +320,7 @@ BEGIN
         RAISE EXCEPTION 'Transcript not found for this account';
     END IF;
     IF v_tombstoned_at IS NOT NULL THEN
-        RAISE EXCEPTION 'Transcript has been deleted' USING ERRCODE = 'SE021';
+        RAISE EXCEPTION 'Transcript has been deleted' USING ERRCODE = 'SE023';
     END IF;
 
     -- Validate optional opportunity belongs to the account and organization.
