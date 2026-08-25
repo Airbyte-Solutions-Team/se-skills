@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import json
 import shutil
 import uuid
 from pathlib import Path
@@ -603,8 +604,8 @@ async def test_storage_failure_keeps_the_tombstone_retryable(
     app_client: TestClient, admin_pool: asyncpg.Pool, worker_pool: asyncpg.Pool, backend: Any
 ) -> None:
     """An ambiguous Storage delete never marks cleanup complete: the claim is
-    released with a bounded error, the transcript stays hidden, and a later
-    attempt from a restarted worker finishes the job.
+    released with a bounded error and a backed-off next attempt, the transcript
+    stays hidden, and a later attempt from a restarted worker finishes the job.
     """
     fx = await _upload(app_client, admin_pool)
     assert _delete(app_client, fx).status_code == 202
@@ -628,8 +629,16 @@ async def test_storage_failure_keeps_the_tombstone_retryable(
         == []
     )
 
-    # A fresh process picks the row back up because the claim was released.
+    # A fresh process picks the row back up once the backoff comes due, and the
+    # wait is recorded on the row rather than held in worker memory.
+    assert row["cleanup_next_attempt_at"] > row["updated_at"]
     restarted = _orchestrator(worker_pool, failing)
+    assert (
+        await restarted.cleanup_next_transcript_tombstone("cleanup-worker-restarted") is False
+    )
+    await asyncio.sleep(
+        max(0.0, (row["cleanup_next_attempt_at"] - row["updated_at"]).total_seconds()) + 0.2
+    )
     assert (
         await restarted.cleanup_next_transcript_tombstone("cleanup-worker-restarted") is True
     )
@@ -642,35 +651,215 @@ async def test_storage_failure_keeps_the_tombstone_retryable(
     assert len(await _delete_events(admin_pool, fx["org_id"])) == 1
 
 
-async def test_repeated_failures_stop_being_claimed_after_max_attempts(
+async def test_repeated_failures_back_off_but_never_stop_retrying(
     app_client: TestClient, admin_pool: asyncpg.Pool, worker_pool: asyncpg.Pool, backend: Any
 ) -> None:
-    """Attempts are bounded so one poisoned row cannot spin the worker forever;
-    the row stays `pending` with its last error for operator follow-up.
+    """A Storage outage costs delay, not the deletion.
+
+    Every failure schedules the next attempt further out instead of consuming a
+    quota, so no number of transient failures can turn a tombstone into
+    permanent retention of the customer's bytes: the row stays claimable
+    forever, and the attempt that finally succeeds reconciles it.
     """
     fx = await _upload(app_client, admin_pool)
     assert _delete(app_client, fx).status_code == 202
-    failing = _worker_backend(admin_pool, backend, fail_times=10)
+    failing = _worker_backend(admin_pool, backend, fail_times=12)
 
     orchestrator = _orchestrator(worker_pool, failing)
-    for _ in range(3):
+    delays: list[float] = []
+    for attempt in range(1, 13):
         with pytest.raises(_orchestrator_module().CleanupError):
-            await orchestrator.cleanup_next_transcript_tombstone("cleanup-worker-bounded")
+            await orchestrator.cleanup_next_transcript_tombstone("cleanup-worker-backoff")
+        row = await _row(admin_pool, fx["transcript_id"])
+        assert row["cleanup_state"] == "pending"
+        assert row["cleanup_attempts"] == attempt
+        assert row["cleanup_last_error"] == "StorageError"
+        assert row["cleanup_next_attempt_at"] is not None
+        delays.append((row["cleanup_next_attempt_at"] - row["updated_at"]).total_seconds())
+        # The backoff is what makes the row temporarily unclaimable, and it is
+        # state on the row, so a restart does not reset or lose it.
+        async with worker_pool.acquire() as conn:
+            assert (
+                await conn.fetchrow(
+                    "SELECT * FROM public.claim_next_transcript_cleanup($1, $2)",
+                    "cleanup-worker-backoff",
+                    1,
+                )
+                is None
+            )
+        async with admin_pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE public.transcripts SET cleanup_next_attempt_at = now() - "
+                "interval '1 second' WHERE id = $1",
+                fx["transcript_id"],
+            )
 
-    async with worker_pool.acquire() as conn:
-        claimed = await conn.fetch(
-            "SELECT * FROM public.claim_next_transcript_cleanup($1, $2, $3)",
-            "cleanup-worker-bounded",
-            60,
-            3,
+    # Backoff grows and is capped, so retries neither hot-loop nor drift apart.
+    assert delays == sorted(delays)
+    assert 1.0 <= delays[0] <= 4.0
+    assert delays[-1] <= 3600.0
+    assert delays[-1] > delays[0]
+    assert _object_exists(failing, fx["storage_path"])
+
+    # Attempt 13 succeeds; nothing about the twelve failures blocked it.
+    assert (
+        await orchestrator.cleanup_next_transcript_tombstone("cleanup-worker-backoff") is True
+    )
+    row = await _row(admin_pool, fx["transcript_id"])
+    assert row["cleanup_state"] == "complete"
+    assert row["cleanup_attempts"] == 13
+    assert row["cleanup_next_attempt_at"] is None
+    assert not _object_exists(failing, fx["storage_path"])
+    assert len(await _delete_events(admin_pool, fx["org_id"])) == 1
+
+
+async def test_ambiguous_delete_that_actually_removed_the_object_reconciles(
+    app_client: TestClient, admin_pool: asyncpg.Pool, worker_pool: asyncpg.Pool, backend: Any
+) -> None:
+    """Storage removed the object and *then* failed the response.
+
+    The worker cannot tell that apart from "nothing happened", so the first
+    attempt must stay conservative: hidden, `pending`, retryable, no completion
+    claimed. The retry then observes `ObjectNotFound` — the desired end state —
+    and finalizes without a second audit event.
+    """
+    fx = await _upload(app_client, admin_pool)
+    assert _delete(app_client, fx).status_code == 202
+
+    hs = _hs()
+    deleting_then_failing = _worker_backend(admin_pool, backend)
+    original = deleting_then_failing.delete_for_maintenance
+
+    async def delete_then_raise(
+        org_id: uuid.UUID, path: str, bucket: str = hs.OUTPUTS_BUCKET
+    ) -> None:
+        await hs.MemoryStorageBackend.delete_for_maintenance(
+            deleting_then_failing, org_id, path, bucket=bucket
         )
-    assert claimed == []
+        raise hs.StorageError("timed out after the object was removed")
+
+    deleting_then_failing.delete_for_maintenance = delete_then_raise
+    orchestrator = _orchestrator(worker_pool, deleting_then_failing)
+    with pytest.raises(_orchestrator_module().CleanupError):
+        await orchestrator.cleanup_next_transcript_tombstone("cleanup-worker-ambiguous")
 
     row = await _row(admin_pool, fx["transcript_id"])
     assert row["cleanup_state"] == "pending"
-    assert row["cleanup_attempts"] == 3
+    assert row["cleanup_completed_at"] is None
     assert row["cleanup_last_error"] == "StorageError"
-    assert _object_exists(failing, fx["storage_path"])
+    assert not _object_exists(backend, fx["storage_path"])
+    assert (
+        app_client.get(f"{fx['prefix']}/transcripts", headers=fx["headers"]).json()[
+            "transcripts"
+        ]
+        == []
+    )
+
+    # The retry sees the object is already gone and closes the tombstone out.
+    deleting_then_failing.delete_for_maintenance = original
+    async with admin_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE public.transcripts SET cleanup_next_attempt_at = NULL WHERE id = $1",
+            fx["transcript_id"],
+        )
+    assert (
+        await orchestrator.cleanup_next_transcript_tombstone("cleanup-worker-ambiguous")
+        is True
+    )
+    row = await _row(admin_pool, fx["transcript_id"])
+    assert row["cleanup_state"] == "complete"
+    assert len(await _delete_events(admin_pool, fx["org_id"])) == 1
+
+
+async def test_finalization_failure_after_a_successful_delete_recovers(
+    app_client: TestClient, admin_pool: asyncpg.Pool, worker_pool: asyncpg.Pool, backend: Any
+) -> None:
+    """Storage and Postgres share no transaction, so the bytes can be gone while
+    the completion write fails. The transcript must stay hidden and tombstoned,
+    the absent object must not be recreated, and a later worker must rediscover
+    the row once the lease expires and finalize it after observing absence.
+    """
+    fx = await _upload(app_client, admin_pool)
+    assert _delete(app_client, fx).status_code == 202
+
+    worker_backend = _worker_backend(admin_pool, backend)
+    orchestrator = _orchestrator(worker_pool, worker_backend)
+
+    async def failing_finalize(transcript_id: uuid.UUID, worker_id: str) -> bool:
+        raise _orchestrator_module().CleanupError("failed to finalize transcript cleanup")
+
+    orchestrator._finalize_transcript_cleanup = failing_finalize
+    with pytest.raises(_orchestrator_module().CleanupError):
+        await orchestrator.cleanup_next_transcript_tombstone(
+            "cleanup-worker-finalize-fail", lease_seconds=1
+        )
+
+    row = await _row(admin_pool, fx["transcript_id"])
+    assert row["tombstoned_at"] is not None
+    assert row["cleanup_state"] == "pending"
+    assert row["cleanup_completed_at"] is None
+    assert row["cleanup_claimed_by"] == "cleanup-worker-finalize-fail"
+    assert not _object_exists(backend, fx["storage_path"])
+    assert (
+        app_client.get(f"{fx['prefix']}/transcripts", headers=fx["headers"]).json()[
+            "transcripts"
+        ]
+        == []
+    )
+
+    # A restarted worker reclaims the row after the lease expires. The object is
+    # already absent, so reconciliation completes without re-creating anything.
+    await asyncio.sleep(1.2)
+    restarted_backend = _worker_backend(admin_pool, backend)
+    restarted = _orchestrator(worker_pool, restarted_backend)
+    assert (
+        await restarted.cleanup_next_transcript_tombstone(
+            "cleanup-worker-restarted", lease_seconds=1
+        )
+        is True
+    )
+    row = await _row(admin_pool, fx["transcript_id"])
+    assert row["cleanup_state"] == "complete"
+    assert row["cleanup_completed_at"] is not None
+    assert not _object_exists(backend, fx["storage_path"])
+    assert len(await _delete_events(admin_pool, fx["org_id"])) == 1
+
+
+async def test_queued_job_input_cannot_be_physically_reconciled(
+    app_client: TestClient, admin_pool: asyncpg.Pool, worker_pool: asyncpg.Pool, backend: Any
+) -> None:
+    """A transcript owned by a queued or running job is never reachable by the
+    cleanup claim, because the only way into `cleanup_state = 'pending'` is a
+    tombstone, and tombstoning is refused while such a job exists.
+    """
+    for status_name in ("queued", "running"):
+        fx = await _upload(app_client, admin_pool)
+        await _seed_job(admin_pool, fx, status_name)
+        assert _delete(app_client, fx).status_code == 409
+
+        row = await _row(admin_pool, fx["transcript_id"])
+        assert row["tombstoned_at"] is None
+        assert row["cleanup_state"] == "none"
+
+        orchestrator = _orchestrator(worker_pool, _worker_backend(admin_pool, backend))
+        assert (
+            await orchestrator.cleanup_next_transcript_tombstone("cleanup-worker-owned")
+            is False
+        )
+        assert _object_exists(backend, fx["storage_path"])
+
+        # Once the job reaches a terminal state the input may be reconciled.
+        async with admin_pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE public.jobs SET status = 'success' WHERE transcript_id = $1",
+                fx["transcript_id"],
+            )
+        assert _delete(app_client, fx).status_code == 202
+        assert (
+            await orchestrator.cleanup_next_transcript_tombstone("cleanup-worker-owned")
+            is True
+        )
+        assert not _object_exists(backend, fx["storage_path"])
 
 
 async def test_live_claim_is_not_stolen_and_expired_claim_is_reclaimed(
@@ -709,10 +898,11 @@ async def test_live_claim_is_not_stolen_and_expired_claim_is_reclaimed(
         )
         assert (
             await conn.fetchval(
-                "SELECT public.release_transcript_cleanup($1, $2, $3)",
+                "SELECT public.release_transcript_cleanup($1, $2, $3, $4)",
                 fx["transcript_id"],
                 "worker-b",
                 "not mine",
+                3600,
             )
             is False
         )
@@ -801,7 +991,16 @@ async def test_worker_loop_reconciles_tombstones_and_suppresses_failures(
     worker = Worker(worker_pool, executor=executor, worker_name="tombstone-loop-worker")
 
     assert await worker.cleanup_next_transcript_tombstone() is False
-    assert (await _row(admin_pool, fx["transcript_id"]))["cleanup_state"] == "pending"
+    row = await _row(admin_pool, fx["transcript_id"])
+    assert row["cleanup_state"] == "pending"
+    assert row["cleanup_next_attempt_at"] is not None
+
+    # The next poll cycle that runs after the backoff comes due reconciles it.
+    async with admin_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE public.transcripts SET cleanup_next_attempt_at = now() WHERE id = $1",
+            fx["transcript_id"],
+        )
     assert await worker.run_once() is False
 
     row = await _row(admin_pool, fx["transcript_id"])
@@ -826,10 +1025,172 @@ async def test_worker_role_reaches_transcripts_only_through_the_functions(
     async with worker_pool.acquire() as conn:
         assert await conn.fetchval(
             "SELECT has_function_privilege('app_worker', "
-            "'public.claim_next_transcript_cleanup(text,integer,integer)', 'EXECUTE')"
+            "'public.claim_next_transcript_cleanup(text,integer)', 'EXECUTE')"
         )
         with pytest.raises(asyncpg.InsufficientPrivilegeError):
             await conn.fetchval("SELECT count(*) FROM public.transcripts")
+
+
+async def test_transcript_maintenance_policies_are_scoped_to_the_exact_object(
+    superuser_pool: asyncpg.Pool, admin_pool: asyncpg.Pool
+) -> None:
+    """Exercise the real Storage policies as the transcript maintenance role.
+
+    The capability the cleanup worker mints is a credential for one
+    `{org, bucket, object}` triple. Positively: it may read and delete exactly
+    the tombstoned transcript it was minted for, even though the uploader's
+    membership is inactive. Negatively: it reaches no other transcript in the
+    same organization, no other organization, no outputs object, cannot insert
+    or update, and authorizes nothing when either claim is missing or wrong.
+    """
+    user_id, org_id, _ = await _seed_member(
+        admin_pool, f"tomb-maint-{uuid.uuid4().hex[:8]}@airbyte.io"
+    )
+    other_org = uuid.uuid4()
+    target = f"{org_id}/acct/{uuid.uuid4()}.txt"
+    sibling = f"{org_id}/acct/{uuid.uuid4()}.txt"
+    cross_org = f"{other_org}/acct/{uuid.uuid4()}.txt"
+    output_path = f"{org_id}/acct/transcript/output/output.md"
+    async with admin_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE public.memberships SET active = false WHERE user_id = $1", user_id
+        )
+
+    def _claims(
+        subject: uuid.UUID,
+        obj: str | None = target,
+        bucket: str | None = _hs().DEFAULT_BUCKET,
+    ) -> str:
+        claims: dict[str, str] = {"sub": str(subject)}
+        if obj is not None:
+            claims[_hs().MAINTENANCE_OBJECT_CLAIM] = obj
+        if bucket is not None:
+            claims[_hs().MAINTENANCE_BUCKET_CLAIM] = bucket
+        return json.dumps(claims)
+
+    async def _as_maintenance(
+        subject: uuid.UUID,
+        sql: str,
+        *args: Any,
+        obj: str | None = target,
+        bucket: str | None = _hs().DEFAULT_BUCKET,
+    ) -> None:
+        async with superuser_pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute("SET LOCAL ROLE app_storage_maintenance")
+                await conn.execute("SET LOCAL search_path = 'auth, storage, public'")
+                await conn.execute(
+                    "SELECT set_config('request.jwt.claims', $1, true)",
+                    _claims(subject, obj, bucket),
+                )
+                await conn.execute(sql, *args)
+
+    async def _visible(
+        subject: uuid.UUID,
+        name: str,
+        obj: str | None = target,
+        bucket: str | None = _hs().DEFAULT_BUCKET,
+    ) -> bool:
+        async with superuser_pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute("SET LOCAL ROLE app_storage_maintenance")
+                await conn.execute("SET LOCAL search_path = 'auth, storage, public'")
+                await conn.execute(
+                    "SELECT set_config('request.jwt.claims', $1, true)",
+                    _claims(subject, obj, bucket),
+                )
+                return await conn.fetchval(
+                    "SELECT EXISTS (SELECT 1 FROM storage.objects WHERE name = $1)", name
+                )
+
+    async def _exists(bucket: str, name: str) -> bool:
+        async with superuser_pool.acquire() as conn:
+            return await conn.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM storage.objects "
+                "WHERE bucket_id = $1 AND name = $2)",
+                bucket,
+                name,
+            )
+
+    async with superuser_pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO storage.objects (bucket_id, name) VALUES "
+            "('transcripts', $1), ('transcripts', $2), ('transcripts', $3), ('outputs', $4)",
+            target,
+            sibling,
+            cross_org,
+            output_path,
+        )
+
+    try:
+        # Insert and update are denied outright: cleanup can only remove.
+        for sql, args in (
+            (
+                "INSERT INTO storage.objects (bucket_id, name) VALUES ('transcripts', $1)",
+                (f"{org_id}/acct/{uuid.uuid4()}.txt",),
+            ),
+            ("UPDATE storage.objects SET name = 'x' WHERE name = $1", (target,)),
+        ):
+            with pytest.raises(asyncpg.InsufficientPrivilegeError):
+                await _as_maintenance(org_id, sql, *args)
+
+        # Another transcript in the same org, another org, and outputs are all
+        # invisible and untouchable with this credential.
+        for bucket, name in (
+            (_hs().DEFAULT_BUCKET, sibling),
+            (_hs().DEFAULT_BUCKET, cross_org),
+            (_hs().OUTPUTS_BUCKET, output_path),
+        ):
+            assert await _visible(org_id, name) is False
+            await _as_maintenance(
+                org_id,
+                "DELETE FROM storage.objects WHERE bucket_id = $1 AND name = $2",
+                bucket,
+                name,
+            )
+            assert await _exists(bucket, name) is True
+
+        # A token minted for the sibling object, or for another org, does not
+        # reach the target either.
+        assert await _visible(org_id, target, obj=sibling) is False
+        await _as_maintenance(
+            org_id, "DELETE FROM storage.objects WHERE name = $1", target, obj=sibling
+        )
+        assert await _visible(other_org, target) is False
+        await _as_maintenance(other_org, "DELETE FROM storage.objects WHERE name = $1", target)
+        assert await _exists(_hs().DEFAULT_BUCKET, target) is True
+
+        # Missing or wrong claims authorize nothing, so the transcripts and
+        # outputs cleanup paths cannot borrow each other's capability.
+        for obj, bucket in (
+            (None, _hs().DEFAULT_BUCKET),
+            (target, None),
+            (target, _hs().OUTPUTS_BUCKET),
+        ):
+            assert await _visible(org_id, target, obj=obj, bucket=bucket) is False
+            await _as_maintenance(
+                org_id,
+                "DELETE FROM storage.objects WHERE name = $1",
+                target,
+                obj=obj,
+                bucket=bucket,
+            )
+            assert await _exists(_hs().DEFAULT_BUCKET, target) is True
+
+        # The allowed case: the exact claimed transcript object, with no active
+        # membership behind it. The pre-delete lookup the Storage API performs is
+        # visible for this object only, and the delete succeeds.
+        assert await _visible(org_id, target) is True
+        await _as_maintenance(org_id, "DELETE FROM storage.objects WHERE name = $1", target)
+        assert await _exists(_hs().DEFAULT_BUCKET, target) is False
+        assert await _exists(_hs().DEFAULT_BUCKET, sibling) is True
+        assert await _exists(_hs().OUTPUTS_BUCKET, output_path) is True
+    finally:
+        async with superuser_pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM storage.objects WHERE name = ANY($1::text[])",
+                [target, sibling, cross_org, output_path],
+            )
 
 
 # ---------------------------------------------------------------------------

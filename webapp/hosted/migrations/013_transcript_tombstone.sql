@@ -36,7 +36,8 @@ ALTER TABLE public.transcripts
     ADD COLUMN IF NOT EXISTS cleanup_attempts INTEGER NOT NULL DEFAULT 0,
     ADD COLUMN IF NOT EXISTS cleanup_claimed_by TEXT,
     ADD COLUMN IF NOT EXISTS cleanup_claimed_at TIMESTAMPTZ,
-    ADD COLUMN IF NOT EXISTS cleanup_last_error TEXT;
+    ADD COLUMN IF NOT EXISTS cleanup_last_error TEXT,
+    ADD COLUMN IF NOT EXISTS cleanup_next_attempt_at TIMESTAMPTZ;
 
 ALTER TABLE public.transcripts DROP CONSTRAINT IF EXISTS transcripts_cleanup_state_check;
 ALTER TABLE public.transcripts ADD CONSTRAINT transcripts_cleanup_state_check
@@ -52,8 +53,10 @@ ALTER TABLE public.transcripts ADD CONSTRAINT transcripts_tombstone_cleanup_chec
     );
 
 -- Partial index for the worker's claim scan; live transcripts stay out of it.
+-- `cleanup_next_attempt_at` leads because the claim orders by due time.
+DROP INDEX IF EXISTS public.idx_transcripts_cleanup_pending;
 CREATE INDEX IF NOT EXISTS idx_transcripts_cleanup_pending
-    ON public.transcripts(tombstoned_at)
+    ON public.transcripts(cleanup_next_attempt_at NULLS FIRST, tombstoned_at)
     WHERE cleanup_state = 'pending';
 
 -- ---------------------------------------------------------------------------
@@ -222,6 +225,7 @@ BEGIN
         cleanup_claimed_by = NULL,
         cleanup_claimed_at = NULL,
         cleanup_last_error = NULL,
+        cleanup_next_attempt_at = NULL,
         updated_at = now()
     WHERE t.id = v_row.id;
 
@@ -441,10 +445,19 @@ GRANT EXECUTE ON FUNCTION public.enqueue_job(TEXT, UUID, UUID, UUID, TEXT, TEXT,
 -- or the Storage tables. Authorization for the object delete comes from an
 -- exact-target `{org, bucket, path}` maintenance credential minted server-side,
 -- so cleanup never depends on the requester still being an active member.
-CREATE OR REPLACE FUNCTION public.claim_next_transcript_cleanup(
+--
+-- Retries are unbounded on purpose. A tombstoned transcript's bytes must end up
+-- deleted, so "we gave up after N attempts" would turn a transient Storage
+-- outage into permanent retention of customer content with no recovery path.
+-- Instead a failed attempt schedules the next one with capped exponential
+-- backoff (`cleanup_next_attempt_at`), so an outage costs delay rather than the
+-- deletion itself, and `cleanup_attempts` / `cleanup_last_error` remain as the
+-- signal that a tombstone is struggling.
+DROP FUNCTION IF EXISTS public.claim_next_transcript_cleanup(TEXT, INTEGER, INTEGER);
+DROP FUNCTION IF EXISTS public.claim_next_transcript_cleanup(TEXT, INTEGER);
+CREATE FUNCTION public.claim_next_transcript_cleanup(
     p_worker_id TEXT,
-    p_lease_seconds INTEGER DEFAULT 60,
-    p_max_attempts INTEGER DEFAULT 10
+    p_lease_seconds INTEGER DEFAULT 60
 )
 RETURNS TABLE(
     transcript_id UUID,
@@ -473,10 +486,10 @@ BEGIN
     FROM public.transcripts t
     WHERE t.cleanup_state = 'pending'
       AND t.tombstoned_at IS NOT NULL
-      AND t.cleanup_attempts < p_max_attempts
+      AND (t.cleanup_next_attempt_at IS NULL OR t.cleanup_next_attempt_at <= now())
       AND (t.cleanup_claimed_at IS NULL
            OR t.cleanup_claimed_at < now() - make_interval(secs => p_lease_seconds))
-    ORDER BY t.tombstoned_at
+    ORDER BY t.cleanup_next_attempt_at NULLS FIRST, t.tombstoned_at
     FOR UPDATE SKIP LOCKED
     LIMIT 1;
 
@@ -497,9 +510,9 @@ BEGIN
 END;
 $$;
 
-ALTER FUNCTION public.claim_next_transcript_cleanup(TEXT, INTEGER, INTEGER) OWNER TO app_admin;
-REVOKE ALL ON FUNCTION public.claim_next_transcript_cleanup(TEXT, INTEGER, INTEGER) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.claim_next_transcript_cleanup(TEXT, INTEGER, INTEGER) TO app_worker;
+ALTER FUNCTION public.claim_next_transcript_cleanup(TEXT, INTEGER) OWNER TO app_admin;
+REVOKE ALL ON FUNCTION public.claim_next_transcript_cleanup(TEXT, INTEGER) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.claim_next_transcript_cleanup(TEXT, INTEGER) TO app_worker;
 
 -- Physical reconciliation is finished: the object is gone (deleted now, or
 -- already absent). The row stays as the tombstoned provenance anchor; only
@@ -521,6 +534,7 @@ BEGIN
         cleanup_claimed_by = NULL,
         cleanup_claimed_at = NULL,
         cleanup_last_error = NULL,
+        cleanup_next_attempt_at = NULL,
         updated_at = now()
     WHERE id = p_transcript_id
       AND tombstoned_at IS NOT NULL
@@ -536,24 +550,33 @@ GRANT EXECUTE ON FUNCTION public.finalize_transcript_cleanup(UUID, TEXT) TO app_
 
 -- Release a claim whose Storage delete failed or whose outcome is unknown. The
 -- row stays `pending` — an ambiguous Storage result is never recorded as
--- reconciled — and becomes immediately claimable again. The error is a bounded,
--- redacted category string (an exception class name), never a raw error, path,
--- or response body.
+-- reconciled — and is scheduled for another attempt with capped exponential
+-- backoff (2s, 4s, 8s, … up to `p_backoff_cap_seconds`, default one hour), so a
+-- Storage outage delays reconciliation instead of abandoning it. There is no
+-- attempt ceiling and no terminal failure state: the only way out of `pending`
+-- is the object being gone. The error is a bounded, redacted category string (an
+-- exception class name), never a raw error, path, or response body.
 CREATE OR REPLACE FUNCTION public.release_transcript_cleanup(
     p_transcript_id UUID,
     p_worker_id TEXT,
-    p_error TEXT
+    p_error TEXT,
+    p_backoff_cap_seconds INTEGER DEFAULT 3600
 )
 RETURNS BOOLEAN
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = ''
 AS $$
+DECLARE
+    v_cap INTEGER := GREATEST(COALESCE(p_backoff_cap_seconds, 3600), 1);
 BEGIN
     UPDATE public.transcripts
     SET cleanup_claimed_by = NULL,
         cleanup_claimed_at = NULL,
         cleanup_last_error = left(COALESCE(p_error, ''), 200),
+        cleanup_next_attempt_at = now() + make_interval(
+            secs => LEAST(v_cap, (2 ^ LEAST(cleanup_attempts, 20))::numeric)::double precision
+        ),
         updated_at = now()
     WHERE id = p_transcript_id
       AND cleanup_state = 'pending'
@@ -562,9 +585,10 @@ BEGIN
 END;
 $$;
 
-ALTER FUNCTION public.release_transcript_cleanup(UUID, TEXT, TEXT) OWNER TO app_admin;
-REVOKE ALL ON FUNCTION public.release_transcript_cleanup(UUID, TEXT, TEXT) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.release_transcript_cleanup(UUID, TEXT, TEXT) TO app_worker;
+DROP FUNCTION IF EXISTS public.release_transcript_cleanup(UUID, TEXT, TEXT);
+ALTER FUNCTION public.release_transcript_cleanup(UUID, TEXT, TEXT, INTEGER) OWNER TO app_admin;
+REVOKE ALL ON FUNCTION public.release_transcript_cleanup(UUID, TEXT, TEXT, INTEGER) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.release_transcript_cleanup(UUID, TEXT, TEXT, INTEGER) TO app_worker;
 
 -- ---------------------------------------------------------------------------
 -- Exact-target Storage maintenance, now bucket-bound

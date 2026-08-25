@@ -1030,10 +1030,14 @@ class PostCallOrchestrator:
         removes the bytes. The claim function hands back only the transcript id,
         the organization id, and the trusted Storage path, and the maintenance
         credential minted from them reaches that single object. A failed or
-        ambiguous delete releases the claim with cleanup still `pending`, so the
-        transcript stays hidden, the deletion audit stays singular, and a
-        restarted worker retries; cleanup is only marked `complete` once the
-        object is known to be gone.
+        ambiguous delete releases the claim with cleanup still `pending` and a
+        backed-off next attempt, so the transcript stays hidden, the deletion
+        audit stays singular, and a later attempt or a restarted worker retries
+        it — there is no attempt ceiling, because giving up would leave customer
+        bytes in Storage forever. Cleanup is only marked `complete` once the
+        object is known to be gone, so a delete whose outcome is unknown, or one
+        whose finalization fails, is simply retried and observes
+        `ObjectNotFound` the next time round.
         """
         if not worker_id or not isinstance(worker_id, str):
             raise CleanupError("worker_id is required")
@@ -1078,9 +1082,32 @@ class PostCallOrchestrator:
             )
             raise CleanupError("failed to delete tombstoned transcript object") from exc
 
+        finalized = await self._finalize_transcript_cleanup(transcript_id, worker_id)
+
+        if not finalized:
+            logger.warning(
+                "finalize_transcript_cleanup returned false for %s worker %s",
+                transcript_id,
+                worker_id,
+            )
+            raise CleanupError("transcript cleanup row was not finalized")
+
+        return True
+
+    async def _finalize_transcript_cleanup(
+        self,
+        transcript_id: uuid.UUID,
+        worker_id: str,
+    ) -> bool:
+        """Record that the private object is gone, if we still own the claim.
+
+        Separate from the caller so a failure here is a single, testable step:
+        the object is already absent, the row is still `pending` and hidden, and
+        the next attempt finalizes it after observing `ObjectNotFound`.
+        """
         async with self.db_pool.acquire() as conn:
             try:
-                finalized = await conn.fetchval(
+                return await conn.fetchval(
                     "SELECT public.finalize_transcript_cleanup($1, $2)",
                     transcript_id,
                     worker_id,
@@ -1093,16 +1120,6 @@ class PostCallOrchestrator:
                     type(exc).__name__,
                 )
                 raise CleanupError("failed to finalize transcript cleanup") from exc
-
-        if not finalized:
-            logger.warning(
-                "finalize_transcript_cleanup returned false for %s worker %s",
-                transcript_id,
-                worker_id,
-            )
-            raise CleanupError("transcript cleanup row was not finalized")
-
-        return True
 
     async def _release_transcript_cleanup(
         self,

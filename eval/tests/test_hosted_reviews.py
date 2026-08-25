@@ -1551,23 +1551,40 @@ async def test_maintenance_storage_token_is_org_scoped_and_server_only(
     from hosted import storage as storage_module
 
     org_id = uuid.uuid4()
-    target = f"{org_id}/acct/transcript/output/versions/{uuid.uuid4()}/output.md"
     supabase_backend = storage_module.SupabaseStorageBackend()
-    token = supabase_backend._storage_token(
-        org_id, storage_module.MAINTENANCE_ROLE, maintenance_object=target
-    )
-    claims = pyjwt.decode(token, hosted_env["SUPABASE_JWT_SECRET"], algorithms=["HS256"])
-    assert claims["role"] == storage_module.MAINTENANCE_ROLE == "app_storage_maintenance"
-    assert claims["sub"] == str(org_id)
-    assert claims[storage_module.MAINTENANCE_OBJECT_CLAIM] == target
 
-    # A normal `app_storage` token never carries the maintenance claim.
+    # Both private buckets are reachable by maintenance, and a production-valid
+    # token for either one names the bucket *and* the object, because the Storage
+    # policies require both claims to match.
+    for bucket, target in (
+        (
+            storage_module.OUTPUTS_BUCKET,
+            f"{org_id}/acct/transcript/output/versions/{uuid.uuid4()}/output.md",
+        ),
+        (storage_module.DEFAULT_BUCKET, f"{org_id}/acct/{uuid.uuid4()}.txt"),
+    ):
+        token = supabase_backend._storage_token(
+            org_id,
+            storage_module.MAINTENANCE_ROLE,
+            maintenance_object=target,
+            maintenance_bucket=bucket,
+        )
+        claims = pyjwt.decode(token, hosted_env["SUPABASE_JWT_SECRET"], algorithms=["HS256"])
+        assert claims["role"] == storage_module.MAINTENANCE_ROLE == "app_storage_maintenance"
+        assert claims["sub"] == str(org_id)
+        assert claims[storage_module.MAINTENANCE_OBJECT_CLAIM] == target
+        assert claims[storage_module.MAINTENANCE_BUCKET_CLAIM] == bucket
+
+    # A normal `app_storage` token carries neither maintenance claim, so an
+    # ordinary request identity can never satisfy a maintenance policy.
     user_claims = pyjwt.decode(
         supabase_backend._storage_token(uuid.uuid4()),
         hosted_env["SUPABASE_JWT_SECRET"],
         algorithms=["HS256"],
     )
     assert storage_module.MAINTENANCE_OBJECT_CLAIM not in user_claims
+    assert storage_module.MAINTENANCE_BUCKET_CLAIM not in user_claims
+    assert user_claims["role"] != storage_module.MAINTENANCE_ROLE
 
     # No browser-visible surface carries the storage secret or a storage token.
     fx = await _seed_reviewable_output(admin_pool, backend)

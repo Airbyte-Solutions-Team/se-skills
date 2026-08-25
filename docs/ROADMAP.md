@@ -486,6 +486,10 @@ are still there.
   (`claim_next_transcript_cleanup`/`finalize_transcript_cleanup`/`release_transcript_cleanup`)
   deletes the exact private object with the `app_storage_maintenance` identity,
   which now also requires a `maintenance_bucket` claim.
+- Reconciliation retries are unbounded with capped exponential backoff stored on
+  the row (`cleanup_next_attempt_at`). There is deliberately no attempt ceiling
+  and no terminal failure state, because an exhausted budget would leave content
+  the customer deleted in Storage indefinitely with no recovery path.
 - A `BEFORE DELETE` guard rejects physical deletion of a transcript row that is
   not tombstoned and reconciled.
 
@@ -500,6 +504,13 @@ are still there.
 - A concurrent duplicate delete, a delete/enqueue race, a Storage failure, an
   expired lease, a worker restart, and a deactivated requester all resolve to one
   audit event, one deleted object, and no false completion.
+- A long run of transient Storage failures never strands the bytes: attempts back
+  off, the tombstone stays claimable, and a later attempt reconciles it.
+- A Storage delete that succeeds and then fails (ambiguous response, or a failed
+  completion write) leaves the row hidden and `pending`, does not recreate the
+  object, and is finalized by a subsequent attempt that observes its absence.
+- A transcript owned by a `queued` or `running` job is never physically
+  reconciled, because tombstoning is refused while such a job exists.
 - Cleanup marks `complete` only after the object is known deleted or already
   absent, and only for the worker that still owns the claim.
 - Maintenance credentials authorize exactly one `{organization, bucket, object}`
