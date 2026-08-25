@@ -63,7 +63,9 @@ async def test_member_can_upload_list_download_delete_transcript(
         f"/api/hosted/accounts/{account_id}/transcripts/{transcript['id']}",
         headers=auth,
     )
-    assert delete.status_code == 204
+    assert delete.status_code == 202
+    assert delete.json()["status"] == "accepted"
+    assert delete.json()["cleanup_state"] == "pending"
 
     response = app_client.get(
         f"/api/hosted/accounts/{account_id}/transcripts", headers=auth
@@ -788,9 +790,14 @@ async def test_storage_bucket_public_is_forced_private_by_migration(
                 "UPDATE storage.buckets SET public = true WHERE name = 'transcripts'"
             )
 
-    # Re-run migration 002; it must force the bucket private.
+    # Re-run migration 002; it must force the bucket private. Migration 013 is
+    # replayed with it because 002 restores the pre-tombstone transcript grants
+    # and policy that 013 narrows; replaying both leaves the session database on
+    # the current boundary instead of an intermediate one.
     async with superuser_pool.acquire() as conn:
-        await conn.execute("DELETE FROM public.schema_migrations WHERE version = '002'")
+        await conn.execute(
+            "DELETE FROM public.schema_migrations WHERE version IN ('002', '013')"
+        )
 
     import hosted.config
 
@@ -1161,9 +1168,13 @@ async def test_upload_cleans_up_object_when_transaction_finalization_fails(
 
 @pytest.mark.hosted
 @pytest.mark.slow
-async def test_delete_metadata_failure_leaves_transcript_listable(
+async def test_delete_tombstone_failure_leaves_transcript_and_object_intact(
     app_client: TestClient, admin_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Deletion is one database transaction that tombstones the row before any
+    Storage call, so its failure leaves the transcript listable *and* its private
+    object present — the state a user can retry from.
+    """
     from asyncpg import Connection
 
     user_id, org_id, _ = await _seed_member(admin_pool, "delete-meta@airbyte.io")
@@ -1178,14 +1189,14 @@ async def test_delete_metadata_failure_leaves_transcript_listable(
     assert upload.status_code == 201
     transcript_id = upload.json()["id"]
 
-    original_execute = Connection.execute
+    original_fetchval = Connection.fetchval
 
-    async def fake_execute(self: Any, query: Any, *args: Any, **kwargs: Any) -> Any:
-        if isinstance(query, str) and "DELETE FROM public.transcripts" in query:
-            raise RuntimeError("simulated metadata delete failure")
-        return await original_execute(self, query, *args, **kwargs)
+    async def fake_fetchval(self: Any, query: Any, *args: Any, **kwargs: Any) -> Any:
+        if isinstance(query, str) and "request_transcript_deletion" in query:
+            raise asyncpg.exceptions.DeadlockDetectedError("simulated tombstone failure")
+        return await original_fetchval(self, query, *args, **kwargs)
 
-    monkeypatch.setattr(Connection, "execute", fake_execute)
+    monkeypatch.setattr(Connection, "fetchval", fake_fetchval)
 
     delete = app_client.delete(
         f"/api/hosted/accounts/{account_id}/transcripts/{transcript_id}",
@@ -1193,12 +1204,14 @@ async def test_delete_metadata_failure_leaves_transcript_listable(
     )
     assert delete.status_code == 500
 
+    monkeypatch.setattr(Connection, "fetchval", original_fetchval)
+
     list_resp = app_client.get(
         f"/api/hosted/accounts/{account_id}/transcripts", headers=auth
     )
     assert len(list_resp.json()["transcripts"]) == 1
     assert list_resp.json()["transcripts"][0]["id"] == transcript_id
-    assert not any(
+    assert any(
         v == b"keep" for v in app_client.app.state.storage_backend.objects.values()
     )
 
@@ -1258,7 +1271,11 @@ async def test_storage_migration_fails_when_authenticator_missing(
                 await conn.execute("GRANT USAGE ON SCHEMA public, storage, auth TO authenticator")
                 await conn.execute("ALTER ROLE authenticator SET search_path = 'auth, storage, public'")
                 await conn.execute("GRANT app_storage TO authenticator")
-                await conn.execute("DELETE FROM public.schema_migrations WHERE version = '002'")
+                # 013 is replayed with 002 because 002 restores the pre-tombstone
+                # transcript grants and policy that 013 narrows.
+                await conn.execute(
+                    "DELETE FROM public.schema_migrations WHERE version IN ('002', '013')"
+                )
 
         await migrations.migrate(
             admin_dsn,

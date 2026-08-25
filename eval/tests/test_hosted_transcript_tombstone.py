@@ -1,0 +1,1536 @@
+"""Slice 6B2A1 tests: transcript deletion tombstone + Storage reconciliation.
+
+These run against a real Postgres container with the versioned migrations
+applied, so the boundary exercised is the production one:
+
+    authenticated FastAPI -> tenant-scoped `app_user` connection
+    -> `public.request_transcript_deletion` (tombstone + audit, one transaction)
+    -> worker claim -> exact-target Storage credential -> `cleanup_state`
+
+All data is synthetic. The transcript row survives deletion as the provenance
+anchor terminal jobs, outputs, and audit events reference; only the private
+object is removed, and only after the tombstone is committed.
+"""
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import hmac
+import json
+import shutil
+import uuid
+from pathlib import Path
+from typing import Any
+
+import asyncpg
+import pytest
+from fastapi.testclient import TestClient
+
+from .hosted_helpers import (
+    _auth_header,
+    _context_token,
+    _seed_account,
+    _seed_member,
+    _seed_opportunity,
+)
+
+pytestmark = [pytest.mark.asyncio, pytest.mark.hosted, pytest.mark.slow]
+
+TERMINAL_STATUSES = ("success", "failure", "timeout", "cancelled")
+
+
+def _hs() -> Any:
+    """Return the live `hosted.storage` module.
+
+    The hosted fixtures drop `hosted*` from `sys.modules` before the app is
+    built, so a module-level import here would capture stale classes and the
+    `StorageError` raised by a test double would not be the class the
+    orchestrator catches.
+    """
+    import hosted.storage
+
+    return hosted.storage
+
+
+def _orchestrator_module() -> Any:
+    """Return the live `hosted.post_call_orchestrator` module."""
+    import hosted.post_call_orchestrator
+
+    return hosted.post_call_orchestrator
+
+
+class _IdleRuntime:
+    """Runtime that must never be invoked by a cleanup-only orchestrator."""
+
+    async def execute(self, job: Any, cancellation: Any) -> Any:
+        raise AssertionError("runtime must not be invoked for transcript cleanup")
+
+
+def _worker_backend(
+    admin_pool: asyncpg.Pool, app_backend: Any, *, fail_times: int = 0
+) -> Any:
+    """Return a worker-side memory backend over the app's object store.
+
+    It shares `objects` with the backend the app uploaded through, so a
+    maintenance delete performed by the worker is observable from the request
+    side. `fail_times` injects transient Storage failures.
+    """
+    hs = _hs()
+
+    class WorkerBackend(hs.MemoryStorageBackend):  # type: ignore[misc, name-defined]
+        def __init__(self) -> None:
+            super().__init__(admin_pool=admin_pool)
+            self.objects = app_backend.objects
+            self.maintenance_calls: list[tuple[uuid.UUID, str, str]] = []
+            self.failures_left = fail_times
+
+        async def delete_for_maintenance(
+            self, org_id: uuid.UUID, path: str, bucket: str = hs.OUTPUTS_BUCKET
+        ) -> None:
+            self.maintenance_calls.append((org_id, path, bucket))
+            if self.failures_left > 0:
+                self.failures_left -= 1
+                raise hs.StorageError("injected maintenance delete failure")
+            return await super().delete_for_maintenance(org_id, path, bucket=bucket)
+
+    return WorkerBackend()
+
+
+@pytest.fixture
+def backend(app_client: TestClient) -> Any:
+    """Return the in-memory Storage backend installed by `app_client`."""
+    return _hs().get_backend()
+
+
+@pytest.fixture(autouse=True)
+async def _clean_tables(admin_pool: asyncpg.Pool) -> None:
+    """Reset transcript, job, output, and audit state between tests.
+
+    Transcripts are included so a tombstone left pending by one test cannot be
+    the row a later worker-claim test picks up. TRUNCATE does not fire the
+    physical-delete guard, which is a row trigger.
+    """
+    async with admin_pool.acquire() as conn:
+        await conn.execute("TRUNCATE public.audit_events")
+        await conn.execute(
+            "TRUNCATE public.reviews, public.output_versions, public.outputs, "
+            "public.job_attempts, public.jobs, public.transcripts CASCADE"
+        )
+
+
+async def _upload(
+    app_client: TestClient,
+    admin_pool: asyncpg.Pool,
+    *,
+    email: str | None = None,
+    with_opportunity: bool = False,
+) -> dict[str, Any]:
+    """Seed an org/account and upload one transcript through the hosted API."""
+    email = email or f"tomb-{uuid.uuid4().hex[:8]}@airbyte.io"
+    user_id, org_id, _ = await _seed_member(admin_pool, email)
+    account_id = await _seed_account(admin_pool, org_id, user_id)
+    opportunity_id = (
+        await _seed_opportunity(admin_pool, org_id, account_id, user_id)
+        if with_opportunity
+        else None
+    )
+    headers = _auth_header(user_id, email)
+    prefix = f"/api/hosted/accounts/{account_id}"
+    if opportunity_id is not None:
+        prefix = f"{prefix}/opportunities/{opportunity_id}"
+    response = app_client.post(
+        f"{prefix}/transcripts",
+        files={"file": ("call.txt", b"Discovery call with Acme.", "text/plain")},
+        headers=headers,
+    )
+    assert response.status_code == 201
+    transcript_id = uuid.UUID(response.json()["id"])
+    async with admin_pool.acquire() as conn:
+        storage_path = await conn.fetchval(
+            "SELECT storage_path FROM public.transcripts WHERE id = $1", transcript_id
+        )
+    return {
+        "user_id": user_id,
+        "email": email,
+        "org_id": org_id,
+        "account_id": account_id,
+        "opportunity_id": opportunity_id,
+        "transcript_id": transcript_id,
+        "headers": headers,
+        "prefix": prefix,
+        "storage_path": storage_path,
+    }
+
+
+def _delete(app_client: TestClient, fx: dict[str, Any]) -> Any:
+    return app_client.delete(
+        f"{fx['prefix']}/transcripts/{fx['transcript_id']}", headers=fx["headers"]
+    )
+
+
+async def _row(admin_pool: asyncpg.Pool, transcript_id: uuid.UUID) -> asyncpg.Record:
+    async with admin_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM public.transcripts WHERE id = $1", transcript_id
+        )
+    assert row is not None, "the transcript row must survive as provenance"
+    return row
+
+
+async def _delete_events(
+    admin_pool: asyncpg.Pool, org_id: uuid.UUID
+) -> list[asyncpg.Record]:
+    async with admin_pool.acquire() as conn:
+        return await conn.fetch(
+            "SELECT * FROM public.audit_events "
+            "WHERE org_id = $1 AND action = 'transcript_delete' ORDER BY created_at",
+            org_id,
+        )
+
+
+async def _seed_job(admin_pool: asyncpg.Pool, fx: dict[str, Any], status: str) -> uuid.UUID:
+    async with admin_pool.acquire() as conn:
+        return await conn.fetchval(
+            """
+            INSERT INTO public.jobs (
+                org_id, account_id, opportunity_id, transcript_id, requester_id,
+                skill, skill_version, status, max_attempts
+            ) VALUES ($1, $2, $3, $4, $5, 'post-call', '1.0', $6, 3)
+            RETURNING id
+            """,
+            fx["org_id"],
+            fx["account_id"],
+            fx["opportunity_id"],
+            fx["transcript_id"],
+            fx["user_id"],
+            status,
+        )
+
+
+def _orchestrator(worker_pool: asyncpg.Pool, backend: Any) -> Any:
+    return _orchestrator_module().PostCallOrchestrator(
+        _IdleRuntime(), db_pool=worker_pool, storage_backend=backend
+    )
+
+
+def _object_exists(backend: Any, storage_path: str) -> bool:
+    return f"{_hs().DEFAULT_BUCKET}:{storage_path}" in backend.objects
+
+
+# ---------------------------------------------------------------------------
+# Logical deletion: authorize, hide, audit
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("with_opportunity", [False, True], ids=["account", "opportunity"])
+async def test_delete_hides_the_transcript_everywhere_and_keeps_the_object(
+    app_client: TestClient,
+    admin_pool: asyncpg.Pool,
+    user_pool: asyncpg.Pool,
+    backend: Any,
+    with_opportunity: bool,
+) -> None:
+    """A committed tombstone hides the transcript from every read path at once,
+    while the private object is still present: cleanup is asynchronous, and the
+    `202` response says exactly that.
+    """
+    fx = await _upload(app_client, admin_pool, with_opportunity=with_opportunity)
+    assert _object_exists(backend, fx["storage_path"])
+
+    response = _delete(app_client, fx)
+    assert response.status_code == 202
+    assert response.json() == {
+        "transcript_id": str(fx["transcript_id"]),
+        "status": "accepted",
+        "cleanup_state": "pending",
+    }
+
+    # Every user-facing read path fails closed immediately.
+    assert (
+        app_client.get(f"{fx['prefix']}/transcripts", headers=fx["headers"]).json()[
+            "transcripts"
+        ]
+        == []
+    )
+    assert (
+        app_client.get(
+            f"/api/hosted/accounts/{fx['account_id']}/transcripts", headers=fx["headers"]
+        ).json()["transcripts"]
+        == []
+    )
+    assert (
+        app_client.get(
+            f"{fx['prefix']}/transcripts/{fx['transcript_id']}/download",
+            headers=fx["headers"],
+        ).status_code
+        == 404
+    )
+    assert _delete(app_client, fx).json()["status"] == "already_deleted"
+
+    # RLS hides the row from a direct `app_user` SELECT, so no route has to
+    # remember to filter, while the row itself survives for provenance.
+    async with user_pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT set_config('app.context_token', $1, true)",
+                _context_token(fx["user_id"]),
+            )
+            assert (
+                await conn.fetchval(
+                    "SELECT count(*) FROM public.transcripts WHERE id = $1",
+                    fx["transcript_id"],
+                )
+                == 0
+            )
+
+    row = await _row(admin_pool, fx["transcript_id"])
+    assert row["tombstoned_at"] is not None
+    assert row["delete_requested_by"] == fx["user_id"]
+    assert row["cleanup_state"] == "pending"
+    assert row["cleanup_completed_at"] is None
+    assert row["storage_path"] == fx["storage_path"]
+
+    # The bytes are still there: `transcript_delete` records an accepted request,
+    # not a completed purge.
+    assert _object_exists(backend, fx["storage_path"])
+    events = await _delete_events(admin_pool, fx["org_id"])
+    assert len(events) == 1
+    assert events[0]["user_id"] == fx["user_id"]
+    assert events[0]["entity_id"] == fx["transcript_id"]
+
+
+async def test_cross_org_and_missing_deletions_are_indistinguishable(
+    app_client: TestClient, admin_pool: asyncpg.Pool
+) -> None:
+    """A neighbour's transcript id and a random id fail the same way and leave
+    no tombstone and no audit event behind.
+    """
+    victim = await _upload(app_client, admin_pool, email="victim@airbyte.io")
+    attacker = await _upload(app_client, admin_pool, email="attacker@airbyte.io")
+
+    for target in (victim["transcript_id"], uuid.uuid4()):
+        response = app_client.delete(
+            f"/api/hosted/accounts/{attacker['account_id']}/transcripts/{target}",
+            headers=attacker["headers"],
+        )
+        assert response.status_code == 404
+
+    # The victim's own account id with the attacker's credentials fails too, and
+    # in the same way.
+    assert (
+        app_client.delete(
+            f"/api/hosted/accounts/{victim['account_id']}/transcripts/{victim['transcript_id']}",
+            headers=attacker["headers"],
+        ).status_code
+        == 404
+    )
+
+    row = await _row(admin_pool, victim["transcript_id"])
+    assert row["tombstoned_at"] is None
+    assert row["cleanup_state"] == "none"
+    assert await _delete_events(admin_pool, victim["org_id"]) == []
+    assert await _delete_events(admin_pool, attacker["org_id"]) == []
+
+
+async def test_wrong_opportunity_scope_cannot_delete_a_transcript(
+    app_client: TestClient, admin_pool: asyncpg.Pool
+) -> None:
+    """The opportunity relationship is validated against the trusted row, so an
+    account-scoped path cannot delete an opportunity transcript or vice versa.
+    """
+    opp_fx = await _upload(app_client, admin_pool, with_opportunity=True)
+    account_fx = await _upload(app_client, admin_pool)
+
+    assert (
+        app_client.delete(
+            f"/api/hosted/accounts/{opp_fx['account_id']}/transcripts/{opp_fx['transcript_id']}",
+            headers=opp_fx["headers"],
+        ).status_code
+        == 404
+    )
+    other_opportunity = await _seed_opportunity(
+        admin_pool, account_fx["org_id"], account_fx["account_id"], account_fx["user_id"]
+    )
+    assert (
+        app_client.delete(
+            f"/api/hosted/accounts/{account_fx['account_id']}/opportunities/"
+            f"{other_opportunity}/transcripts/{account_fx['transcript_id']}",
+            headers=account_fx["headers"],
+        ).status_code
+        == 404
+    )
+    assert (await _row(admin_pool, opp_fx["transcript_id"]))["tombstoned_at"] is None
+    assert (await _row(admin_pool, account_fx["transcript_id"]))["tombstoned_at"] is None
+
+
+async def test_inactive_member_cannot_request_deletion(
+    app_client: TestClient, admin_pool: asyncpg.Pool
+) -> None:
+    """Deactivation revokes the deletion capability like every other action."""
+    fx = await _upload(app_client, admin_pool)
+    async with admin_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE public.memberships SET active = false WHERE user_id = $1",
+            fx["user_id"],
+        )
+
+    assert _delete(app_client, fx).status_code == 403
+    assert (await _row(admin_pool, fx["transcript_id"]))["tombstoned_at"] is None
+    assert await _delete_events(admin_pool, fx["org_id"]) == []
+
+
+# ---------------------------------------------------------------------------
+# Concurrency with jobs
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("job_status", ["queued", "running"])
+async def test_active_jobs_block_deletion_without_cancelling_them(
+    app_client: TestClient, admin_pool: asyncpg.Pool, backend: Any, job_status: str
+) -> None:
+    """Deleting the input of live work is a conflict, not an implicit cancel."""
+    fx = await _upload(app_client, admin_pool)
+    job_id = await _seed_job(admin_pool, fx, job_status)
+
+    assert _delete(app_client, fx).status_code == 409
+
+    row = await _row(admin_pool, fx["transcript_id"])
+    assert row["tombstoned_at"] is None
+    assert row["cleanup_state"] == "none"
+    assert _object_exists(backend, fx["storage_path"])
+    assert await _delete_events(admin_pool, fx["org_id"]) == []
+    async with admin_pool.acquire() as conn:
+        assert (
+            await conn.fetchval("SELECT status FROM public.jobs WHERE id = $1", job_id)
+            == job_status
+        )
+
+    # The transcript is still fully usable while the conflict stands.
+    assert (
+        len(
+            app_client.get(f"{fx['prefix']}/transcripts", headers=fx["headers"]).json()[
+                "transcripts"
+            ]
+        )
+        == 1
+    )
+
+
+@pytest.mark.parametrize("job_status", TERMINAL_STATUSES)
+async def test_terminal_jobs_do_not_block_deletion_and_keep_their_reference(
+    app_client: TestClient, admin_pool: asyncpg.Pool, job_status: str
+) -> None:
+    """Terminal provenance survives: the job keeps pointing at the tombstone."""
+    fx = await _upload(app_client, admin_pool)
+    job_id = await _seed_job(admin_pool, fx, job_status)
+
+    assert _delete(app_client, fx).status_code == 202
+
+    async with admin_pool.acquire() as conn:
+        job = await conn.fetchrow("SELECT * FROM public.jobs WHERE id = $1", job_id)
+    assert job["status"] == job_status
+    assert job["transcript_id"] == fx["transcript_id"]
+
+
+async def test_cross_org_active_job_does_not_block_deletion(
+    app_client: TestClient, admin_pool: asyncpg.Pool
+) -> None:
+    """The active-job check is organization-scoped, so another tenant's queued
+    job can neither deny a deletion nor reveal that it exists.
+    """
+    fx = await _upload(app_client, admin_pool)
+    other = await _upload(app_client, admin_pool)
+    await _seed_job(admin_pool, other, "queued")
+
+    assert _delete(app_client, fx).status_code == 202
+
+
+async def test_enqueue_after_tombstone_is_rejected_by_the_database(
+    app_client: TestClient, admin_pool: asyncpg.Pool, user_pool: asyncpg.Pool
+) -> None:
+    """The API hides the transcript (404), and `enqueue_job` independently
+    refuses it (SE023) so no caller of the function can bypass the tombstone.
+    """
+    fx = await _upload(app_client, admin_pool)
+    assert _delete(app_client, fx).status_code == 202
+
+    response = app_client.post(
+        f"/api/hosted/accounts/{fx['account_id']}/jobs",
+        json={
+            "account_id": str(fx["account_id"]),
+            "transcript_id": str(fx["transcript_id"]),
+            "skill": "post-call",
+        },
+        headers=fx["headers"],
+    )
+    assert response.status_code == 404
+
+    with pytest.raises(asyncpg.PostgresError) as exc_info:
+        async with user_pool.acquire() as conn:
+            await conn.fetch(
+                """
+                SELECT * FROM public.enqueue_job(
+                    $1, $2, $3, NULL, 'post-call', '1.0', 'claude-test', '1.0',
+                    NULL, 3, 900, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb
+                )
+                """,
+                _context_token(fx["user_id"]),
+                fx["account_id"],
+                fx["transcript_id"],
+            )
+    assert exc_info.value.sqlstate == "SE023"
+
+    async with admin_pool.acquire() as conn:
+        assert await conn.fetchval("SELECT count(*) FROM public.jobs") == 0
+
+
+async def test_concurrent_delete_and_enqueue_have_exactly_one_winner(
+    app_client: TestClient, admin_pool: asyncpg.Pool, backend: Any
+) -> None:
+    """Either the run is queued and deletion loses with a conflict, or the
+    tombstone lands first and the run is refused. Never both, never neither.
+    """
+    fx = await _upload(app_client, admin_pool)
+
+    def _enqueue() -> Any:
+        return app_client.post(
+            f"/api/hosted/accounts/{fx['account_id']}/jobs",
+            json={
+                "account_id": str(fx["account_id"]),
+                "transcript_id": str(fx["transcript_id"]),
+                "skill": "post-call",
+            },
+            headers=fx["headers"],
+        )
+
+    delete_response, enqueue_response = await asyncio.gather(
+        asyncio.to_thread(lambda: _delete(app_client, fx)),
+        asyncio.to_thread(_enqueue),
+    )
+
+    row = await _row(admin_pool, fx["transcript_id"])
+    async with admin_pool.acquire() as conn:
+        jobs = await conn.fetch("SELECT * FROM public.jobs")
+
+    if enqueue_response.status_code == 201:
+        # The run won: the transcript is intact and the deletion was refused.
+        assert delete_response.status_code == 409
+        assert row["tombstoned_at"] is None
+        assert len(jobs) == 1
+        assert _object_exists(backend, fx["storage_path"])
+        assert await _delete_events(admin_pool, fx["org_id"]) == []
+    else:
+        assert enqueue_response.status_code in (404, 409)
+        assert delete_response.status_code == 202
+        assert row["tombstoned_at"] is not None
+        assert jobs == []
+        assert len(await _delete_events(admin_pool, fx["org_id"])) == 1
+
+
+async def test_concurrent_duplicate_deletions_produce_one_tombstone(
+    app_client: TestClient, admin_pool: asyncpg.Pool
+) -> None:
+    """Two simultaneous requests serialize on the row lock: one accepts, the
+    other replays, and there is exactly one deletion event.
+    """
+    fx = await _upload(app_client, admin_pool)
+
+    first, second = await asyncio.gather(
+        asyncio.to_thread(lambda: _delete(app_client, fx)),
+        asyncio.to_thread(lambda: _delete(app_client, fx)),
+    )
+    assert {first.status_code, second.status_code} == {202}
+    assert sorted([first.json()["status"], second.json()["status"]]) == [
+        "accepted",
+        "already_deleted",
+    ]
+    assert len(await _delete_events(admin_pool, fx["org_id"])) == 1
+
+    row = await _row(admin_pool, fx["transcript_id"])
+    assert row["cleanup_state"] == "pending"
+    assert row["cleanup_attempts"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Worker reconciliation
+# ---------------------------------------------------------------------------
+
+
+async def test_worker_deletes_the_exact_object_and_marks_cleanup_complete(
+    app_client: TestClient, admin_pool: asyncpg.Pool, worker_pool: asyncpg.Pool, backend: Any
+) -> None:
+    """The claim hands the worker only trusted identifiers, and the object is
+    removed with an exact `{org, bucket, path}` maintenance credential.
+    """
+    fx = await _upload(app_client, admin_pool)
+    assert _delete(app_client, fx).status_code == 202
+    assert _object_exists(backend, fx["storage_path"])
+
+    worker_backend = _worker_backend(admin_pool, backend)
+    orchestrator = _orchestrator(worker_pool, worker_backend)
+    assert await orchestrator.cleanup_next_transcript_tombstone("cleanup-worker-1") is True
+    assert worker_backend.maintenance_calls == [
+        (fx["org_id"], fx["storage_path"], _hs().DEFAULT_BUCKET)
+    ]
+    assert not _object_exists(backend, fx["storage_path"])
+
+    row = await _row(admin_pool, fx["transcript_id"])
+    assert row["cleanup_state"] == "complete"
+    assert row["cleanup_completed_at"] is not None
+    assert row["cleanup_claimed_by"] is None
+    assert row["cleanup_last_error"] is None
+    assert row["storage_path"] == fx["storage_path"]
+
+    # Reconciliation is not a user action: it records no second audit event, and
+    # there is nothing left to claim.
+    assert len(await _delete_events(admin_pool, fx["org_id"])) == 1
+    assert await orchestrator.cleanup_next_transcript_tombstone("cleanup-worker-1") is False
+
+
+async def test_missing_object_counts_as_reconciled(
+    app_client: TestClient, admin_pool: asyncpg.Pool, worker_pool: asyncpg.Pool, backend: Any
+) -> None:
+    """An already-absent object is the desired end state, not an error."""
+    fx = await _upload(app_client, admin_pool)
+    assert _delete(app_client, fx).status_code == 202
+    del backend.objects[f"{_hs().DEFAULT_BUCKET}:{fx['storage_path']}"]
+
+    orchestrator = _orchestrator(worker_pool, backend)
+    assert await orchestrator.cleanup_next_transcript_tombstone("cleanup-worker-2") is True
+    assert (await _row(admin_pool, fx["transcript_id"]))["cleanup_state"] == "complete"
+
+
+async def test_storage_failure_keeps_the_tombstone_retryable(
+    app_client: TestClient, admin_pool: asyncpg.Pool, worker_pool: asyncpg.Pool, backend: Any
+) -> None:
+    """An ambiguous Storage delete never marks cleanup complete: the claim is
+    released with a bounded error and a backed-off next attempt, the transcript
+    stays hidden, and a later attempt from a restarted worker finishes the job.
+    """
+    fx = await _upload(app_client, admin_pool)
+    assert _delete(app_client, fx).status_code == 202
+    failing = _worker_backend(admin_pool, backend, fail_times=1)
+
+    orchestrator = _orchestrator(worker_pool, failing)
+    with pytest.raises(_orchestrator_module().CleanupError):
+        await orchestrator.cleanup_next_transcript_tombstone("cleanup-worker-fail")
+
+    row = await _row(admin_pool, fx["transcript_id"])
+    assert row["cleanup_state"] == "pending"
+    assert row["cleanup_completed_at"] is None
+    assert row["cleanup_claimed_by"] is None
+    assert row["cleanup_attempts"] == 1
+    assert row["cleanup_last_error"] == "StorageError"
+    assert _object_exists(failing, fx["storage_path"])
+    assert (
+        app_client.get(f"{fx['prefix']}/transcripts", headers=fx["headers"]).json()[
+            "transcripts"
+        ]
+        == []
+    )
+
+    # A fresh process picks the row back up once the backoff comes due, and the
+    # wait is recorded on the row rather than held in worker memory.
+    assert row["cleanup_next_attempt_at"] > row["updated_at"]
+    restarted = _orchestrator(worker_pool, failing)
+    assert (
+        await restarted.cleanup_next_transcript_tombstone("cleanup-worker-restarted") is False
+    )
+    await asyncio.sleep(
+        max(0.0, (row["cleanup_next_attempt_at"] - row["updated_at"]).total_seconds()) + 0.2
+    )
+    assert (
+        await restarted.cleanup_next_transcript_tombstone("cleanup-worker-restarted") is True
+    )
+    assert not _object_exists(failing, fx["storage_path"])
+
+    row = await _row(admin_pool, fx["transcript_id"])
+    assert row["cleanup_state"] == "complete"
+    assert row["cleanup_attempts"] == 2
+    assert row["cleanup_last_error"] is None
+    assert len(await _delete_events(admin_pool, fx["org_id"])) == 1
+
+
+async def test_repeated_failures_back_off_but_never_stop_retrying(
+    app_client: TestClient, admin_pool: asyncpg.Pool, worker_pool: asyncpg.Pool, backend: Any
+) -> None:
+    """A Storage outage costs delay, not the deletion.
+
+    Every failure schedules the next attempt further out instead of consuming a
+    quota, so no number of transient failures can turn a tombstone into
+    permanent retention of the customer's bytes: the row stays claimable
+    forever, and the attempt that finally succeeds reconciles it.
+    """
+    fx = await _upload(app_client, admin_pool)
+    assert _delete(app_client, fx).status_code == 202
+    failing = _worker_backend(admin_pool, backend, fail_times=12)
+
+    orchestrator = _orchestrator(worker_pool, failing)
+    delays: list[float] = []
+    for attempt in range(1, 13):
+        with pytest.raises(_orchestrator_module().CleanupError):
+            await orchestrator.cleanup_next_transcript_tombstone("cleanup-worker-backoff")
+        row = await _row(admin_pool, fx["transcript_id"])
+        assert row["cleanup_state"] == "pending"
+        assert row["cleanup_attempts"] == attempt
+        assert row["cleanup_last_error"] == "StorageError"
+        assert row["cleanup_next_attempt_at"] is not None
+        delays.append((row["cleanup_next_attempt_at"] - row["updated_at"]).total_seconds())
+        # The backoff is what makes the row temporarily unclaimable, and it is
+        # state on the row, so a restart does not reset or lose it.
+        async with worker_pool.acquire() as conn:
+            assert (
+                await conn.fetchrow(
+                    "SELECT * FROM public.claim_next_transcript_cleanup($1, $2)",
+                    "cleanup-worker-backoff",
+                    1,
+                )
+                is None
+            )
+        async with admin_pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE public.transcripts SET cleanup_next_attempt_at = now() - "
+                "interval '1 second' WHERE id = $1",
+                fx["transcript_id"],
+            )
+
+    # Backoff grows and is capped, so retries neither hot-loop nor drift apart.
+    assert delays == sorted(delays)
+    assert 1.0 <= delays[0] <= 4.0
+    assert delays[-1] <= 3600.0
+    assert delays[-1] > delays[0]
+    assert _object_exists(failing, fx["storage_path"])
+
+    # Attempt 13 succeeds; nothing about the twelve failures blocked it.
+    assert (
+        await orchestrator.cleanup_next_transcript_tombstone("cleanup-worker-backoff") is True
+    )
+    row = await _row(admin_pool, fx["transcript_id"])
+    assert row["cleanup_state"] == "complete"
+    assert row["cleanup_attempts"] == 13
+    assert row["cleanup_next_attempt_at"] is None
+    assert not _object_exists(failing, fx["storage_path"])
+    assert len(await _delete_events(admin_pool, fx["org_id"])) == 1
+
+
+async def test_ambiguous_delete_that_actually_removed_the_object_reconciles(
+    app_client: TestClient, admin_pool: asyncpg.Pool, worker_pool: asyncpg.Pool, backend: Any
+) -> None:
+    """Storage removed the object and *then* failed the response.
+
+    The worker cannot tell that apart from "nothing happened", so the first
+    attempt must stay conservative: hidden, `pending`, retryable, no completion
+    claimed. The retry then observes `ObjectNotFound` — the desired end state —
+    and finalizes without a second audit event.
+    """
+    fx = await _upload(app_client, admin_pool)
+    assert _delete(app_client, fx).status_code == 202
+
+    hs = _hs()
+    deleting_then_failing = _worker_backend(admin_pool, backend)
+    original = deleting_then_failing.delete_for_maintenance
+
+    async def delete_then_raise(
+        org_id: uuid.UUID, path: str, bucket: str = hs.OUTPUTS_BUCKET
+    ) -> None:
+        await hs.MemoryStorageBackend.delete_for_maintenance(
+            deleting_then_failing, org_id, path, bucket=bucket
+        )
+        raise hs.StorageError("timed out after the object was removed")
+
+    deleting_then_failing.delete_for_maintenance = delete_then_raise
+    orchestrator = _orchestrator(worker_pool, deleting_then_failing)
+    with pytest.raises(_orchestrator_module().CleanupError):
+        await orchestrator.cleanup_next_transcript_tombstone("cleanup-worker-ambiguous")
+
+    row = await _row(admin_pool, fx["transcript_id"])
+    assert row["cleanup_state"] == "pending"
+    assert row["cleanup_completed_at"] is None
+    assert row["cleanup_last_error"] == "StorageError"
+    assert not _object_exists(backend, fx["storage_path"])
+    assert (
+        app_client.get(f"{fx['prefix']}/transcripts", headers=fx["headers"]).json()[
+            "transcripts"
+        ]
+        == []
+    )
+
+    # The retry sees the object is already gone and closes the tombstone out.
+    deleting_then_failing.delete_for_maintenance = original
+    async with admin_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE public.transcripts SET cleanup_next_attempt_at = NULL WHERE id = $1",
+            fx["transcript_id"],
+        )
+    assert (
+        await orchestrator.cleanup_next_transcript_tombstone("cleanup-worker-ambiguous")
+        is True
+    )
+    row = await _row(admin_pool, fx["transcript_id"])
+    assert row["cleanup_state"] == "complete"
+    assert len(await _delete_events(admin_pool, fx["org_id"])) == 1
+
+
+async def test_finalization_failure_after_a_successful_delete_recovers(
+    app_client: TestClient, admin_pool: asyncpg.Pool, worker_pool: asyncpg.Pool, backend: Any
+) -> None:
+    """Storage and Postgres share no transaction, so the bytes can be gone while
+    the completion write fails. The transcript must stay hidden and tombstoned,
+    the absent object must not be recreated, and a later worker must rediscover
+    the row once the lease expires and finalize it after observing absence.
+    """
+    fx = await _upload(app_client, admin_pool)
+    assert _delete(app_client, fx).status_code == 202
+
+    worker_backend = _worker_backend(admin_pool, backend)
+    orchestrator = _orchestrator(worker_pool, worker_backend)
+
+    async def failing_finalize(transcript_id: uuid.UUID, worker_id: str) -> bool:
+        raise _orchestrator_module().CleanupError("failed to finalize transcript cleanup")
+
+    orchestrator._finalize_transcript_cleanup = failing_finalize
+    with pytest.raises(_orchestrator_module().CleanupError):
+        await orchestrator.cleanup_next_transcript_tombstone(
+            "cleanup-worker-finalize-fail", lease_seconds=1
+        )
+
+    row = await _row(admin_pool, fx["transcript_id"])
+    assert row["tombstoned_at"] is not None
+    assert row["cleanup_state"] == "pending"
+    assert row["cleanup_completed_at"] is None
+    assert row["cleanup_claimed_by"] == "cleanup-worker-finalize-fail"
+    assert not _object_exists(backend, fx["storage_path"])
+    assert (
+        app_client.get(f"{fx['prefix']}/transcripts", headers=fx["headers"]).json()[
+            "transcripts"
+        ]
+        == []
+    )
+
+    # A restarted worker reclaims the row after the lease expires. The object is
+    # already absent, so reconciliation completes without re-creating anything.
+    await asyncio.sleep(1.2)
+    restarted_backend = _worker_backend(admin_pool, backend)
+    restarted = _orchestrator(worker_pool, restarted_backend)
+    assert (
+        await restarted.cleanup_next_transcript_tombstone(
+            "cleanup-worker-restarted", lease_seconds=1
+        )
+        is True
+    )
+    row = await _row(admin_pool, fx["transcript_id"])
+    assert row["cleanup_state"] == "complete"
+    assert row["cleanup_completed_at"] is not None
+    assert not _object_exists(backend, fx["storage_path"])
+    assert len(await _delete_events(admin_pool, fx["org_id"])) == 1
+
+
+async def test_queued_job_input_cannot_be_physically_reconciled(
+    app_client: TestClient, admin_pool: asyncpg.Pool, worker_pool: asyncpg.Pool, backend: Any
+) -> None:
+    """A transcript owned by a queued or running job is never reachable by the
+    cleanup claim, because the only way into `cleanup_state = 'pending'` is a
+    tombstone, and tombstoning is refused while such a job exists.
+    """
+    for status_name in ("queued", "running"):
+        fx = await _upload(app_client, admin_pool)
+        await _seed_job(admin_pool, fx, status_name)
+        assert _delete(app_client, fx).status_code == 409
+
+        row = await _row(admin_pool, fx["transcript_id"])
+        assert row["tombstoned_at"] is None
+        assert row["cleanup_state"] == "none"
+
+        orchestrator = _orchestrator(worker_pool, _worker_backend(admin_pool, backend))
+        assert (
+            await orchestrator.cleanup_next_transcript_tombstone("cleanup-worker-owned")
+            is False
+        )
+        assert _object_exists(backend, fx["storage_path"])
+
+        # Once the job reaches a terminal state the input may be reconciled.
+        async with admin_pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE public.jobs SET status = 'success' WHERE transcript_id = $1",
+                fx["transcript_id"],
+            )
+        assert _delete(app_client, fx).status_code == 202
+        assert (
+            await orchestrator.cleanup_next_transcript_tombstone("cleanup-worker-owned")
+            is True
+        )
+        assert not _object_exists(backend, fx["storage_path"])
+
+
+async def test_live_claim_is_not_stolen_and_expired_claim_is_reclaimed(
+    app_client: TestClient, admin_pool: asyncpg.Pool, worker_pool: asyncpg.Pool
+) -> None:
+    """Two workers cannot reconcile the same transcript concurrently, and a
+    worker that died mid-cleanup does not strand the row.
+    """
+    fx = await _upload(app_client, admin_pool)
+    assert _delete(app_client, fx).status_code == 202
+
+    async with worker_pool.acquire() as conn:
+        claimed = await conn.fetchrow(
+            "SELECT * FROM public.claim_next_transcript_cleanup($1, $2)", "worker-a", 60
+        )
+        assert claimed["transcript_id"] == fx["transcript_id"]
+        assert claimed["org_id"] == fx["org_id"]
+        assert claimed["storage_path"] == fx["storage_path"]
+
+        # A live lease is invisible to a second worker.
+        assert (
+            await conn.fetchrow(
+                "SELECT * FROM public.claim_next_transcript_cleanup($1, $2)", "worker-b", 60
+            )
+            is None
+        )
+
+        # Only the claim holder may finalize or release.
+        assert (
+            await conn.fetchval(
+                "SELECT public.finalize_transcript_cleanup($1, $2)",
+                fx["transcript_id"],
+                "worker-b",
+            )
+            is False
+        )
+        assert (
+            await conn.fetchval(
+                "SELECT public.release_transcript_cleanup($1, $2, $3, $4)",
+                fx["transcript_id"],
+                "worker-b",
+                "not mine",
+                3600,
+            )
+            is False
+        )
+        assert (await _row(admin_pool, fx["transcript_id"]))["cleanup_state"] == "pending"
+
+        # Once the lease expires the row is claimable again, and the recovered
+        # claim carries the same trusted target.
+        await conn.execute("SELECT pg_sleep(1.1)")
+        reclaimed = await conn.fetchrow(
+            "SELECT * FROM public.claim_next_transcript_cleanup($1, $2)", "worker-b", 1
+        )
+    assert reclaimed is not None
+    assert reclaimed["transcript_id"] == fx["transcript_id"]
+    assert reclaimed["storage_path"] == fx["storage_path"]
+
+    row = await _row(admin_pool, fx["transcript_id"])
+    assert row["cleanup_claimed_by"] == "worker-b"
+    assert row["cleanup_attempts"] == 2
+
+
+async def test_concurrent_workers_reconcile_each_tombstone_once(
+    app_client: TestClient, admin_pool: asyncpg.Pool, worker_pool: asyncpg.Pool, backend: Any
+) -> None:
+    """`FOR UPDATE SKIP LOCKED` means N workers share the backlog instead of
+    fighting over one row or deleting the same object twice.
+    """
+    fixtures = []
+    for _ in range(3):
+        fx = await _upload(app_client, admin_pool)
+        assert _delete(app_client, fx).status_code == 202
+        fixtures.append(fx)
+
+    worker_backends = [_worker_backend(admin_pool, backend) for _ in range(3)]
+    orchestrators = [_orchestrator(worker_pool, wb) for wb in worker_backends]
+    results = await asyncio.gather(
+        *(
+            orchestrator.cleanup_next_transcript_tombstone(f"parallel-worker-{index}")
+            for index, orchestrator in enumerate(orchestrators)
+        )
+    )
+    assert results == [True, True, True]
+
+    targets = [call[1] for wb in worker_backends for call in wb.maintenance_calls]
+    assert sorted(targets) == sorted(fx["storage_path"] for fx in fixtures)
+    for fx in fixtures:
+        assert (await _row(admin_pool, fx["transcript_id"]))["cleanup_state"] == "complete"
+        assert not _object_exists(backend, fx["storage_path"])
+
+
+async def test_reconciliation_ignores_requester_deactivation(
+    app_client: TestClient, admin_pool: asyncpg.Pool, worker_pool: asyncpg.Pool, backend: Any
+) -> None:
+    """A deactivated requester cannot pin customer bytes in Storage: the
+    maintenance credential consults no membership.
+    """
+    fx = await _upload(app_client, admin_pool)
+    assert _delete(app_client, fx).status_code == 202
+    async with admin_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE public.memberships SET active = false WHERE user_id = $1", fx["user_id"]
+        )
+
+    orchestrator = _orchestrator(worker_pool, _worker_backend(admin_pool, backend))
+    assert await orchestrator.cleanup_next_transcript_tombstone("cleanup-worker-3") is True
+    assert not _object_exists(backend, fx["storage_path"])
+
+    row = await _row(admin_pool, fx["transcript_id"])
+    assert row["cleanup_state"] == "complete"
+    assert row["delete_requested_by"] == fx["user_id"]
+
+
+async def test_worker_loop_reconciles_tombstones_and_suppresses_failures(
+    app_client: TestClient, admin_pool: asyncpg.Pool, worker_pool: asyncpg.Pool, backend: Any
+) -> None:
+    """The generic worker poll cycle performs transcript cleanup, and a cleanup
+    failure is suppressed so job processing is never blocked by it.
+    """
+    from hosted.post_call_orchestrator import PostCallExecutor
+    from hosted.worker import Worker
+
+    fx = await _upload(app_client, admin_pool)
+    assert _delete(app_client, fx).status_code == 202
+    failing = _worker_backend(admin_pool, backend, fail_times=1)
+
+    executor = PostCallExecutor(_IdleRuntime(), db_pool=worker_pool, storage_backend=failing)
+    worker = Worker(worker_pool, executor=executor, worker_name="tombstone-loop-worker")
+
+    assert await worker.cleanup_next_transcript_tombstone() is False
+    row = await _row(admin_pool, fx["transcript_id"])
+    assert row["cleanup_state"] == "pending"
+    assert row["cleanup_next_attempt_at"] is not None
+
+    # The next poll cycle that runs after the backoff comes due reconciles it.
+    async with admin_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE public.transcripts SET cleanup_next_attempt_at = now() WHERE id = $1",
+            fx["transcript_id"],
+        )
+    assert await worker.run_once() is False
+
+    row = await _row(admin_pool, fx["transcript_id"])
+    assert row["cleanup_state"] == "complete"
+    assert not _object_exists(failing, fx["storage_path"])
+
+
+async def test_worker_role_reaches_transcripts_only_through_the_functions(
+    worker_pool: asyncpg.Pool, admin_pool: asyncpg.Pool
+) -> None:
+    """`app_worker` keeps no direct privilege on the customer-data tables."""
+    async with admin_pool.acquire() as conn:
+        for table in ("transcripts", "memberships", "audit_events"):
+            for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
+                assert not await conn.fetchval(
+                    "SELECT has_table_privilege('app_worker', $1, $2)",
+                    f"public.{table}",
+                    privilege,
+                ), (table, privilege)
+
+    # The narrow functions are the only path, and they are executable.
+    async with worker_pool.acquire() as conn:
+        assert await conn.fetchval(
+            "SELECT has_function_privilege('app_worker', "
+            "'public.claim_next_transcript_cleanup(text,integer)', 'EXECUTE')"
+        )
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await conn.fetchval("SELECT count(*) FROM public.transcripts")
+
+
+async def test_transcript_maintenance_policies_are_scoped_to_the_exact_object(
+    superuser_pool: asyncpg.Pool, admin_pool: asyncpg.Pool
+) -> None:
+    """Exercise the real Storage policies as the transcript maintenance role.
+
+    The capability the cleanup worker mints is a credential for one
+    `{org, bucket, object}` triple. Positively: it may read and delete exactly
+    the tombstoned transcript it was minted for, even though the uploader's
+    membership is inactive. Negatively: it reaches no other transcript in the
+    same organization, no other organization, no outputs object, cannot insert
+    or update, and authorizes nothing when either claim is missing or wrong.
+    """
+    user_id, org_id, _ = await _seed_member(
+        admin_pool, f"tomb-maint-{uuid.uuid4().hex[:8]}@airbyte.io"
+    )
+    other_org = uuid.uuid4()
+    target = f"{org_id}/acct/{uuid.uuid4()}.txt"
+    sibling = f"{org_id}/acct/{uuid.uuid4()}.txt"
+    cross_org = f"{other_org}/acct/{uuid.uuid4()}.txt"
+    output_path = f"{org_id}/acct/transcript/output/output.md"
+    async with admin_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE public.memberships SET active = false WHERE user_id = $1", user_id
+        )
+
+    def _claims(
+        subject: uuid.UUID,
+        obj: str | None = target,
+        bucket: str | None = _hs().DEFAULT_BUCKET,
+    ) -> str:
+        claims: dict[str, str] = {"sub": str(subject)}
+        if obj is not None:
+            claims[_hs().MAINTENANCE_OBJECT_CLAIM] = obj
+        if bucket is not None:
+            claims[_hs().MAINTENANCE_BUCKET_CLAIM] = bucket
+        return json.dumps(claims)
+
+    async def _as_maintenance(
+        subject: uuid.UUID,
+        sql: str,
+        *args: Any,
+        obj: str | None = target,
+        bucket: str | None = _hs().DEFAULT_BUCKET,
+    ) -> None:
+        async with superuser_pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute("SET LOCAL ROLE app_storage_maintenance")
+                await conn.execute("SET LOCAL search_path = 'auth, storage, public'")
+                await conn.execute(
+                    "SELECT set_config('request.jwt.claims', $1, true)",
+                    _claims(subject, obj, bucket),
+                )
+                await conn.execute(sql, *args)
+
+    async def _visible(
+        subject: uuid.UUID,
+        name: str,
+        obj: str | None = target,
+        bucket: str | None = _hs().DEFAULT_BUCKET,
+    ) -> bool:
+        async with superuser_pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute("SET LOCAL ROLE app_storage_maintenance")
+                await conn.execute("SET LOCAL search_path = 'auth, storage, public'")
+                await conn.execute(
+                    "SELECT set_config('request.jwt.claims', $1, true)",
+                    _claims(subject, obj, bucket),
+                )
+                return await conn.fetchval(
+                    "SELECT EXISTS (SELECT 1 FROM storage.objects WHERE name = $1)", name
+                )
+
+    async def _exists(bucket: str, name: str) -> bool:
+        async with superuser_pool.acquire() as conn:
+            return await conn.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM storage.objects "
+                "WHERE bucket_id = $1 AND name = $2)",
+                bucket,
+                name,
+            )
+
+    async with superuser_pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO storage.objects (bucket_id, name) VALUES "
+            "('transcripts', $1), ('transcripts', $2), ('transcripts', $3), ('outputs', $4)",
+            target,
+            sibling,
+            cross_org,
+            output_path,
+        )
+
+    try:
+        # Insert and update are denied outright: cleanup can only remove.
+        for sql, args in (
+            (
+                "INSERT INTO storage.objects (bucket_id, name) VALUES ('transcripts', $1)",
+                (f"{org_id}/acct/{uuid.uuid4()}.txt",),
+            ),
+            ("UPDATE storage.objects SET name = 'x' WHERE name = $1", (target,)),
+        ):
+            with pytest.raises(asyncpg.InsufficientPrivilegeError):
+                await _as_maintenance(org_id, sql, *args)
+
+        # Another transcript in the same org, another org, and outputs are all
+        # invisible and untouchable with this credential.
+        for bucket, name in (
+            (_hs().DEFAULT_BUCKET, sibling),
+            (_hs().DEFAULT_BUCKET, cross_org),
+            (_hs().OUTPUTS_BUCKET, output_path),
+        ):
+            assert await _visible(org_id, name) is False
+            await _as_maintenance(
+                org_id,
+                "DELETE FROM storage.objects WHERE bucket_id = $1 AND name = $2",
+                bucket,
+                name,
+            )
+            assert await _exists(bucket, name) is True
+
+        # A token minted for the sibling object, or for another org, does not
+        # reach the target either.
+        assert await _visible(org_id, target, obj=sibling) is False
+        await _as_maintenance(
+            org_id, "DELETE FROM storage.objects WHERE name = $1", target, obj=sibling
+        )
+        assert await _visible(other_org, target) is False
+        await _as_maintenance(other_org, "DELETE FROM storage.objects WHERE name = $1", target)
+        assert await _exists(_hs().DEFAULT_BUCKET, target) is True
+
+        # Missing or wrong claims authorize nothing, so the transcripts and
+        # outputs cleanup paths cannot borrow each other's capability.
+        for obj, bucket in (
+            (None, _hs().DEFAULT_BUCKET),
+            (target, None),
+            (target, _hs().OUTPUTS_BUCKET),
+        ):
+            assert await _visible(org_id, target, obj=obj, bucket=bucket) is False
+            await _as_maintenance(
+                org_id,
+                "DELETE FROM storage.objects WHERE name = $1",
+                target,
+                obj=obj,
+                bucket=bucket,
+            )
+            assert await _exists(_hs().DEFAULT_BUCKET, target) is True
+
+        # The allowed case: the exact claimed transcript object, with no active
+        # membership behind it. The pre-delete lookup the Storage API performs is
+        # visible for this object only, and the delete succeeds.
+        assert await _visible(org_id, target) is True
+        await _as_maintenance(org_id, "DELETE FROM storage.objects WHERE name = $1", target)
+        assert await _exists(_hs().DEFAULT_BUCKET, target) is False
+        assert await _exists(_hs().DEFAULT_BUCKET, sibling) is True
+        assert await _exists(_hs().OUTPUTS_BUCKET, output_path) is True
+    finally:
+        async with superuser_pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM storage.objects WHERE name = ANY($1::text[])",
+                [target, sibling, cross_org, output_path],
+            )
+
+
+# ---------------------------------------------------------------------------
+# Physical deletion guard
+# ---------------------------------------------------------------------------
+
+
+async def test_physical_delete_requires_a_reconciled_tombstone(
+    app_client: TestClient,
+    admin_pool: asyncpg.Pool,
+    worker_pool: asyncpg.Pool,
+    backend: Any,
+) -> None:
+    """No privileged path can hard-delete a transcript that was never tombstoned
+    or whose object has not been reconciled, so a future retention slice cannot
+    silently skip the deletion audit event and the Storage cleanup.
+    """
+    fx = await _upload(app_client, admin_pool)
+
+    async with admin_pool.acquire() as conn:
+        with pytest.raises(asyncpg.PostgresError) as exc_info:
+            await conn.execute(
+                "DELETE FROM public.transcripts WHERE id = $1", fx["transcript_id"]
+            )
+    assert "reconciled" in str(exc_info.value)
+    await _row(admin_pool, fx["transcript_id"])
+
+    assert _delete(app_client, fx).status_code == 202
+    async with admin_pool.acquire() as conn:
+        with pytest.raises(asyncpg.PostgresError):
+            await conn.execute(
+                "DELETE FROM public.transcripts WHERE id = $1", fx["transcript_id"]
+            )
+    await _row(admin_pool, fx["transcript_id"])
+
+    orchestrator = _orchestrator(worker_pool, _worker_backend(admin_pool, backend))
+    assert await orchestrator.cleanup_next_transcript_tombstone("cleanup-worker-4") is True
+
+    # Only a reconciled tombstone may be physically removed, and doing so
+    # records no user action.
+    async with admin_pool.acquire() as conn:
+        await conn.execute("DELETE FROM public.transcripts WHERE id = $1", fx["transcript_id"])
+        assert (
+            await conn.fetchval(
+                "SELECT count(*) FROM public.transcripts WHERE id = $1", fx["transcript_id"]
+            )
+            == 0
+        )
+    assert len(await _delete_events(admin_pool, fx["org_id"])) == 1
+
+
+@pytest.mark.parametrize(
+    "tombstoned_at,cleanup_state,cleanup_completed_at",
+    [
+        pytest.param("NULL", "pending", "NULL", id="pending_without_tombstone"),
+        pytest.param("now()", "none", "NULL", id="tombstone_without_cleanup"),
+        pytest.param("NULL", "none", "now()", id="completed_without_tombstone"),
+    ],
+)
+async def test_tombstone_and_cleanup_state_cannot_drift(
+    app_client: TestClient,
+    admin_pool: asyncpg.Pool,
+    tombstoned_at: str,
+    cleanup_state: str,
+    cleanup_completed_at: str,
+) -> None:
+    """Hidden and being-reconciled are one invariant, enforced by a CHECK."""
+    fx = await _upload(app_client, admin_pool)
+    async with admin_pool.acquire() as conn:
+        with pytest.raises(asyncpg.exceptions.CheckViolationError):
+            await conn.execute(
+                f"""
+                UPDATE public.transcripts
+                SET tombstoned_at = {tombstoned_at},
+                    cleanup_state = $1,
+                    cleanup_completed_at = {cleanup_completed_at}
+                WHERE id = $2
+                """,
+                cleanup_state,
+                fx["transcript_id"],
+            )
+
+
+# ---------------------------------------------------------------------------
+# Migration compatibility
+# ---------------------------------------------------------------------------
+
+
+async def test_clean_install_has_the_tombstone_boundary(admin_pool: asyncpg.Pool) -> None:
+    """The container database (a clean install through 013) has the state,
+    privileges, policies, and function ownership the boundary depends on.
+    """
+    async with admin_pool.acquire() as conn:
+        columns = {
+            row["column_name"]
+            for row in await conn.fetch(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = 'transcripts'"
+            )
+        }
+        assert {
+            "tombstoned_at",
+            "delete_requested_by",
+            "cleanup_state",
+            "cleanup_completed_at",
+            "cleanup_attempts",
+            "cleanup_claimed_by",
+            "cleanup_claimed_at",
+            "cleanup_last_error",
+        } <= columns
+
+        # `app_user` may read and insert, but no longer delete or update.
+        privileges = {
+            privilege: await conn.fetchval(
+                "SELECT has_table_privilege('app_user', 'public.transcripts', $1)", privilege
+            )
+            for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE")
+        }
+        assert privileges == {
+            "SELECT": True,
+            "INSERT": True,
+            "UPDATE": False,
+            "DELETE": False,
+        }
+
+        policies = {
+            row["policyname"]: row["cmd"]
+            for row in await conn.fetch(
+                "SELECT policyname, cmd FROM pg_policies "
+                "WHERE schemaname = 'public' AND tablename = 'transcripts'"
+            )
+        }
+        assert policies == {
+            "org_tenant_transcripts_select": "SELECT",
+            "org_tenant_transcripts_insert": "INSERT",
+        }
+
+        # The deletion and cleanup functions are app_admin-owned SECURITY DEFINER
+        # with a pinned search_path, and only the intended role may execute each.
+        for name, allowed_role in (
+            ("request_transcript_deletion", "app_user"),
+            ("claim_next_transcript_cleanup", "app_worker"),
+            ("finalize_transcript_cleanup", "app_worker"),
+            ("release_transcript_cleanup", "app_worker"),
+        ):
+            row = await conn.fetchrow(
+                "SELECT p.oid, pg_get_userbyid(p.proowner) AS owner, p.prosecdef, p.proconfig "
+                "FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+                "WHERE n.nspname = 'public' AND p.proname = $1",
+                name,
+            )
+            assert row["owner"] == "app_admin", name
+            assert row["prosecdef"] is True, name
+            assert "search_path=" in "".join(row["proconfig"] or []), name
+            assert await conn.fetchval(
+                "SELECT has_function_privilege($1, $2::oid, 'EXECUTE')", allowed_role, row["oid"]
+            ), (allowed_role, name)
+            denied = "app_worker" if allowed_role == "app_user" else "app_user"
+            assert not await conn.fetchval(
+                "SELECT has_function_privilege($1, $2::oid, 'EXECUTE')", denied, row["oid"]
+            ), (denied, name)
+
+        assert (
+            await conn.fetchval(
+                "SELECT count(*) FROM pg_trigger WHERE tgname = 'audit_transcript_delete'"
+            )
+            == 0
+        )
+        assert (
+            await conn.fetchval(
+                "SELECT count(*) FROM pg_trigger "
+                "WHERE tgname = 'transcripts_guard_physical_delete'"
+            )
+            == 1
+        )
+
+
+async def test_upgrade_from_012_preserves_live_transcripts_and_evidence(
+    hosted_env: dict[str, str], tmp_path: Path
+) -> None:
+    """Upgrading a populated 012 database keeps historical rows, leaves existing
+    transcripts live, and tombstones one of them through the new function.
+    """
+    import hosted
+    import hosted.migrations as migrations
+
+    host_port = hosted_env["MIGRATE_DATABASE_URL"].rsplit("/", 1)[0]
+    test_db = f"upgrade_013_{uuid.uuid4().hex[:8]}"
+    partial_dir = tmp_path / "migrations_012"
+    partial_dir.mkdir()
+    for version, path in migrations.list_migrations(hosted.config.MIGRATIONS_DIR):
+        if version <= "012":
+            shutil.copyfile(path, partial_dir / path.name)
+
+    admin_conn = await asyncpg.connect(hosted_env["MIGRATE_DATABASE_URL"])
+    try:
+        await admin_conn.execute(f'CREATE DATABASE "{test_db}"')
+    finally:
+        await admin_conn.close()
+
+    test_dsn = f"{host_port}/{test_db}"
+    passwords = {
+        "app_user_password": "app_user_password",
+        "app_admin_password": "app_admin_password",
+        "app_worker_password": "app_worker_password",
+        "context_secret": hosted_env["HOSTED_CONTEXT_SECRET"],
+    }
+    conn = None
+    try:
+        await migrations.migrate(test_dsn, partial_dir, **passwords)
+
+        conn = await asyncpg.connect(test_dsn)
+        user_id = uuid.uuid4()
+        org_id = uuid.uuid4()
+        account_id = uuid.uuid4()
+        live_id = uuid.uuid4()
+        historical_id = uuid.uuid4()
+        await conn.execute(
+            "INSERT INTO public.users (id, email) VALUES ($1, $2)",
+            user_id,
+            "upgrade-013@airbyte.io",
+        )
+        await conn.execute(
+            "INSERT INTO public.organizations (id, name, slug) VALUES ($1, $2, $3)",
+            org_id,
+            "Upgrade Org",
+            f"upgrade-013-{uuid.uuid4().hex[:8]}",
+        )
+        await conn.execute(
+            "INSERT INTO public.memberships (id, org_id, user_id, role, active) "
+            "VALUES ($1, $2, $3, 'member', true)",
+            uuid.uuid4(),
+            org_id,
+            user_id,
+        )
+        await conn.execute(
+            "INSERT INTO public.accounts (id, org_id, name, slug, created_by) "
+            "VALUES ($1, $2, $3, $4, $5)",
+            account_id,
+            org_id,
+            "Upgrade Account",
+            f"upgrade-013-account-{uuid.uuid4().hex[:8]}",
+            user_id,
+        )
+        for transcript_id in (live_id, historical_id):
+            await conn.execute(
+                """
+                INSERT INTO public.transcripts
+                    (id, org_id, account_id, storage_path, original_filename,
+                     size_bytes, mime_type, uploaded_by)
+                VALUES ($1, $2, $3, $4, 'legacy.txt', 4, 'text/plain', $5)
+                """,
+                transcript_id,
+                org_id,
+                account_id,
+                f"{org_id}/{account_id}/{transcript_id}-legacy.txt",
+                user_id,
+            )
+        job_id = await conn.fetchval(
+            """
+            INSERT INTO public.jobs (
+                org_id, account_id, transcript_id, requester_id, skill,
+                skill_version, status, max_attempts
+            ) VALUES ($1, $2, $3, $4, 'post-call', '1.0', 'success', 3)
+            RETURNING id
+            """,
+            org_id,
+            account_id,
+            historical_id,
+            user_id,
+        )
+        # Historical audit evidence, including a pre-upgrade delete event that
+        # meant "row and object removed".
+        for action, entity_type in (
+            ("transcript_upload", "transcripts"),
+            ("transcript_delete", "transcripts"),
+            ("job_run_requested", "jobs"),
+            ("output_export", "outputs"),
+        ):
+            await conn.execute(
+                "INSERT INTO public.audit_events (org_id, user_id, action, entity_type) "
+                "VALUES ($1, $2, $3, $4)",
+                org_id,
+                user_id,
+                action,
+                entity_type,
+            )
+        await conn.close()
+        conn = None
+
+        await migrations.migrate(test_dsn, hosted.config.MIGRATIONS_DIR, **passwords)
+
+        conn = await asyncpg.connect(test_dsn)
+        assert await conn.fetchval("SELECT count(*) FROM public.audit_events") == 4
+        assert await conn.fetchval("SELECT count(*) FROM public.transcripts") == 2
+        assert (
+            await conn.fetchval("SELECT count(*) FROM public.jobs WHERE id = $1", job_id) == 1
+        )
+        # Existing rows come out of the upgrade live, not tombstoned.
+        assert (
+            await conn.fetchval(
+                "SELECT count(*) FROM public.transcripts "
+                "WHERE tombstoned_at IS NULL AND cleanup_state = 'none'"
+            )
+            == 2
+        )
+
+        # The new deletion path works on a pre-existing row.
+        secret = hosted_env["HOSTED_CONTEXT_SECRET"].encode("utf-8")
+        digest = hmac.new(secret, str(user_id).encode("utf-8"), hashlib.sha256).hexdigest()
+        result = await conn.fetchval(
+            "SELECT public.request_transcript_deletion($1, $2, NULL, $3)",
+            f"{user_id}:{digest}",
+            account_id,
+            live_id,
+        )
+        assert '"accepted"' in result
+        assert (
+            await conn.fetchval(
+                "SELECT count(*) FROM public.audit_events WHERE action = 'transcript_delete'"
+            )
+            == 2
+        )
+        row = await conn.fetchrow(
+            "SELECT tombstoned_at, cleanup_state FROM public.transcripts WHERE id = $1",
+            live_id,
+        )
+        assert row["tombstoned_at"] is not None
+        assert row["cleanup_state"] == "pending"
+
+        # The historical terminal job still resolves its transcript reference.
+        assert (
+            await conn.fetchval("SELECT transcript_id FROM public.jobs WHERE id = $1", job_id)
+            == historical_id
+        )
+    finally:
+        if conn is not None:
+            await conn.close()
+        drop_conn = await asyncpg.connect(hosted_env["MIGRATE_DATABASE_URL"])
+        try:
+            await drop_conn.execute(f'DROP DATABASE IF EXISTS "{test_db}" WITH (FORCE)')
+        finally:
+            await drop_conn.close()

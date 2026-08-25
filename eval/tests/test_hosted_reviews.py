@@ -773,6 +773,33 @@ async def test_correction_requires_the_generation_time_transcript(
         assert await conn.fetchval("SELECT count(*) FROM public.output_correction_uploads") == 0
 
 
+async def test_correction_fails_closed_after_the_transcript_is_deleted(
+    app_client: TestClient, admin_pool: asyncpg.Pool, backend: Any
+) -> None:
+    """A tombstoned transcript is invisible to the review connection, so a
+    correction cannot proceed on weaker evidence than generation time had. The
+    output row itself survives as provenance and comments still work.
+    """
+    fx = await _seed_reviewable_output(admin_pool, backend)
+    async with admin_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE public.transcripts SET tombstoned_at = now(), cleanup_state = 'pending' "
+            "WHERE id = $1",
+            fx.transcript_id,
+        )
+
+    assert _correct(app_client, fx, base_version_id=None).status_code == 503
+    assert _comment(app_client, fx).status_code == 201
+
+    async with admin_pool.acquire() as conn:
+        assert await conn.fetchval(
+            "SELECT count(*) FROM public.output_versions WHERE output_id = $1", fx.output_id
+        ) == 0
+        assert await conn.fetchval(
+            "SELECT count(*) FROM public.outputs WHERE id = $1", fx.output_id
+        ) == 1
+
+
 async def test_malformed_version_chain_fails_closed(
     app_client: TestClient,
     admin_pool: asyncpg.Pool,
@@ -1494,16 +1521,20 @@ async def test_maintenance_delete_refuses_cross_org_and_non_output_targets(
     path = f"{org_id}/{uuid.uuid4()}/{uuid.uuid4()}/{uuid.uuid4()}/output.md"
     await _upload(backend, user_id, path, "content", _hs().OUTPUTS_BUCKET)
 
-    # Wrong bucket, another org's path, an unparsable prefix, and a missing
-    # identity are all refused before any request is made.
+    # An unsupported bucket, another org's path, an unparsable prefix, and a
+    # missing identity are all refused before any request is made.
     with pytest.raises(_hs().StorageAuthError):
-        await backend.delete_for_maintenance(org_id, path, bucket=_hs().DEFAULT_BUCKET)
+        await backend.delete_for_maintenance(org_id, path, bucket="avatars")
     with pytest.raises(_hs().StorageAuthError):
         await backend.delete_for_maintenance(other_org, path)
     with pytest.raises(_hs().StorageAuthError):
         await backend.delete_for_maintenance(org_id, "not-a-uuid/output.md")
     with pytest.raises(_hs().StorageAuthError):
         await backend.delete_for_maintenance(None, path)
+    # The transcripts bucket is a supported maintenance target, but a credential
+    # for it does not reach this outputs object.
+    with pytest.raises(_hs().ObjectNotFound):
+        await backend.delete_for_maintenance(org_id, path, bucket=_hs().DEFAULT_BUCKET)
     assert f"{_hs().OUTPUTS_BUCKET}:{path}" in backend.objects
 
     # Only the matching org path is allowed.
@@ -1520,23 +1551,40 @@ async def test_maintenance_storage_token_is_org_scoped_and_server_only(
     from hosted import storage as storage_module
 
     org_id = uuid.uuid4()
-    target = f"{org_id}/acct/transcript/output/versions/{uuid.uuid4()}/output.md"
     supabase_backend = storage_module.SupabaseStorageBackend()
-    token = supabase_backend._storage_token(
-        org_id, storage_module.MAINTENANCE_ROLE, maintenance_object=target
-    )
-    claims = pyjwt.decode(token, hosted_env["SUPABASE_JWT_SECRET"], algorithms=["HS256"])
-    assert claims["role"] == storage_module.MAINTENANCE_ROLE == "app_storage_maintenance"
-    assert claims["sub"] == str(org_id)
-    assert claims[storage_module.MAINTENANCE_OBJECT_CLAIM] == target
 
-    # A normal `app_storage` token never carries the maintenance claim.
+    # Both private buckets are reachable by maintenance, and a production-valid
+    # token for either one names the bucket *and* the object, because the Storage
+    # policies require both claims to match.
+    for bucket, target in (
+        (
+            storage_module.OUTPUTS_BUCKET,
+            f"{org_id}/acct/transcript/output/versions/{uuid.uuid4()}/output.md",
+        ),
+        (storage_module.DEFAULT_BUCKET, f"{org_id}/acct/{uuid.uuid4()}.txt"),
+    ):
+        token = supabase_backend._storage_token(
+            org_id,
+            storage_module.MAINTENANCE_ROLE,
+            maintenance_object=target,
+            maintenance_bucket=bucket,
+        )
+        claims = pyjwt.decode(token, hosted_env["SUPABASE_JWT_SECRET"], algorithms=["HS256"])
+        assert claims["role"] == storage_module.MAINTENANCE_ROLE == "app_storage_maintenance"
+        assert claims["sub"] == str(org_id)
+        assert claims[storage_module.MAINTENANCE_OBJECT_CLAIM] == target
+        assert claims[storage_module.MAINTENANCE_BUCKET_CLAIM] == bucket
+
+    # A normal `app_storage` token carries neither maintenance claim, so an
+    # ordinary request identity can never satisfy a maintenance policy.
     user_claims = pyjwt.decode(
         supabase_backend._storage_token(uuid.uuid4()),
         hosted_env["SUPABASE_JWT_SECRET"],
         algorithms=["HS256"],
     )
     assert storage_module.MAINTENANCE_OBJECT_CLAIM not in user_claims
+    assert storage_module.MAINTENANCE_BUCKET_CLAIM not in user_claims
+    assert user_claims["role"] != storage_module.MAINTENANCE_ROLE
 
     # No browser-visible surface carries the storage secret or a storage token.
     fx = await _seed_reviewable_output(admin_pool, backend)
@@ -1569,10 +1617,14 @@ async def test_maintenance_role_policies_are_scoped_to_the_exact_target_object(
     transcript_path = f"{org_id}/acct/transcript.txt"
     await _deactivate(admin_pool, user_id)
 
-    def _claims(subject: uuid.UUID, target: str | None = path) -> str:
+    def _claims(
+        subject: uuid.UUID, target: str | None = path, maintenance_bucket: str | None = "outputs"
+    ) -> str:
         claims: dict[str, str] = {"sub": str(subject)}
         if target is not None:
             claims["maintenance_object"] = target
+        if maintenance_bucket is not None:
+            claims["maintenance_bucket"] = maintenance_bucket
         return json.dumps(claims)
 
     async with superuser_pool.acquire() as conn:
@@ -1602,7 +1654,11 @@ async def test_maintenance_role_policies_are_scoped_to_the_exact_target_object(
             ) is False
 
     async def _as_maintenance(
-        subject: uuid.UUID, sql: str, *args: Any, target: str | None = path
+        subject: uuid.UUID,
+        sql: str,
+        *args: Any,
+        target: str | None = path,
+        maintenance_bucket: str | None = "outputs",
     ) -> str:
         async with superuser_pool.acquire() as conn:
             async with conn.transaction():
@@ -1610,12 +1666,15 @@ async def test_maintenance_role_policies_are_scoped_to_the_exact_target_object(
                 await conn.execute("SET LOCAL search_path = 'auth, storage, public'")
                 await conn.execute(
                     "SELECT set_config('request.jwt.claims', $1, true)",
-                    _claims(subject, target),
+                    _claims(subject, target, maintenance_bucket),
                 )
                 return await conn.execute(sql, *args)
 
     async def _visible_as_maintenance(
-        subject: uuid.UUID, name: str, target: str | None = path
+        subject: uuid.UUID,
+        name: str,
+        target: str | None = path,
+        maintenance_bucket: str | None = "outputs",
     ) -> bool:
         async with superuser_pool.acquire() as conn:
             async with conn.transaction():
@@ -1623,7 +1682,7 @@ async def test_maintenance_role_policies_are_scoped_to_the_exact_target_object(
                 await conn.execute("SET LOCAL search_path = 'auth, storage, public'")
                 await conn.execute(
                     "SELECT set_config('request.jwt.claims', $1, true)",
-                    _claims(subject, target),
+                    _claims(subject, target, maintenance_bucket),
                 )
                 return await conn.fetchval(
                     "SELECT EXISTS (SELECT 1 FROM storage.objects WHERE name = $1)", name
@@ -1685,6 +1744,29 @@ async def test_maintenance_role_policies_are_scoped_to_the_exact_target_object(
     assert await _visible_as_maintenance(org_id, path, target=None) is False
     await _as_maintenance(org_id, "DELETE FROM storage.objects WHERE name = $1", path, target=None)
     assert await _exists("outputs", path) is True
+
+    # Nor does a token without the bucket claim, or one minted for the other
+    # private bucket: an outputs object is out of reach for a transcripts
+    # credential and vice versa, so the two cleanup paths cannot borrow each
+    # other's capability.
+    for wrong_bucket in (None, "transcripts"):
+        assert (
+            await _visible_as_maintenance(org_id, path, maintenance_bucket=wrong_bucket) is False
+        )
+        await _as_maintenance(
+            org_id,
+            "DELETE FROM storage.objects WHERE name = $1",
+            path,
+            maintenance_bucket=wrong_bucket,
+        )
+        assert await _exists("outputs", path) is True
+
+    assert (
+        await _visible_as_maintenance(
+            org_id, transcript_path, target=transcript_path, maintenance_bucket="outputs"
+        )
+        is False
+    )
 
     # The allowed case: the exact claimed object, with no active membership. The
     # pre-delete lookup the Storage API performs is visible for this object only.

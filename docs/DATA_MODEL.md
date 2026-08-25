@@ -90,10 +90,20 @@ Uploaded customer artifacts. The object bytes live in Supabase Storage private b
 | `size_bytes` | File size |
 | `mime_type` | MIME type (derived from original filename) |
 | `uploaded_by` (FK to users) | Uploader |
+| `tombstoned_at` | Timestamp; set when a deletion is accepted and the row becomes invisible to the organization |
+| `delete_requested_by` (FK to users) | Member whose request tombstoned the row |
+| `cleanup_state` | `none`, `pending`, `complete`; `complete` is the only proof the private object is gone |
+| `cleanup_completed_at` | Timestamp of the reconciled Storage delete (nullable) |
+| `cleanup_attempts` | Reconciliation attempt counter; drives backoff, never a give-up ceiling |
+| `cleanup_claimed_by` / `cleanup_claimed_at` | Lease held by the worker currently reconciling this tombstone (nullable) |
+| `cleanup_last_error` | Truncated failure category from the last attempt (nullable) |
+| `cleanup_next_attempt_at` | Earliest time the tombstone may be claimed again after a failed attempt (nullable) |
 | `created_at` | Timestamp |
 | `updated_at` | Timestamp |
 
 Constraints:
+- `CHECK (cleanup_state IN ('none', 'pending', 'complete'))`
+- `CHECK ((tombstoned_at IS NULL AND cleanup_state = 'none' AND cleanup_completed_at IS NULL) OR (tombstoned_at IS NOT NULL AND cleanup_state IN ('pending', 'complete')))` — cleanup state cannot exist without a tombstone, and a live transcript can never look reconciled
 - `FOREIGN KEY (account_id, org_id) REFERENCES accounts(id, org_id)`
 - `FOREIGN KEY (opportunity_id, account_id, org_id) REFERENCES opportunities(id, account_id, org_id)`
 - `FOREIGN KEY (uploaded_by, org_id) REFERENCES memberships(user_id, org_id)`
@@ -101,6 +111,15 @@ Constraints:
 - Indexes on `org_id`, `(account_id, org_id)`, `(opportunity_id, org_id)`, and `uploaded_by`
 
 RLS on `org_id` using the same signed tenant-context token as accounts and opportunities. Storage object access uses a dedicated `app_storage` Postgres role: FastAPI signs a short-lived JWT (`role: "app_storage"`, `sub: user_id`) with the server-side `SUPABASE_JWT_SECRET` for Supabase Storage REST calls, and the browser-visible `authenticated` role has no `storage.objects` privileges. The API streams file contents through FastAPI; the SPA never holds storage credentials. Uploads are validated for size (`TRANSCRIPT_MAX_BYTES`, default 10 MiB), allowed text extensions (`.txt`, `.md`, `.vtt`, `.srt`), valid UTF-8, no NUL bytes, and disallowed HTML/executable/binary signatures before any object or metadata is created.
+
+**Slice 6B2A1 deletion lifecycle (implemented).** Deletion is a durable tombstone plus asynchronous Storage reconciliation, because Storage and Postgres share no transaction and the previous delete-object-then-delete-row order could leave a listable row with no object and no evidence:
+
+1. `public.request_transcript_deletion(context_token, account_id, opportunity_id, transcript_id)` (`app_admin`-owned `SECURITY DEFINER`, `SET search_path = ''`) derives the actor from the signed tenant context and the organization from the locked transcript row, and returns `SE020` (indistinguishable for missing, cross-organization, and wrong-account/opportunity requests) or `SE021` when a `queued` or `running` job still references the transcript. Deletion never implicitly cancels a job.
+2. Accepted requests set `tombstoned_at`, `delete_requested_by`, and `cleanup_state = 'pending'` and record exactly one `transcript_delete` audit event in the same transaction. A replayed or concurrent duplicate request returns `already_deleted` and appends no second event.
+3. The `SELECT`/`INSERT` policies for `app_user` carry `tombstoned_at IS NULL`, and `app_user` holds no `UPDATE`/`DELETE` on the table, so a tombstoned row is invisible to lists, downloads, corrections, and new runs the moment the tombstone commits. `public.enqueue_job` rejects a tombstoned transcript at the database boundary, so the delete/enqueue race has one safe winner.
+4. A worker claims one tombstone with `public.claim_next_transcript_cleanup(worker_id, lease_seconds)` (`FOR UPDATE SKIP LOCKED`, due tombstones first, expired leases reclaimable) and receives only the transcript id, organization, trusted `storage_path`, and attempt count.
+5. It deletes that one object with the `app_storage_maintenance` identity, then calls `public.finalize_transcript_cleanup(...)`, which marks `complete` only when the caller still owns the claim. A missing object counts as reconciled; any ambiguous Storage failure calls `public.release_transcript_cleanup(...)`, which keeps the row `pending`, clears the lease, stores a truncated error, and sets `cleanup_next_attempt_at` to `now() + min(2^attempts, 3600) seconds`. There is no attempt ceiling and no terminal failure state: an attempt budget would turn a transient Storage outage into permanent retention of content the customer asked to delete, so failures cost delay only and the backoff lives on the row, surviving worker restarts. A deletion that succeeds in Storage but fails to finalize in Postgres is the same case — the row stays `pending` and hidden, and the next attempt observes `ObjectNotFound` and finalizes.
+6. The row itself is retained as the hidden provenance anchor for terminal jobs, outputs, reviews, and export evidence. A privileged physical delete is guarded by `app_private.assert_transcript_delete_is_reconciled()`, which raises `SE022` unless the row is tombstoned and `complete`, and emits no user audit event. Retention/purge policy for reconciled tombstones is Slice 6B2B.
 
 ### `jobs`
 
@@ -283,9 +302,8 @@ audit-admin UI.
 
 Slice 6B2A extends the same boundary to the remaining user actions:
 `transcript_upload` and `transcript_delete` (written by `app_admin`-owned
-`AFTER INSERT`/`AFTER DELETE` triggers on `public.transcripts`, so metadata and
-evidence share one transaction and delete evidence outlives the row it
-describes) and `job_run_requested` / `job_cancel_requested` (written inside
+database code on `public.transcripts`, so metadata and evidence share one
+transaction) and `job_run_requested` / `job_cancel_requested` (written inside
 `public.enqueue_job` and `public.request_job_cancellation` on the branch that
 changes durable job state). Their metadata is server-side identifiers only —
 account, opportunity, transcript, job — so every recorded value is a UUID and no
@@ -299,6 +317,16 @@ the database-side backstop against duplicate evidence from a retry or a
 concurrent request. Worker lifecycle stays out of this table: `jobs` and
 `job_attempts` remain the operational lifecycle and provenance ledger, and the
 job actions record the authenticated user's request rather than each attempt.
+
+Slice 6B2A1 moves `transcript_delete` from an `AFTER DELETE` trigger to
+`public.request_transcript_deletion`, which records it in the same transaction
+that writes the tombstone. The action therefore means "the organization asked
+for this transcript to be deleted and it is no longer visible", not "the private
+object is gone": `transcripts.cleanup_state = 'complete'` is the only proof of
+physical reconciliation. Reconciliation is background maintenance, not a user
+action, so it appends nothing — one accepted deletion is exactly one event, and
+a privileged hard delete of an already reconciled row records nothing rather
+than re-attributing it to the original requester.
 
 ### `output_correction_uploads`
 

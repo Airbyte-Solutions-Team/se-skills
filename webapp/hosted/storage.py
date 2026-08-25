@@ -36,16 +36,25 @@ OUTPUTS_BUCKET = "outputs"
 # Postgres role names used as the `role` claim of the server-signed Storage JWT.
 # `app_storage` carries a user subject and inherits the active-membership
 # contract. `app_storage_maintenance` carries an *organization* subject plus the
-# exact object being reconciled, and may only delete that one object under that
-# organization's path in the outputs bucket, so cleanup of an abandoned private
-# object never depends on the historical actor still being an active member.
+# exact bucket and object being reconciled, and may only delete that one object
+# under that organization's path in that bucket, so cleanup of an abandoned
+# private object never depends on the historical actor still being an active
+# member.
 STORAGE_ROLE = "app_storage"
 MAINTENANCE_ROLE = "app_storage_maintenance"
 
-# JWT claim naming the single object a maintenance token may act on. The
-# maintenance policies require `storage.objects.name` to equal it, so the
-# credential cannot reach any other output even inside its own organization.
+# JWT claims naming the single bucket and object a maintenance token may act on.
+# The maintenance policies require `storage.objects.bucket_id` and
+# `storage.objects.name` to equal them, so the credential cannot reach any other
+# object even inside its own organization, and an outputs token is invalid
+# against the transcripts bucket and vice versa.
 MAINTENANCE_OBJECT_CLAIM = "maintenance_object"
+MAINTENANCE_BUCKET_CLAIM = "maintenance_bucket"
+
+# Buckets with exact-target maintenance policies: generated outputs (tombstoned
+# or abandoned correction uploads) and transcripts (tombstoned customer
+# uploads). Nothing else is reachable with a maintenance credential.
+MAINTENANCE_BUCKETS = frozenset({OUTPUTS_BUCKET, DEFAULT_BUCKET})
 
 
 class StorageError(Exception):
@@ -64,13 +73,14 @@ def check_maintenance_target(org_id: uuid.UUID | None, path: str, bucket: str) -
     """Reject anything the Storage maintenance policies would not authorize.
 
     Enforced in the backend as well as in SQL so the narrow contract holds for
-    the memory backend and for any caller mistake: outputs bucket only, and the
-    object's leading org path segment must equal the token subject.
+    the memory backend and for any caller mistake: a bucket that has exact-target
+    maintenance policies, and an object whose leading org path segment equals the
+    token subject.
     """
     if not org_id:
         raise StorageAuthError("Missing organization identity")
-    if bucket != OUTPUTS_BUCKET:
-        raise StorageAuthError("Maintenance deletion is limited to the outputs bucket")
+    if bucket not in MAINTENANCE_BUCKETS:
+        raise StorageAuthError("Maintenance deletion is not supported for this bucket")
     parts = path.split("/")
     if not parts or not parts[0]:
         raise StorageAuthError("Invalid object path")
@@ -111,14 +121,14 @@ class StorageBackend:
     async def delete_for_maintenance(
         self, org_id: uuid.UUID, path: str, bucket: str = OUTPUTS_BUCKET
     ) -> None:
-        """Delete an abandoned output object as the Storage maintenance identity.
+        """Delete an abandoned private object as the Storage maintenance identity.
 
         Authorization is object-scoped rather than user-scoped: the credential is
-        minted for exactly *path*, which must live under *org_id* in the outputs
-        bucket, and it authorizes nothing else. No membership is consulted, so a
-        deactivated correction author cannot pin customer content in Storage.
-        *path* comes from the trusted cleanup claim or tombstone row, never from
-        a request body.
+        minted for exactly *bucket* and *path*, which must live under *org_id*,
+        and it authorizes nothing else. No membership is consulted, so a
+        deactivated correction author or transcript deleter cannot pin customer
+        content in Storage. *path* comes from the trusted cleanup claim or
+        tombstone row, never from a request body.
         """
         raise NotImplementedError
 
@@ -161,6 +171,7 @@ class SupabaseStorageBackend(StorageBackend):
         subject: uuid.UUID,
         role: str = STORAGE_ROLE,
         maintenance_object: str | None = None,
+        maintenance_bucket: str | None = None,
     ) -> str:
         """Return a short-lived JWT for a dedicated Storage role.
 
@@ -180,6 +191,8 @@ class SupabaseStorageBackend(StorageBackend):
         }
         if maintenance_object is not None:
             claims[MAINTENANCE_OBJECT_CLAIM] = maintenance_object
+        if maintenance_bucket is not None:
+            claims[MAINTENANCE_BUCKET_CLAIM] = maintenance_bucket
         return jwt.encode(claims, self.jwt_secret, algorithm="HS256")
 
     def _headers(
@@ -187,12 +200,14 @@ class SupabaseStorageBackend(StorageBackend):
         user_id: uuid.UUID,
         role: str = STORAGE_ROLE,
         maintenance_object: str | None = None,
+        maintenance_bucket: str | None = None,
     ) -> dict[str, str]:
+        token = self._storage_token(
+            user_id, role, maintenance_object, maintenance_bucket
+        )
         return {
             "apikey": self.anon_key,
-            "Authorization": (
-                f"Bearer {self._storage_token(user_id, role, maintenance_object)}"
-            ),
+            "Authorization": f"Bearer {token}",
         }
 
     async def upload(
@@ -289,7 +304,12 @@ class SupabaseStorageBackend(StorageBackend):
         try:
             response = await self.client.delete(
                 url,
-                headers=self._headers(org_id, MAINTENANCE_ROLE, maintenance_object=path),
+                headers=self._headers(
+                    org_id,
+                    MAINTENANCE_ROLE,
+                    maintenance_object=path,
+                    maintenance_bucket=bucket,
+                ),
             )
         except httpx.HTTPError as exc:
             logger.warning(
@@ -443,8 +463,9 @@ class MemoryStorageBackend(StorageBackend):
     async def delete_for_maintenance(
         self, org_id: uuid.UUID, path: str, bucket: str = OUTPUTS_BUCKET
     ) -> None:
-        # Mirrors the maintenance policies: outputs bucket, org path segment
-        # equal to the token subject, and no membership lookup at all.
+        # Mirrors the maintenance policies: a bucket with exact-target policies,
+        # an org path segment equal to the token subject, and no membership
+        # lookup at all.
         check_maintenance_target(org_id, path, bucket)
         key = f"{bucket}:{path}"
         if key not in self.objects:

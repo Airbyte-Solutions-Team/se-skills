@@ -401,7 +401,7 @@ completing the reviewed-output workflow through export.
 
 **Non-goals:**
 - No persisted export artifacts, share links, or hosted Git push.
-- No admin/onboarding surface or broader audit coverage (Slice 6B2A/6B2B).
+- No admin/onboarding surface or broader audit coverage (Slice 6B2A/6B2A1/6B2B).
 
 ## Slice 6B2A: Hosted user-action audit completeness
 
@@ -455,8 +455,78 @@ review (Slice 6A) and export (Slice 6B1).
   client text, so this slice keeps it out of audit metadata instead of
   constraining it (Slice 6B2B).
 - No recovery for the inherited transcript-delete window (Storage object deleted,
-  metadata row retained, no delete event): a bounded reconciliation slice before
-  launch.
+  metadata row retained, no delete event): closed by Slice 6B2A1.
+
+## Slice 6B2A1: Transcript deletion tombstone and Storage reconciliation
+
+**Status:** `In Progress` — implemented on the open Slice 6B2A1 pull request;
+this slice is complete only after that pull request merges.
+
+**Product outcome:** Deleting a transcript is immediately trustworthy and
+durably recoverable: the content stops being reachable the moment the request is
+accepted, the private object is removed even if Storage or the worker fails at
+the wrong moment, and the deletion cannot be reported as finished while the bytes
+are still there.
+
+**Scope:**
+- Migration `013` adds the deletion tombstone and reconciliation state to
+  `public.transcripts` (`tombstoned_at`, `delete_requested_by`, `cleanup_state`,
+  `cleanup_completed_at`, and lease/attempt/error columns) with check constraints
+  that keep live and tombstoned rows distinguishable.
+- `public.request_transcript_deletion` replaces direct `app_user` deletion:
+  `app_admin`-owned `SECURITY DEFINER`, actor from the signed tenant context,
+  organization from the locked row, `409` while a `queued`/`running` job
+  references the transcript, and one `transcript_delete` event committed with the
+  tombstone. `DELETE`/`UPDATE` on the table is revoked from `app_user`.
+- The transcript `SELECT`/`INSERT` policies require `tombstoned_at IS NULL` and
+  `public.enqueue_job` rejects a tombstoned transcript, so hiding and
+  run-eligibility are enforced at the database boundary, not in the API.
+- The DELETE routes return `202` with the cleanup state and are idempotent on
+  replay; a lease-bound worker path
+  (`claim_next_transcript_cleanup`/`finalize_transcript_cleanup`/`release_transcript_cleanup`)
+  deletes the exact private object with the `app_storage_maintenance` identity,
+  which now also requires a `maintenance_bucket` claim.
+- Reconciliation retries are unbounded with capped exponential backoff stored on
+  the row (`cleanup_next_attempt_at`). There is deliberately no attempt ceiling
+  and no terminal failure state, because an exhausted budget would leave content
+  the customer deleted in Storage indefinitely with no recovery path.
+- A `BEFORE DELETE` guard rejects physical deletion of a transcript row that is
+  not tombstoned and reconciled.
+
+**Dependencies:** Slice 3, Slice 5B2A, Slice 6A, Slice 6B1, Slice 6B2A.
+
+**Acceptance criteria:**
+- A tombstoned transcript disappears from lists, downloads, corrections, and new
+  runs immediately, including through direct `app_user` SQL, while missing and
+  cross-organization requests stay indistinguishable.
+- Deletion never implicitly cancels a job; terminal jobs, outputs, reviews, and
+  export evidence keep referencing the tombstoned transcript.
+- A concurrent duplicate delete, a delete/enqueue race, a Storage failure, an
+  expired lease, a worker restart, and a deactivated requester all resolve to one
+  audit event, one deleted object, and no false completion.
+- A long run of transient Storage failures never strands the bytes: attempts back
+  off, the tombstone stays claimable, and a later attempt reconciles it.
+- A Storage delete that succeeds and then fails (ambiguous response, or a failed
+  completion write) leaves the row hidden and `pending`, does not recreate the
+  object, and is finalized by a subsequent attempt that observes its absence.
+- A transcript owned by a `queued` or `running` job is never physically
+  reconciled, because tombstoning is refused while such a job exists.
+- Cleanup marks `complete` only after the object is known deleted or already
+  absent, and only for the worker that still owns the claim.
+- Maintenance credentials authorize exactly one `{organization, bucket, object}`
+  and no service-role key is introduced.
+- Migration `013` applies to a clean install and to an upgrade from `012` with
+  existing transcripts, jobs, outputs, review, and audit rows preserved.
+
+**Non-goals:**
+- No retention window, scheduled purge, or hard deletion of reconciled tombstones
+  (Slice 6B2B).
+- No admin surface or operator dashboard for stuck cleanups; the evidence lives
+  in `cleanup_state`/`cleanup_last_error` (Slice 6B2B).
+- No account/opportunity/organization deletion, and no change to generated-output
+  or correction-upload cleanup beyond the shared maintenance credential.
+- No polling UI: the SPA reflects the immediate hiding, not the background
+  reconciliation.
 
 ## Slice 6B2B: Admin/onboarding, observability, retention, and beta launch readiness
 

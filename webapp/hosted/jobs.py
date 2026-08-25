@@ -53,12 +53,18 @@ async def _load_transcript_for_job(
     opportunity_id: uuid.UUID | None,
     org_id: uuid.UUID,
 ) -> asyncpg.Record:
-    """Fetch the transcript row and verify the account/opportunity/org chain."""
+    """Fetch a live transcript row and verify the account/opportunity/org chain.
+
+    Logically deleted transcripts are excluded, so a tombstoned transcript can no
+    longer seed a new run. `public.enqueue_job` re-checks the tombstone under a
+    row lock, which is what makes a concurrent delete/enqueue race safe.
+    """
     if opportunity_id is not None:
         row = await conn.fetchrow(
             """
             SELECT * FROM public.transcripts
             WHERE id = $1 AND account_id = $2 AND opportunity_id = $3 AND org_id = $4
+              AND tombstoned_at IS NULL
             """,
             transcript_id,
             account_id,
@@ -70,6 +76,7 @@ async def _load_transcript_for_job(
             """
             SELECT * FROM public.transcripts
             WHERE id = $1 AND account_id = $2 AND org_id = $3 AND opportunity_id IS NULL
+              AND tombstoned_at IS NULL
             """,
             transcript_id,
             account_id,
@@ -167,10 +174,15 @@ async def create_job(
                 json.dumps(source_manifest),
             )
     except PostgresError as exc:
-        if getattr(exc, "sqlstate", None) == "40901":
+        if exc.sqlstate == "40901":
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Idempotency key reused with different scope",
+            ) from exc
+        if exc.sqlstate == "SE023":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Transcript has been deleted",
             ) from exc
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
