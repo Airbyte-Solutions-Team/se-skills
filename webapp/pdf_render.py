@@ -21,7 +21,7 @@ import tempfile
 
 from md_render import markdown_to_body_html
 
-# Chrome/Chromium candidates, in preference order (macOS first, then Linux).
+# Chrome/Chromium candidates, in preference order (macOS, Linux, then Windows).
 _CHROME_CANDIDATES = [
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "/Applications/Chromium.app/Contents/MacOS/Chromium",
@@ -29,6 +29,13 @@ _CHROME_CANDIDATES = [
     "google-chrome",
     "chromium",
     "chromium-browser",
+    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+    r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    "chrome.exe",
+    "msedge.exe",
 ]
 
 _CSS = """
