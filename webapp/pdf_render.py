@@ -48,16 +48,23 @@ _CSS = """
 body {
   font-family: -apple-system, "Helvetica Neue", Arial, sans-serif;
   font-size: 10.5pt; line-height: 1.5; color: #1a1a1a; margin: 0;
+  counter-reset: sec;
 }
 h1 {
   font-size: 21pt; line-height: 1.2; margin: 0 0 4pt 0;
   padding-bottom: 8pt; border-bottom: 2px solid #222; color: #111;
 }
-/* Each major section starts on its own page. */
+/* Flat-editorial section: each major section starts on its own page, marked by
+   a heavy rule above and a leading-zero number (matches the web reader). */
 h2 {
-  font-size: 15pt; color: #111; margin: 0 0 8pt 0;
-  padding-bottom: 4pt; border-bottom: 1px solid #ccc;
+  font-size: 15pt; color: #111; margin: 0 0 10pt 0;
+  padding-top: 6pt; border-top: 2pt solid #222;
   break-before: page; break-after: avoid;
+  counter-increment: sec;
+}
+h2::before {
+  content: counter(sec, decimal-leading-zero) "\2003";
+  color: #c0c0c0; font-weight: 800;
 }
 h3 { font-size: 12.5pt; color: #222; margin: 14pt 0 6pt 0; break-after: avoid; }
 h2 + p, h2 + ul, h3 + p, h3 + ul { break-before: avoid; }

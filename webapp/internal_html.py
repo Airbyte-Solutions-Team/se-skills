@@ -26,6 +26,25 @@ from md_render import markdown_to_body_html
 # including the <style> tags) rather than duplicating the CSS here.
 _TEMPLATE = Path(__file__).resolve().parent.parent / "skills" / "coverage-handoff" / "template.html"
 
+# Flat-editorial section skin for the GENERIC exporter only. Scoped to
+# `.section--flat` (emitted here, never by the coverage-handoff skill) so the
+# rs-group template's own card layout is untouched. Matches the web reader:
+# a heavy rule + a leading-zero number, no card box around section content.
+_FLAT_STYLE = """<style>
+  .section--flat { margin: 26px 0 0; }
+  .section--flat .section-title {
+    display: block; border: none; border-top: 2px solid var(--primary);
+    padding: 14px 0 0; margin: 0 0 14px; font-size: 19px; font-weight: 700;
+  }
+  .section--flat .section-title .sec-n {
+    font-weight: 800; color: #c7cdd6; margin-right: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  .section--flat > .card.full {
+    background: none; border: none; border-radius: 0; padding: 0;
+  }
+</style>"""
+
 _AUTH_MARKER = (
     '<div class="airbyte-auth-marker" tabindex="0" role="note" '
     'aria-label="Airbyte internal — SSO required">'
@@ -126,11 +145,15 @@ def render_internal_html(md_text: str, *, customer: str = "", subtitle: str = ""
     section_html = ""
     if preamble.strip():
         # content before the first H2 (the At-a-Glance) leads as a full card
-        section_html += f'<div class="section"><div class="card full">{preamble}</div></div>'
-    for sec_title, content in sections:
+        section_html += f'<div class="section section--flat"><div class="card full">{preamble}</div></div>'
+    for i, (sec_title, content) in enumerate(sections, 1):
+        # sec_title already carries HTML entities from the markdown render
+        # (e.g. "Blockers &amp; Risks"); unescape before re-escaping so it
+        # doesn't become "&amp;amp;".
+        safe_title = html.escape(html.unescape(sec_title))
         section_html += (
-            f'<div class="section">'
-            f'<div class="section-title">{html.escape(sec_title)}</div>'
+            f'<div class="section section--flat">'
+            f'<div class="section-title"><span class="sec-n">{i:02d}</span>{safe_title}</div>'
             f'<div class="card full">{content}</div>'
             f"</div>"
         )
@@ -147,6 +170,7 @@ def render_internal_html(md_text: str, *, customer: str = "", subtitle: str = ""
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(title)} — Airbyte Internal</title>
 {_style_block()}
+{_FLAT_STYLE}
 </head>
 <body>
 {_AUTH_MARKER}
