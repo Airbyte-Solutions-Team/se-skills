@@ -2,10 +2,12 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: August 28, 2026 — HEAD `ad928dd` on `main`.
+_Last updated: August 28, 2026 — HEAD `8bb233c`, branch `redesign-outputs`.
 
 
 ## Built this session (newest first — see `git log`)
+
+- **Output reader redesign 1/3 — flat-editorial section model (August 28, branch `redesign-outputs`).** Design canvas approved (`Structured Brief` direction, section treatment `B`): the reader document is now one reading surface with sections set off by a heavy top rule + a large marginal number + air, instead of the previous flat `margin-bottom` gap (no visible separation) or boxed cards. `reader.js` `buildReaderDocument` numbers every `h2` section in document order and writes `data-num="01"…`; the un-promoted summary panel (`is-glance`) is not numbered and stays the one boxed surface. `style.css`: `.doc-section` gets `position:relative`, a `border-top: 2px solid var(--text)`, left padding for the gutter, and a `::before` that renders `attr(data-num)` as a 32px faint marginal figure; evidence/audit sections (`--role-evidence`) drop their `var(--panel2)` box for a light rule + fainter number; the high-stakes deal sections (`--blocker`/`--win`/`--risk`) drop their filled box for a color-matched top rule + colored number. Mobile block tightened (24px number, 38px gutter). Verified in the Output Gallery against `deal-assessment` and `prep-call`, light + dark. Exec card, tiles, risk strip, callouts, tables, people/action/qa components unchanged in this commit. Still to come: 2/3 chat panel → non-reflowing overlay + doc actions to the toolbar; 3/3 same section system in `pdf_render.py` and `coverage-handoff/template.html`.
 
 - **PDF export now finds Chrome on Windows (August 28).** `find_chrome()` in `pdf_render.py` only checked macOS app-bundle paths and Linux binary names (`google-chrome`, `chromium`, `chromium-browser`), so on Windows it always returned `None` and PDF download failed with "No Chrome/Chromium found for PDF rendering" even with Chrome installed. Added the standard Windows Chrome/Edge install paths (`Program Files`, `Program Files (x86)`, `%LOCALAPPDATA%`) and `chrome.exe`/`msedge.exe` as `PATH` fallbacks to `_CHROME_CANDIDATES`.
 

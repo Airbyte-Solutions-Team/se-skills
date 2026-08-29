@@ -717,11 +717,18 @@
     }
 
     // ── Role classes (surface weight) + collapsible audit/detail sections.
+    // Sections are numbered in document order (01, 02, …) for the flat-editorial
+    // marginal figure; the un-promoted summary panel (is-glance) is not a
+    // numbered section.
+    let secNum = 0;
     for (const s of sections) {
       const h2 = s.querySelector(":scope > h2.md-h2");
       if (!h2) continue;
       const titleText = h2.textContent || "";
       s.classList.add(`doc-section--role-${sectionRole(titleText)}`);
+      if (!s.classList.contains("is-glance")) {
+        s.setAttribute("data-num", String(++secNum).padStart(2, "0"));
+      }
       const body = doc.createElement("div");
       body.className = "sec-body";
       Array.from(s.childNodes).forEach((n) => { if (n !== h2) body.appendChild(n); });

@@ -546,27 +546,41 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 }
 .doc-action:hover { border-color: var(--accent); background: var(--panel-hover); }
 .doc-action.copied { border-color: var(--accent2); color: var(--accent2); }
-/* Ordinary narrative section: no border, no fill — just breathing room. */
-.md-body .doc-section { padding: 0; margin: 0 0 42px; }
+/* Flat-editorial section: one reading surface. Sections are set off by a heavy
+   top rule + a large marginal number (data-num, emitted by reader.js) + air —
+   distinguished as units without boxing the document into a stack of cards. */
+.md-body .doc-section {
+  position: relative;
+  padding: 22px 0 4px 54px;
+  margin: 34px 0 0;
+  border-top: 2px solid var(--text);
+}
+.md-body .doc-section:first-child { border-top: none; margin-top: 0; padding-top: 2px; }
 .md-body .doc-section:last-child { margin-bottom: 0; }
 .md-body .doc-section > :last-child { margin-bottom: 0; }
+.md-body .doc-section[data-num]::before {
+  content: attr(data-num);
+  position: absolute; left: 0; top: 19px;
+  font: 800 32px/1 Inter, ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: -.02em;
+  color: color-mix(in srgb, var(--text) 13%, transparent);
+}
+.md-body .doc-section:first-child[data-num]::before { top: 0; }
 .md-body .doc-section .md-h2 { margin: 0 0 12px; display: flex; align-items: baseline; gap: 10px; }
 
-/* Sections that DO earn a surface: the summary panel, the audit trail, and the
-   three high-stakes deal sections (accented further down). */
-.md-body .doc-section.is-glance,
-.md-body .doc-section--role-evidence,
-.md-body .doc-section--blocker,
-.md-body .doc-section--win,
-.md-body .doc-section--risk {
-  padding: 24px 26px; border-radius: 14px;
+/* The one section that stays a panel: the un-promoted summary (is-glance). */
+.md-body .doc-section.is-glance {
+  padding: 24px 26px; border-radius: 14px; border-top: none; margin-top: 22px;
 }
+.md-body .doc-section.is-glance::before { content: none; }
 .md-body .doc-section.is-glance { background: color-mix(in srgb, var(--accent) 6%, var(--panel)); border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--line)); }
 .md-body .doc-section.is-glance .md-h3 { margin-top: 0; color: var(--accent); text-transform: uppercase; letter-spacing: .5px; font-size: 12px; }
 
 /* Audit / provenance sections (Source Coverage, MEDDPICC, Coaching, evidence):
-   quieter than decision content, but never hidden and never dropped. */
-.md-body .doc-section--role-evidence { background: var(--panel2); border: 1px solid var(--line); }
+   quieter than decision content — a light rule and a faint number, never hidden
+   and never dropped. */
+.md-body .doc-section--role-evidence { border-top-color: var(--line); }
+.md-body .doc-section--role-evidence[data-num]::before { color: color-mix(in srgb, var(--text) 7%, transparent); }
 .md-body .doc-section--role-evidence > .md-h2 { font-size: 15px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 700; }
 .md-body .doc-section--role-evidence .md-p,
 .md-body .doc-section--role-evidence .md-list li { font-size: 13.5px; color: var(--muted); }
@@ -905,12 +919,9 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 }
 @media (max-width: 700px) {
   main:has(.doc-layout) { padding-top: 24px; }
-  .md-body .doc-section { margin-bottom: 32px; }
-  .md-body .doc-section.is-glance,
-  .md-body .doc-section--role-evidence,
-  .md-body .doc-section--blocker,
-  .md-body .doc-section--win,
-  .md-body .doc-section--risk { padding: 18px 16px; }
+  .md-body .doc-section { margin-top: 26px; padding-left: 38px; }
+  .md-body .doc-section[data-num]::before { font-size: 24px; top: 16px; }
+  .md-body .doc-section.is-glance { padding: 18px 16px; }
   .md-body .md-h2 { font-size: 19px; }
   .md-body .exec-card { padding: 16px 16px; }
   .md-body .tile-grid { grid-template-columns: 1fr; }
@@ -1227,11 +1238,16 @@ a.live-btn { text-decoration: none; display: inline-flex; align-items: center; }
 /* Status color carries meaning only: these three surfaces are a real blocker, a
    real path-to-win and a real risk section. The section heading also states the
    meaning in words, so the color is never the only signal. */
-.md-body .doc-section--blocker { border: 1px solid color-mix(in srgb, var(--danger) 30%, var(--line)); border-left: 3px solid var(--danger); background: color-mix(in srgb, var(--danger) 6%, var(--panel)); }
+/* Flat model: the section is marked by a colored top rule + colored marginal
+   number, not a filled box. The heading still states the meaning in words. */
+.md-body .doc-section--blocker { border-top-color: var(--danger); }
+.md-body .doc-section--blocker[data-num]::before { color: color-mix(in srgb, var(--danger) 55%, transparent); }
 .md-body .doc-section--blocker > .sec-body > p:first-of-type > strong:first-child,
 .md-body .doc-section--blocker > .sec-body > .risk-card.blocker .risk-card-title { color: var(--danger); }
-.md-body .doc-section--win { border: 1px solid color-mix(in srgb, var(--accent2) 30%, var(--line)); border-left: 3px solid var(--accent2); background: color-mix(in srgb, var(--accent2) 6%, var(--panel)); }
-.md-body .doc-section--risk { border: 1px solid color-mix(in srgb, var(--warn) 30%, var(--line)); border-left: 3px solid var(--warn); background: color-mix(in srgb, var(--warn) 6%, var(--panel)); }
+.md-body .doc-section--win { border-top-color: var(--accent2); }
+.md-body .doc-section--win[data-num]::before { color: color-mix(in srgb, var(--accent2) 55%, transparent); }
+.md-body .doc-section--risk { border-top-color: var(--warn); }
+.md-body .doc-section--risk[data-num]::before { color: color-mix(in srgb, var(--warn) 55%, transparent); }
 
 /* Keep legacy validation-banner hidden if any stray markup still carries it. */
 .validation-banner { display: none; }
