@@ -2096,7 +2096,6 @@ async function openOutput(path, title, ctx) {
         <button class="ghost small" id="doc-back" title="Back to opportunity">← Back</button>
         ${compareBtn}
         <span class="doc-actions" id="doc-actions"></span>
-        <span class="row-actions-spacer"></span>
         ${downloadMenuHtml(encodeURIComponent(decodedPath), "dl-menu-doc", "Export", false)}
         <button class="danger small" id="doc-delete" title="Delete this output">Delete</button>
         <button class="primary small" id="doc-chat-toggle" title="Ask a follow-up or run a skill on this doc">💬 Chat</button>
@@ -2337,12 +2336,13 @@ async function openOutput(path, title, ctx) {
   }
 
   // Recover an in-flight skill run started earlier from this chat (e.g. next-move).
-  // The job keeps running server-side even after leaving; re-attach so re-opening
-  // the output shows its live status again (mirrors the opp page's recovery).
+  // The job keeps running server-side even after leaving; re-attach so the live
+  // status shows the next time the panel is opened. The panel stays CLOSED — it
+  // only opens on an explicit Chat click.
   if (ctx?.account && ctx?.slug) {
     const jobs = await api(`/api/jobs?account=${encodeURIComponent(ctx.account)}&opp_slug=${encodeURIComponent(ctx.slug)}`).catch(() => []);
     const running = (jobs || []).find((j) => j.status === "running" && j.skill && j.skill !== "output-ask");
-    if (running) { openChat(false); reattachInvoke(thread, running, ctx); }
+    if (running) reattachInvoke(thread, running, ctx);
   }
 }
 

@@ -378,11 +378,11 @@ button:disabled { opacity: .5; cursor: default; }
 /* 3-dots (⋮) trigger on output rows — a touch bolder/wider than a plain glyph so
    it reads as an actions affordance and lines up with the sibling row buttons. */
 .dl-btn-dots { font-size: 18px; font-weight: 700; padding: 3px 10px; letter-spacing: 1px; }
-/* labeled "Export ▾" trigger (doc reader) — sized to match the sibling ghost
-   buttons (Chat / Back) so the header action row aligns. */
+/* labeled "Export ▾" trigger (doc reader) — sized to match the sibling
+   `button.small` controls (Back / Delete / Chat) so the header row is uniform. */
 .dl-btn-labeled {
-  padding: 9px 16px; font-size: 15px; color: var(--text);
-  display: inline-flex; align-items: center; gap: 6px; line-height: 1.5;
+  padding: 6px 12px; font-size: 13px; color: var(--text);
+  display: inline-flex; align-items: center; gap: 6px; line-height: 1;
 }
 .dl-btn-labeled .dl-caret { font-size: 11px; color: var(--muted); }
 .dl-menu-doc { vertical-align: middle; }
@@ -499,18 +499,19 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 /* follow-up chat in a docked right-side panel — thread (scrolls) + ask bar (pinned bottom).
    Hidden by default so the document uses the full width; shown only when .doc-layout
    has .has-chat (toggled open via the 💬 Chat button / on send / on job recovery). */
-/* Right-edge overlay: opening chat slides a panel over the right edge and never
-   reflows the document, so the reading column keeps its full width. */
+/* Right-edge overlay: opening chat drops a panel over the right edge and never
+   reflows the document, so the reading column keeps its full width. Hidden by
+   default — it appears only when .doc-layout gets .has-chat (the Chat button). */
 .doc-chat {
+  display: none;
   position: fixed; top: 50px; right: 0; bottom: 0; z-index: 40;
   width: min(410px, 100vw);
-  display: flex; flex-direction: column; min-height: 0;
+  flex-direction: column; min-height: 0;
   background: var(--panel); border-left: 1px solid var(--line);
   box-shadow: -22px 0 55px -24px rgba(0, 0, 0, .35);
-  transform: translateX(101%); transition: transform .18s ease;
   overflow: hidden;
 }
-.doc-layout.has-chat .doc-chat { transform: none; }
+.doc-layout.has-chat .doc-chat { display: flex; }
 .doc-chat-head { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .7px;
   color: var(--muted); padding: 12px 14px 10px; border-bottom: 1px solid var(--line);
   display: flex; align-items: center; justify-content: space-between; }
@@ -1199,9 +1200,11 @@ a.live-btn { text-decoration: none; display: inline-flex; align-items: center; }
 .doc-status-issue--info { color: var(--accent); }
 
 /* ── Reader action-bar separation ───────────────────────────────────────── */
-.row-actions--doc { gap: 8px; flex-wrap: wrap; }
-.row-actions--doc .row-actions-spacer { flex: 1; min-width: 8px; }
-.row-actions--doc #doc-delete { margin-left: 0; }
+/* Doc-reader header: Back is the only left-aligned control; everything else
+   (Compare, Copy summary, Draft follow-up, Export, Delete, Chat) right-aligns.
+   The row spans full width so the auto-margin split is stable across skills. */
+.row-actions--doc { flex: 1 1 100%; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.row-actions--doc #doc-back { margin-right: auto; }
 
 /* ── Output list status badges ──────────────────────────────────────────── */
 .out-status {

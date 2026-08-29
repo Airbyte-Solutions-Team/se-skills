@@ -63,7 +63,8 @@ h2 {
   counter-increment: sec;
 }
 h2::before {
-  content: counter(sec, decimal-leading-zero) "\2003";
+  content: counter(sec, decimal-leading-zero);
+  display: inline-block; margin-right: 10pt;
   color: #c0c0c0; font-weight: 800;
 }
 h3 { font-size: 12.5pt; color: #222; margin: 14pt 0 6pt 0; break-after: avoid; }
