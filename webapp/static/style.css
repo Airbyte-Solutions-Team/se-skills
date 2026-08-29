@@ -499,15 +499,18 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 /* follow-up chat in a docked right-side panel — thread (scrolls) + ask bar (pinned bottom).
    Hidden by default so the document uses the full width; shown only when .doc-layout
    has .has-chat (toggled open via the 💬 Chat button / on send / on job recovery). */
+/* Right-edge overlay: opening chat slides a panel over the right edge and never
+   reflows the document, so the reading column keeps its full width. */
 .doc-chat {
-  display: none;
-  position: sticky; top: 84px; align-self: start;
-  max-height: calc(100vh - 110px);
-  flex-direction: column; min-height: 0;
-  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  position: fixed; top: 50px; right: 0; bottom: 0; z-index: 40;
+  width: min(410px, 100vw);
+  display: flex; flex-direction: column; min-height: 0;
+  background: var(--panel); border-left: 1px solid var(--line);
+  box-shadow: -22px 0 55px -24px rgba(0, 0, 0, .35);
+  transform: translateX(101%); transition: transform .18s ease;
   overflow: hidden;
 }
-.doc-layout.has-chat .doc-chat { display: flex; }
+.doc-layout.has-chat .doc-chat { transform: none; }
 .doc-chat-head { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .7px;
   color: var(--muted); padding: 12px 14px 10px; border-bottom: 1px solid var(--line);
   display: flex; align-items: center; justify-content: space-between; }
@@ -697,16 +700,10 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 /* Default: TOC + document only (chat hidden) → the doc gets the full width.
    When chat is open AND the window is wide enough (≥1280px), it takes a third
    column; otherwise it drops below the document (see responsive blocks). */
+/* The document layout is TOC + body only. The chat panel is a fixed overlay
+   (see .doc-chat) and is never a layout column, so opening it does not reflow
+   or narrow the document. */
 .doc-layout { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 32px; align-items: start; }
-@media (min-width: 1280px) {
-  .doc-layout.has-chat { grid-template-columns: 210px minmax(0, 1fr) 360px; }
-}
-/* chat open but not enough room for 3 columns → chat below the document, in the
-   doc's own column (NOT spanning under the sticky TOC, which would overlap it). */
-@media (max-width: 1279px) {
-  .doc-layout.has-chat .doc-chat { grid-column: 2; position: static; max-height: none; }
-  .doc-layout.has-chat .doc-qa { max-height: 420px; }
-}
 .doc-toc {
   position: sticky; top: 84px; align-self: start;
   max-height: calc(100vh - 110px); overflow: auto;
