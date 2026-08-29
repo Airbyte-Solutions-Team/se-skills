@@ -2095,6 +2095,7 @@ async function openOutput(path, title, ctx) {
       <div class="row-actions row-actions--doc">
         <button class="ghost small" id="doc-back" title="Back to opportunity">← Back</button>
         ${compareBtn}
+        <span class="doc-actions" id="doc-actions"></span>
         <span class="row-actions-spacer"></span>
         ${downloadMenuHtml(encodeURIComponent(decodedPath), "dl-menu-doc", "Export", false)}
         <button class="danger small" id="doc-delete" title="Delete this output">Delete</button>
@@ -2118,16 +2119,13 @@ async function openOutput(path, title, ctx) {
             <div class="doc-assist-group-head">Suggested questions</div>
             <div class="doc-chips" id="doc-chips"></div>
           </div>
-          <div>
-            <div class="doc-assist-group-head">Actions</div>
-            <div class="doc-chips" id="doc-actions"></div>
-          </div>
         </div>
         <div class="doc-qa" id="doc-qa"></div>
         <div class="doc-askbar">
           <textarea id="doc-ask" rows="1" autocomplete="off" placeholder="Ask a follow-up about this document…"></textarea>
           <button class="primary small" id="doc-ask-send">Ask</button>
         </div>
+        <div class="doc-skillrun">Run a skill on this doc — type <code>/</code> or e.g. <code>run next-move</code></div>
       </aside>
     </div>`;
   if (ctx) setCrumbs([...(await accountCrumbs(ctx.account)),
@@ -2312,13 +2310,15 @@ async function openOutput(path, title, ctx) {
     });
   }
   if (actionsEl) {
+    // Doc actions live in the header toolbar (not the chat panel, which is
+    // conversation only). "Export" is the adjacent download menu, so it is not
+    // repeated here.
     const acts = [
-      { label: "📋 Copy summary", id: "copy" },
-      { label: "✉️ Draft follow-up email", id: "email" },
-      { label: "⬇ Export brief", id: "export" },
+      { label: "Copy summary", id: "copy" },
+      { label: "Draft follow-up", id: "email" },
     ];
-    actionsEl.innerHTML = acts.map((a) => `<button class="doc-action" data-act="${a.id}">${a.label}</button>`).join("");
-    actionsEl.querySelectorAll(".doc-action").forEach((b) => {
+    actionsEl.innerHTML = acts.map((a) => `<button class="ghost small" data-act="${a.id}">${a.label}</button>`).join("");
+    actionsEl.querySelectorAll("button").forEach((b) => {
       b.onclick = () => {
         const act = b.dataset.act;
         if (act === "copy") {
@@ -2329,9 +2329,8 @@ async function openOutput(path, title, ctx) {
             setTimeout(() => { b.classList.remove("copied"); b.textContent = o; }, 1500);
           });
         } else if (act === "email") {
+          openChat(false);
           askInput.value = "draft a follow-up email"; autosizeTextarea(askInput); docAsk();  // routes via detectSkillInvocation
-        } else if (act === "export") {
-          view.querySelector(".dl-menu-doc .dl-btn")?.click();
         }
       };
     });
