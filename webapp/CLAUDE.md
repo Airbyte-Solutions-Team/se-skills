@@ -19,6 +19,6 @@ Docs drift silently. When you change code or skills in this repo, update the doc
 
 ## Conventions / gotchas
 - Bump the `app.js?v=…` cache-bust in `static/index.html` on any JS change (CSS auto-busts via `Date.now()`).
-- Two git remotes — push to **both**: `git push origin main && git push mine main` (origin = `Airbyte-Solutions-Team/se-skills`, mine = `gyairbyte/SE-Workflow`, both private).
+- `origin` mirrors to both remotes on push (`git remote set-url --add --push origin <url>` run once per machine) — plain `git push origin main` (or `git push`) updates `Airbyte-Solutions-Team/se-skills` and `gyairbyte/SE-Workflow`, both private. A `mine` remote also exists pointing at the latter alone, for a one-off push there if ever needed.
 - Customer data never goes in the repo (`01-customers/` is gitignored; `webapp/.member-prefs/` too). Genericize any customer names in repo skill copies.
 - `skills/*/SKILL.md` are symlinked into `~/.claude/skills/` — editing them hits the live skills directly.

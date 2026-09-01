@@ -7,10 +7,24 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import httpx
 import pytest
 
 import reference_freshness as rf
 import output_schema
+
+
+_RealAsyncClient = httpx.AsyncClient
+
+
+def _client_factory(transport: httpx.MockTransport):
+    """Swap in a mock transport so refresh tests never hit the real network."""
+
+    def factory(*args, **kwargs):
+        kwargs["transport"] = transport
+        return _RealAsyncClient(*args, **kwargs)
+
+    return factory
 
 
 def _set_mtime(path: Path, days_ago: float) -> None:
@@ -64,6 +78,62 @@ def test_registry_stale(tmp_workspace: Path) -> None:
     assert entry.status == "stale"
     assert entry.fresh is False
     assert entry.age_days == 10
+
+
+async def test_refresh_registry_cache_fetches_when_missing(
+    tmp_workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    body = b'{"sources": [], "destinations": []}'
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body)
+
+    monkeypatch.setattr(rf.httpx, "AsyncClient", _client_factory(httpx.MockTransport(handler)))
+    config = {"airbyte_repos_dir": str(tmp_workspace / "02-repos")}
+
+    result = await rf.refresh_registry_cache(config, tmp_workspace)
+
+    assert set(result["refreshed"]) == {"oss_registry.json", "cloud_registry.json"}
+    assert result["errors"] == []
+    registry_dir = tmp_workspace / "02-repos" / "registry"
+    assert (registry_dir / "oss_registry.json").read_bytes() == body
+    assert (registry_dir / "cloud_registry.json").read_bytes() == body
+
+
+async def test_refresh_registry_cache_skips_when_fresh(
+    tmp_workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _set_mtime(tmp_workspace / "02-repos" / "registry" / "oss_registry.json", 0.1)
+    _set_mtime(tmp_workspace / "02-repos" / "registry" / "cloud_registry.json", 0.1)
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, content=b"{}")
+
+    monkeypatch.setattr(rf.httpx, "AsyncClient", _client_factory(httpx.MockTransport(handler)))
+    config = {"airbyte_repos_dir": str(tmp_workspace / "02-repos")}
+
+    result = await rf.refresh_registry_cache(config, tmp_workspace)
+
+    assert result == {"refreshed": [], "errors": []}
+    assert calls == []  # fresh cache — no network call made at all
+
+
+async def test_refresh_registry_cache_reports_errors_without_raising(
+    tmp_workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, content=b"boom")
+
+    monkeypatch.setattr(rf.httpx, "AsyncClient", _client_factory(httpx.MockTransport(handler)))
+    config = {"airbyte_repos_dir": str(tmp_workspace / "02-repos")}
+
+    result = await rf.refresh_registry_cache(config, tmp_workspace)
+
+    assert result["refreshed"] == []
+    assert len(result["errors"]) == 2
+    assert not (tmp_workspace / "02-repos" / "registry" / "oss_registry.json").exists()
 
 
 def test_repo_fresh_and_stale(tmp_workspace: Path) -> None:

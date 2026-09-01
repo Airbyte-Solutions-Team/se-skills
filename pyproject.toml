@@ -25,6 +25,16 @@ dev = [
     "pytest-asyncio>=0.23",
     "python-multipart>=0.0.12",
     "uvicorn>=0.30.0",
+    # Ask feature (AskService) quick path: SSE streaming + the Anthropic SDK.
+    # `webapp/app.py`'s own PEP 723 inline script header already declares
+    # these for `uv run app.py`, but that's a SEPARATE ephemeral environment
+    # from this project's .venv — anyone running the app any other way
+    # (`-m uvicorn app:app`, or importing webapp.app from pytest) needs them
+    # declared here too, or the quick path 500s with ModuleNotFoundError the
+    # first time someone actually asks a quick-path question (the import is
+    # lazy, inside the request handler, so the server looks healthy until then).
+    "sse-starlette>=2.0",
+    "anthropic>=0.40",
 ]
 hosted = [
     "asyncpg>=0.30.0",

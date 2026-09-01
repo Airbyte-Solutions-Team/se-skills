@@ -914,6 +914,72 @@ async function pageMembers() {
   });
 }
 
+// ---- Page: member settings (Anthropic API key) ---------------------------
+async function renderMemberSettings(memberId, m) {
+  const status = await api(`/api/members/${encodeURIComponent(memberId)}/anthropic-key`).catch(() => ({ configured: false }));
+
+  view.innerHTML = `
+    <div class="row"><div><h1>${esc(m.name)}</h1><p class="sub">Settings</p></div></div>
+    <div class="tabs">
+      <button class="tab" data-tab="active">Active</button>
+      <button class="tab" data-tab="archived">Archived</button>
+      <button class="tab" data-tab="trash">Trash</button>
+      <button class="tab active" data-tab="settings">Settings</button>
+    </div>
+    <div class="settings-pane">
+      <h3>Anthropic API key</h3>
+      <p class="sub">Powers the fast ⚡ ask-bar path for questions on accounts this member owns.
+        Without a key, questions still work — they just route through the slower deep path.</p>
+      <div id="key-body">${keyBodyHtml(status.configured)}</div>
+      <div id="key-msg" class="sub"></div>
+    </div>`;
+
+  view.querySelectorAll(".tab").forEach((t) => { t.onclick = () => pageMember(memberId, t.dataset.tab); });
+  wireKeyBody(memberId, status.configured);
+}
+
+function keyBodyHtml(configured) {
+  return configured
+    ? `<div class="status ok"><span>✓ Configured</span>
+         <div><button class="ghost small" id="key-replace">Replace</button>
+              <button class="danger small" id="key-remove">Remove</button></div></div>`
+    : `<div class="add-member-form">
+         <input type="password" id="key-input" placeholder="sk-ant-…" autocomplete="off" />
+         <button class="primary small" id="key-save">Save</button></div>`;
+}
+
+function wireKeyBody(memberId, configured) {
+  const msg = document.getElementById("key-msg");
+  const body = document.getElementById("key-body");
+  const wireSave = () => {
+    document.getElementById("key-save").onclick = async () => {
+      const val = document.getElementById("key-input").value.trim();
+      if (!val) return;
+      msg.textContent = "";
+      try {
+        await api(`/api/members/${encodeURIComponent(memberId)}/anthropic-key`, {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ api_key: val }),
+        });
+        body.innerHTML = keyBodyHtml(true);
+        wireConfigured();
+      } catch (e) { msg.textContent = "Save failed: " + e.message; }
+    };
+  };
+  const wireConfigured = () => {
+    document.getElementById("key-replace").onclick = () => { body.innerHTML = keyBodyHtml(false); wireSave(); };
+    document.getElementById("key-remove").onclick = async () => {
+      if (!confirm("Remove this member's saved API key? They'll fall back to the shared/deep path.")) return;
+      try {
+        await api(`/api/members/${encodeURIComponent(memberId)}/anthropic-key`, { method: "DELETE" });
+        body.innerHTML = keyBodyHtml(false);
+        wireSave();
+      } catch (e) { msg.textContent = "Remove failed: " + e.message; }
+    };
+  };
+  configured ? wireConfigured() : wireSave();
+}
+
 // ---- Page: member's accounts ---------------------------------------------
 // `tab` is "active" (default), "archived", or "trash"
 let _sort = (() => { try { return JSON.parse(localStorage.getItem("se-hub-sort")) || { key: "updated", dir: -1 }; } catch { return { key: "updated", dir: -1 }; } })();
@@ -922,6 +988,9 @@ async function pageMember(memberId, tab = "active") {
   const members = await api("/api/members");
   const m = members.find((x) => x.id === memberId) || { id: memberId, name: memberId };
   setCrumbs([{ label: "Team", href: "#/" }, { label: m.name }]);
+
+  if (tab === "settings") return renderMemberSettings(memberId, m);
+
   const data = await api(`/api/members/${encodeURIComponent(memberId)}/accounts`);
   const active = data.active || [];
   const archived = data.archived || [];
@@ -1080,6 +1149,7 @@ async function pageMember(memberId, tab = "active") {
       <button class="tab ${tab === "active" ? "active" : ""}" data-tab="active">Active (${active.length})</button>
       <button class="tab ${tab === "archived" ? "active" : ""}" data-tab="archived">Archived (${archived.length})</button>
       <button class="tab ${tab === "trash" ? "active" : ""}" data-tab="trash">Trash (${trash.length})</button>
+      <button class="tab" data-tab="settings">Settings</button>
     </div>
     <div id="bulk-bar" class="bulk-bar hidden">
       <span id="bulk-count" class="bulk-count"></span>
@@ -2390,22 +2460,77 @@ async function askThread(threadEl, q, endpoint, payload) {
   }
   // SSE token stream (quick path)
   tag.textContent = "⚡";
+  bodyEl.innerHTML = `<span class="muted">thinking…</span>`;
   const reader = res.body.getReader(); const dec = new TextDecoder();
-  let buf = "", acc = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    // Normalize CRLF → LF: sse-starlette emits "event: …\r\ndata: …\r\n\r\n",
-    // so split-on-blank-line and the regex must not assume bare \n.
-    buf += dec.decode(value, { stream: true }).replace(/\r\n/g, "\n");
-    const events = buf.split("\n\n"); buf = events.pop();
-    for (const ev of events) {
-      const m = ev.match(/^event: (\w+)\ndata: (.*)$/ms);
-      if (!m) continue;
-      if (m[1] === "token") { const payload = JSON.parse(m[2]); acc += payload.text; item.dataset.answerMd = acc; bodyEl.innerHTML = addMdClasses(payload.html); }
-      else if (m[1] === "error") { bodyEl.innerHTML = `<span class="muted">Error: ${esc(JSON.parse(m[2]).error)}</span>`; }
+  let buf = "", acc = "", escalated = false, gotError = false;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      // Normalize CRLF → LF: sse-starlette emits "event: …\r\ndata: …\r\n\r\n",
+      // so split-on-blank-line and the regex must not assume bare \n.
+      buf += dec.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+      const events = buf.split("\n\n"); buf = events.pop();
+      for (const ev of events) {
+        const m = ev.match(/^event: (\w+)\ndata: (.*)$/ms);
+        if (!m) continue;
+        if (m[1] === "token") { const tokenData = JSON.parse(m[2]); acc += tokenData.text; item.dataset.answerMd = acc; bodyEl.innerHTML = addMdClasses(tokenData.html); }
+        else if (m[1] === "error") { gotError = true; bodyEl.innerHTML = `<span class="muted">Error: ${esc(JSON.parse(m[2]).error)}</span>`; }
+        else if (m[1] === "escalate") {
+          escalated = true;
+          const d = JSON.parse(m[2]);
+          item.dataset.answerMd = acc;  // keep the raw streamed md (sentinel included) as the "prior answer" source
+          tag.textContent = "🔧";
+          bodyEl.innerHTML = addMdClasses(d.html)
+            + `<div class="qa-escalate-note muted">🔧 Escalating — ${esc(d.reason)} — checking codebase &amp; skills…</div>`;
+          if (d.persistence_warning) warnPersistence(`job:${d.job_id}`, d.persistence_warning);
+          if (d.job_id) {
+            await pollJob(d.job_id, async (job) => {
+              if (job.status !== "running") {
+                const md = job.stdout || job.stderr || "(no output)";
+                item.dataset.answerMd = md;
+                bodyEl.innerHTML = await mdToHtml(md);
+              }
+            });
+          } else {
+            bodyEl.insertAdjacentHTML("beforeend",
+              `<div class="qa-actions"><span class="muted">Couldn't start deep search automatically${d.error ? `: ${esc(d.error)}` : ""}.</span> `
+              + `<button class="linklike qa-go-deeper" type="button">Try Go deeper →</button></div>`);
+            wireGoDeeper(item, threadEl, q, endpoint, payload);
+          }
+        }
+      }
     }
+  } catch (e) {
+    gotError = true; tag.textContent = "⚠️";
+    bodyEl.innerHTML = `<span class="muted">Connection dropped: ${esc(e.message)}</span>`;
   }
+  // Guard against a silent empty stream (no tokens, no error, no escalation) —
+  // never leave a blank answer with just the ⚡ tag and nothing else.
+  if (!escalated && !gotError && !acc) {
+    tag.textContent = "⚠️";
+    bodyEl.innerHTML = `<span class="muted">No response — the copilot returned nothing.</span>
+      <div class="qa-actions"><button class="linklike qa-go-deeper" type="button">Try Go deeper →</button></div>`;
+    wireGoDeeper(item, threadEl, q, endpoint, payload);
+  } else if (!escalated && !gotError && acc) {
+    bodyEl.insertAdjacentHTML("beforeend",
+      `<div class="qa-actions"><button class="linklike qa-go-deeper" type="button">Not enough? Go deeper →</button></div>`);
+    wireGoDeeper(item, threadEl, q, endpoint, payload);
+  }
+}
+
+// Wire a "Go deeper" button appended to a finished quick-path `qa-item`:
+// re-runs the same question through `askThread` with force_deep + the quick
+// answer as prior_answer, so the deep pass can correct/fill gaps rather than
+// starting cold. Shared by the normal-completion and failed-auto-escalation
+// fallback cases in `askThread`.
+function wireGoDeeper(item, threadEl, q, endpoint, payload) {
+  const btn = item.querySelector(".qa-go-deeper");
+  if (!btn) return;
+  btn.onclick = () => {
+    btn.disabled = true; btn.textContent = "Going deeper…";
+    askThread(threadEl, q, endpoint, { ...payload, force_deep: true, prior_answer: item.dataset.answerMd });
+  };
 }
 
 // Append a ⚙️-running skill card to the thread (shared by fresh invokes and the
@@ -2537,7 +2662,7 @@ async function pageLive(account, slug, oppName) {
     const badge = $("live-ai-badge");
     if (!badge) return;
     try {
-      const s = await api("/api/ai-status");
+      const s = await api(`/api/ai-status?account=${encodeURIComponent(account)}`);
       if (s.quick_path) {
         badge.className = "ai-badge ok";
         badge.textContent = "⚡ fast path ready";
@@ -2720,11 +2845,10 @@ async function pageLive(account, slug, oppName) {
 
   // ── Ask bar ─────────────────────────────────────────────────────────
   let threadHasItems = false;
-  const ask = async () => {
-    const q = askInput.value.trim();
+  // Core submit-and-render logic, shared by the normal Enter-key ask and the
+  // "Go deeper" button (which re-submits the same question with forceDeep).
+  const submitAsk = async (q, { forceDeep = false, priorAnswer = null } = {}) => {
     if (!q || !_liveState) return;
-    askInput.value = "";
-    askInput.style.height = "";  // reset autogrow
     if (!threadHasItems) { threadEl.innerHTML = ""; threadHasItems = true; }
     const ts = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
     const item = document.createElement("div");
@@ -2740,11 +2864,22 @@ async function pageLive(account, slug, oppName) {
       payload.account = account;
       payload.opportunity = oppName;
     }
+    if (forceDeep) payload.force_deep = true;
+    if (priorAnswer) payload.prior_answer = priorAnswer;
     const res = await fetch(`/api/transcribe/${_liveState.sessionId}/ask`, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
     });
     const ctype = res.headers.get("content-type") || "";
+
+    const wireGoDeeperLive = () => {
+      const btn = item.querySelector(".qa-go-deeper");
+      if (!btn) return;
+      btn.onclick = () => {
+        btn.disabled = true; btn.textContent = "Going deeper…";
+        submitAsk(q, { forceDeep: true, priorAnswer: item.dataset.answerMd });
+      };
+    };
 
     if (ctype.includes("application/json")) {
       const data = await res.json();
@@ -2753,7 +2888,9 @@ async function pageLive(account, slug, oppName) {
         if (data.persistence_warning) warnPersistence(`job:${data.job_id}`, data.persistence_warning);
         await pollJob(data.job_id, async (job) => {
           if (job.status !== "running") {
-            bodyEl.innerHTML = await mdToHtml(job.stdout || job.stderr || "(no output)");
+            const md = job.stdout || job.stderr || "(no output)";
+            item.dataset.answerMd = md;
+            bodyEl.innerHTML = await mdToHtml(md);
             threadEl.scrollTop = threadEl.scrollHeight;
           }
         });
@@ -2767,7 +2904,7 @@ async function pageLive(account, slug, oppName) {
     tag.textContent = "⚡";
     bodyEl.innerHTML = `<span class="muted">thinking…</span>`;
     const reader = res.body.getReader(); const dec = new TextDecoder();
-    let buf = "", acc = "", gotError = false;
+    let buf = "", acc = "", gotError = false, escalated = false;
     try {
       while (true) {
         const { done, value } = await reader.read();
@@ -2777,8 +2914,32 @@ async function pageLive(account, slug, oppName) {
         for (const ev of events) {
           const m = ev.match(/^event: (\w+)\ndata: (.*)$/ms);
           if (!m) continue;
-          if (m[1] === "token") { const payload = JSON.parse(m[2]); acc += payload.text; bodyEl.innerHTML = addMdClasses(payload.html); threadEl.scrollTop = threadEl.scrollHeight; }
+          if (m[1] === "token") { const tokenData = JSON.parse(m[2]); acc += tokenData.text; item.dataset.answerMd = acc; bodyEl.innerHTML = addMdClasses(tokenData.html); threadEl.scrollTop = threadEl.scrollHeight; }
           else if (m[1] === "error") { gotError = true; tag.textContent = "⚠️"; bodyEl.innerHTML = `<span class="muted">Error: ${esc(JSON.parse(m[2]).error)}</span>`; }
+          else if (m[1] === "escalate") {
+            escalated = true;
+            const d = JSON.parse(m[2]);
+            item.dataset.answerMd = acc;
+            tag.textContent = "🔧";
+            bodyEl.innerHTML = addMdClasses(d.html)
+              + `<div class="qa-escalate-note muted">🔧 Escalating — ${esc(d.reason)} — checking codebase &amp; skills…</div>`;
+            if (d.persistence_warning) warnPersistence(`job:${d.job_id}`, d.persistence_warning);
+            if (d.job_id) {
+              await pollJob(d.job_id, async (job) => {
+                if (job.status !== "running") {
+                  const md = job.stdout || job.stderr || "(no output)";
+                  item.dataset.answerMd = md;
+                  bodyEl.innerHTML = await mdToHtml(md);
+                  threadEl.scrollTop = threadEl.scrollHeight;
+                }
+              });
+            } else {
+              bodyEl.insertAdjacentHTML("beforeend",
+                `<div class="qa-actions"><span class="muted">Couldn't start deep search automatically${d.error ? `: ${esc(d.error)}` : ""}.</span> `
+                + `<button class="linklike qa-go-deeper" type="button">Try Go deeper →</button></div>`);
+              wireGoDeeperLive();
+            }
+          }
         }
       }
     } catch (e) {
@@ -2786,10 +2947,21 @@ async function pageLive(account, slug, oppName) {
       bodyEl.innerHTML = `<span class="muted">Connection dropped: ${esc(e.message)}</span>`;
     }
     // Guard against a silent empty stream (no tokens, no error) — never leave a blank answer.
-    if (!acc && !gotError) {
+    if (!acc && !gotError && !escalated) {
       tag.textContent = "⚠️";
       bodyEl.innerHTML = `<span class="muted">No response — the copilot returned nothing. Try re-asking, or include a word like “connector”/“codebase” to route to the deep path.</span>`;
+    } else if (!escalated && !gotError && acc) {
+      bodyEl.insertAdjacentHTML("beforeend",
+        `<div class="qa-actions"><button class="linklike qa-go-deeper" type="button">Not enough? Go deeper →</button></div>`);
+      wireGoDeeperLive();
     }
+  };
+  const ask = async () => {
+    const q = askInput.value.trim();
+    if (!q || !_liveState) return;
+    askInput.value = "";
+    askInput.style.height = "";  // reset autogrow
+    await submitAsk(q);
   };
   sendBtn.onclick = ask;
   askInput.onkeydown = (e) => {

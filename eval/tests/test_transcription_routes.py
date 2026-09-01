@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 from fastapi.testclient import TestClient
 
 import webapp.app as app
+from services.ask_service import AskService
 from services.transcription_service import TranscriptionService
 
 
@@ -26,6 +29,24 @@ def client(tmp_path, monkeypatch):
     svc = _svc(tmp_path)
     app.app.state.transcription_service = svc
     return TestClient(app.app)
+
+
+@pytest.fixture
+def ask_client(tmp_path, monkeypatch):
+    """Like `client`, but with a controllable `AskService` (mocked job launch,
+    fixed API key) so deep/force_deep routing is deterministic — the plain
+    `client` fixture leaves whatever real `AskService` `webapp/app.py` wired
+    at import time, which isn't controllable enough for these assertions."""
+    svc = _svc(tmp_path)
+    app.app.state.transcription_service = svc
+    job_mock = AsyncMock(return_value=("job789", None))
+    app.app.state.ask_service = AskService(
+        output_service=app.app.state.ask_service.output_service,
+        job_service=type("JS", (), {"launch": job_mock})(),
+        api_key=lambda member_id=None: "test-key",
+        model_for=lambda use: "claude-sonnet-4-6",
+    )
+    return TestClient(app.app), job_mock
 
 
 def test_list_transcripts_empty(client):
@@ -88,3 +109,53 @@ def test_ask_file_requires_account_and_name(client):
         json={"question": "What did they say?", "account": "Acme"},
     )
     assert resp.status_code == 400
+
+
+def test_ask_force_deep_field_accepted(ask_client, tmp_path):
+    test_client, job_mock = ask_client
+    tdir = tmp_path / "customers" / "_transcripts"
+    tdir.mkdir(parents=True)
+    (tdir / "Acme-07.14.26.txt").write_text("[12:00:00] Gary: hello", encoding="utf-8")
+
+    resp = test_client.post("/api/transcribe/file/ask", json={
+        "question": "hello",
+        "account": "Acme",
+        "transcript_name": "Acme-07.14.26.txt",
+        "force_deep": True,
+    })
+
+    assert resp.status_code == 200
+    assert resp.json() == {"mode": "deep", "job_id": "job789"}
+    job_mock.assert_awaited_once()
+    assert job_mock.call_args.kwargs["skill"] == "live-ask"
+
+
+def test_ask_resolves_member_id_from_account_owner(ask_client, tmp_path):
+    # Spy returns None (no key for anyone) so the request falls through to the
+    # mocked deep path instead of attempting a real Anthropic network call —
+    # the point of this test is only to observe which member_id was resolved.
+    test_client, job_mock = ask_client
+    tdir = tmp_path / "customers" / "_transcripts"
+    tdir.mkdir(parents=True)
+    (tdir / "Acme-07.14.26.txt").write_text("[12:00:00] Gary: hello", encoding="utf-8")
+
+    seen = []
+
+    def spy_api_key(member_id=None):
+        seen.append(member_id)
+        return None
+
+    app.app.state.ask_service.api_key = spy_api_key
+    app.app.state.account_service = type(
+        "AS", (), {"owner_for_account": staticmethod(lambda account: "gary" if account == "Acme" else None)}
+    )()
+
+    resp = test_client.post("/api/transcribe/file/ask", json={
+        "question": "hello",
+        "account": "Acme",
+        "transcript_name": "Acme-07.14.26.txt",
+    })
+
+    assert resp.status_code == 200
+    assert resp.json() == {"mode": "deep", "job_id": "job789"}
+    assert "gary" in seen

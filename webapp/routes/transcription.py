@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from services.account_service import AccountService
 from services.ask_service import AskError, AskService
 from services.transcription_service import TranscriptionError, TranscriptionService
 
@@ -30,6 +31,8 @@ class AskLive(BaseModel):
     transcript_name: str | None = Field(default=None, max_length=500)
     account: str | None = Field(default=None, max_length=120)
     opportunity: str | None = Field(default=None, max_length=200)
+    force_deep: bool = False                      # manual "Go deeper" escalation
+    prior_answer: str | None = Field(default=None, max_length=8_000)
 
 
 def _get_transcription_service(request: Request) -> TranscriptionService:
@@ -38,6 +41,10 @@ def _get_transcription_service(request: Request) -> TranscriptionService:
 
 def _get_ask_service(request: Request) -> AskService:
     return request.app.state.ask_service
+
+
+def _get_account_service(request: Request) -> AccountService:
+    return request.app.state.account_service
 
 
 @router.get("/api/audio-devices")
@@ -141,6 +148,7 @@ async def api_transcribe_ask(session_id: str, body: AskLive, request: Request):
     except TranscriptionError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from e
 
+    member_id = _get_account_service(request).owner_for_account(account)
     try:
         result = await ask.transcript_ask(
             transcript=transcript,
@@ -149,6 +157,9 @@ async def api_transcribe_ask(session_id: str, body: AskLive, request: Request):
             opportunity=opportunity,
             live=live,
             session_id=session_id,
+            member_id=member_id,
+            force_deep=body.force_deep,
+            prior_answer=body.prior_answer,
         )
     except AskError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from e

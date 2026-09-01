@@ -173,6 +173,8 @@ body:has(.doc-layout) .bar { max-width: 1500px; }
 .add-member-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin: 0 0 20px; }
 .add-member-form.hidden { display: none; }
 .add-member-form input { font: inherit; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; min-width: 200px; }
+.settings-pane { max-width: 520px; }
+.settings-pane h3 { margin: 0 0 6px; }
 
 /* ── opportunity rows (account → opps, top-to-bottom like the account list) ─ */
 .opp-list { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--panel); }
@@ -999,6 +1001,8 @@ a.live-btn { text-decoration: none; display: inline-flex; align-items: center; }
 .qa-a { font-size: 14px; line-height: 1.6; padding: 0 2px; }
 .qa-tag { margin-right: 6px; }
 .qa-a .md-h, .qa-a .md-p { margin: 6px 0; }
+.qa-escalate-note { display: block; margin-top: 6px; font-size: 12px; }
+.qa-actions { margin-top: 8px; }
 
 /* full-width sticky ask-bar spanning both columns */
 .live-askbar { display: flex; gap: 10px; margin-top: 14px; position: sticky; bottom: 0; background: var(--bg); padding: 10px 0; }

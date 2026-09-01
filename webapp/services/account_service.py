@@ -269,6 +269,20 @@ class AccountService:
         acc_dir = self._resolve_account_dir(account)
         return {"name": acc_dir.name, "owner": self._read_owner(acc_dir)}
 
+    def owner_for_account(self, account: str | None) -> str | None:
+        """Best-effort account -> owner lookup for server-side key resolution.
+
+        Never raises — an unknown, unresolvable, or empty account all return
+        None, which correctly falls through to "no member-scoped key" for the
+        caller (same as an owner-less account).
+        """
+        if not account:
+            return None
+        try:
+            return self.get_account(account).get("owner")
+        except AccountError:
+            return None
+
     # -----------------------------------------------------------------------
     # Account mutations
     # -----------------------------------------------------------------------

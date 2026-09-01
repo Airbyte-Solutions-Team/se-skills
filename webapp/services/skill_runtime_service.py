@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import orchestrator
+import reference_freshness
 import yaml
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
@@ -492,6 +493,15 @@ class SkillRuntimeService:
         profile = self._permission_profile(skill, freeform=bool(freeform))
         if profile.requires_approval and not approve_permissions:
             return {"permissions": profile.model_dump(), "blocked": True}
+
+        # Deterministic registry refresh: skills that depend on DS1 (the
+        # connector registry cache) shouldn't rely on the skill's own agent
+        # remembering to fetch it live. Best-effort — never blocks the run.
+        if not freeform and skill and "registry" in (reference_freshness.get_relevant_sources(skill) or set()):
+            try:
+                await reference_freshness.refresh_registry_cache(self._se_config(), self.workspace)
+            except Exception:
+                logger.warning("Registry cache refresh failed before launching %s", skill, exc_info=True)
 
         prompt = self._build_prompt(
             freeform=freeform,

@@ -247,6 +247,14 @@ class OutputService:
             raise OutputError(400, "Not an HTML output")
         return target.read_text(encoding="utf-8")
 
+    @staticmethod
+    def _flatten_for_trash(file_path: Path, root: Path, stamp: str) -> Path:
+        """Trash-safe filename for `file_path`: join its path parts (not the raw
+        OS separator string, which differs between Windows `\\` and POSIX `/|`)
+        so flattening behaves identically on every platform."""
+        flat = "__".join(file_path.relative_to(root).parts)
+        return f"{stamp}__{flat}"
+
     def delete_output(self, path: str, customers_dir: Path | None = None) -> dict:
         target = self._resolve_output(path, customers_dir)
         if target.suffix not in (".md", ".html"):
@@ -256,10 +264,11 @@ class OutputService:
         trash = customers_dir / "_trash"
         trash.mkdir(exist_ok=True)
         stamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d-%H%M%S")
-        rel = target.relative_to(root)
-        flat = str(rel).replace("/", "__")
-        dest = trash / f"{stamp}__{flat}"
+        dest = trash / self._flatten_for_trash(target, root, stamp)
         shutil.move(str(target), str(dest))
+        for sidecar in (self._sidecar_for_md(target), self._feedback_file(target)):
+            if sidecar.is_file():
+                shutil.move(str(sidecar), str(trash / self._flatten_for_trash(sidecar, root, stamp)))
         return {"path": path, "deleted": True, "trash_id": dest.name}
 
     # -----------------------------------------------------------------------

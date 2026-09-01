@@ -120,6 +120,41 @@ def test_delete_output_moves_html_to_trash(tmp_path: Path) -> None:
     assert (tmp_path / "_trash").is_dir()
 
 
+def test_delete_output_flattens_nested_path_without_os_separator(tmp_path: Path) -> None:
+    # Regression: flattening used to string-replace "/" only, which is a no-op
+    # on Windows (Path renders nested rel paths with "\\"), so shutil.move
+    # targeted a trash path with non-existent subdirectories and raised
+    # FileNotFoundError. Flattening must use Path.parts (separator-agnostic)
+    # so the trash filename has no raw path separator of either kind.
+    svc = _svc(tmp_path)
+    rel = "Acme/opportunities/Acme-Q3/outputs/connector-feasibility/connector-feasibility-2026-08-31.md"
+    _make_md(tmp_path, rel)
+    result = svc.delete_output(rel)
+    assert result["deleted"] is True
+    trash_id = result["trash_id"]
+    assert "/" not in trash_id and "\\" not in trash_id
+    assert (tmp_path / "_trash" / trash_id).is_file()
+
+
+def test_delete_output_moves_sidecars_to_trash(tmp_path: Path) -> None:
+    svc = _svc(tmp_path)
+    rel = "Acme/outputs/connector-feasibility/connector-feasibility-2026-08-31.md"
+    md = _make_md(tmp_path, rel)
+    sidecar = md.with_suffix(md.suffix + ".json")
+    sidecar.write_text("{}", encoding="utf-8")
+    feedback = md.with_suffix(".feedback.jsonl")
+    feedback.write_text("", encoding="utf-8")
+
+    result = svc.delete_output(rel)
+
+    assert result["deleted"] is True
+    assert not sidecar.exists()
+    assert not feedback.exists()
+    trash_files = list((tmp_path / "_trash").iterdir())
+    assert any(f.name.endswith(".md.json") for f in trash_files)
+    assert any(f.name.endswith(".feedback.jsonl") for f in trash_files)
+
+
 def test_delete_output_rejects_other_types(tmp_path: Path) -> None:
     # Only .md and .html are deletable here; sidecars (.json) and anything else are rejected.
     svc = _svc(tmp_path)

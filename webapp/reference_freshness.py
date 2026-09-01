@@ -8,11 +8,15 @@ webapp can attach to each output sidecar and surface in the UI.
 
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+import httpx
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 
 class ReferenceFreshness(BaseModel):
@@ -48,6 +52,11 @@ _DEFAULT_THRESHOLDS = {
     "airbyte_platform": 14,
     "airbyte_enterprise": 14,
     "connector_models": 7,
+}
+
+_DEFAULT_REGISTRY_URLS = {
+    "oss_registry.json": "https://connectors.airbyte.com/files/registries/v0/oss_registry.json",
+    "cloud_registry.json": "https://connectors.airbyte.com/files/registries/v0/cloud_registry.json",
 }
 
 _SOURCE_LABELS = {
@@ -180,6 +189,57 @@ def _build_entry(
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+async def refresh_registry_cache(
+    config: dict,
+    workspace: Path,
+    *,
+    timeout_seconds: float = 15.0,
+) -> dict:
+    """Best-effort refresh of the connector registry cache (DS1).
+
+    Deterministic counterpart to the skill-level "fetch live" instruction in
+    `_se-playbook.md` — a skill run may or may not remember to do this itself,
+    so the webapp does it before launching a skill that depends on DS1. Only
+    fetches a file when missing or older than `cache_ttl_hours` (default 24h).
+    Never raises: network failures are swallowed and reported in the return
+    value so a fetch problem never blocks a skill launch. Any existing cached
+    file is left in place on failure.
+    """
+    cfg = (config or {}).get("reference_data") or {}
+    registry_cfg = cfg.get("registry") or {}
+    workspace = Path(os.path.expanduser(workspace))
+    repos_dir = _resolve_path(config.get("airbyte_repos_dir"), workspace, "02-repos")
+    registry_dir = _resolve_path(registry_cfg.get("cache_dir"), repos_dir, "registry")
+    ttl_seconds = float(registry_cfg.get("cache_ttl_hours", 24)) * 3600
+    urls = {
+        "oss_registry.json": registry_cfg.get("oss_url") or _DEFAULT_REGISTRY_URLS["oss_registry.json"],
+        "cloud_registry.json": registry_cfg.get("cloud_url") or _DEFAULT_REGISTRY_URLS["cloud_registry.json"],
+    }
+
+    now = datetime.now(timezone.utc).timestamp()
+    refreshed: list[str] = []
+    errors: list[str] = []
+    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+        for filename, url in urls.items():
+            dest = registry_dir / filename
+            mtime = _file_mtime(dest)
+            if mtime is not None and (now - mtime) < ttl_seconds:
+                continue
+            try:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                registry_dir.mkdir(parents=True, exist_ok=True)
+                tmp = dest.with_name(dest.name + ".tmp")
+                tmp.write_bytes(resp.content)
+                tmp.replace(dest)
+                refreshed.append(filename)
+            except Exception as e:  # network down, DNS failure, HTTP error, disk full, etc.
+                errors.append(f"{filename}: {e}")
+                logger.warning("Registry cache refresh failed for %s: %s", filename, e)
+
+    return {"refreshed": refreshed, "errors": errors}
+
+
 def compute_reference_freshness(
     config: dict,
     workspace: Path,
