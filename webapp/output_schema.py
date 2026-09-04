@@ -374,6 +374,27 @@ def _canonicalize_sections(
 # Bracket text that is allowed and does not indicate an unfilled template.
 _PLACEHOLDER_ALLOWED_BRACKETS = frozenset({"stated", "inferred"})
 
+# Speaker-attribution citation, e.g. `[Edouard, 09.01.26]` or
+# `[Charles Robin + Edouard Rousseau, 09.01.26]` — the bare (no `stated —`/
+# `inferred —` prefix) form of the citation convention from _se-playbook.md's
+# "Citation precision" section. A bare `[09.01.26]` (call-date only, speaker
+# already named in the surrounding prose) is also allowed. One or more such
+# citations may share a bracket, separated by `;`.
+_CITATION_NAME_RE = r"[A-Za-z][\w'.-]*(?:\s+[A-Za-z][\w'.-]*)*"
+_CITATION_PERSON_RE = rf"{_CITATION_NAME_RE}(?:\s*\+\s*{_CITATION_NAME_RE})*"
+_CITATION_DATE_RE = r"\d{1,2}\.\d{1,2}\.\d{2,4}"
+_CITATION_SEGMENT_RE = re.compile(
+    rf"^(?:(?:stated|inferred)\s*(?:—|-)\s*)?(?:{_CITATION_PERSON_RE},\s*)?{_CITATION_DATE_RE}$",
+    re.IGNORECASE,
+)
+
+
+def _is_speaker_citation(content: str) -> bool:
+    """True for a speaker-attribution citation (see `_CITATION_SEGMENT_RE`),
+    optionally several joined with `;` in one bracket."""
+    segments = [s.strip() for s in content.split(";")]
+    return bool(segments) and all(_CITATION_SEGMENT_RE.match(s) for s in segments)
+
 
 def _is_allowed_bracket_content(content: str) -> bool:
     """Return True for checkboxes, tags, and callouts rather than placeholders."""
@@ -390,6 +411,8 @@ def _is_allowed_bracket_content(content: str) -> bool:
     if re.fullmatch(r"[xX ]?", content):
         return True
     if re.match(r"^(?:stated|inferred)\b", content, re.IGNORECASE):
+        return True
+    if _is_speaker_citation(content):
         return True
     return False
 

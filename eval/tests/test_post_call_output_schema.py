@@ -94,6 +94,42 @@ def test_post_call_markdown_syntax_brackets_are_not_placeholders(repo_root: Path
     assert not any("Jump to" in e for e in meta.validation_errors)
 
 
+@pytest.mark.parametrize(
+    "citation",
+    [
+        "[Edouard, 09.01.26]",
+        "[Charles Robin + Edouard Rousseau, 09.01.26]",
+        "[09.01.26]",
+        "[stated — Edouard, 09.01.26]",
+    ],
+)
+def test_post_call_speaker_citation_brackets_are_not_placeholders(citation: str, repo_root: Path) -> None:
+    """A bare speaker+date (or date-only) citation tag isn't a leftover
+    template field — it's the citation convention from _se-playbook.md's
+    "Citation precision" section, just without the `stated —`/`inferred —`
+    prefix. Regression for a real false "Output incomplete" flag."""
+    text = _load_fixture(repo_root, "post-call-canonical.md").replace(
+        "The team needs a managed deployment before renewal.",
+        f"The team needs a managed deployment before renewal {citation}.",
+    )
+    meta = output_schema.parse_output("post-call", text, mode="full")
+    assert meta.valid is True
+    assert not any(citation in e for e in meta.validation_errors)
+
+
+@pytest.mark.parametrize("placeholder", ["[Edouard 09.01.26]", "[John Doe, TBD]", "[Name, 09.01.26 confirm]"])
+def test_post_call_non_citation_brackets_still_rejected(placeholder: str, repo_root: Path) -> None:
+    """Guard against the citation allowance being loose enough to swallow a
+    real placeholder that merely contains a comma or some digits."""
+    text = _load_fixture(repo_root, "post-call-canonical.md").replace(
+        "The team needs a managed deployment before renewal.",
+        f"The team needs {placeholder} before renewal.",
+    )
+    meta = output_schema.parse_output("post-call", text, mode="full")
+    assert meta.valid is False
+    assert any(placeholder in e for e in meta.validation_errors)
+
+
 def test_post_call_canonical_fixture_keeps_source_coverage_last(repo_root: Path) -> None:
     text = _load_fixture(repo_root, "post-call-canonical.md")
     headings = re.findall(r"^## (.+)$", text, re.MULTILINE)
