@@ -99,7 +99,7 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 ## Key Takeaways
 
 
-3–6 bullets capturing the most important things learned. Lead with what changed in your understanding of the deal, not a chronological recap. Mark each takeaway `[stated]` (the customer said it — cite speaker) or `[inferred]` (your read of the evidence) — never blend the two in one bullet. A downstream skill (deal-assessment, tech-qual) will treat a `[stated]` fact differently from an `[inferred]` read.
+3–6 bullets capturing the most important things learned. Lead with what changed in your understanding of the deal, not a chronological recap. Mark each takeaway `[stated]` (cite the specific speaker by name/role — customer or Airbyte, either can be `[stated]`) or `[inferred]` (your read of the evidence) — never blend the two in one bullet, and never blend what two different speakers said into one claim (see `_se-playbook.md` → "Citation precision"). If the `[stated]` claim is about Airbyte's own product, architecture, or deployment model, check it against `_se-playbook.md` → "Product/architecture facts must be verified" before it becomes the takeaway's framing. A downstream skill (deal-assessment, tech-qual) will treat a `[stated]` fact differently from an `[inferred]` read.
 
 ## Deal Impact
 
@@ -116,7 +116,7 @@ Quick read on what this call moved (or didn't):
 Describe the deal-stage, momentum, and customer-commitment movement since the prior call; state what changed and why it matters.
 
 ### MEDDPICC Changes
-*(AE-led discovery calls only — summarize each MEDDPICC letter with 🟢/🟡/🔴 status and the change this call produced; omit for SE-attended or unknown attribution.)*
+*(AE-led discovery calls only — summarize each MEDDPICC letter with 🟢/🟡/🔴 status, the change this call produced, and whether that status is confirmed / partial / inferred / not discussed. A letter the call didn't address is "not discussed" — not 🔴 — an unaddressed topic is not a negative finding. Never mark Economic Buyer or Champion "confirmed" from a title or reporting line alone; that's `[inferred]` at best until the person's own behavior or statement confirms it (see `_se-playbook.md` → "Evidence thresholds"). Omit this subsection for SE-attended or unknown attribution.)*
 
 ## Scope & Technical Changes
 ### Sources & Destinations
@@ -149,7 +149,7 @@ Capture the technical FACTS as stated on this call — raw, attributed, not synt
 
 ## Objections & Open Questions
 ### New Objections / Concerns Surfaced
-Anything the customer raised that wasn't on your radar before the call — pricing, security, deployment model, competitor mentions, internal politics. *(Placed high: a newly-surfaced objection is often the most important thing that changed, and it usually drives an action item below.)*
+Anything the customer raised that wasn't on your radar before the call — pricing, security, deployment model, competitor mentions, internal politics. **A question is not an objection** — if the customer asked something without stating a concern, pushback, or reservation, it belongs in Open Questions / Follow-Ups below, not here (see `_se-playbook.md` → "Evidence thresholds"). *(Placed high: a newly-surfaced objection is often the most important thing that changed, and it usually drives an action item below.)*
 
 > [!risk] [Title the new objection — only if a genuinely new concern surfaced]
 > [What they raised, who raised it, and the severity. Omit this callout if no new objection surfaced; if multiple, use one callout each for the material ones.]
@@ -159,15 +159,15 @@ Questions the customer asked that weren't fully answered, or that you committed 
 
 ## Actions & Next Step
 ### Action Items
-Markdown checklist. Each item: who owns it, what they're doing, by when (if stated).
-- [ ] **[Owner]** — [action] *(by [date if mentioned])*
+Markdown checklist. Each item: who owns it, what they're doing, by when (if stated). **Don't assign an owner or due date the transcript doesn't support — write `TBD` rather than guessing.**
+- [ ] **[Owner, or TBD if not stated]** — [action] *(by [date if mentioned, else omit])*
 
 ### Next Step
-The single most important next action. Be specific — "send POC proposal by Friday" not "follow up".
+The single most important next action. Be specific — "send POC proposal by Friday" not "follow up." **State whether this was actually agreed on the call (both sides committed) or is a recommended follow-up the SE hasn't proposed/gotten agreement on yet** — don't write a recommendation as though the customer already committed to it.
 
 ## Coaching Observations
 
-Write 2–4 candid, personally actionable observations about how the SE/AE ran the call: what worked and what to change next time in the talk track, discovery technique, or demo pacing. Label each observation **[stated]** or **[inferred]**, and tie it to a concrete moment or behavior rather than grading the deal.
+Write 2–4 candid, personally actionable observations about how the SE/AE ran the call: what worked and what to change next time in the talk track, discovery technique, or demo pacing. Label each observation **[stated]** or **[inferred]**, and tie it to a concrete moment or behavior rather than grading the deal. Keep the language proportional to the evidence — a single ambiguous moment supports a mild, specific note, not a dramatic verdict.
 
 ## Source Coverage
 
@@ -186,7 +186,7 @@ Per `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → After Ge
 Filename example: `post-call-2026-05-28-Tech-Discovery.md`.
 
 ### Self-check before save
-(1) every action item has an owner or `TBD`; (2) every deal-health signal cites speaker + timestamp; (3) no attendee/company fact appears that isn't in the transcript; (4) the Sources & Destinations table matches what was actually said; (5) no bracketed `[flag-for-confirmation]`-style aside anywhere outside `[stated]`/`[inferred]` tags — if something needs the SE's attention (an unnamed tool, an unconfirmed detail, a date to fill in), write it as plain prose or move it to Open Questions / Follow-Ups, don't leave a `[bracketed note]` in the sentence. The validator treats any other bracketed text as an unresolved template placeholder and will reject the output. (6) **Every `[stated]` bullet, re-verified**: re-read its literal cited line(s) and confirm the sentence is what that one speaker said about that one subject — not a synthesis of two speakers or two subjects (see `_se-playbook.md` → "Citation precision"). This skill is unusually exposed to this failure because every call has multiple speakers and Key Takeaways / Technical Notes / Coaching Observations routinely cite several lines close together. (7) **Every claim about Airbyte's product/architecture/deployment model** (not the customer's environment) is checked against what's actually true before it's asserted — a participant's belief about the product is `[stated — belief]`, not verified fact; if it's wrong, add a `[correction]` per `_se-playbook.md` → "Product/architecture facts must be verified." Mark each takeaway `[stated]` (customer said it) or `[inferred]` (SE read) — never blend. If a check fails, fix the summary before saving — don't persist a summary a downstream skill will treat as ground truth when it isn't.
+(1) every action item has an owner or `TBD`; (2) every deal-health signal cites speaker + timestamp; (3) no attendee/company fact appears that isn't in the transcript; (4) the Sources & Destinations table matches what was actually said; (5) no bracketed `[flag-for-confirmation]`-style aside anywhere outside `[stated]`/`[inferred]` tags — if something needs the SE's attention (an unnamed tool, an unconfirmed detail, a date to fill in), write it as plain prose or move it to Open Questions / Follow-Ups, don't leave a `[bracketed note]` in the sentence. The validator treats any other bracketed text as an unresolved template placeholder and will reject the output. (6) **Every `[stated]` bullet, re-verified**: re-read its literal cited line(s) and confirm the sentence is what that one speaker said about that one subject — not a synthesis of two speakers or two subjects (see `_se-playbook.md` → "Citation precision"). This skill is unusually exposed to this failure because every call has multiple speakers and Key Takeaways / Technical Notes / Coaching Observations routinely cite several lines close together. (7) **Every claim about Airbyte's product/architecture/deployment model** (not the customer's environment) is checked against what's actually true before it's asserted — a participant's belief about the product is `[stated — belief]`, not verified fact; if it's wrong, add a `[correction]` per `_se-playbook.md` → "Product/architecture facts must be verified." (8) **Every material number, stakeholder conclusion, risk, action, and next step is traceable** to a speaker/line or explicitly labeled `[inferred]` — check each one against `_se-playbook.md` → "Evidence thresholds": no question read as an objection, no title read as a confirmed EB/champion, no invented competitor/budget/timeline/urgency/compelling event, no sizing/cost number without the inputs it needs, and nothing the call didn't address written as a negative finding instead of "not discussed." Mark each takeaway `[stated]` (customer said it) or `[inferred]` (SE read) — never blend. If a check fails, fix the summary before saving — don't persist a summary a downstream skill will treat as ground truth when it isn't.
 
 ### Then ask which other artifacts to update
 1. **Update Notion** — create a new subpage under the customer's parent page named `<YYYY-MM-DD> — <Call Name>` with Attendees / Key Takeaways / Action Items / Follow-up Date sections. Also append new Q&A items to the customer's `Q&A` subpage.
@@ -222,7 +222,7 @@ Wait for explicit yes/no on Notion / memory / deal-assessment / tech-qual before
 Read `~/.claude/skills/_se-playbook.md` for full framework details. Apply to post-call analysis:
 
 ### Memory Check
-Read `memory_dir` `MEMORY.md` and any customer-specific memory files before summarizing (skip gracefully if `memory_dir` is unset). Active blockers and prior context shape how to interpret what was said. Per `_se-playbook.md` ("Memory Check").
+Read `memory_dir` `MEMORY.md` and any customer-specific memory files before summarizing (skip gracefully if `memory_dir` is unset). Active blockers and prior context shape how to interpret what was said — but keep that external account context visibly separate from this call's confirmed findings; cite memory/prior-call content by its own source rather than folding it into a `[stated]` claim about this call. Per `_se-playbook.md` ("Memory Check").
 
 **After the summary, propose memory updates only if warranted:**
 - ✅ Propose update if: new active blocker, stakeholder change, deal-status change (e.g., POC paused, deal at-risk), material commitment from either side
@@ -294,6 +294,7 @@ If the customer revealed a belief about their own business that Airbyte data cou
 
 ## Changelog
 
+- **2026-09-04** — Fact-vs-assumption hardening pass (no structural change — canonical sections, order, and save behavior are unchanged): broadened `[stated]` in Key Takeaways to any named speaker (not just the customer) with a pointer to verify Airbyte's own product claims; MEDDPICC Changes now requires a confirmed/partial/inferred/not-discussed label per letter and forbids inferring Economic Buyer/Champion from a title or reporting line alone; New Objections now explicitly excludes bare questions (route to Open Questions instead); Action Items/Next Step now require `TBD` over a guessed owner/date and require stating whether a next step was actually agreed vs. is a recommended-but-unagreed follow-up; Coaching Observations now asks for language proportional to the evidence. Added self-check (8) tying all of this to the new `_se-playbook.md` → "Evidence thresholds" section.
 - **2026-09-03** — Fixed a `[stated]` misattribution found in an Ista call summary: a bullet merged a customer's comment about *Airbyte's* managed-region availability with an AE's separate comment about Flex architecture into one `[stated]` "customer requires AWS" claim — reversing the actual finding (the customer's own infra is Azure, and the AE later confirmed Flex's value was specifically EU-on-Azure) and citing lines that didn't actually say what the sentence claimed. This is a cross-cutting fix, not post-call-only: added "Citation precision" and "Product/architecture facts must be verified" to `_se-playbook.md` → "Confidence & Assumptions (all skills)" — the canonical, skill-agnostic definition of `[stated]`/`[inferred]` every skill inherits. Added post-call-specific self-check items (6)/(7) here since this skill is the most exposed (every call has multiple speakers, and Key Takeaways/Technical Notes/Coaching Observations cite adjacent lines constantly).
 - **2026-09-03** — Fixed a recurring false "Output incomplete" flag: (1) the Source Coverage validator required a literal `N / N lines` count, which a Gong-pulled transcript never has (no native line numbering) — every Gong-sourced call (increasingly the common path when no local transcript exists) failed validation even when fully read. Validator now also accepts a Gong call ID + explicit full/complete-read claim. (2) The Sources & Destinations template modeled "flag this for the SE" as a bracketed clause, which outputs then echoed as a general-purpose bracket-note style elsewhere in the doc (e.g. `[other tool]`, `[specific day]`) — indistinguishable from an unfilled template placeholder to the validator. Reworded the template to avoid bracket-wrapped instructional asides and added an explicit self-check item against bracket-style flags outside `[stated]`/`[inferred]`.
 - **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.

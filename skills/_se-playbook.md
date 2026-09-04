@@ -607,7 +607,7 @@ Every analytical or decision output states, near the top (inside or just under i
 - **What would change this** — the one or two facts that, if different, flip the verdict. e.g. "If Flex is now GA, the deployment verdict changes."
 
 Separate the three registers explicitly wherever a claim could be mistaken for fact:
-- `[stated]` — the customer/source said it (cite speaker + date)
+- `[stated]` — a named source said/showed it; identify which: the customer, an Airbyte participant, CRM, a previous call, or external research (cite speaker + date, or the record/query for a non-transcript source)
 - `[inferred]` — the SE's read of the evidence (not confirmed)
 - `[recommendation]` — what to do about it
 
@@ -626,6 +626,21 @@ A customer or AE stating something about Airbyte's product, architecture, or dep
 - If the skill has access to product/architecture reference data (see "Product & Connector Reference Data" below) or the model's own current knowledge of Airbyte's architecture, cross-check the claim before asserting it.
 - If the transcript's claim conflicts with what's actually true, don't launder the mistaken belief into the output as fact. State what was said, labeled `[stated — belief]`, and add a `[correction]` note with the accurate fact and its source (docs, registry, Helm chart) where possible.
 - If a claim can't be verified (no reference data available, not in current knowledge), don't assert it either way — flag it explicitly as unverified rather than silently repeating the call's framing as ground truth.
+
+### Evidence thresholds — don't let inference outrun evidence
+
+Several conclusion types get manufactured from thinner evidence than they need. Before any of the following appears in an output, check it against the evidence actually in hand — none of these is a fact until a source supports it:
+
+- **A question, or an expression of interest, is not an objection, mandatory requirement, or belief.** Report what was asked or expressed; don't convert a customer's question or interest into a stated concern, requirement, or position they didn't take.
+- **A title or reporting line, alone, is not evidence of economic buyer, champion, or blocker status.** State the title/role as `[stated]`; label any EB/champion/blocker read as `[inferred]`, with what would confirm it.
+- **Don't name a "likely competitor" unless a source identifies one.** No competitor named is "not identified," not an invitation to guess.
+- **Don't infer budget, timeline, urgency, priority, or a compelling event without support.** Interest or engagement is not urgency.
+- **Don't produce a sizing, pricing, capacity, cost-savings, ROI, or headcount estimate without the inputs it depends on** (volume, concurrency, current spend, etc.). Missing an input means saying what's missing — not estimating around it.
+- **A topic that wasn't discussed is "not discussed" / "not identified" / "not yet confirmed" — never a stated absence** (e.g. "no security requirement") and never treated as a negative finding.
+- **An internal recommendation is not a customer-agreed next step** until the customer actually agreed to it, even when it's the same action either way.
+- **Don't assign an action owner or due date the source doesn't support** — write `TBD` instead of guessing.
+- **When sources conflict** (this call vs. a prior call, transcript vs. CRM), state both and flag the conflict rather than silently picking one.
+- **Size the inference to the evidence.** A single ambiguous line supports a hedged read, not a confident one — say what would need to be true to resolve it, and don't dramatize an open question into a certainty.
 
 ---
 
@@ -988,6 +1003,7 @@ If/when built, this should be a separate skill (not a mode flag on biz-qual/deal
 
 ## Changelog
 
+- **2026-09-04** — Added **"Evidence thresholds"** to "Confidence & Assumptions (all skills)" — ten specific don't-over-infer rules (question ≠ objection, title ≠ EB/champion, no invented competitors, no unsupported budget/timeline/urgency/sizing/ROI, absent-topic ≠ negative finding, recommendation ≠ agreed step, no invented owner/date, surface source conflicts, proportional inference). Requested as a focused fact-vs-assumption hardening pass on `prep-call`/`post-call`; placed here (not duplicated in either skill) because every rule generalizes past those two skills and the shared section is what all skills already inherit `[stated]`/`[inferred]` from.
 - **2026-09-03** — Hardened "Confidence & Assumptions" against a real misattribution (found in a post-call output): a `[stated]` bullet merged two different speakers' statements about two different subjects into one fabricated customer requirement, and its citation didn't actually support the claim. Added **"Citation precision"** (a `[stated]` tag must be a defensible, single-speaker/single-subject paraphrase of its literal cited line — split or downgrade to `[inferred]` rather than synthesize across speakers) and **"Product/architecture facts must be verified, not just transcribed"** (a call participant's belief about Airbyte's product isn't ground truth — cross-check against reference data/current knowledge and add a `[correction]` if the transcript's framing is wrong, rather than laundering it into the output). Applies to every skill that cites `[stated]`/`[inferred]` from this shared section, not just the skill that surfaced it.
 - **2026-07-10** — **SME retirement across the deployment guidance.** Self-Managed Enterprise is now framed as retired / not currently offered (may return), never as a live motion. Edition mapping in the entitlement→edition reasoning is now Cloud vs Flex (SME noted historical). The "Deployment-model qualification first" application note now names the two live shapes (Cloud Pro / Enterprise Flex), routes data-residency + VPC-isolation to Flex, and treats BYOK / control-plane-in-VPC / true air-gap with no Flex path as an honest park/no-fit — **not** a requalify-to-SME. Kept the SME concept as retired-may-return; did not delete it.
 - **2026-07-10** — Added the **"Product & Connector Reference Data" (Shared Machinery)** section (sibling to Salesforce Enrichment) — the foundation for grounding connector-availability and entitlement reasoning in real product truth instead of memory. Defines four sources (DS1 connector registry JSON, DS2 `airbyte-platform` entitlements + `airbyte-data-plane` Helm chart, DS3 private `airbyte-enterprise` connector stubs, DS4 optional typed models), two derived lookups (connector-availability incl. the Cloud-vs-Self-Managed OSS-minus-Cloud set difference; entitlement→edition), freshness/caching rules (registry 24h cache; repos 14-day pull guard), fail-loud graceful degradation (ties to Source Coverage Transparency), and the don't-surface-plumbing-to-customers guardrail. Paired with new `reference_data:` keys in `.se-config.yaml`. Per-skill consumers (connector-feasibility, deployment-model-qual, objection-handler, tech-qual, poc-plan) will reference this section — this entry lands the shared convention first.

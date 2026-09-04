@@ -112,7 +112,7 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 - **Recent news:** [funding, launches, acquisitions, leadership changes — with source tag]
 
 ### Why Airbyte
-*Positioning anchor — comes before talk tracks/agenda because it frames how the SE leads the call.* Based on their profile, the most likely reasons they're evaluating Airbyte:
+*Positioning anchor — comes before talk tracks/agenda because it frames how the SE leads the call.* Based on their profile, the most likely reasons they're evaluating Airbyte — **hypotheses to validate on the call, not the customer's stated position:**
 - [Hypothesis 1 — e.g., scaling data pipelines beyond a manual solution]
 - [Hypothesis 2 — e.g., replacing a brittle custom ETL or legacy tool]
 - [Hypothesis 3 — e.g., need for connector breadth or self-hosted deployment]
@@ -160,7 +160,7 @@ Why this reframe for this customer: [brief rationale based on their stack/indust
 ## Discovery Plan
 
 ### Must-Ask Questions
-*Two modes — depends on whether an AE call exists.*
+*Two modes — depends on whether an AE call exists. In both modes, prioritize the highest-value questions per subsection (3-5, not exhaustive) over stacking near-duplicate questions, and phrase each as a neutral request for the missing fact — not a conclusion wrapped in a question (see Style section below for the pattern to avoid).*
 
 **If AE call exists (default mode):**
 - **Skip AE-level basics.** Do NOT re-ask "tell me about your data stack" or "what business problem are you solving" — the AE covered these. Re-asking signals you didn't read the AE's transcript.
@@ -222,13 +222,13 @@ Why this reframe for this customer: [brief rationale based on their stack/indust
 ---
 
 ### Implication-Depth Questions
-*For each top-2 likely pain point, pre-stage 2-3 Implication questions that force the customer to quantify the cost themselves. Wrap the resulting cost framing in `==…==` where it's a headline figure (e.g., ==$80K/yr== of engineering capacity, ==13h → 15min== latency).*
+*For each top-2 likely pain point, pre-stage 2-3 Implication questions that force the customer to quantify the cost themselves on the call. Wrap the resulting cost framing in `==…==` where it's a headline figure (e.g., ==$80K/yr== of engineering capacity, ==13h → 15min== latency) — but only when a source (AE call, prior notes) already supplied the underlying number (frequency, hours, headcount). Don't invent a cost/sizing figure to fill this line — if the inputs aren't sourced yet, say the number will be established live on the call.*
 
 **Pain Hypothesis 1: [name the pain]**
-- "How often does X happen?" → [expected answer]
-- "When that happens, who gets paged and how long is it down?" → [expected answer]
-- "What's the downstream impact — what reports go stale, what decisions get delayed?" → [expected answer]
-- Estimated cost framing: [annual dollar or hours number]
+- "How often does X happen?" → [expected answer, if a source suggests one — else leave as the open question to ask]
+- "When that happens, who gets paged and how long is it down?" → [expected answer, if a source suggests one]
+- "What's the downstream impact — what reports go stale, what decisions get delayed?" → [expected answer, if a source suggests one]
+- Cost framing: [a number, only if the inputs above are already sourced — otherwise "not yet quantified; establish on the call"]
 
 **Pain Hypothesis 2: [name the pain]**
 - [Same structure]
@@ -260,8 +260,8 @@ Why this reframe for this customer: [brief rationale based on their stack/indust
 ## Watch Outs
 
 ### Watch-Outs / Landmines
-- [Any competitors they likely use or have evaluated]
-- [Any known sensitivities — e.g., data residency, compliance, open-source skepticism]
+- **Competitors:** [name one only if a source — AE call, SFDC, public research — identified it, and cite that source; if none was named, write "No competitor named — not identified" rather than guessing one]
+- [Any known sensitivities — e.g., data residency, compliance, open-source skepticism — with source]
 
 ## Desired Next Step
 
@@ -299,6 +299,10 @@ Name the specific calendar-able mutual commitment to ask for at the end of the c
 - If a section can't be filled, use `[research needed]` rather than guessing
 - Tailor discovery questions to the company's likely maturity and use case
 - Cite Gong transcripts inline when pulling AE-learned content (date + speaker)
+- **Base every section on confirmed context first** — the AE transcript, existing local files, or a cited source — before layering in hypotheses. A hypothesis stays labeled as a hypothesis to validate; never restate it as the customer's position (see `_se-playbook.md` → "Evidence thresholds").
+- **Discovery questions are a neutral ask for the missing fact, not a conclusion wrapped in a question.** Don't write "The customer believes the pricing will be cost-prohibitive, so confirm their concurrency." Write "The customer asked how the workload maps to pricing. Concurrency was not established, so confirm the peak concurrency and completion requirements before estimating capacity."
+- **Don't name a competitor, stakeholder, decision process, or objection that no source named** — say so ("no competitor named — not identified") instead of guessing one to fill a section.
+- **Don't state a cost, sizing, or capacity number the sources don't support.** If a pain point's cost depends on an answer the customer hasn't given yet, say the number will be established on the call — don't invent one to fill the template.
 
 ---
 
@@ -379,6 +383,7 @@ Read `config_file` (per playbook → Workspace Paths) to populate the `[SE name]
 
 ## Changelog
 
+- **2026-09-04** — Fact-vs-assumption hardening pass (no structural change — canonical sections, order, and save behavior are unchanged): Watch-Outs' competitor line now requires a cited source or "No competitor named — not identified" instead of inviting a guess; "Why Airbyte" is explicitly labeled hypotheses to validate, not the customer's stated position; Implication-Depth Questions' cost/sizing figure is now gated on a sourced input (else "not yet quantified; establish on the call") instead of always producing a number; Must-Ask Questions now asks for 3-5 prioritized questions over exhaustive lists, phrased as neutral asks rather than conclusions wrapped in questions. Added 4 new Style-section rules pointing at `_se-playbook.md` → "Evidence thresholds."
 - **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
 - **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE" (reads identity from `.se-config.yaml`).
 - **2026-07-09** — Sourcing discipline for cold-prep facts: every Company Snapshot fact carries an origin tag (`[per AE call]` / `[SFDC]` / `[public]` / `[assumption — confirm live]`); the reframe is now stated as "they likely believe X (basis…); reframe to Y," labeled a hypothesis to test if unsourced. No refuse-gate added — stays cold-runnable (light-touch).
