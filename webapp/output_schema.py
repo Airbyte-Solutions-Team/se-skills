@@ -426,15 +426,34 @@ def _find_placeholders(text: str) -> list[str]:
     return placeholders
 
 
+_GONG_CALL_ID_RE = re.compile(r"\b\d{10,}\b")
+_FULL_COVERAGE_CLAIM_RE = re.compile(
+    r"\b(?:full(?:y)?|complete(?:ly)?|entire(?:ty)?|no truncation|not truncated)\b", re.IGNORECASE
+)
+
+
 def _validate_source_coverage_post_call(body: str) -> list[str]:
-    """Source Coverage for post-call must claim a complete read with N / N lines (N > 0)."""
+    """Source Coverage for post-call must claim a complete read: either concrete
+    read/total line counts (a locally-read transcript file), or — since a
+    Gong-pulled transcript has no native line count to report — a Gong call ID
+    plus an explicit full/complete-read claim."""
     errors: list[str] = []
     if not body or not body.strip():
         errors.append("Source Coverage section is empty.")
         return errors
     match = re.search(r"(\d+)\s*/\s*(\d+)\s*(?:line|lines|ln|lns)", body, re.IGNORECASE)
     if not match:
-        errors.append("Source Coverage must report concrete read/total line counts (e.g. '612 / 612 lines').")
+        if (
+            "gong" in body.lower()
+            and _GONG_CALL_ID_RE.search(body)
+            and _FULL_COVERAGE_CLAIM_RE.search(body)
+        ):
+            return errors
+        errors.append(
+            "Source Coverage must report concrete read/total line counts (e.g. '612 / 612 lines') "
+            "for a local transcript, or a Gong call ID plus an explicit full/complete-read claim "
+            "for a Gong-sourced transcript."
+        )
         return errors
     read_count = int(match.group(1))
     total_count = int(match.group(2))
@@ -444,11 +463,6 @@ def _validate_source_coverage_post_call(body: str) -> list[str]:
         errors.append(f"Source Coverage reports a partial read ({read_count} / {total_count} lines).")
     elif read_count > total_count:
         errors.append(f"Source Coverage read count exceeds total ({read_count} / {total_count} lines).")
-    if read_count == total_count and total_count > 0:
-        if "full" not in body.lower() and "complete" not in body.lower():
-            # Encourage an explicit full/complete statement; not a hard failure on
-            # its own if counts are equal, but combined with missing counts it fails.
-            pass
     return errors
 
 

@@ -114,6 +114,29 @@ def test_post_call_source_coverage_without_line_counts_is_invalid(repo_root: Pat
     assert any("line counts" in e for e in meta.validation_errors)
 
 
+def test_post_call_source_coverage_accepts_gong_full_read_without_line_count(repo_root: Path) -> None:
+    """A Gong-sourced transcript has no native line count — a call ID plus an
+    explicit full/complete-read claim satisfies coverage without one."""
+    text = _load_fixture(repo_root, "post-call-canonical.md").replace(
+        "(612 / 612 lines)",
+        "pulled from Gong call ID `7071650853289875421`, retrieved in full with no truncation",
+    )
+    meta = output_schema.parse_output("post-call", text, mode="full")
+    assert meta.valid is True
+    assert not any("line counts" in e for e in meta.validation_errors)
+
+
+def test_post_call_source_coverage_gong_mention_without_completeness_claim_is_invalid(repo_root: Path) -> None:
+    """Naming Gong isn't enough on its own — still requires an explicit
+    full/complete-read claim (or a call ID), not just a source mention."""
+    text = _load_fixture(repo_root, "post-call-canonical.md").replace(
+        "(612 / 612 lines)", "Transcript was pulled from Gong and reviewed.",
+    )
+    meta = output_schema.parse_output("post-call", text, mode="full")
+    assert meta.valid is False
+    assert any("line counts" in e for e in meta.validation_errors)
+
+
 def test_ae_led_discovery_requires_meddpicc_h3(repo_root: Path) -> None:
     text = _load_fixture(repo_root, "post-call-full.md")
     transcript = "The AE led a discovery call to review metrics and the economic buyer."
