@@ -32,10 +32,12 @@ class JobService:
         *,
         model_for: Callable[[str], str],
         persist_run: Callable[[str, str | None, str, dict[str, Any]], None],
+        has_output_since: Callable[[str, str | None, str, float], bool | None] | None = None,
     ) -> None:
         self.workspace = workspace
         self.model_for = model_for
         self.persist_run = persist_run
+        self.has_output_since = has_output_since
         self.jobs: dict[str, dict] = persistence.load_jobs(workspace)
 
     def get_job(self, job_id: str) -> dict | None:
@@ -142,9 +144,19 @@ class JobService:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=_RUN_TIMEOUT_SECONDS)
             stdout = security.redact_sensitive(stdout.decode("utf-8", errors="replace"))
             stderr = security.redact_sensitive(stderr.decode("utf-8", errors="replace"))
+            ok = proc.returncode == 0
+            produced_output = None
+            if ok and self.has_output_since is not None:
+                try:
+                    produced_output = self.has_output_since(
+                        meta["account"], meta.get("opp_slug"), meta["skill"], job["started_at"]
+                    )
+                except Exception:
+                    logger.exception("has_output_since check failed for job %s", job_id)
             job.update(
                 status="done",
-                ok=proc.returncode == 0,
+                ok=ok,
+                produced_output=produced_output,
                 stdout=stdout,
                 stderr=stderr,
                 finished_at=datetime.now(timezone.utc).timestamp(),
@@ -185,6 +197,7 @@ class JobService:
                     "opportunity": meta.get("opportunity"),
                     "acknowledged_choices": meta.get("acknowledged_choices", []),
                     "ok": job.get("ok"),
+                    "produced_output": job.get("produced_output"),
                     "stdout": job.get("stdout", ""),
                     "stderr": job.get("stderr", ""),
                     "finished_at": datetime.now(timezone.utc).timestamp(),

@@ -110,6 +110,7 @@ def _build_local_services(app: FastAPI) -> None:
         workspace=config.WORKSPACE,
         model_for=config._model_for,
         persist_run=output_service.persist_run,
+        has_output_since=output_service.has_output_since,
     )
     salesforce_integration = SalesforceIntegration(
         customers_dir=config.CUSTOMERS_DIR,

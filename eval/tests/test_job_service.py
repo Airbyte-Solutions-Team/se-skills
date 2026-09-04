@@ -149,6 +149,61 @@ def test_run_job_success(service: JobService, monkeypatch) -> None:
     assert "finished_at" in job and job["finished_at"] >= job["started_at"]
 
 
+def test_run_job_success_sets_produced_output_true(service: JobService, monkeypatch) -> None:
+    """A clean exit with a fresh output file on disk is reported as produced."""
+    service.has_output_since = lambda account, opp_slug, skill, since_ts: True
+    job_id, _ = asyncio.run(service.launch(
+        account="Acme", opp_slug="op1", skill="post-call", opportunity="Big Deal",
+        sig=("s2",), prompt="p", meta={"account": "Acme", "opp_slug": "op1", "skill": "post-call", "opportunity": "Big Deal"},
+    ))
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_proc(returncode=0, stdout="output", stderr=""))
+
+    asyncio.run(JobService._run_job(service, job_id, "p", {"account": "Acme", "opp_slug": "op1", "skill": "post-call", "opportunity": "Big Deal"}))
+
+    job = service.get_job(job_id)
+    assert job["ok"] is True
+    assert job["produced_output"] is True
+
+
+def test_run_job_success_sets_produced_output_false_when_nothing_saved(service: JobService, monkeypatch) -> None:
+    """A clean exit (e.g. the skill asked a clarifying question instead of
+    fabricating a deliverable) with no new output file is reported as such,
+    not silently treated the same as a real deliverable."""
+    service.has_output_since = lambda account, opp_slug, skill, since_ts: False
+    job_id, _ = asyncio.run(service.launch(
+        account="Ista", opp_slug="op1", skill="post-call", opportunity="Pro/Flex",
+        sig=("s3",), prompt="p", meta={"account": "Ista", "opp_slug": "op1", "skill": "post-call", "opportunity": "Pro/Flex"},
+    ))
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec",
+        _fake_proc(returncode=0, stdout="I can't find a transcript — which call should I use?", stderr=""),
+    )
+
+    asyncio.run(JobService._run_job(service, job_id, "p", {"account": "Ista", "opp_slug": "op1", "skill": "post-call", "opportunity": "Pro/Flex"}))
+
+    job = service.get_job(job_id)
+    assert job["ok"] is True
+    assert job["produced_output"] is False
+
+
+def test_run_job_produced_output_none_without_checker(tmp_path, monkeypatch) -> None:
+    """Without a `has_output_since` callable wired up, produced_output stays
+    unset — legacy behavior (no false "no output" claims) is preserved."""
+    svc = JobService(tmp_path, model_for=_model_for, persist_run=_noop_persist)
+    svc.jobs = {}
+    job_id, _ = asyncio.run(svc.launch(
+        account="Acme", opp_slug="op1", skill="post-call", opportunity="Big Deal",
+        sig=("s4",), prompt="p", meta={"account": "Acme", "opp_slug": "op1", "skill": "post-call", "opportunity": "Big Deal"},
+    ))
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_proc(returncode=0, stdout="output", stderr=""))
+
+    asyncio.run(JobService._run_job(svc, job_id, "p", {"account": "Acme", "opp_slug": "op1", "skill": "post-call", "opportunity": "Big Deal"}))
+
+    job = svc.get_job(job_id)
+    assert job["ok"] is True
+    assert job.get("produced_output") is None
+
+
 def test_run_job_persists_acknowledged_choices(tmp_path, monkeypatch) -> None:
     """The on-disk run record carries the explicit skip acknowledgement."""
     records: list[dict] = []

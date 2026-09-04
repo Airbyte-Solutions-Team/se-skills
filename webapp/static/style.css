@@ -474,12 +474,13 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 .run-dismiss:hover { color: var(--text); background: var(--panel); }
 .status.running { color: var(--warn); }
 .status.ok { color: var(--accent2); }
+.status.warn { color: var(--warn); }
 .status.err { color: #ff6b6b; }
-/* a failed status row carries an expandable error detail — lay it out in a column
-   so the <details> log can grow below the headline + dismiss button. */
-.status.err:has(.run-error-detail) { flex-direction: column; align-items: stretch; }
-.status.err:has(.run-error-detail) .run-dismiss { position: absolute; top: 8px; right: 8px; }
-.status.err:has(.run-error-detail) { position: relative; padding-right: 36px; }
+/* a failed (or no-output) status row carries an expandable detail — lay it out in
+   a column so the <details> log can grow below the headline + dismiss button. */
+.status.err:has(.run-error-detail), .status.warn:has(.run-error-detail) { flex-direction: column; align-items: stretch; }
+.status.err:has(.run-error-detail) .run-dismiss, .status.warn:has(.run-error-detail) .run-dismiss { position: absolute; top: 8px; right: 8px; }
+.status.err:has(.run-error-detail), .status.warn:has(.run-error-detail) { position: relative; padding-right: 36px; }
 .run-error-detail { margin-top: 6px; color: var(--text); }
 .run-error-detail summary { cursor: pointer; color: var(--muted); font-size: 13px; font-weight: 500; }
 .run-error-detail summary:hover { color: var(--text); }

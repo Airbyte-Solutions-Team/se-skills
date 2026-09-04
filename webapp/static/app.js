@@ -143,17 +143,24 @@ function sfdcLink(url, label = "Salesforce") {
   return `<span class="sfdc-link" role="link" tabindex="0" title="Open in Salesforce" onclick="event.stopPropagation();event.preventDefault();window.open('${encodeURI(safe)}','_blank','noopener')">☁ ${esc(label)}</span>`;
 }
 
-// Collapsible error detail for a failed job. The job object comes from the full
-// single-job endpoint (/api/jobs/{id}), which includes stderr/stdout. Renders a
-// "View error detail" <details> with the captured (already secret-redacted)
-// output so the user can see WHAT went wrong, not just that it failed.
+// Collapsible detail for a job that didn't cleanly end with a saved output. The
+// job object comes from the full single-job endpoint (/api/jobs/{id}), which
+// includes stderr/stdout. Covers two cases: the process errored (job.ok is
+// false), or it exited cleanly but produced no output — e.g. a skill that
+// stopped to ask for a missing transcript instead of fabricating a summary
+// (job.ok true, job.produced_output false). Renders a "View detail" <details>
+// with the captured (already secret-redacted) output so the user can see WHY,
+// not just that nothing landed in Generated Outputs.
 function errorDetailHtml(job) {
-  if (!job || job.ok) return "";
+  if (!job) return "";
+  const noOutput = job.ok && job.produced_output === false;
+  if (job.ok && !noOutput) return "";
   const detail = (job.stderr && job.stderr.trim()) || (job.stdout && job.stdout.trim()) || "";
   if (!detail) return "";
   const firstLine = detail.split("\n").find((l) => l.trim()) || "";
+  const summaryLabel = noOutput ? "Why no output was saved" : "View error detail";
   return `<details class="run-error-detail">
-    <summary>View error detail${firstLine ? ` — <span class="run-error-first">${esc(firstLine.slice(0, 140))}</span>` : ""}</summary>
+    <summary>${summaryLabel}${firstLine ? ` — <span class="run-error-first">${esc(firstLine.slice(0, 140))}</span>` : ""}</summary>
     <pre class="run-error-log">${esc(detail)}</pre>
   </details>`;
 }
@@ -1969,11 +1976,14 @@ async function pageOpportunity(account, slug, oppName) {
       return;
     }
     const ok = job.ok;
-    row.className = ok ? "status ok" : "status err";
+    const noOutput = ok && job.produced_output === false;
+    row.className = !ok ? "status err" : noOutput ? "status warn" : "status ok";
     const ago = finishedAt ? ` · ran ${relTime(finishedAt)}` : "";
-    const head = ok
-      ? `✓ ${esc(job.skill || "run")}${ago} — saved to Generated Outputs below`
-      : `✕ ${esc(job.skill || "run")}${ago} — finished with an error`;
+    const head = !ok
+      ? `✕ ${esc(job.skill || "run")}${ago} — finished with an error`
+      : noOutput
+        ? `⚠ ${esc(job.skill || "run")}${ago} — finished, but no output was saved`
+        : `✓ ${esc(job.skill || "run")}${ago} — saved to Generated Outputs below`;
     row.innerHTML = `<span class="run-head">${head}</span>${errorDetailHtml(job)}<button class="run-dismiss" title="Dismiss">✕</button>`;
     row.querySelector(".run-dismiss").onclick = () => { row.remove(); rows.delete(key); };
   };
@@ -2552,11 +2562,17 @@ function appendInvokeCard(threadEl, q, skillId, oppName) {
 async function pollInvokeJob(card, jobId, skillId, ctx) {
   await pollJob(jobId, (job) => {
     if (job.status === "running") return;
-    if (job.ok) {
+    const noOutput = job.ok && job.produced_output === false;
+    if (job.ok && !noOutput) {
       card.tag.textContent = "✓";
       const oppHref = `#/opp/${encodeURIComponent(ctx.account)}/${encodeURIComponent(ctx.slug)}/${encodeURIComponent(ctx.oppName)}`;
       card.bodyEl.innerHTML = `<strong>${esc(prettySkill(skillId))}</strong> finished — saved to `
         + `<a href="${oppHref}">Generated Outputs</a> for ${esc(ctx.oppName)}.`;
+    } else if (noOutput) {
+      card.tag.textContent = "⚠";
+      const reason = (job.stdout || "").trim().split("\n").find((l) => l.trim()) || "";
+      card.bodyEl.innerHTML = `<span class="muted">${esc(prettySkill(skillId))} finished, but no output was saved`
+        + (reason ? ` — ${esc(reason.slice(0, 160))}` : "") + `.</span>`;
     } else {
       card.tag.textContent = "✕";
       card.bodyEl.innerHTML = `<span class="muted">${esc(prettySkill(skillId))} finished with an error. `

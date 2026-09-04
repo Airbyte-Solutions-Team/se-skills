@@ -166,6 +166,55 @@ def test_delete_output_rejects_other_types(tmp_path: Path) -> None:
     assert exc.value.status_code == 400
 
 
+def test_has_output_since_none_without_opp_context(tmp_path: Path) -> None:
+    """Account-level runs (no opp_slug) aren't scoped to a single skill output
+    dir, so the check is undeterminable — callers fall back to legacy behavior."""
+    svc = _svc(tmp_path)
+    assert svc.has_output_since("Acme", None, "next-move", 0.0) is None
+
+
+def test_has_output_since_false_when_dir_missing(tmp_path: Path) -> None:
+    svc = _svc(tmp_path)
+    assert svc.has_output_since("Acme", "op1", "post-call", 0.0) is False
+
+
+def test_has_output_since_false_for_stale_file(tmp_path: Path) -> None:
+    """A file that predates the run (e.g. left over from an earlier successful
+    run of the same skill) doesn't count as this run's output."""
+    svc = _svc(tmp_path)
+    out_dir = tmp_path / "Acme" / "opportunities" / "op1" / "outputs" / "post-call"
+    out_dir.mkdir(parents=True)
+    f = out_dir / "post-call-2026-01-01-Old.md"
+    f.write_text("old", encoding="utf-8")
+    import os
+    old_time = f.stat().st_mtime - 3600
+    os.utime(f, (old_time, old_time))
+    assert svc.has_output_since("Acme", "op1", "post-call", f.stat().st_mtime + 60) is False
+
+
+def test_has_output_since_true_for_fresh_file(tmp_path: Path) -> None:
+    svc = _svc(tmp_path)
+    out_dir = tmp_path / "Acme" / "opportunities" / "op1" / "outputs" / "post-call"
+    out_dir.mkdir(parents=True)
+    since = 0.0
+    (out_dir / "post-call-2026-09-03-Tech-Discovery.md").write_text("new", encoding="utf-8")
+    assert svc.has_output_since("Acme", "op1", "post-call", since) is True
+
+
+def test_has_output_since_true_for_prep_call_legacy_folder(tmp_path: Path) -> None:
+    """`prep-call` saves under `outputs/call-prep/`, not `outputs/prep-call/`,
+    per _se-playbook.md's documented standard subfolders (predates the skill's
+    rename from `call-prep` to `prep-call`). Without the folder-name mapping,
+    this always reports False and the UI falsely warns "no output was saved"
+    even though the skill saved a file."""
+    svc = _svc(tmp_path)
+    out_dir = tmp_path / "Acme" / "opportunities" / "op1" / "outputs" / "call-prep"
+    out_dir.mkdir(parents=True)
+    since = 0.0
+    (out_dir / "call-prep-2026-09-04-Tech-Discovery.md").write_text("new", encoding="utf-8")
+    assert svc.has_output_since("Acme", "op1", "prep-call", since) is True
+
+
 def test_render_markdown_converts_to_html() -> None:
     html = OutputService.render_markdown("# Hello\n\nWorld.")
     assert "<h1" in html

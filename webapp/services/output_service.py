@@ -31,6 +31,13 @@ from .path_utils import resolve_within
 
 logger = logging.getLogger(__name__)
 
+# Skills whose on-disk outputs/ subfolder name doesn't match the skill id used
+# elsewhere in the webapp (job.skill, skill_runtime_service catalog, etc.).
+# `prep-call` saves under `outputs/call-prep/` per _se-playbook.md's documented
+# standard subfolders — kept for backward compatibility with existing customer
+# files predating the skill's rename from `call-prep` to `prep-call`.
+_SKILL_OUTPUT_FOLDER = {"prep-call": "call-prep"}
+
 
 class OutputError(Exception):
     """Domain exception carrying an HTTP-like status code and detail."""
@@ -638,7 +645,32 @@ class OutputService:
     def _output_dir(self, account: str, opp_slug: str | None, skill: str) -> Path | None:
         if not opp_slug:
             return None
-        return self.customers_dir / account / "opportunities" / opp_slug / "outputs" / skill
+        folder = _SKILL_OUTPUT_FOLDER.get(skill, skill)
+        return self.customers_dir / account / "opportunities" / opp_slug / "outputs" / folder
+
+    def has_output_since(
+        self, account: str, opp_slug: str | None, skill: str, since_ts: float
+    ) -> bool | None:
+        """Whether `skill`'s output dir gained a new `.md`/`.html` file at/after `since_ts`.
+
+        Lets the job runner tell "finished cleanly but produced nothing" (e.g. a skill
+        that stopped to ask for a missing transcript) apart from "finished and saved a
+        deliverable" — both currently look identical via the process exit code alone.
+        Returns `None` when there's no opportunity context to scope the check to (the
+        run isn't checkable this way), so callers can fall back to legacy behavior.
+        """
+        out_dir = self._output_dir(account, opp_slug, skill)
+        if out_dir is None:
+            return None
+        if not out_dir.exists():
+            return False
+        for f in (*out_dir.glob("*.md"), *out_dir.glob("*.html")):
+            try:
+                if f.is_file() and f.stat().st_mtime >= since_ts:
+                    return True
+            except OSError:
+                continue
+        return False
 
     @staticmethod
     def _sidecar_for_md(md_path: Path) -> Path:
