@@ -104,7 +104,7 @@ function writeFrame(bodyHtml) {
   d.write(
     '<!doctype html><html data-theme="' + currentTheme() + '"><head><meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width, initial-scale=1">' +
-    '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">' +
+    '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Public+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">' +
     '<link rel="stylesheet" href="/style.css">' +
     "</head><body><main>" + bodyHtml + "</main></body></html>"
   );

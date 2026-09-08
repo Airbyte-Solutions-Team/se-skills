@@ -302,7 +302,11 @@ def test_people_and_action_transformations_preserve_every_value(repo_root: Path,
     ):
         assert value in sheet
     assert sheet.count('class="person"') == 2
-    assert sheet.count('class="action-chip"') == 4
+    assert sheet.count('class="action-owner"') == 2
+    assert sheet.count('class="action-due"') == 2
+    assert sheet.count('class="action-status"') == 2
+    # 2 actions × 3 columns each, minus the 4 populated fields above = 2 placeholders
+    assert sheet.count('class="action-empty"') == 2
 
 
 def test_hostile_generated_content_stays_inert_through_the_reader(repo_root: Path, tmp_path: Path) -> None:

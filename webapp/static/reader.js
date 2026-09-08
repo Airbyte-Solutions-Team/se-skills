@@ -384,8 +384,27 @@
     });
   }
 
-  // Action lists → the action reads first, owner/date/status become subordinate
-  // chips. Only fires when the Markdown actually carries labeled metadata.
+  // Which ACTION_META_LABELS matches go in which fixed column. A label can
+  // only ever match one bucket — the regexes are disjoint by construction.
+  const ACTION_META_BUCKETS = [
+    { key: "owner", re: /^owners?$/i },
+    { key: "due", re: /^(due|due date|date|when|by when|target|target date|deadline|confirm by)$/i },
+    { key: "status", re: /^status$/i },
+  ];
+
+  function bucketActionMeta(meta) {
+    const out = { owner: "", due: "", status: "" };
+    meta.forEach((m) => {
+      const spec = ACTION_META_BUCKETS.find((b) => b.re.test(m.label));
+      if (spec && !out[spec.key]) out[spec.key] = m.value;
+    });
+    return out;
+  }
+
+  // Action lists → the action reads first; owner/due/status become fixed
+  // columns (a real table, not a chip cloud) so every action's fields line
+  // up down the list. Only fires when the Markdown actually carries labeled
+  // metadata.
   function upgradeActionLists(section) {
     section.querySelectorAll("ul.md-list, ol.md-list").forEach((list) => {
       if (!ACTION_SECTION.test(nearestHeadingText(list))) return;
@@ -412,15 +431,20 @@
       });
       if (!parsed.some(Boolean)) return;
       list.classList.add("action-list");
+      const head = list.ownerDocument.createElement("div");
+      head.className = "action-list-head";
+      head.innerHTML = "<span>Next Step</span><span>Owner</span><span>Due</span><span>Status</span>";
+      list.before(head);
+      const empty = '<span class="action-empty">&mdash;</span>';
       items.forEach((li, index) => {
         const entry = parsed[index];
         if (!entry) return;
-        const chips = entry.meta.map((m) =>
-          `<span class="action-chip"><span class="action-chip-k">${escapeHtml(m.label)}</span>`
-          + `<span class="action-chip-v">${escapeHtml(m.value)}</span></span>`).join("");
+        const b = bucketActionMeta(entry.meta);
         li.classList.add("action");
         li.innerHTML = `<span class="action-text">${entry.html}</span>`
-          + `<span class="action-meta">${chips}</span>`;
+          + `<span class="action-owner">${b.owner ? escapeHtml(b.owner) : empty}</span>`
+          + `<span class="action-due">${b.due ? escapeHtml(b.due) : empty}</span>`
+          + `<span class="action-status">${b.status ? escapeHtml(b.status) : empty}</span>`;
       });
     });
   }
@@ -831,6 +855,7 @@
     classifyTableShape,
     parsePersonEntry,
     splitActionMeta,
+    bucketActionMeta,
     addMdClasses,
     upgradeKeyValues,
     upgradeTables,

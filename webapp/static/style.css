@@ -583,7 +583,7 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 
 /* The one section that stays a panel: the un-promoted summary (is-glance). */
 .md-body .doc-section.is-glance {
-  padding: 24px 26px; border-radius: 14px; border-top: none; margin-top: 22px;
+  padding: 24px 26px; border-radius: 0; border-top: none; margin-top: 22px;
 }
 .md-body .doc-section.is-glance::before { content: none; }
 .md-body .doc-section.is-glance { background: color-mix(in srgb, var(--accent) 6%, var(--panel)); border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--line)); }
@@ -613,7 +613,8 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 .md-body .exec-card {
   background: color-mix(in srgb, var(--accent) 7%, var(--panel));
   border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
-  border-radius: 14px; padding: 20px 24px; margin: 0 0 18px;
+  border-top: 3px solid var(--accent);
+  border-radius: 0; padding: 20px 24px; margin: 0 0 18px;
 }
 .md-body .exec-card-eyebrow {
   font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .7px;
@@ -627,11 +628,11 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 /* decision tiles — the highest-signal glance rows, scannable side by side */
 .md-body .tile-grid {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px; margin: 0 0 4px;
+  gap: 1px; margin: 0 0 4px; background: var(--line); border: 1px solid var(--line);
 }
 .md-body .tile {
-  background: var(--panel); border: 1px solid var(--line);
-  border-left: 3px solid var(--muted); border-radius: 10px; padding: 11px 14px; min-width: 0;
+  background: var(--panel); border: none;
+  border-left: 3px solid var(--muted); border-radius: 0; padding: 11px 14px; min-width: 0;
 }
 .md-body .tile-label {
   font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px;
@@ -656,7 +657,7 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 }
 .md-body .risk-item {
   display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
-  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 0;
   padding: 10px 14px; cursor: pointer; color: var(--text); font: inherit;
   transition: border-color .12s, background .12s;
 }
@@ -672,12 +673,13 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 
 /* in-section risk cards (Watch-outs / What Would Lose It bullets → severity cards):
    left-accent by severity, bold lead as the title + a tinted severity pill. */
-.md-body .risk-cards { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
+.md-body .risk-cards { display: flex; flex-direction: column; gap: 0; margin: 12px 0; border: 1px solid var(--line); }
 .md-body .risk-card {
-  background: var(--panel2); border: 1px solid var(--line); border-left: 3px solid var(--muted);
-  border-radius: 0 10px 10px 0; padding: 12px 16px;
+  background: var(--panel2); border: none; border-left: 3px solid var(--muted); border-top: 1px solid var(--line);
+  border-radius: 0; padding: 12px 16px;
   scroll-margin-top: 84px;   /* clear the sticky header when jumped-to from the risk strip */
 }
+.md-body .risk-card:first-child { border-top: none; }
 .md-body .risk-card.blocker { border-left-color: var(--danger); background: color-mix(in srgb, var(--danger) 7%, var(--panel)); }
 .md-body .risk-card.risk    { border-left-color: var(--warn);   background: color-mix(in srgb, var(--warn) 7%, var(--panel)); }
 /* neutral info cards (Constraints / Edge Cases) — calm, no severity pill */
@@ -714,6 +716,27 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
    (see .doc-chat) and is never a layout column, so opening it does not reflow
    or narrow the document. */
 .doc-layout { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 32px; align-items: start; }
+
+/* ── Document reader brand system — scoped to the reader only ─────────────
+   Real Airbyte brand tokens (see report_branding.py / metabase_report_
+   generator.py), not the app's generic slate/blue. Deliberately does NOT
+   touch :root — every other page (account list, modals, live-transcribe,
+   hosted review) keeps its existing theme untouched. */
+.doc-layout {
+  --bg: #0A0A24; --panel: #14143D; --panel2: #191948; --panel-hover: #202058;
+  --line: #29295c; --line-strong: #3a3a78;
+  --text: #F5F5FF; --muted: #979DBE; --faint: #7A7AA0;
+  --accent: #8080FF; --accent2: #4CAF50; --warn: #FF9E88; --danger: #FF694A;
+  --font-doc: 'Public Sans', ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-doc-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-doc);
+}
+:root[data-theme="light"] .doc-layout {
+  --bg: #F9F9FB; --panel: #FFFFFF; --panel2: #F4F4F8; --panel-hover: #EDEDF3;
+  --line: #D4D4E3; --line-strong: #BFC2D9;
+  --text: #07072B; --muted: #5F5F82; --faint: #8487A4;
+  --accent: #463CFB; --accent2: #388E3C; --warn: #B85D4A; --danger: #753E45;
+}
 .doc-toc {
   position: sticky; top: 84px; align-self: start;
   max-height: calc(100vh - 110px); overflow: auto;
@@ -743,7 +766,7 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 
 /* ── rendered markdown (skill output reports) ─────────────────────────── */
 .md-body {
-  font: 15px/1.7 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 15px; line-height: 1.7; font-family: var(--font-doc), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: var(--text); overflow-wrap: anywhere; min-width: 0;
 }
 /* readable measure: fill the column but cap so lines don't get too long on wide
@@ -775,8 +798,8 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 .md-body .md-cbox.done { background: color-mix(in srgb, var(--accent2) 22%, transparent); border-color: var(--accent2); color: var(--accent2); }
 .md-body .md-check-text { flex: 1; min-width: 0; }
 .md-body .md-hr { border: none; border-top: 1px solid var(--line); margin: 28px 0; }
-.md-body code { background: var(--panel2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.md-body .md-pre { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; overflow: auto; margin: 14px 0; }
+.md-body code { background: var(--panel2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; font: 13px var(--font-doc-mono), ui-monospace, SFMono-Regular, Menlo, monospace; }
+.md-body .md-pre { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; overflow: auto; margin: 14px 0; font-family: var(--font-doc-mono), ui-monospace, SFMono-Regular, Menlo, monospace; }
 .md-body .md-pre code { background: none; border: none; padding: 0; }
 /* Any table the reader did not reshape stays a table — wrapped in its own
    scroll region so a wide generic table can never clip or push the page wider
@@ -802,7 +825,7 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 .md-body a:hover { border-bottom-color: var(--accent); }
 
 /* plain blockquote (no [!type] marker) */
-.md-body .md-quote { margin: 14px 0; padding: 10px 18px; border-left: 3px solid var(--line); background: var(--panel2); border-radius: 0 8px 8px 0; color: var(--muted); font-style: italic; }
+.md-body .md-quote { margin: 14px 0; padding: 10px 18px; border-left: 3px solid var(--line); background: var(--panel2); border-radius: 0; color: var(--muted); font-style: italic; }
 
 /* key-number emphasis — ==value==
    Emphasis via accent-colored bold text + a faint tint, NOT a loud highlighter
@@ -816,7 +839,7 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 }
 
 /* callout boxes — > [!verdict|risk|blocker|info] */
-.md-body .callout { margin: 16px 0; padding: 13px 18px; border-left: 4px solid var(--line); border-radius: 0 10px 10px 0; background: var(--panel2); scroll-margin-top: 84px; }
+.md-body .callout { margin: 16px 0; padding: 13px 18px; border-left: 4px solid var(--line); border-radius: 0; background: var(--panel2); scroll-margin-top: 84px; }
 .md-body .callout-title { font-weight: 700; font-size: 14.5px; margin-bottom: 5px; display: flex; align-items: center; gap: 7px; }
 .md-body .callout-title::before { font-size: 14px; }
 .md-body .callout-body { color: var(--text); font-size: 14px; line-height: 1.6; }
@@ -844,8 +867,9 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 /* A recognized Connector Feasibility table becomes one record per system so
    every field (availability, fit, confidence, top risk) stays visible instead
    of being squeezed into a clipped right-most column. */
-.md-body .sys-records { display: flex; flex-direction: column; gap: 12px; margin: 16px 0; }
-.md-body .sys-record { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; min-width: 0; }
+.md-body .sys-records { display: flex; flex-direction: column; gap: 0; margin: 16px 0; border: 1px solid var(--line); }
+.md-body .sys-record { background: var(--panel); border: none; border-top: 1px solid var(--line); border-radius: 0; padding: 14px 16px; min-width: 0; }
+.md-body .sys-record:first-child { border-top: none; }
 .md-body .sys-record-title { font-weight: 650; font-size: 15px; line-height: 1.35; margin-bottom: 10px; overflow-wrap: anywhere; }
 .md-body .sys-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px 18px; }
 .md-body .sys-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
@@ -865,23 +889,32 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 .md-body .person-role { color: var(--muted); font-size: 13.5px; line-height: 1.5; min-width: 0; }
 
 /* ── actions ───────────────────────────────────────────────────────────── */
-/* The committed action reads first; owner/date/status stay scannable but
-   subordinate. */
+/* Real columns — the action reads first, then Owner / Due / Status line up
+   down the list instead of wrapping as a chip cloud. */
+.md-body .action-list-head {
+  display: grid; grid-template-columns: 1fr 150px 110px 110px; gap: 6px 14px;
+  padding: 0 0 8px; font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .5px; color: var(--muted);
+}
 .md-body .md-list.action-list { list-style: none; padding-left: 0; margin: 12px 0; }
 .md-body .action-list > li.action {
-  display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px;
+  display: grid; grid-template-columns: 1fr 150px 110px 110px; gap: 6px 14px;
+  align-items: baseline;
   margin: 0; padding: 10px 0;
   border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
 }
 .md-body .action-list > li.action:first-child { border-top: none; }
-.md-body .action-text { flex: 1 1 320px; min-width: 0; font-size: 14.5px; line-height: 1.55; }
-.md-body .action-meta { display: flex; flex-wrap: wrap; gap: 6px; }
-.md-body .action-chip {
-  display: inline-flex; align-items: baseline; gap: 6px;
-  border: 1px solid var(--line); background: var(--panel2); border-radius: 999px; padding: 2px 10px;
+.md-body .action-text { min-width: 0; font-size: 14.5px; line-height: 1.55; }
+.md-body .action-owner, .md-body .action-due, .md-body .action-status { min-width: 0; font-size: 13px; color: var(--muted); }
+.md-body .action-status { font-weight: 600; }
+.md-body .action-empty { color: var(--faint); }
+@media (max-width: 700px) {
+  .md-body .action-list-head { display: none; }
+  .md-body .action-list > li.action { grid-template-columns: 1fr; gap: 2px; }
+  .md-body .action-owner::before { content: "Owner: "; color: var(--faint); }
+  .md-body .action-due::before { content: "Due: "; color: var(--faint); }
+  .md-body .action-status::before { content: "Status: "; color: var(--faint); }
 }
-.md-body .action-chip-k { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
-.md-body .action-chip-v { font-size: 12.5px; color: var(--text); }
 
 /* ── discovery questions ───────────────────────────────────────────────── */
 /* The question stays prominent; "why this matters" / "listen for" support it.
@@ -937,7 +970,6 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
   .md-body .kv + .kv { margin-top: 8px; }
   .md-body .person { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   .md-body .sys-fields { grid-template-columns: minmax(0, 1fr); }
-  .md-body .action-text { flex-basis: 100%; }
 }
 .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--muted); border-top-color: var(--warn); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 8px; }
 @keyframes spin { to { transform: rotate(360deg); } }
