@@ -1887,49 +1887,321 @@ function showPushError(account, message) {
   overlay.onclick = (e) => { if (e.target === overlay) close(); };
 }
 
-// ---- Page: opportunity (outputs + invoke) --------------------------------
-async function pageOpportunity(account, slug, oppName) {
-  setCrumbs([...(await accountCrumbs(account)), { label: account, href: `#/account/${encodeURIComponent(account)}` }, { label: oppName }]);
-  const outputs = await api(`/api/accounts/${encodeURIComponent(account)}/outputs?opp=${encodeURIComponent(slug)}`);
-  outputMeta = Object.fromEntries(outputs.map((o) => [o.path, normalizeOutputMeta(o)]));
-  // Resolve the owning member's display name (for the handoff repo-path). Owner
-  // is a member id on the account; map to its name. Empty is fine (endpoint
-  // falls back to a placeholder slug).
-  let _memberName = "";
-  try {
-    const [meta, members] = await Promise.all([
-      api(`/api/accounts/${encodeURIComponent(account)}`).catch(() => ({})),
-      api("/api/members").catch(() => []),
-    ]);
-    _memberName = (members.find((m) => m.id === meta.owner)?.name) || "";
-  } catch { /* best-effort */ }
-  view.innerHTML = `
-    <div class="row">
-      <div><h1>${esc(oppName)}</h1><p class="sub">${esc(account)} · outputs &amp; skills</p></div>
-      <div class="row-actions">
-        <a class="primary live-btn" href="#/live/${encodeURIComponent(account)}/${encodeURIComponent(slug)}/${encodeURIComponent(oppName)}">🎙 Live Transcribe</a>
-        <button class="ghost" id="handoff-btn" title="Generate a PTO coverage handoff for a covering SE">🤝 Coverage Handoff</button>
-        <button class="primary" id="invoke-btn">⚡ Invoke Skill</button>
+function workspaceOutputItems(workspace) {
+  const scopes = workspace?.outputs || {};
+  return ["opportunity", "account"].flatMap((scope) =>
+    (scopes[scope]?.groups || []).flatMap((group) => group.generations || [])
+  );
+}
+
+function workspaceOutputBadges(output) {
+  const decision = window.docStatus(normalizeOutputMeta(output));
+  const issueTitle = window.docStatus.escapeHtml(decision.issues.map((i) => i.text).join(" | "));
+  let validationLabel = "Valid";
+  let validationClass = "success";
+  if (decision.severity === "error") {
+    validationLabel = "Incomplete";
+    validationClass = "error";
+  } else if (decision.severity === "warn") {
+    const changed = (output.reference_changed_since_generation || []).length > 0;
+    validationLabel = changed ? "Source changed" : "Review sources";
+    validationClass = "warn";
+  } else if (decision.severity === "info") {
+    validationLabel = decision.label || "Checks unavailable";
+    validationClass = "neutral";
+  } else if (output.validation_supported === false) {
+    validationLabel = "No automatic check";
+    validationClass = "neutral";
+  }
+
+  const validation = `<span class="workspace-status workspace-status--${validationClass}"${issueTitle ? ` title="${issueTitle}"` : ""}>Validation: ${esc(validationLabel)}</span>`;
+  if (output.review_supported === false) return validation;
+
+  const reviewStatus = output.review_status || "awaiting review";
+  const reviewLabels = {
+    approved: "Approved",
+    corrected: "Corrected",
+    commented: "Commented",
+    "awaiting review": "Awaiting review",
+  };
+  const reviewClasses = {
+    approved: "success",
+    corrected: "warn",
+    commented: "warn",
+    "awaiting review": "neutral",
+  };
+  const review = `<span class="workspace-status workspace-status--${reviewClasses[reviewStatus] || "neutral"}">Review: ${esc(reviewLabels[reviewStatus] || reviewStatus)}</span>`;
+  return validation + review;
+}
+
+function renderWorkspaceOutputArtifact(output, latest = false) {
+  const isHtml = output.ext === "html";
+  const title = `${prettySkill(output.skill)} — ${output.filename}`;
+  return `
+    <div class="out-item workspace-output-item${isHtml ? " is-html" : ""}" data-path="${encodeURIComponent(output.path)}" data-ext="${esc(output.ext || "md")}" data-title="${esc(title)}">
+      <div class="workspace-output-main">
+        <div class="skill">${latest ? "Latest generation" : "Earlier generation"}${isHtml ? ' <span class="badge">HTML</span>' : ""}</div>
+        <div class="when" title="${esc(output.filename)}">${esc(conciseOutputName(output.filename, output.skill))}</div>
+        <div class="workspace-output-statuses">${workspaceOutputBadges(output)}</div>
       </div>
-    </div>
-    <div class="freebar command-bar">
-      <span class="command-bar-icon">⚡</span>
-      <div class="freebar-input-wrap">
-        <input id="opp-free" type="text" autocomplete="off" placeholder="Run a skill or type an instruction (e.g. “deal assessment focused on the security objection”)…" />
-        <div id="free-suggest" class="free-suggest hidden"></div>
+      <div class="out-item-right">
+        <span class="when">${esc(output.modified || "")}${output.modified ? " UTC" : ""}</span>
+        ${isHtml ? `<button class="ghost small out-view" data-path="${encodeURIComponent(output.path)}">Open</button>` : '<span class="workspace-open-label">Open →</span>'}
+        ${downloadMenuHtml(encodeURIComponent(output.path), "dl-menu-row")}
       </div>
-      <button class="primary small" id="opp-free-run">Run</button>
-    </div>
-    <div id="freebar-status" class="status hidden"></div>
-    <h2>Generated outputs</h2>
-    <div class="outputs" id="outputs">
-      ${outputs.length ? renderOutputGroups(outputs) : emptyBox({ icon: "⊘", title: "No outputs yet", body: "Invoke a skill to generate the first output for this opportunity.", actions: `<button class="primary small" id="empty-invoke">Invoke Skill</button>` })}
     </div>`;
-  wireOutItems(view, { account, slug, oppName, memberName: _memberName });
-  // onDeleted runs on user click (after refreshOutputs is defined below) → safe.
-  wireDownloadMenus(view, () => refreshOutputs());
+}
+
+function renderWorkspaceOutputGroups(scope, { accountLevel = false } = {}) {
+  const groups = scope?.groups || [];
+  if (!groups.length) {
+    return accountLevel ? "" : emptyBox({
+      icon: "⊘",
+      title: "No opportunity outputs yet",
+      body: "Generate a specialized output for this opportunity. Nothing will be treated as canonical opportunity state.",
+      actions: '<button class="primary small" data-generate>Generate output</button>',
+    });
+  }
+
+  return `<div class="workspace-output-grid">${groups.map((group) => `
+    <article class="workspace-output-card">
+      <div class="workspace-output-card-head">
+        <div>
+          <div class="workspace-eyebrow">${accountLevel ? "Account artifact" : "Opportunity output"}</div>
+          <h3>${esc(prettySkill(group.skill))}</h3>
+        </div>
+        <span class="workspace-count">${group.generation_count} generation${group.generation_count === 1 ? "" : "s"}</span>
+      </div>
+      ${renderWorkspaceOutputArtifact(group.latest, true)}
+      ${group.history_count ? `
+        <details class="workspace-history">
+          <summary>View ${group.history_count} earlier generation${group.history_count === 1 ? "" : "s"}</summary>
+          <div class="workspace-history-list">
+            ${(group.generations || []).slice(1).map((output) => renderWorkspaceOutputArtifact(output)).join("")}
+          </div>
+        </details>` : ""}
+    </article>`).join("")}</div>`;
+}
+
+function workspaceFact(value, label) {
+  return `<div class="workspace-fact"><span class="workspace-fact-value">${esc(value || "Unknown")}</span><span class="workspace-fact-label">${esc(label)}</span></div>`;
+}
+
+function opportunityAmount(value) {
+  return value || value === 0 ? "$" + Number(value).toLocaleString() : "";
+}
+
+function opportunityHeaderMeta(workspace) {
+  const opportunity = workspace.opportunity || {};
+  const account = workspace.account || {};
+  const stage = [opportunity.stage_num, opportunity.stage].filter(Boolean).join(" · ");
+  return [
+    stage,
+    opportunity.type,
+    opportunityAmount(opportunity.amount),
+    opportunity.close_date ? `Target close ${opportunity.close_date}` : "",
+    account.owner_name ? `Owner ${account.owner_name}` : "",
+    opportunity.ae ? `AE ${opportunity.ae}` : "",
+  ].filter(Boolean).map((item) => `<span class="workspace-meta-pill">${esc(item)}</span>`).join("");
+}
+
+function latestWorkspaceOutput(scope) {
+  const latest = (scope?.groups || []).map((group) => group.latest).filter(Boolean)
+    .sort((a, b) => (b.mtime || 0) - (a.mtime || 0))[0];
+  return latest || null;
+}
+
+function renderOpportunityWorkspace(workspace) {
+  const opportunity = workspace.opportunity || {};
+  const account = workspace.account || {};
+  const opportunityOutputs = workspace.outputs?.opportunity || { total: 0, groups: [] };
+  const accountOutputs = workspace.outputs?.account || { total: 0, groups: [] };
+  const latest = latestWorkspaceOutput(opportunityOutputs);
+  const stage = [opportunity.stage_num, opportunity.stage].filter(Boolean).join(" · ") || "Unknown";
+  const metadataNote = opportunity.metadata_complete === false
+    ? '<span class="workspace-source-note">Salesforce metadata unavailable; name derived from the local opportunity folder.</span>'
+    : "";
+
+  return `
+    <div class="opp-workspace">
+      <section class="workspace-hero">
+        <div class="row workspace-title-row">
+          <div>
+            <div class="workspace-eyebrow">Opportunity workspace</div>
+            <h1>${esc(opportunity.name)}</h1>
+            <p class="sub">${esc(account.name)} · current workspace and generated artifacts</p>
+            <div class="workspace-meta">${opportunityHeaderMeta(workspace)}</div>
+            ${metadataNote}
+          </div>
+          <div class="row-actions workspace-primary-actions">
+            <a class="ghost live-btn" href="#/live/${encodeURIComponent(account.name)}/${encodeURIComponent(opportunity.slug)}/${encodeURIComponent(opportunity.name)}">🎙 Live Transcribe</a>
+            <button class="ghost" id="handoff-btn" title="Generate a PTO coverage handoff for a covering SE">🤝 Coverage Handoff</button>
+            <button class="primary" id="invoke-btn">Generate</button>
+          </div>
+        </div>
+        <div class="workspace-facts" aria-label="Known opportunity context">
+          ${workspaceFact(stage, "Current stage")}
+          ${workspaceFact(String(opportunityOutputs.total || 0), "Opportunity outputs")}
+          ${workspaceFact(latest?.modified || "None yet", "Latest output")}
+          ${workspaceFact(account.owner_name || "Unassigned", "Account owner")}
+        </div>
+      </section>
+
+      <section class="workspace-panel workspace-brief">
+        <div class="workspace-panel-head">
+          <div>
+            <div class="workspace-eyebrow">Current understanding</div>
+            <h2>Opportunity Brief</h2>
+          </div>
+          <span class="workspace-state">Not created</span>
+        </div>
+        <p>No canonical opportunity overview exists yet. This page only shows facts and artifacts the application can verify today.</p>
+        <p class="muted">Use Generate for a specialized deliverable. Create or Update overview will be added only after a typed, evidence-backed opportunity-state workflow exists.</p>
+        <button class="ghost small" data-generate>Generate a specialized output</button>
+      </section>
+
+      <div id="freebar-status" class="status-stack"></div>
+
+      <details class="workspace-disclosure workspace-disclosure--priority">
+        <summary>
+          <span>
+            <span class="workspace-eyebrow">Technical evaluation lifecycle</span>
+            <strong>Tech Eval / POV Readiness</strong>
+            <small>No structured readiness plan exists yet.</small>
+          </span>
+          <span class="workspace-state">Not established</span>
+        </summary>
+        <div class="workspace-disclosure-body">
+          <p>Readiness, gates, POV progress, and technical-win criteria will appear here once the canonical lifecycle model is implemented.</p>
+          <p class="muted">For now, generate a POC Plan as a separate, reviewable output. It will not silently become opportunity state.</p>
+          <button class="ghost small" data-run-skill="poc-plan">Generate POC Plan</button>
+        </div>
+      </details>
+
+      <section class="workspace-section" aria-labelledby="opportunity-outputs-title">
+        <div class="workspace-section-head">
+          <div>
+            <div class="workspace-eyebrow">Durable artifacts</div>
+            <h2 id="opportunity-outputs-title">Opportunity Outputs</h2>
+          </div>
+          <span class="workspace-count">${opportunityOutputs.total} total</span>
+        </div>
+        <div class="outputs" id="outputs">${renderWorkspaceOutputGroups(opportunityOutputs)}</div>
+      </section>
+
+      <div id="account-outputs-region">
+        ${accountOutputs.total ? `
+          <details class="workspace-disclosure workspace-account-outputs">
+            <summary>
+              <span>
+                <span class="workspace-eyebrow">Separate scope</span>
+                <strong>Account-level outputs</strong>
+                <small>These artifacts belong to ${esc(account.name)} and are not applied to this opportunity.</small>
+              </span>
+              <span class="workspace-count">${accountOutputs.total} total</span>
+            </summary>
+            <div class="workspace-disclosure-body">${renderWorkspaceOutputGroups(accountOutputs, { accountLevel: true })}</div>
+          </details>` : ""}
+      </div>
+
+      <div class="workspace-frameworks">
+        <details class="workspace-disclosure">
+          <summary>
+            <span><strong>Business Case</strong><small>Current state, future state, consequences, and outcomes.</small></span>
+            <span class="workspace-state">Not established</span>
+          </summary>
+          <div class="workspace-disclosure-body">
+            <p>No structured business case is available yet.</p>
+            <button class="ghost small" data-run-skill="biz-qual">Generate Business Qualification</button>
+          </div>
+        </details>
+        <details class="workspace-disclosure">
+          <summary>
+            <span><strong>MEDDPICC</strong><small>Qualification dimensions, evidence, gaps, and discovery.</small></span>
+            <span class="workspace-state">Not established</span>
+          </summary>
+          <div class="workspace-disclosure-body">
+            <p>No canonical MEDDPICC scorecard is available yet. Generated qualification remains a separate artifact until reviewed state is implemented.</p>
+            <button class="ghost small" data-run-skill="biz-qual">Generate Business Qualification</button>
+          </div>
+        </details>
+        <details class="workspace-disclosure">
+          <summary>
+            <span><strong>Stakeholders</strong><small>Roles, influence, engagement, and blockers.</small></span>
+            <span class="workspace-state">Not established</span>
+          </summary>
+          <div class="workspace-disclosure-body">
+            <p>No structured stakeholder map is available yet.</p>
+            <button class="ghost small" data-run-skill="biz-qual">Generate Business Qualification</button>
+          </div>
+        </details>
+      </div>
+
+      <details class="workspace-disclosure workspace-command-panel">
+        <summary>
+          <span><strong>Run with specific instructions</strong><small>Use a named skill or give the local agent additional context.</small></span>
+          <span class="workspace-state">Local only</span>
+        </summary>
+        <div class="workspace-disclosure-body">
+          <div class="freebar command-bar">
+            <span class="command-bar-icon">⚡</span>
+            <div class="freebar-input-wrap">
+              <input id="opp-free" type="text" autocomplete="off" placeholder="Run a skill or type an instruction (e.g. “deal assessment focused on the security objection”)…" />
+              <div id="free-suggest" class="free-suggest hidden"></div>
+            </div>
+            <button class="primary small" id="opp-free-run">Run</button>
+          </div>
+        </div>
+      </details>
+    </div>`;
+}
+
+// ---- Page: opportunity workspace (local mode) ---------------------------
+async function pageOpportunity(account, slug, routeOppName) {
+  const workspaceUrl = `/api/accounts/${encodeURIComponent(account)}/opportunities/${encodeURIComponent(slug)}/workspace`;
+  let workspace;
+  try {
+    workspace = await api(workspaceUrl);
+  } catch (error) {
+    setCrumbs([...(await accountCrumbs(account)), { label: account, href: `#/account/${encodeURIComponent(account)}` }, { label: "Opportunity" }]);
+    view.innerHTML = emptyBox({
+      icon: "!",
+      title: "Opportunity unavailable",
+      body: error.message || `Could not load ${routeOppName || slug}.`,
+      actions: `<a class="ghost small" href="#/account/${encodeURIComponent(account)}">Back to account</a>`,
+    });
+    return;
+  }
+
+  account = workspace.account.name;
+  slug = workspace.opportunity.slug;
+  const oppName = workspace.opportunity.name;
+  const _memberName = workspace.account.owner_name || "";
+  const memberCrumb = workspace.account.owner_id
+    ? [{ label: workspace.account.owner_name || workspace.account.owner_id, href: `#/member/${encodeURIComponent(workspace.account.owner_id)}` }]
+    : [];
+  setCrumbs([
+    { label: "Team", href: "#/" },
+    ...memberCrumb,
+    { label: account, href: `#/account/${encodeURIComponent(account)}` },
+    { label: oppName },
+  ]);
+
+  const outputContext = { account, slug, oppName, memberName: _memberName };
+  outputMeta = Object.fromEntries(
+    workspaceOutputItems(workspace).map((output) => [output.path, normalizeOutputMeta(output)])
+  );
+  view.innerHTML = renderOpportunityWorkspace(workspace);
+
+  const wireWorkspace = (root) => {
+    wireOutItems(root, outputContext);
+    wireDownloadMenus(root, () => refreshOutputs());
+    root.querySelectorAll("[data-generate]").forEach((button) => {
+      button.onclick = () => openInvoke(account, { slug, name: oppName });
+    });
+  };
+  wireWorkspace(view);
   document.getElementById("invoke-btn").onclick = () => openInvoke(account, { slug, name: oppName });
-  document.getElementById("empty-invoke")?.addEventListener("click", () => openInvoke(account, { slug, name: oppName }));
 
   // Free-text instruction bar — runs the agent without picking a named skill
   const freeInput = document.getElementById("opp-free");
@@ -1937,16 +2209,39 @@ async function pageOpportunity(account, slug, oppName) {
   const fStatus = document.getElementById("freebar-status");
   fStatus.className = "status-stack";  // container of per-job rows (was a single line)
 
-  // Re-fetch the Generated Outputs list (after a run produces a new file).
+// Re-fetch the aggregate after a run or deletion so generation counts and
+  // account/opportunity boundaries stay server-authoritative.
   const refreshOutputs = async () => {
-    const outs = await api(`/api/accounts/${encodeURIComponent(account)}/outputs?opp=${encodeURIComponent(slug)}`).catch(() => []);
-    outputMeta = Object.fromEntries(outs.map((o) => [o.path, normalizeOutputMeta(o)]));
-    const el = document.getElementById("outputs");
-    if (!el) return;
-    el.innerHTML = outs.length ? renderOutputGroups(outs) : emptyBox({ icon: "⊘", title: "No outputs yet", body: "Invoke a skill to generate the first output for this opportunity.", actions: `<button class="primary small empty-invoke">Invoke Skill</button>` });
-    el.querySelector(".empty-invoke")?.addEventListener("click", () => openInvoke(account, { slug, name: oppName }));
-    wireOutItems(el, { account, slug, oppName, memberName: _memberName });
-    wireDownloadMenus(el, () => refreshOutputs());
+    const refreshed = await api(workspaceUrl).catch(() => null);
+    if (!refreshed) return;
+    workspace = refreshed;
+    outputMeta = Object.fromEntries(
+      workspaceOutputItems(workspace).map((output) => [output.path, normalizeOutputMeta(output)])
+    );
+
+    const opportunityRegion = document.getElementById("outputs");
+    if (opportunityRegion) {
+      opportunityRegion.innerHTML = renderWorkspaceOutputGroups(workspace.outputs.opportunity);
+      wireWorkspace(opportunityRegion);
+    }
+
+    const accountRegion = document.getElementById("account-outputs-region");
+    if (accountRegion) {
+      const scope = workspace.outputs.account;
+      accountRegion.innerHTML = scope.total ? `
+        <details class="workspace-disclosure workspace-account-outputs">
+          <summary>
+            <span>
+              <span class="workspace-eyebrow">Separate scope</span>
+              <strong>Account-level outputs</strong>
+              <small>These artifacts belong to ${esc(workspace.account.name)} and are not applied to this opportunity.</small>
+            </span>
+            <span class="workspace-count">${scope.total} total</span>
+          </summary>
+          <div class="workspace-disclosure-body">${renderWorkspaceOutputGroups(scope, { accountLevel: true })}</div>
+        </details>` : "";
+      wireWorkspace(accountRegion);
+    }
   };
 
   // ── Multi-job status stack ──────────────────────────────────────────────
@@ -1983,7 +2278,7 @@ async function pageOpportunity(account, slug, oppName) {
       ? `✕ ${esc(job.skill || "run")}${ago} — finished with an error`
       : noOutput
         ? `⚠ ${esc(job.skill || "run")}${ago} — finished, but no output was saved`
-        : `✓ ${esc(job.skill || "run")}${ago} — saved to Generated Outputs below`;
+        : `✓ ${esc(job.skill || "run")}${ago} — saved to Opportunity Outputs below`;
     row.innerHTML = `<span class="run-head">${head}</span>${errorDetailHtml(job)}<button class="run-dismiss" title="Dismiss">✕</button>`;
     row.querySelector(".run-dismiss").onclick = () => { row.remove(); rows.delete(key); };
   };
@@ -2059,6 +2354,9 @@ async function pageOpportunity(account, slug, oppName) {
   };
 
   document.getElementById("handoff-btn").onclick = () => openHandoffModal(oppName, startHandoff);
+  view.querySelectorAll("[data-run-skill]").forEach((button) => {
+    button.onclick = () => startRun(button.dataset.runSkill);
+  });
 
   // ── Suggestive skill dropdown ─────────────────────────────────────────
   // As you type, surface skills whose label / id / triggers match a word.
