@@ -6,6 +6,7 @@ router in `webapp/routes/outputs.py` keeps the original URL/method surface.
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -42,6 +43,62 @@ def _make_md(customers_dir: Path, rel: str = "Acme/outputs/next-move/next-move-2
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text("# Acme — next-move\n\n- Item A\n", encoding="utf-8")
     return f
+
+
+def test_list_outputs_exposes_review_separately_from_validation(tmp_path: Path) -> None:
+    svc = _svc(tmp_path)
+    rel = "Acme/opportunities/acme-expansion/outputs/post-call/post-call.md"
+    md = _make_md(tmp_path, rel)
+    md.with_suffix(".feedback.jsonl").write_text(
+        json.dumps({"action": "approve", "comment": ""}) + "\n",
+        encoding="utf-8",
+    )
+
+    outputs = svc.list_outputs("Acme", "acme-expansion")
+
+    assert len(outputs) == 1
+    output = outputs[0]
+    assert output["review_supported"] is True
+    assert output["review_status"] == "approved"
+    assert output["review_needs_attention"] is False
+    assert "validation_status" in output
+    assert output["review_status"] != output["validation_status"]
+
+
+def test_list_outputs_marks_missing_or_malformed_feedback_awaiting_review(
+    tmp_path: Path,
+) -> None:
+    svc = _svc(tmp_path)
+    rel = "Acme/opportunities/acme-expansion/outputs/post-call/post-call.md"
+    md = _make_md(tmp_path, rel)
+    md.with_suffix(".feedback.jsonl").write_text("{not-json}\n", encoding="utf-8")
+
+    output = svc.list_outputs("Acme", "acme-expansion")[0]
+
+    assert output["review_supported"] is True
+    assert output["review_status"] == "awaiting review"
+    assert output["review_needs_attention"] is True
+
+
+def test_list_outputs_does_not_claim_html_is_reviewable(tmp_path: Path) -> None:
+    svc = _svc(tmp_path)
+    html = (
+        tmp_path
+        / "Acme"
+        / "opportunities"
+        / "acme-expansion"
+        / "outputs"
+        / "coverage-handoff"
+        / "handoff.html"
+    )
+    html.parent.mkdir(parents=True)
+    html.write_text("<!doctype html><title>Handoff</title>", encoding="utf-8")
+
+    output = svc.list_outputs("Acme", "acme-expansion")[0]
+
+    assert output["review_supported"] is False
+    assert output["review_status"] == "not_available"
+    assert output["review_needs_attention"] is False
 
 
 def test_read_output_content_returns_markdown(tmp_path: Path) -> None:
