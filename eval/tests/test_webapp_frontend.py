@@ -265,3 +265,111 @@ console.log(JSON.stringify({{
     ]
     assert data["list"] == "field required"
     assert data["empty"] == ""
+
+def test_local_opportunity_workspace_renders_truthful_shell_and_output_history(
+    repo_root: Path,
+) -> None:
+    """Exercise the DOM-free workspace renderer with synthetic aggregate data."""
+    app_js_path = repo_root / "webapp" / "static" / "app.js"
+    script = f"""
+const fs = require("fs");
+const src = fs.readFileSync({str(app_js_path)!r}, "utf8");
+const start = src.indexOf("function workspaceOutputItems");
+const end = src.indexOf("// ---- Page: opportunity workspace", start);
+if (start < 0 || end < 0) throw new Error("workspace helper block missing");
+global.window = {{
+  docStatus: Object.assign(
+    (meta) => ({{severity: meta.validation_status === "invalid" ? "error" : "ok", label: "Valid", issues: []}}),
+    {{escapeHtml: (value) => value}}
+  )
+}};
+function normalizeOutputMeta(value) {{ return value; }}
+function esc(value) {{ return String(value || "").replace(/[&<>"]/g, ""); }}
+function prettySkill(value) {{ return value; }}
+function conciseOutputName(filename) {{ return filename; }}
+function downloadMenuHtml() {{ return ""; }}
+function emptyBox({{title, body, actions}}) {{ return title + body + (actions || ""); }}
+eval(src.slice(start, end));
+const output = {{
+  skill: "tech-qual",
+  filename: "tech-qual-current.md",
+  path: "Acme/opportunities/acme-expansion/outputs/tech-qual/tech-qual-current.md",
+  ext: "md",
+  mtime: 2,
+  modified: "2026-09-15 12:00",
+  validation_status: "valid",
+  validation_supported: true,
+  review_supported: true,
+  review_status: "approved"
+}};
+const older = {{...output, filename: "tech-qual-old.md", path: "old.md", mtime: 1, modified: "2026-09-10 12:00"}};
+const accountOutput = {{...output, skill: "account-refresher", filename: "account.md", path: "account.md"}};
+const workspace = {{
+  account: {{name: "Acme", owner_id: "gary", owner_name: "Gary Yang"}},
+  opportunity: {{
+    name: "Server Opportunity",
+    slug: "acme-expansion",
+    stage: "Tech Eval",
+    stage_num: "S3",
+    amount: 75000,
+    close_date: "2026-10-31",
+    type: "New Business",
+    ae: "Alex",
+    metadata_complete: true
+  }},
+  outputs: {{
+    opportunity: {{
+      total: 2,
+      groups: [{{skill: "tech-qual", latest: output, generation_count: 2, history_count: 1, generations: [output, older]}}]
+    }},
+    account: {{
+      total: 1,
+      groups: [{{skill: "account-refresher", latest: accountOutput, generation_count: 1, history_count: 0, generations: [accountOutput]}}]
+    }}
+  }}
+}};
+const html = renderOpportunityWorkspace(workspace);
+console.log(JSON.stringify({{
+  title: html.includes("Server Opportunity"),
+  stage: html.includes("S3 · Tech Eval"),
+  techEval: html.includes("Tech Eval / POV Readiness"),
+  meddpicc: html.includes("MEDDPICC"),
+  outputs: html.includes("Opportunity Outputs"),
+  history: html.includes("View 1 earlier generation"),
+  statuses: html.includes("Validation: Valid") && html.includes("Review: Approved"),
+  accountScope: html.includes("Account-level outputs") && html.includes("are not applied to this opportunity"),
+  generate: html.includes('id="invoke-btn">Generate</button>'),
+  noFakeUpdateButton: !html.includes('id="update-overview"')
+}}));
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    rendered = json.loads(result.stdout)
+    assert all(rendered.values()), rendered
+
+
+def test_local_opportunity_page_uses_workspace_endpoint_and_server_identity(
+    repo_root: Path,
+) -> None:
+    """The route label is fallback-only; normal rendering uses aggregate data."""
+    app_js = (repo_root / "webapp" / "static" / "app.js").read_text(encoding="utf-8")
+    subprocess.run(
+        ["node", "--check", str(repo_root / "webapp" / "static" / "app.js")],
+        check=True,
+    )
+
+    page = app_js.split("async function pageOpportunity(account, slug, routeOppName)")[1]
+    page = page.split("// Build a single, scannable Document status bar")[0]
+
+    assert "/opportunities/${encodeURIComponent(slug)}/workspace" in page
+    assert "account = workspace.account.name;" in page
+    assert "slug = workspace.opportunity.slug;" in page
+    assert "const oppName = workspace.opportunity.name;" in page
+    assert "outputContext = { account, slug, oppName" in page
+    assert "renderWorkspaceOutputGroups(workspace.outputs.opportunity)" in page
+    assert 'id="invoke-btn">⚡ Invoke Skill</button>' not in page
+
