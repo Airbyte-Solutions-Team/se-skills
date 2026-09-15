@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from services.account_service import AccountError, AccountService
 from services.job_service import JobService
+from services.opportunity_workspace_service import OpportunityWorkspaceService
 from services.output_service import OutputService
 from webapp.app import app
 from webapp.config import _safe, _slug, _titlecase_folder
@@ -52,6 +53,11 @@ def _test_account_svc(tmp_path: Path) -> AccountService:
 def client(tmp_path: Path) -> TestClient:
     account_svc = _test_account_svc(tmp_path)
     app.state.account_service = account_svc
+    app.state.output_service = account_svc._output_service
+    app.state.opportunity_workspace_service = OpportunityWorkspaceService(
+        account_service=account_svc,
+        output_service=account_svc._output_service,
+    )
     with TestClient(app) as c:
         yield c
 
@@ -136,6 +142,56 @@ def test_opportunities_route(client: TestClient) -> None:
     data = resp.json()
     assert data[0]["name"] == "Intro"
     assert "output_count" in data[0]
+
+
+def test_opportunity_workspace_route_uses_server_metadata(client: TestClient) -> None:
+    svc = app.state.account_service
+    svc.create_account("Acme", owner="alice")
+
+    async def fake_sfdc(account: str) -> list[dict]:
+        return [{
+            "name": "Authoritative Opportunity",
+            "slug": "authoritative-opportunity",
+            "stage": "Tech Eval",
+            "stage_num": "S3",
+            "amount": 75000,
+            "close_date": "2026-10-31",
+            "type": "New Business",
+            "is_closed": False,
+            "ae": "Alex",
+            "sfdc_url": None,
+        }]
+
+    svc._sfdc_opportunities = fake_sfdc
+    resp = client.get(
+        "/api/accounts/Acme/opportunities/authoritative-opportunity/workspace"
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["account"]["name"] == "Acme"
+    assert data["opportunity"]["name"] == "Authoritative Opportunity"
+    assert data["opportunity"]["stage"] == "Tech Eval"
+    assert data["canonical_state"]["available"] is False
+    assert data["outputs"]["opportunity"] == {"total": 0, "groups": []}
+
+
+def test_opportunity_workspace_route_rejects_unknown_opportunity(
+    client: TestClient,
+) -> None:
+    app.state.account_service.create_account("Acme")
+
+    resp = client.get("/api/accounts/Acme/opportunities/missing/workspace")
+
+    assert resp.status_code == 404
+
+
+def test_opportunity_workspace_route_rejects_traversal(client: TestClient) -> None:
+    app.state.account_service.create_account("Acme")
+
+    resp = client.get("/api/accounts/Acme/opportunities/%2E%2E%2Fescape/workspace")
+
+    assert resp.status_code in (400, 404)
 
 
 def test_outputs_query_traversal_rejected(client: TestClient) -> None:
