@@ -90,6 +90,7 @@ def _build_local_services(app: FastAPI) -> None:
     from services.ask_service import AskService, anthropic_api_key
     from services.feedback_service import FeedbackService
     from services.job_service import JobService
+    from services.opportunity_workspace_service import OpportunityWorkspaceService
     from services.output_service import OutputService
     from services.overview_service import OverviewService
     from services.skill_runtime_service import SkillRuntimeService
@@ -132,6 +133,10 @@ def _build_local_services(app: FastAPI) -> None:
         se_config_file=config.SE_CONFIG,
         sfdc_opportunities=salesforce_integration.opportunities_for_account,
     )
+    opportunity_workspace_service = OpportunityWorkspaceService(
+        account_service=account_service,
+        output_service=output_service,
+    )
     overview_service = OverviewService(
         account_service=account_service,
         output_service=output_service,
@@ -166,6 +171,7 @@ def _build_local_services(app: FastAPI) -> None:
     app.state.job_service = job_service
     app.state.salesforce_integration = salesforce_integration
     app.state.account_service = account_service
+    app.state.opportunity_workspace_service = opportunity_workspace_service
     app.state.overview_service = overview_service
     app.state.ask_service = ask_service
     app.state.transcription_service = transcription_service
