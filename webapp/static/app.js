@@ -2189,7 +2189,7 @@ async function pageOpportunity(account, slug, routeOppName) {
 
   const outputContext = { account, slug, oppName, memberName: _memberName };
   outputMeta = Object.fromEntries(
-    workspaceOutputItems(workspace).map((output) => [output.path, normalizeOutputMeta(output)])
+    workspaceOutputItems(workspace).map((o) => [o.path, normalizeOutputMeta(o)])
   );
   view.innerHTML = renderOpportunityWorkspace(workspace);
 
@@ -2216,7 +2216,7 @@ async function pageOpportunity(account, slug, routeOppName) {
     if (!refreshed) return;
     workspace = refreshed;
     outputMeta = Object.fromEntries(
-      workspaceOutputItems(workspace).map((output) => [output.path, normalizeOutputMeta(output)])
+      workspaceOutputItems(workspace).map((o) => [o.path, normalizeOutputMeta(o)])
     );
 
     const opportunityRegion = document.getElementById("outputs");
