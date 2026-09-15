@@ -2262,7 +2262,7 @@ async function pageOpportunity(account, slug, routeOppName) {
     return row;
   };
 
-  // Status-only row — the result goes to Generated Outputs (no inline preview).
+  // Status-only row — the result goes to Opportunity Outputs (no inline preview).
   const renderJob = (key, job, finishedAt) => {
     const row = ensureRow(key);
     if (job.status === "running") {
@@ -2291,7 +2291,7 @@ async function pageOpportunity(account, slug, routeOppName) {
   });
 
   // Recover runs started earlier (still-running jobs re-attach) — ALL of them,
-  // not just the first. Finished results live in Generated Outputs (and chat-only
+  // not just the first. Finished results live in Opportunity Outputs (and chat-only
   // skills like next-move show their text when opened), so we only re-surface
   // the ones still in flight.
   const existing = await api(`/api/jobs?account=${encodeURIComponent(account)}&opp_slug=${encodeURIComponent(slug)}`).catch(() => []);
