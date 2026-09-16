@@ -7,6 +7,7 @@ opportunity brief or canonical state from generated Markdown.
 from __future__ import annotations
 
 from collections import OrderedDict
+from collections.abc import Mapping
 from typing import Any
 
 from .account_service import AccountError, AccountService
@@ -87,7 +88,20 @@ class OpportunityWorkspaceService:
 
         opportunity_outputs = self._output_service.list_outputs(safe_account, safe_opp)
         opportunities = await self._account_service.list_opportunities(safe_account)
-        matched = next((o for o in opportunities if o.get("slug") == safe_opp), None)
+        # Salesforce is an external metadata boundary. Ignore malformed rows
+        # rather than letting one non-mapping value or a missing display name
+        # turn the whole workspace into a 500 or a blank authoritative header.
+        matched = next(
+            (
+                o
+                for o in opportunities
+                if isinstance(o, Mapping)
+                and o.get("slug") == safe_opp
+                and isinstance(o.get("name"), str)
+                and bool(o["name"].strip())
+            ),
+            None,
+        )
 
         if matched is None:
             if not opportunity_outputs:
