@@ -149,8 +149,16 @@ class OutputService:
                     "size": st.st_size,
                     "validation_supported": validation_supported,
                     "reference_sources_tracked": reference_sources_tracked,
+                    "review_supported": f.suffix == ".md",
+                    "review_status": "not_available",
+                    "review_needs_attention": False,
                 }
                 if f.suffix == ".md":
+                    review_needs_attention, review_status = self.output_review_status(
+                        self._feedback_file(f)
+                    )
+                    entry["review_status"] = review_status
+                    entry["review_needs_attention"] = review_needs_attention
                     try:
                         meta = output_schema.read_or_parse_sidecar(f, skill)
                         if output_schema.skill_has_schema(skill):

@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 import webapp.app as app_module
 from services.ask_service import AskService
 from services.job_service import JobService
+from services.opportunity_workspace_service import OpportunityWorkspaceService
 from services.output_service import OutputService
 from services.transcription_service import TranscriptionService
 from webapp.app import app, create_app
@@ -61,6 +62,7 @@ def test_expected_public_routes_registered() -> None:
         "/api/accounts/{account}",
         "/api/accounts/{account}/outputs",
         "/api/accounts/{account}/opportunities",
+        "/api/accounts/{account}/opportunities/{opp_slug}/workspace",
         "/api/accounts/{account}/last-run",
         "/api/bulk-create-accounts",
         "/api/bulk/{action}",
@@ -118,6 +120,8 @@ def test_service_identity_preserved() -> None:
     assert fresh.state.job_service is fresh.state.overview_service._job_service
     assert fresh.state.output_service is fresh.state.overview_service._output_service
     assert fresh.state.account_service is fresh.state.overview_service._account_service
+    assert fresh.state.account_service is fresh.state.opportunity_workspace_service._account_service
+    assert fresh.state.output_service is fresh.state.opportunity_workspace_service._output_service
     assert fresh.state.job_service is fresh.state.ask_service.job_service
     assert fresh.state.output_service is fresh.state.ask_service.output_service
     assert fresh.state.job_service is fresh.state.account_service._job_service
@@ -190,5 +194,6 @@ def test_job_and_transcription_services_are_stateful_singletons() -> None:
     fresh = create_app()
     assert isinstance(fresh.state.job_service, JobService)
     assert isinstance(fresh.state.output_service, OutputService)
+    assert isinstance(fresh.state.opportunity_workspace_service, OpportunityWorkspaceService)
     assert isinstance(fresh.state.ask_service, AskService)
     assert isinstance(fresh.state.transcription_service, TranscriptionService)

@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from services.account_service import AccountError, AccountService
+from services.opportunity_workspace_service import OpportunityWorkspaceService
 from services.output_service import OutputError, OutputService
 
 router = APIRouter()
@@ -16,6 +17,10 @@ def _get_account_service(request: Request) -> AccountService:
 
 def _get_output_service(request: Request) -> OutputService:
     return request.app.state.output_service
+
+
+def _get_opportunity_workspace_service(request: Request) -> OpportunityWorkspaceService:
+    return request.app.state.opportunity_workspace_service
 
 
 class CreateMember(BaseModel):
@@ -117,6 +122,14 @@ async def api_opportunities(account: str, request: Request) -> list[dict]:
     try:
         return await _get_account_service(request).list_opportunities(account)
     except AccountError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+
+@router.get("/api/accounts/{account}/opportunities/{opp_slug}/workspace")
+async def api_opportunity_workspace(account: str, opp_slug: str, request: Request) -> dict:
+    try:
+        return await _get_opportunity_workspace_service(request).get_workspace(account, opp_slug)
+    except (AccountError, OutputError) as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
 
 
