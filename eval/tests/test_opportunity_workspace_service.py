@@ -159,6 +159,31 @@ async def test_workspace_rejects_unknown_opportunity_without_local_outputs() -> 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "opportunities",
+    [
+        [None, "invalid", 42],
+        [{"slug": "legacy-renewal"}, {"slug": "legacy-renewal", "name": "  "}],
+    ],
+)
+async def test_workspace_ignores_malformed_opportunity_metadata(
+    opportunities: list[Any],
+) -> None:
+    service = OpportunityWorkspaceService(
+        account_service=FakeAccountService(opportunities),
+        output_service=FakeOutputService(
+            [{"skill": "post-call", "filename": "post-call.md", "path": "safe.md"}]
+        ),
+    )
+
+    workspace = await service.get_workspace("Acme", "legacy-renewal")
+
+    assert workspace["opportunity"]["name"] == "Legacy Renewal"
+    assert workspace["opportunity"]["metadata_source"] == "local_outputs"
+    assert workspace["opportunity"]["metadata_complete"] is False
+
+
+@pytest.mark.asyncio
 async def test_workspace_rejects_unsafe_opportunity_name() -> None:
     service = OpportunityWorkspaceService(
         account_service=FakeAccountService([_opportunity()]),
