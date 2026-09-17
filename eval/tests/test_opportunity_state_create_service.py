@@ -73,7 +73,9 @@ def _harness(tmp_path: Path, executor=None):
         whisper_model="tiny",
     )
     evidence_id = transcription.list_evidence_transcripts("Acme")[0]["id"]
-    chosen_executor = executor or FakeCanonicalStateExecutor(_candidate_for(evidence_id))
+    chosen_executor = executor or FakeCanonicalStateExecutor(
+        _candidate_for(evidence_id), cli_version="2.1.272"
+    )
     state = OpportunityStateService(customers, safe_name=_safe)
     jobs = JobService(tmp_path, model_for=lambda _: "unused", persist_run=lambda *args: None)
     service = OpportunityStateCreateService(
@@ -103,7 +105,9 @@ async def test_create_promotes_one_valid_version_and_refuses_second_create(tmp_p
     assert job["kind"] == "opportunity_state_create"
     assert job["ok"] is True
     assert job["result_revision"] == 1
-    assert state.read_current("Acme", "synthetic-opportunity") is not None
+    current = state.read_current("Acme", "synthetic-opportunity")
+    assert current is not None
+    assert current.provenance.cli_version == "2.1.272"
     assert len(executor.requests) == 1
     with pytest.raises(OpportunityStateCreateError) as exc:
         await service.start_create("Acme", "synthetic-opportunity", [evidence_id])
@@ -119,7 +123,9 @@ class BlockingExecutor:
     async def execute(self, request):
         self.started.set()
         await self.release.wait()
-        return CanonicalStateExecutionResult(candidate=self.candidate, model="blocking-fake")
+        return CanonicalStateExecutionResult(
+            candidate=self.candidate, model="blocking-fake", cli_version="2.1.272"
+        )
 
 
 @pytest.mark.asyncio
@@ -173,7 +179,9 @@ class MutatingExecutor:
 
     async def execute(self, request):
         self.transcript.write_text("changed during execution", encoding="utf-8")
-        return CanonicalStateExecutionResult(candidate=self.candidate, model="mutating-fake")
+        return CanonicalStateExecutionResult(
+            candidate=self.candidate, model="mutating-fake", cli_version="2.1.272"
+        )
 
 
 @pytest.mark.asyncio
@@ -202,7 +210,9 @@ async def test_job_metadata_and_errors_never_persist_raw_evidence(tmp_path) -> N
     persisted = (tmp_path / ".state" / "jobs.json").read_text(encoding="utf-8")
     assert sentinel not in persisted
     assert transcript.read_text(encoding="utf-8") not in persisted
+    assert str(transcript) not in persisted
     assert "stdout" not in job and "stderr" not in job
+    assert str(transcript) not in json.dumps(job)
     assert state.read_current("Acme", "synthetic-opportunity") is None
 
 

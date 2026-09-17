@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ from services.transcription_service import ResolvedTranscriptEvidence
 
 UPDATER_VERSION = "opportunity-overview-slice-2a-v1"
 VERIFIED_CLAUDE_VERSION = "2.1.272"
+_CLAUDE_VERSION_RE = re.compile(r"^\s*(?P<version>\d+\.\d+\.\d+)(?:\s|\(|$)")
 
 
 class CanonicalStateExecutionError(Exception):
@@ -43,8 +45,8 @@ class CanonicalStateExecutionRequest:
 class CanonicalStateExecutionResult:
     candidate: OpportunityStateCandidate
     model: str
+    cli_version: str
     runtime: str = "claude-code-restricted"
-    cli_version: str = VERIFIED_CLAUDE_VERSION
 
 
 class CanonicalStateExecutor(Protocol):
@@ -54,13 +56,18 @@ class CanonicalStateExecutor(Protocol):
 class FakeCanonicalStateExecutor:
     """Deterministic injectable executor used by automated tests."""
 
-    def __init__(self, candidate: OpportunityStateCandidate) -> None:
+    def __init__(self, candidate: OpportunityStateCandidate, *, cli_version: str = "fake-cli-version") -> None:
         self.candidate = candidate
+        self.cli_version = cli_version
         self.requests: list[CanonicalStateExecutionRequest] = []
 
     async def execute(self, request: CanonicalStateExecutionRequest) -> CanonicalStateExecutionResult:
         self.requests.append(request)
-        return CanonicalStateExecutionResult(candidate=self.candidate, model="fake-canonical-state-model")
+        return CanonicalStateExecutionResult(
+            candidate=self.candidate,
+            model="fake-canonical-state-model",
+            cli_version=self.cli_version,
+        )
 
 
 class ClaudeCanonicalStateExecutor:
@@ -73,34 +80,45 @@ class ClaudeCanonicalStateExecutor:
         forbidden_roots: list[Path],
         executable: str = "claude",
         timeout_seconds: float = 180.0,
+        version_timeout_seconds: float = 5.0,
         max_stdin_bytes: int = 900_000,
         max_stdout_bytes: int = 1_000_000,
         max_stderr_bytes: int = 65_536,
+        max_version_stdout_bytes: int = 256,
+        max_version_stderr_bytes: int = 1_024,
     ) -> None:
         self.model = model
         self.executable = executable
         self.timeout_seconds = timeout_seconds
+        self.version_timeout_seconds = version_timeout_seconds
         self.max_stdin_bytes = max_stdin_bytes
         self.max_stdout_bytes = max_stdout_bytes
         self.max_stderr_bytes = max_stderr_bytes
+        self.max_version_stdout_bytes = max_version_stdout_bytes
+        self.max_version_stderr_bytes = max_version_stderr_bytes
         self.forbidden_roots = [Path(root).resolve() for root in forbidden_roots]
 
     @staticmethod
     def json_schema() -> dict[str, Any]:
         return OpportunityStateCandidate.model_json_schema()
 
-    def command(self) -> list[str]:
+    def version_command(self, executable: str | None = None) -> list[str]:
+        """Return the evidence-free runtime preflight command."""
+        return [executable or shutil.which(self.executable) or self.executable, "--version"]
+
+    def command(self, executable: str | None = None) -> list[str]:
         """Return the audited 2.1.272 command contract, without any evidence."""
-        executable = shutil.which(self.executable) or self.executable
         return [
-            executable,
+            executable or shutil.which(self.executable) or self.executable,
             "-p",
+            "--max-turns",
+            "1",
             "--restricted",
             "--safe-mode",
             "--tools",
             "",
             "--disallowedTools",
-            "*,mcp__*",
+            "mcp__*",
             "--permission-mode",
             "dontAsk",
             "--permission-prompts",
@@ -157,7 +175,12 @@ class ClaudeCanonicalStateExecutor:
                 )
 
     @staticmethod
-    async def _read_bounded(stream: asyncio.StreamReader, limit: int, code: str) -> bytes:
+    async def _read_bounded(
+        stream: asyncio.StreamReader,
+        limit: int,
+        code: str,
+        detail: str = "Canonical-state runtime exceeded its output limit.",
+    ) -> bytes:
         chunks: list[bytes] = []
         total = 0
         while True:
@@ -166,7 +189,7 @@ class ClaudeCanonicalStateExecutor:
                 return b"".join(chunks)
             total += len(chunk)
             if total > limit:
-                raise CanonicalStateExecutionError(code, "Canonical-state runtime exceeded its output limit.")
+                raise CanonicalStateExecutionError(code, detail)
             chunks.append(chunk)
 
     @staticmethod
@@ -185,6 +208,89 @@ class ClaudeCanonicalStateExecutor:
                 await asyncio.wait_for(proc.wait(), timeout=2.0)
             except asyncio.TimeoutError:
                 pass
+
+    @staticmethod
+    def _parse_verified_version(stdout: bytes) -> str:
+        try:
+            text = stdout.decode("utf-8", errors="strict").strip()
+        except UnicodeError as exc:
+            raise CanonicalStateExecutionError(
+                "runtime_version_invalid", "Claude Code returned an invalid version response."
+            ) from exc
+        match = _CLAUDE_VERSION_RE.match(text)
+        if match is None:
+            raise CanonicalStateExecutionError(
+                "runtime_version_invalid", "Claude Code returned an invalid version response."
+            )
+        actual = match.group("version")
+        if actual != VERIFIED_CLAUDE_VERSION:
+            raise CanonicalStateExecutionError(
+                "runtime_version_unsupported",
+                f"Claude Code {VERIFIED_CLAUDE_VERSION} is required to create an overview.",
+            )
+        return actual
+
+    async def _verify_cli_version(
+        self,
+        *,
+        executable: str,
+        cwd: Path,
+        subprocess_options: dict[str, Any],
+    ) -> str:
+        """Verify the exact audited CLI before constructing or sending evidence."""
+        proc: asyncio.subprocess.Process | None = None
+        stdout_task: asyncio.Task[bytes] | None = None
+        stderr_task: asyncio.Task[bytes] | None = None
+        try:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *self.version_command(executable),
+                    cwd=str(cwd),
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    **subprocess_options,
+                )
+            except FileNotFoundError as exc:
+                raise CanonicalStateExecutionError(
+                    "runtime_unavailable", f"Claude Code {VERIFIED_CLAUDE_VERSION} is required to create an overview."
+                ) from exc
+            assert proc.stdout is not None and proc.stderr is not None
+            safe_detail = "Claude Code version check exceeded its output limit."
+            stdout_task = asyncio.create_task(self._read_bounded(
+                proc.stdout,
+                self.max_version_stdout_bytes,
+                "runtime_version_output_too_large",
+                safe_detail,
+            ))
+            stderr_task = asyncio.create_task(self._read_bounded(
+                proc.stderr,
+                self.max_version_stderr_bytes,
+                "runtime_version_output_too_large",
+                safe_detail,
+            ))
+            try:
+                return_code, stdout, _stderr = await asyncio.wait_for(
+                    asyncio.gather(proc.wait(), stdout_task, stderr_task),
+                    timeout=self.version_timeout_seconds,
+                )
+            except asyncio.TimeoutError as exc:
+                raise CanonicalStateExecutionError(
+                    "runtime_version_timeout", "Claude Code version check timed out."
+                ) from exc
+            if return_code != 0:
+                raise CanonicalStateExecutionError(
+                    "runtime_version_failed", "Claude Code version could not be verified."
+                )
+            return self._parse_verified_version(stdout)
+        except CanonicalStateExecutionError:
+            if proc is not None:
+                await self._terminate(proc)
+            raise
+        finally:
+            for task in (stdout_task, stderr_task):
+                if task is not None and not task.done():
+                    task.cancel()
 
     @staticmethod
     def _extract_candidate(stdout: bytes) -> OpportunityStateCandidate:
@@ -214,25 +320,35 @@ class ClaudeCanonicalStateExecutor:
             ) from exc
 
     async def execute(self, request: CanonicalStateExecutionRequest) -> CanonicalStateExecutionResult:
-        stdin = self._prompt(request)
-        if len(stdin) > self.max_stdin_bytes:
-            raise CanonicalStateExecutionError(
-                "input_too_large", "The selected evidence is too large for one overview creation."
-            )
         temp_dir = Path(tempfile.mkdtemp(prefix="se-opportunity-state-"))
         proc: asyncio.subprocess.Process | None = None
         stdout_task: asyncio.Task[bytes] | None = None
         stderr_task: asyncio.Task[bytes] | None = None
         try:
             self._assert_isolated(temp_dir)
+            executable = shutil.which(self.executable)
+            if executable is None:
+                raise CanonicalStateExecutionError(
+                    "runtime_unavailable", f"Claude Code {VERIFIED_CLAUDE_VERSION} is required to create an overview."
+                )
             subprocess_options: dict[str, Any] = {}
             if os.name == "nt":
                 subprocess_options["creationflags"] = getattr(__import__("subprocess"), "CREATE_NEW_PROCESS_GROUP", 0)
             else:
                 subprocess_options["start_new_session"] = True
+            actual_cli_version = await self._verify_cli_version(
+                executable=executable,
+                cwd=temp_dir,
+                subprocess_options=subprocess_options,
+            )
+            stdin = self._prompt(request)
+            if len(stdin) > self.max_stdin_bytes:
+                raise CanonicalStateExecutionError(
+                    "input_too_large", "The selected evidence is too large for one overview creation."
+                )
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    *self.command(),
+                    *self.command(executable),
                     cwd=str(temp_dir),
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
@@ -269,7 +385,11 @@ class ClaudeCanonicalStateExecutor:
                     "runtime_failed", "Claude could not create a valid overview; no state was saved."
                 )
             candidate = self._extract_candidate(stdout)
-            return CanonicalStateExecutionResult(candidate=candidate, model=self.model)
+            return CanonicalStateExecutionResult(
+                candidate=candidate,
+                model=self.model,
+                cli_version=actual_cli_version,
+            )
         except CanonicalStateExecutionError:
             if proc is not None:
                 await self._terminate(proc)
