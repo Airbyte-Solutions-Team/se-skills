@@ -1,7 +1,7 @@
 # Opportunity Overview — Product and Implementation Specification
 
-**Status:** Proposed for Product Owner review  
-**Source-of-truth baseline:** Airbyte-Solutions-Team/se-skills main at 1cdec2aebc14bb1e68bb589657cd2f94cfe40cae, inspected September 15, 2026  
+**Status:** Slice 1 and local Slice 2A implemented; Slice 2B and later slices remain proposed
+**Source-of-truth baseline:** Airbyte-Solutions-Team/se-skills main at 6df71210abe9315f175a459c25d2f5e32bbb7fe6, inspected September 17, 2026
 **Scope of this document:** Product behavior, information architecture, domain boundaries, API and persistence direction, implementation slices, and acceptance criteria. This document does not authorize deployment, production data migration, new providers, or expansion of the hosted skill allowlist.
 
 ## 1. Executive decision
@@ -998,22 +998,29 @@ Primary files likely affected:
 - focused local API/service/frontend tests
 - webapp/README.md and webapp/SESSION-LOG.md
 
-### Slice 2 — Typed canonical state and local Update overview
+### Slice 2A — Typed canonical state and local Create Overview (implemented)
 
-**Outcome:** Add a real, versioned opportunity-state contract and an asynchronous local-mode updater without treating it as a Markdown output.
+**Outcome:** Add the first real, versioned opportunity-state contract and asynchronous local-mode Create workflow without treating it as a Markdown output.
 
 Scope:
 
 - Add typed OpportunityState models and validators.
-- Add local state-version and action persistence under the resolved workspace as a local adapter only.
-- Add durable update job kind with idempotency, failure preservation, and source-manifest hashing.
-- Generate typed state from authorized local evidence.
-- Add Create/Update overview states and What changed.
+- Add immutable local state-version persistence under the resolved workspace as a local adapter only.
+- Add a durable `opportunity_state_create` job kind with idempotency, interruption recovery, failure preservation, and order-independent evidence-manifest hashing.
+- Generate typed state only from read-only trusted opportunity metadata and explicitly selected saved local transcripts resolved by opaque server identifiers.
+- Run Claude Code 2.1.272 through a dedicated restricted/safe, no-tools, no-MCP, no-plugin, no-session executor in a new isolated temporary directory; evidence travels only through bounded stdin and returned JSON is independently Pydantic-validated.
+- Add Create Overview empty/loading/running/failed/retry/completed states and evidence inspection.
 - Keep output generation separate.
-- Add adversarial state-parser and concurrency tests.
+- Add adversarial state-parser, storage, path, evidence-change, restart, idempotency, concurrency, executor-boundary, route, aggregate, and frontend tests using synthetic fixtures.
 - Document that local filesystem persistence is not production durability.
 
-This slice needs explicit Product Owner approval of the local source set and whether Gong/Salesforce are allowed during an update.
+Explicit exclusions: no Update Overview, What Changed, human corrections/overrides, Tech Eval lifecycle state, hosted route, external evidence provider, Salesforce write, deployment, or customer-data fixture.
+
+### Slice 2B — Local Update Overview and typed change history (deferred)
+
+**Outcome:** Reconcile newly authorized evidence into later immutable versions and derive What Changed from typed versions.
+
+Scope remains subject to separate approval. It includes freshness comparison, stale-base promotion rules, typed diffs, and any human correction/conflict behavior. Slice 2A Create refuses to run after a current version exists.
 
 ### Slice 3 — Technical Evaluation Lifecycle
 

@@ -11,7 +11,10 @@ from collections.abc import Mapping
 from typing import Any
 
 from .account_service import AccountError, AccountService
+from .job_service import JobService
+from .opportunity_state_service import OpportunityStateService
 from .output_service import OutputService
+from .transcription_service import TranscriptionService
 
 
 _OPPORTUNITY_FIELDS = (
@@ -31,16 +34,22 @@ _OPPORTUNITY_FIELDS = (
 class OpportunityWorkspaceService:
     """Build the local opportunity workspace payload from existing data only."""
 
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
     def __init__(
         self,
         *,
         account_service: AccountService,
         output_service: OutputService,
+        state_service: OpportunityStateService | None = None,
+        job_service: JobService | None = None,
+        transcription_service: TranscriptionService | None = None,
     ) -> None:
         self._account_service = account_service
         self._output_service = output_service
+        self._state_service = state_service
+        self._job_service = job_service
+        self._transcription_service = transcription_service
 
     @staticmethod
     def _group_outputs(outputs: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -80,8 +89,8 @@ class OpportunityWorkspaceService:
             "metadata_complete": False,
         }
 
-    async def get_workspace(self, account: str, opp_slug: str) -> dict[str, Any]:
-        """Return one local opportunity workspace or a safe 404."""
+    async def resolve_identity(self, account: str, opp_slug: str) -> dict[str, Any]:
+        """Resolve trusted account/opportunity identity and local output scope."""
         safe_account = self._account_service.safe_name(account)
         safe_opp = self._account_service.safe_name(opp_slug)
         account_meta = self._account_service.get_account(safe_account)
@@ -121,21 +130,67 @@ class OpportunityWorkspaceService:
             "owner_name": owner.get("name") if owner else None,
         }
 
+        return {
+            "safe_account": safe_account,
+            "safe_opp": safe_opp,
+            "account": account_payload,
+            "opportunity": opportunity,
+            "opportunity_outputs": opportunity_outputs,
+        }
+
+    @staticmethod
+    def _safe_create_job(job: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not job:
+            return None
+        allowed = (
+            "job_id", "kind", "status", "ok", "started_at", "finished_at",
+            "evidence_manifest_hash", "evidence_count", "result_revision",
+            "result_version_id", "error_code", "error_message", "persistence_warning",
+        )
+        return {key: job[key] for key in allowed if key in job}
+
+    async def get_workspace(self, account: str, opp_slug: str) -> dict[str, Any]:
+        """Return one local opportunity workspace or a safe 404."""
+        identity = await self.resolve_identity(account, opp_slug)
+        safe_account = identity["safe_account"]
+        safe_opp = identity["safe_opp"]
+        account_payload = identity["account"]
+        opportunity = identity["opportunity"]
+        opportunity_outputs = identity["opportunity_outputs"]
+
         account_outputs = self._output_service.list_outputs(safe_account)
+
+        canonical_state = (
+            self._state_service.inspect_current(safe_account, safe_opp)
+            if self._state_service is not None
+            else {"available": False, "status": "not_created"}
+        )
+        create_job = None
+        if self._job_service is not None:
+            create_job = self._safe_create_job(self._job_service.latest_job(
+                kind="opportunity_state_create", account=safe_account, opp_slug=safe_opp
+            ))
+        eligible_summary = {"count": 0, "total_bytes": 0}
+        if self._transcription_service is not None:
+            eligible = self._transcription_service.list_evidence_transcripts(safe_account)
+            eligible_summary = {
+                "count": len(eligible),
+                "total_bytes": sum(item["size_bytes"] for item in eligible),
+            }
+            canonical_state["create_job"] = create_job
 
         return {
             "schema_version": self.SCHEMA_VERSION,
             "account": account_payload,
             "opportunity": opportunity,
-            "canonical_state": {
-                "available": False,
-                "status": "not_created",
-            },
+            "canonical_state": canonical_state,
+            "eligible_evidence": eligible_summary,
             "capabilities": {
                 "generate": True,
                 "live_transcribe": True,
                 "coverage_handoff": True,
                 "update_overview": False,
+                "create_overview": canonical_state["status"] == "not_created",
                 "local_only": True,
             },
             "outputs": {

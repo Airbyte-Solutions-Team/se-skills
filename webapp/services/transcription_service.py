@@ -10,11 +10,15 @@ installed.
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import hmac
 import json
 import logging
 import os
 import queue
 import re
+import stat
 import threading
 import uuid
 from collections import deque
@@ -50,6 +54,18 @@ class TranscriptionError(Exception):
         self.status_code = status_code
         self.detail = detail
         super().__init__(detail)
+
+
+@dataclass(frozen=True)
+class ResolvedTranscriptEvidence:
+    """One server-resolved transcript snapshot for canonical-state execution."""
+
+    evidence_id: str
+    display_name: str
+    content: bytes
+    sha256: str
+    byte_count: int
+    observed_at: datetime
 
 
 @dataclass
@@ -379,6 +395,158 @@ class TranscriptionService:
         self.sessions: dict[str, LiveSession] = {}
         self._whisper: Any | None = None
         self._recover_sessions()
+
+    # ------------------------------------------------------------------
+    # Opaque saved-transcript evidence identifiers
+    # ------------------------------------------------------------------
+    def _evidence_key(self) -> bytes:
+        """Load or create the local HMAC key used for opaque transcript ids."""
+        state_dir = self.workspace / ".state"
+        key_path = state_dir / "transcript-id.key"
+        try:
+            if key_path.exists():
+                key = key_path.read_bytes()
+                if len(key) != 32:
+                    raise TranscriptionError(500, "Saved transcript identity storage is unavailable.")
+                return key
+            state_dir.mkdir(parents=True, exist_ok=True)
+            key = os.urandom(32)
+            temp = key_path.with_name(f".{key_path.name}.{uuid.uuid4().hex}.tmp")
+            try:
+                with temp.open("xb") as handle:
+                    handle.write(key)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                try:
+                    os.chmod(temp, 0o600)
+                except OSError:
+                    pass
+                os.replace(temp, key_path)
+            finally:
+                temp.unlink(missing_ok=True)
+            return key
+        except TranscriptionError:
+            raise
+        except OSError as exc:
+            raise TranscriptionError(500, "Saved transcript identity storage is unavailable.") from exc
+
+    def _evidence_id(self, account: str, filename: str) -> str:
+        material = f"{account}\0{filename}".encode("utf-8")
+        digest = hmac.new(self._evidence_key(), material, hashlib.sha256).digest()[:24]
+        return "tr_" + base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+    def _eligible_transcript_paths(self, account: str) -> list[Path]:
+        safe_account = self.safe_name(account)
+        customer_prefix = self.titlecase(safe_account) + "-"
+        transcript_dir = resolve_within(self.customers_dir, "_transcripts")
+        if not transcript_dir.exists() or transcript_dir.is_symlink():
+            return []
+        paths: list[Path] = []
+        for path in transcript_dir.iterdir():
+            try:
+                if path.is_symlink() or not path.is_file():
+                    continue
+                if path.suffix != ".txt" or not path.name.startswith(customer_prefix):
+                    continue
+                if resolve_within(transcript_dir, path.name) != path.resolve():
+                    continue
+                paths.append(path)
+            except (OSError, ValueError):
+                continue
+        return paths
+
+    def list_evidence_transcripts(self, account: str) -> list[dict[str, Any]]:
+        """List account-owned transcript choices without exposing filesystem paths."""
+        safe_account = self.safe_name(account)
+        items: list[dict[str, Any]] = []
+        for path in self._eligible_transcript_paths(safe_account):
+            try:
+                info = path.stat()
+                items.append({
+                    "id": self._evidence_id(safe_account, path.name),
+                    "display_name": path.name,
+                    "modified_at": datetime.fromtimestamp(info.st_mtime, tz=timezone.utc).isoformat(),
+                    "size_bytes": info.st_size,
+                })
+            except OSError:
+                continue
+        items.sort(key=lambda item: (item["modified_at"], item["display_name"]), reverse=True)
+        return items
+
+    def resolve_evidence_transcripts(
+        self,
+        account: str,
+        evidence_ids: list[str],
+        *,
+        max_items: int = 50,
+        max_item_bytes: int = 500_000,
+        max_total_bytes: int = 750_000,
+    ) -> list[ResolvedTranscriptEvidence]:
+        """Resolve opaque ids to exact bytes inside the trusted transcript store."""
+        safe_account = self.safe_name(account)
+        if not evidence_ids:
+            raise TranscriptionError(400, "Select at least one saved transcript.")
+        if len(evidence_ids) > max_items or len(evidence_ids) != len(set(evidence_ids)):
+            raise TranscriptionError(400, "Transcript selection is invalid.")
+        if any(not isinstance(item, str) or len(item) > 80 for item in evidence_ids):
+            raise TranscriptionError(400, "Transcript selection is invalid.")
+        by_id = {
+            self._evidence_id(safe_account, path.name): path
+            for path in self._eligible_transcript_paths(safe_account)
+        }
+        resolved: list[ResolvedTranscriptEvidence] = []
+        total = 0
+        for evidence_id in evidence_ids:
+            path = by_id.get(evidence_id)
+            if path is None or not hmac.compare_digest(self._evidence_id(safe_account, path.name), evidence_id):
+                raise TranscriptionError(400, "Selected transcript is invalid or unavailable.")
+            try:
+                before = path.lstat()
+                if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+                    raise TranscriptionError(409, "Selected transcript changed or became unavailable.")
+                if before.st_size > max_item_bytes:
+                    raise TranscriptionError(413, "A selected transcript is too large.")
+                with path.open("rb") as handle:
+                    opened = os.fstat(handle.fileno())
+                    if (
+                        not stat.S_ISREG(opened.st_mode)
+                        or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+                    ):
+                        raise TranscriptionError(409, "Selected transcript changed or became unavailable.")
+                    content = handle.read(max_item_bytes + 1)
+                    after_read = os.fstat(handle.fileno())
+                after_path = path.lstat()
+            except OSError as exc:
+                raise TranscriptionError(409, "Selected transcript changed or became unavailable.") from exc
+            if len(content) > max_item_bytes:
+                raise TranscriptionError(413, "A selected transcript is too large.")
+            stable_identity = (
+                (opened.st_dev, opened.st_ino)
+                == (after_read.st_dev, after_read.st_ino)
+                == (after_path.st_dev, after_path.st_ino)
+            )
+            stable_content = (
+                opened.st_size == after_read.st_size == after_path.st_size == len(content)
+                and opened.st_mtime_ns == after_read.st_mtime_ns == after_path.st_mtime_ns
+            )
+            if stat.S_ISLNK(after_path.st_mode) or not stable_identity or not stable_content:
+                raise TranscriptionError(409, "Selected transcript changed or became unavailable.")
+            total += len(content)
+            if total > max_total_bytes:
+                raise TranscriptionError(413, "The selected transcripts are too large together.")
+            try:
+                content.decode("utf-8", errors="strict")
+            except UnicodeDecodeError as exc:
+                raise TranscriptionError(400, "A selected transcript is not valid UTF-8 text.") from exc
+            resolved.append(ResolvedTranscriptEvidence(
+                evidence_id=evidence_id,
+                display_name=path.name,
+                content=content,
+                sha256=hashlib.sha256(content).hexdigest(),
+                byte_count=len(content),
+                observed_at=datetime.fromtimestamp(after_read.st_mtime, tz=timezone.utc),
+            ))
+        return resolved
 
     # ------------------------------------------------------------------
     # Whisper model

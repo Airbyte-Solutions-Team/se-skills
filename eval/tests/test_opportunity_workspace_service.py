@@ -98,7 +98,7 @@ async def test_workspace_uses_authoritative_opportunity_and_groups_history() -> 
 
     workspace = await service.get_workspace("Acme", "acme-expansion")
 
-    assert workspace["schema_version"] == 1
+    assert workspace["schema_version"] == 2
     assert workspace["account"] == {
         "name": "Acme",
         "owner_id": "gary",
@@ -194,3 +194,50 @@ async def test_workspace_rejects_unsafe_opportunity_name() -> None:
         await service.get_workspace("Acme", "../escape")
 
     assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_workspace_enriches_canonical_state_create_job_and_evidence_summary() -> None:
+    class FakeState:
+        def inspect_current(self, account, opp_slug):
+            return {
+                "available": True,
+                "status": "current",
+                "metadata": {"revision": 1},
+                "current": {"revision": 1, "state": {"brief": {}}},
+            }
+
+    class FakeJobs:
+        def latest_job(self, **kwargs):
+            return {
+                "kind": "opportunity_state_create",
+                "status": "done",
+                "ok": True,
+                "started_at": 1.0,
+                "finished_at": 2.0,
+                "result_revision": 1,
+                "stdout": "must not leak",
+                "stderr": "must not leak",
+            }
+
+    class FakeTranscripts:
+        def list_evidence_transcripts(self, account):
+            return [
+                {"id": "opaque-1", "display_name": "one.txt", "size_bytes": 10},
+                {"id": "opaque-2", "display_name": "two.txt", "size_bytes": 20},
+            ]
+
+    service = OpportunityWorkspaceService(
+        account_service=FakeAccountService([_opportunity()]),
+        output_service=FakeOutputService(),
+        state_service=FakeState(),
+        job_service=FakeJobs(),
+        transcription_service=FakeTranscripts(),
+    )
+    workspace = await service.get_workspace("Acme", "acme-expansion")
+    assert workspace["canonical_state"]["available"] is True
+    assert workspace["canonical_state"]["current"]["revision"] == 1
+    assert workspace["canonical_state"]["create_job"]["result_revision"] == 1
+    assert "stdout" not in workspace["canonical_state"]["create_job"]
+    assert workspace["eligible_evidence"] == {"count": 2, "total_bytes": 30}
+    assert workspace["capabilities"]["create_overview"] is False

@@ -1,0 +1,247 @@
+"""Immutable local persistence for canonical opportunity-state versions."""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import stat
+import threading
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable
+
+from opportunity_state import (
+    EvidenceManifestEntry,
+    GenerationProvenance,
+    OpportunityIdentity,
+    OpportunityStateCandidate,
+    OpportunityStateVersion,
+    evidence_manifest_hash,
+    validate_candidate_evidence,
+)
+from services.path_utils import resolve_within
+
+
+_VERSION_FILE = re.compile(r"^(?P<revision>\d{8})-(?P<version>[a-f0-9]{32})\.json$")
+_MAX_STATE_FILE_BYTES = 1_000_000
+
+
+class OpportunityStateError(Exception):
+    def __init__(self, status_code: int, detail: str, *, code: str = "state_error") -> None:
+        self.status_code = status_code
+        self.detail = detail
+        self.code = code
+        super().__init__(detail)
+
+
+class OpportunityStateService:
+    """Store validated state separately from generated output artifacts."""
+
+    STATE_DIR_NAME = ".opportunity-state"
+
+    def __init__(self, customers_dir: Path, *, safe_name: Callable[[str], str]) -> None:
+        self.customers_dir = Path(customers_dir)
+        self._safe_name = safe_name
+        self._lock = threading.Lock()
+
+    def _opportunity_dir(self, account: str, opp_slug: str, *, create: bool = False) -> Path:
+        account = self._safe_name(account)
+        opp_slug = self._safe_name(opp_slug)
+        account_dir = resolve_within(self.customers_dir, account)
+        if not account_dir.is_dir():
+            raise OpportunityStateError(404, "Unknown account", code="unknown_account")
+        opportunity_dir = resolve_within(account_dir, Path("opportunities") / opp_slug)
+        if create:
+            opportunity_dir.mkdir(parents=True, exist_ok=True)
+        return opportunity_dir
+
+    def _paths(self, account: str, opp_slug: str, *, create: bool = False) -> tuple[Path, Path, Path]:
+        opportunity_dir = self._opportunity_dir(account, opp_slug, create=create)
+        state_dir = resolve_within(opportunity_dir, self.STATE_DIR_NAME)
+        versions_dir = resolve_within(state_dir, "versions")
+        pointer = resolve_within(state_dir, "current.json")
+        if state_dir.exists() and state_dir.is_symlink():
+            raise OpportunityStateError(409, "Opportunity state storage is unsafe.", code="malformed_storage")
+        if versions_dir.exists() and versions_dir.is_symlink():
+            raise OpportunityStateError(409, "Opportunity state storage is unsafe.", code="malformed_storage")
+        if create:
+            versions_dir.mkdir(parents=True, exist_ok=True)
+        return state_dir, versions_dir, pointer
+
+    @staticmethod
+    def _canonical_bytes(value: Any) -> bytes:
+        return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+    @staticmethod
+    def _atomic_write(path: Path, payload: bytes) -> None:
+        temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            with temp.open("xb") as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp, path)
+        finally:
+            try:
+                temp.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    @staticmethod
+    def _read_json_file(path: Path) -> Any:
+        try:
+            info = path.lstat()
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+                raise OpportunityStateError(409, "Opportunity state storage is malformed.", code="malformed_storage")
+            if info.st_size <= 0 or info.st_size > _MAX_STATE_FILE_BYTES:
+                raise OpportunityStateError(409, "Opportunity state storage is malformed.", code="malformed_storage")
+            return json.loads(path.read_text(encoding="utf-8"))
+        except OpportunityStateError:
+            raise
+        except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise OpportunityStateError(
+                409, "Opportunity state storage is malformed.", code="malformed_storage"
+            ) from exc
+
+    def _read_current(self, account: str, opp_slug: str) -> OpportunityStateVersion | None:
+        _state_dir, versions_dir, pointer = self._paths(account, opp_slug)
+        if not pointer.exists():
+            if versions_dir.exists() and any(versions_dir.iterdir()):
+                raise OpportunityStateError(
+                    409, "Opportunity state storage has no valid current pointer.", code="malformed_storage"
+                )
+            return None
+        raw_pointer = self._read_json_file(pointer)
+        if not isinstance(raw_pointer, dict) or set(raw_pointer) != {
+            "schema_version", "revision", "filename", "checksum"
+        }:
+            raise OpportunityStateError(409, "Opportunity state pointer is malformed.", code="malformed_storage")
+        if raw_pointer.get("schema_version") != 1 or not isinstance(raw_pointer.get("revision"), int):
+            raise OpportunityStateError(409, "Opportunity state pointer is malformed.", code="malformed_storage")
+        filename = raw_pointer.get("filename")
+        checksum = raw_pointer.get("checksum")
+        if not isinstance(filename, str) or not _VERSION_FILE.fullmatch(filename):
+            raise OpportunityStateError(409, "Opportunity state pointer is malformed.", code="malformed_storage")
+        if not isinstance(checksum, str) or not re.fullmatch(r"[a-f0-9]{64}", checksum):
+            raise OpportunityStateError(409, "Opportunity state pointer is malformed.", code="malformed_storage")
+        version_path = resolve_within(versions_dir, filename)
+        if not version_path.exists():
+            raise OpportunityStateError(409, "Opportunity state version is unavailable.", code="malformed_storage")
+        raw_envelope = self._read_json_file(version_path)
+        if not isinstance(raw_envelope, dict) or set(raw_envelope) != {"version", "checksum"}:
+            raise OpportunityStateError(409, "Opportunity state version is malformed.", code="malformed_storage")
+        encoded = self._canonical_bytes(raw_envelope.get("version"))
+        actual_checksum = hashlib.sha256(encoded).hexdigest()
+        if raw_envelope.get("checksum") != actual_checksum or checksum != actual_checksum:
+            raise OpportunityStateError(409, "Opportunity state checksum mismatch.", code="malformed_storage")
+        try:
+            version = OpportunityStateVersion.model_validate(raw_envelope["version"])
+        except (TypeError, ValueError) as exc:
+            raise OpportunityStateError(409, "Opportunity state version is invalid.", code="malformed_storage") from exc
+        match = _VERSION_FILE.fullmatch(filename)
+        if version.revision != raw_pointer["revision"] or version.revision != int(match.group("revision")):
+            raise OpportunityStateError(409, "Opportunity state revision mismatch.", code="malformed_storage")
+        if version.version_id != match.group("version"):
+            raise OpportunityStateError(409, "Opportunity state identity mismatch.", code="malformed_storage")
+        if (
+            version.identity.account != self._safe_name(account)
+            or version.identity.opportunity_slug != self._safe_name(opp_slug)
+        ):
+            raise OpportunityStateError(409, "Opportunity state scope mismatch.", code="malformed_storage")
+        return version
+
+    def read_current(self, account: str, opp_slug: str) -> OpportunityStateVersion | None:
+        return self._read_current(account, opp_slug)
+
+    def inspect_current(self, account: str, opp_slug: str) -> dict[str, Any]:
+        try:
+            current = self._read_current(account, opp_slug)
+        except OpportunityStateError as exc:
+            if exc.code != "malformed_storage":
+                raise
+            return {"available": False, "status": "malformed"}
+        if current is None:
+            return {"available": False, "status": "not_created"}
+        return {
+            "available": True,
+            "status": "current",
+            "metadata": {
+                "version_id": current.version_id,
+                "revision": current.revision,
+                "schema_version": current.schema_version,
+                "created_at": current.created_at.isoformat(),
+                "evidence_manifest_hash": current.evidence_manifest_hash,
+                "evidence_count": len(current.evidence_manifest),
+                "updater_version": current.provenance.updater_version,
+            },
+            "current": current.model_dump(mode="json"),
+        }
+
+    @staticmethod
+    def _next_revision(versions_dir: Path) -> int:
+        revisions: list[int] = []
+        if versions_dir.exists():
+            for path in versions_dir.iterdir():
+                match = _VERSION_FILE.fullmatch(path.name)
+                if match:
+                    revisions.append(int(match.group("revision")))
+        revision = max(revisions, default=0) + 1
+        if revision > 1_000_000:
+            raise OpportunityStateError(409, "Opportunity state revision limit reached.", code="revision_limit")
+        return revision
+
+    def promote_create(
+        self,
+        *,
+        identity: OpportunityIdentity,
+        evidence_manifest: list[EvidenceManifestEntry],
+        expected_manifest_hash: str,
+        provenance: GenerationProvenance,
+        candidate: OpportunityStateCandidate,
+    ) -> OpportunityStateVersion:
+        """Persist and atomically promote the first canonical state version."""
+        validate_candidate_evidence(candidate, evidence_manifest)
+        actual_manifest_hash = evidence_manifest_hash(evidence_manifest)
+        if actual_manifest_hash != expected_manifest_hash:
+            raise OpportunityStateError(409, "Authorized evidence changed.", code="evidence_changed")
+
+        with self._lock:
+            current = self._read_current(identity.account, identity.opportunity_slug)
+            if current is not None:
+                raise OpportunityStateError(
+                    409, "An overview already exists; Update Overview belongs to Slice 2B.", code="already_created"
+                )
+            _state_dir, versions_dir, pointer = self._paths(
+                identity.account, identity.opportunity_slug, create=True
+            )
+            revision = self._next_revision(versions_dir)
+            version = OpportunityStateVersion(
+                schema_version=1,
+                version_id=uuid.uuid4().hex,
+                revision=revision,
+                identity=identity,
+                created_at=datetime.now(timezone.utc),
+                evidence_manifest=evidence_manifest,
+                evidence_manifest_hash=actual_manifest_hash,
+                provenance=provenance,
+                state=candidate,
+            )
+            version_payload = version.model_dump(mode="json")
+            version_bytes = self._canonical_bytes(version_payload)
+            checksum = hashlib.sha256(version_bytes).hexdigest()
+            filename = f"{revision:08d}-{version.version_id}.json"
+            version_path = resolve_within(versions_dir, filename)
+            envelope = self._canonical_bytes({"version": version_payload, "checksum": checksum})
+            if version_path.exists():
+                raise OpportunityStateError(409, "Opportunity state version collision.", code="storage_conflict")
+            self._atomic_write(version_path, envelope)
+            pointer_payload = self._canonical_bytes({
+                "schema_version": 1,
+                "revision": revision,
+                "filename": filename,
+                "checksum": checksum,
+            })
+            self._atomic_write(pointer, pointer_payload)
+            return version

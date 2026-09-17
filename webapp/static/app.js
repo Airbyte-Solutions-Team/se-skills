@@ -2011,6 +2011,111 @@ function latestWorkspaceOutput(scope) {
   return latest || null;
 }
 
+const overviewLabel = (value) => String(value || "unknown").replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+function renderEvidenceButton(refs, label = "evidence") {
+  const count = (refs || []).length;
+  if (!count) return '<span class="overview-evidence-count">No supporting evidence</span>';
+  const ids = encodeURIComponent(JSON.stringify(refs));
+  return `<button type="button" class="linklike overview-evidence-button" data-evidence-refs="${ids}">${count} ${esc(label)} reference${count === 1 ? "" : "s"}</button>`;
+}
+
+function renderOverviewClaim(label, claim) {
+  const value = claim?.value || ({
+    unknown: "Unknown",
+    not_applicable: "Not applicable",
+    conflicting: "Conflicting evidence — review needed",
+    partial: "Insufficient evidence",
+  }[claim?.knowledge_state] || "Not established");
+  return `<article class="overview-claim">
+    <div class="workspace-eyebrow">${esc(label)}</div>
+    <p>${esc(value)}</p>
+    <div class="overview-claim-meta">
+      <span class="workspace-status workspace-status--neutral">${esc(overviewLabel(claim?.knowledge_state))}</span>
+      <span>${esc(overviewLabel(claim?.confidence))} confidence</span>
+      ${renderEvidenceButton(claim?.evidence_refs)}
+    </div>
+  </article>`;
+}
+
+function renderOverviewBrief(current) {
+  const brief = current?.state?.brief;
+  if (!brief) return "";
+  return `<div class="overview-brief-grid">
+    ${renderOverviewClaim("Customer objective", brief.customer_objective)}
+    ${renderOverviewClaim("Why Airbyte", brief.why_airbyte)}
+    ${renderOverviewClaim("Current status", brief.current_status)}
+    ${renderOverviewClaim("Path to decision", brief.path_to_decision)}
+    ${renderOverviewClaim("Immediate priority", brief.immediate_priority)}
+  </div>`;
+}
+
+function renderOverviewHealth(current) {
+  const indicators = current?.state?.health_indicators || [];
+  if (!indicators.length) return "";
+  return `<section class="workspace-section" aria-labelledby="overview-health-title">
+    <div class="workspace-section-head"><div><div class="workspace-eyebrow">Explainable status</div><h2 id="overview-health-title">Health indicators</h2></div></div>
+    <div class="overview-health-grid">${indicators.map((item) => `<article class="overview-health-card">
+      <div class="workspace-eyebrow">${esc(overviewLabel(item.key))}</div>
+      <strong>${esc(overviewLabel(item.status))}</strong>
+      <p>${esc(item.reason)}</p>
+      ${renderEvidenceButton(item.evidence_refs)}
+    </article>`).join("")}</div>
+  </section>`;
+}
+
+function renderOverviewRisksActions(current) {
+  const risks = current?.state?.risks || [];
+  const actions = current?.state?.recommended_actions || [];
+  const riskHtml = risks.length ? risks.map((risk) => `<article class="overview-list-item overview-risk--${esc(risk.severity)}">
+    <div><span class="workspace-status workspace-status--${risk.severity === "critical" || risk.severity === "high" ? "error" : "warn"}">${esc(overviewLabel(risk.severity))}</span> <strong>${esc(risk.title)}</strong></div>
+    <p>${esc(risk.description)}</p>
+    <small>${esc(overviewLabel(risk.classification))}${risk.owner ? ` · Owner ${esc(risk.owner)}` : " · Owner TBD"}</small>
+    ${renderEvidenceButton(risk.evidence_refs)}
+  </article>`).join("") : '<p class="muted">No evidence-backed risks were identified.</p>';
+  const actionHtml = actions.length ? actions.map((action) => `<article class="overview-list-item">
+    <div><span class="workspace-status workspace-status--neutral">${esc(overviewLabel(action.status))}</span> <strong>${esc(action.action)}</strong></div>
+    <p>${esc(action.goal)}</p>
+    <small>${action.owner ? `Owner ${esc(action.owner)}` : "Owner TBD"} · ${action.due_date ? `Due ${esc(action.due_date)}` : "Due date TBD"}</small>
+    ${renderEvidenceButton(action.evidence_refs)}
+  </article>`).join("") : '<p class="muted">No recommended actions were established.</p>';
+  return `<div class="overview-two-column">
+    <section class="workspace-panel"><div class="workspace-panel-head"><div><div class="workspace-eyebrow">Operational blockers</div><h2>Top Risks</h2></div><span class="workspace-count">${risks.length}</span></div>${riskHtml}</section>
+    <section class="workspace-panel"><div class="workspace-panel-head"><div><div class="workspace-eyebrow">Next best work</div><h2>Recommended Actions</h2></div><span class="workspace-count">${actions.length}</span></div>${actionHtml}</section>
+  </div>`;
+}
+
+function renderOverviewEvidence(current) {
+  if (!current) return "";
+  const manifest = current.evidence_manifest || [];
+  const missing = current.state?.missing_information || [];
+  return `<details class="workspace-disclosure overview-evidence-section">
+    <summary><span><span class="workspace-eyebrow">Attributable state</span><strong>Evidence and missing information</strong><small>${manifest.length} authorized sources · revision ${current.revision}</small></span><span class="workspace-state">Inspect</span></summary>
+    <div class="workspace-disclosure-body">
+      <h3>Evidence used</h3>
+      <div class="overview-evidence-list">${manifest.map((item) => `<div class="overview-evidence-row" data-source-id="${esc(item.source_id)}"><span><strong>${esc(item.display_name)}</strong><small>${esc(overviewLabel(item.source_type))}</small></span><code>${esc(item.sha256.slice(0, 12))}…</code></div>`).join("")}</div>
+      <h3>Missing or unknown</h3>
+      ${missing.length ? `<ul class="overview-missing-list">${missing.map((item) => `<li><strong>${esc(item.description)}</strong><small>${esc(item.category)}</small></li>`).join("")}</ul>` : '<p class="muted">No additional missing-information items were recorded.</p>'}
+      <p class="muted">Only the selected saved transcripts and read-only opportunity metadata supported this version. Generated outputs were not ingested.</p>
+    </div>
+  </details>`;
+}
+
+function renderCreateOverviewState(workspace) {
+  const canonical = workspace.canonical_state || {};
+  const job = canonical.create_job;
+  if (canonical.status === "malformed") {
+    return `<div class="overview-create-status overview-create-status--error"><strong>Overview unavailable</strong><p>Stored canonical state could not be validated. No replacement was attempted.</p></div>`;
+  }
+  if (job?.status === "running") {
+    return `<div class="overview-create-status" id="overview-create-status"><span class="run-head"><span class="spinner"></span>Creating overview from ${Number(job.evidence_count || 0) - 1} selected transcript${job.evidence_count === 2 ? "" : "s"}…</span><p>This continues safely if you leave this page.</p></div>`;
+  }
+  if (job?.status === "error") {
+    return `<div class="overview-create-status overview-create-status--error" id="overview-create-status"><strong>Overview creation failed</strong><p>${esc(job.error_message || "No state was saved. You can retry with an explicit evidence selection.")}</p><button class="primary small" id="create-overview-btn">Retry Create overview</button></div>`;
+  }
+  return `<div class="overview-create-status" id="overview-create-status"><p>No canonical opportunity overview exists yet. Create one from read-only opportunity metadata and saved transcripts you explicitly select.</p><button class="primary" id="create-overview-btn">Create overview</button><small>${workspace.eligible_evidence?.count || 0} eligible saved transcript${workspace.eligible_evidence?.count === 1 ? "" : "s"}</small></div>`;
+}
+
 function renderOpportunityWorkspace(workspace) {
   const opportunity = workspace.opportunity || {};
   const account = workspace.account || {};
@@ -2021,6 +2126,8 @@ function renderOpportunityWorkspace(workspace) {
   const metadataNote = opportunity.metadata_complete === false
     ? '<span class="workspace-source-note">Salesforce metadata unavailable; name derived from the local opportunity folder.</span>'
     : "";
+  const current = workspace.canonical_state?.current || null;
+  const canonicalCreated = Boolean(current);
 
   return `
     <div class="opp-workspace">
@@ -2036,7 +2143,8 @@ function renderOpportunityWorkspace(workspace) {
           <div class="row-actions workspace-primary-actions">
             <a class="ghost live-btn" href="#/live/${encodeURIComponent(account.name)}/${encodeURIComponent(opportunity.slug)}/${encodeURIComponent(opportunity.name)}">🎙 Live Transcribe</a>
             <button class="ghost" id="handoff-btn" title="Generate a PTO coverage handoff for a covering SE">🤝 Coverage Handoff</button>
-            <button class="primary" id="invoke-btn">Generate</button>
+            ${!canonicalCreated && workspace.canonical_state?.status !== "malformed" && workspace.canonical_state?.create_job?.status !== "running" ? '<button class="primary" id="create-overview-header">Create overview</button>' : ""}
+            <button class="${canonicalCreated ? "primary" : "ghost"}" id="invoke-btn">Generate</button>
           </div>
         </div>
         <div class="workspace-facts" aria-label="Known opportunity context">
@@ -2053,12 +2161,14 @@ function renderOpportunityWorkspace(workspace) {
             <div class="workspace-eyebrow">Current understanding</div>
             <h2>Opportunity Brief</h2>
           </div>
-          <span class="workspace-state">Not created</span>
+          <span class="workspace-state">${canonicalCreated ? `Revision ${current.revision}` : "Not created"}</span>
         </div>
-        <p>No canonical opportunity overview exists yet. This page only shows facts and artifacts the application can verify today.</p>
-        <p class="muted">Use Generate for a specialized deliverable. Create or Update overview will be added only after a typed, evidence-backed opportunity-state workflow exists.</p>
-        <button class="ghost small" data-generate>Generate a specialized output</button>
+        ${canonicalCreated ? renderOverviewBrief(current) : renderCreateOverviewState(workspace)}
+        ${canonicalCreated ? '<p class="muted overview-version-note">Canonical opportunity state is separate from generated outputs. Further canonical-state revisions are deferred to Slice 2B.</p>' : '<p class="muted">Create Overview persists one validated canonical version. Generate continues to create separate task-specific artifacts.</p>'}
       </section>
+
+      ${canonicalCreated ? renderOverviewHealth(current) : ""}
+      ${canonicalCreated ? renderOverviewRisksActions(current) : ""}
 
       <div id="freebar-status" class="status-stack"></div>
 
@@ -2137,6 +2247,8 @@ function renderOpportunityWorkspace(workspace) {
         </details>
       </div>
 
+      ${canonicalCreated ? renderOverviewEvidence(current) : ""}
+
       <details class="workspace-disclosure workspace-command-panel">
         <summary>
           <span><strong>Run with specific instructions</strong><small>Use a named skill or give the local agent additional context.</small></span>
@@ -2154,6 +2266,83 @@ function renderOpportunityWorkspace(workspace) {
         </div>
       </details>
     </div>`;
+}
+
+function showOverviewEvidenceRefs(current, refs) {
+  const manifest = Object.fromEntries((current?.evidence_manifest || []).map((item) => [item.source_id, item]));
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `<div class="modal overview-evidence-modal" role="dialog" aria-modal="true" aria-labelledby="evidence-dialog-title">
+    <div class="modal-head"><h2 id="evidence-dialog-title">Supporting evidence</h2><button class="modal-close" type="button" aria-label="Close">✕</button></div>
+    <div class="overview-modal-body">${(refs || []).map((ref) => {
+      const source = manifest[ref.source_id];
+      return `<article class="overview-evidence-detail"><strong>${esc(source?.display_name || "Authorized source")}</strong><span>${esc(overviewLabel(ref.source_type))}${ref.locator ? ` · ${esc(ref.locator)}` : ""}</span><code>${esc(ref.source_id)}</code></article>`;
+    }).join("") || '<p class="muted">No evidence references were recorded.</p>'}</div>
+    <div class="modal-foot"><button class="primary small modal-cancel" type="button">Done</button></div>
+  </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector(".modal-close").onclick = close;
+  overlay.querySelector(".modal-cancel").onclick = close;
+  overlay.onclick = (event) => { if (event.target === overlay) close(); };
+  overlay.onkeydown = (event) => { if (event.key === "Escape") close(); };
+  overlay.querySelector(".modal-close").focus();
+}
+
+async function openCreateOverviewModal(account, slug, oppName, onStarted) {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `<div class="modal overview-create-modal" role="dialog" aria-modal="true" aria-labelledby="create-overview-title">
+    <div class="modal-head"><h2 id="create-overview-title">Create overview</h2><button class="modal-close" type="button" aria-label="Close">✕</button></div>
+    <div class="overview-modal-body" id="create-overview-body"><div class="overview-loading"><span class="spinner"></span> Loading eligible evidence…</div></div>
+    <div class="modal-foot"><button class="ghost modal-cancel" type="button">Cancel</button><button class="primary" id="create-overview-confirm" type="button" disabled>Create overview</button></div>
+  </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector(".modal-close").onclick = close;
+  overlay.querySelector(".modal-cancel").onclick = close;
+  overlay.onclick = (event) => { if (event.target === overlay) close(); };
+  overlay.onkeydown = (event) => { if (event.key === "Escape") close(); };
+  overlay.querySelector(".modal-close").focus();
+  const body = overlay.querySelector("#create-overview-body");
+  const confirmButton = overlay.querySelector("#create-overview-confirm");
+  try {
+    const evidence = await api(`/api/accounts/${encodeURIComponent(account)}/opportunities/${encodeURIComponent(slug)}/overview/evidence`);
+    const transcripts = evidence.transcripts || [];
+    if (!transcripts.length) {
+      body.innerHTML = `<div class="overview-no-evidence"><strong>No eligible saved transcripts</strong><p>Create Overview requires an explicit transcript selection. Save a synthetic or authorized local transcript first, then retry.</p><a class="ghost small" href="#/live/${encodeURIComponent(account)}/${encodeURIComponent(slug)}/${encodeURIComponent(oppName)}">Open Live Transcribe</a></div>`;
+      return;
+    }
+    body.innerHTML = `<p>Create the first canonical overview from:</p>
+      <div class="overview-fixed-source"><span aria-hidden="true">✓</span><span><strong>Read-only opportunity metadata</strong><small>Current trusted account/Salesforce metadata. Nothing is written back.</small></span></div>
+      <fieldset class="overview-evidence-picker"><legend>Select saved transcripts</legend>${transcripts.map((item) => `<label><input type="checkbox" value="${esc(item.id)}"><span><strong>${esc(item.display_name)}</strong><small>${esc(new Date(item.modified_at).toLocaleString())} · ${Math.max(1, Math.round(item.size_bytes / 1024))} KB</small></span></label>`).join("")}</fieldset>
+      <p class="muted">Only checked transcripts are sent to the constrained local Claude runtime. Account transcripts are never attached automatically, and generated outputs are excluded.</p>
+      <div class="status hidden" id="create-overview-error"></div>`;
+    const boxes = [...body.querySelectorAll('input[type="checkbox"]')];
+    const update = () => { confirmButton.disabled = !boxes.some((box) => box.checked); };
+    boxes.forEach((box) => { box.onchange = update; });
+    confirmButton.onclick = async () => {
+      const selected = boxes.filter((box) => box.checked).map((box) => box.value);
+      if (!selected.length) return;
+      confirmButton.disabled = true;
+      confirmButton.textContent = "Starting…";
+      const error = body.querySelector("#create-overview-error");
+      try {
+        const started = await api(`/api/accounts/${encodeURIComponent(account)}/opportunities/${encodeURIComponent(slug)}/overview/create`, {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ transcript_ids: selected }),
+        });
+        close();
+        await onStarted(started);
+      } catch (err) {
+        error.className = "status err";
+        error.textContent = err.message;
+        confirmButton.disabled = false;
+        confirmButton.textContent = "Create overview";
+      }
+    };
+  } catch (error) {
+    body.innerHTML = `<div class="overview-no-evidence"><strong>Evidence could not be loaded</strong><p>${esc(error.message)}</p></div>`;
+  }
 }
 
 // ---- Page: opportunity workspace (local mode) ---------------------------
@@ -2192,6 +2381,44 @@ async function pageOpportunity(account, slug, routeOppName) {
     workspaceOutputItems(workspace).map((o) => [o.path, normalizeOutputMeta(o)])
   );
   view.innerHTML = renderOpportunityWorkspace(workspace);
+
+  const refreshAfterCreate = async () => {
+    if (!document.querySelector(".opp-workspace")) return;
+    await pageOpportunity(account, slug, oppName);
+  };
+  const watchCreate = async (jobId) => {
+    while (document.querySelector(".opp-workspace")) {
+      const job = await api(`/api/accounts/${encodeURIComponent(account)}/opportunities/${encodeURIComponent(slug)}/overview/jobs/${encodeURIComponent(jobId)}`).catch(() => null);
+      if (!job) return;
+      if (job.status !== "running") {
+        await refreshAfterCreate();
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+  };
+  const startCreate = async (started) => {
+    const region = document.getElementById("overview-create-status");
+    if (region) region.innerHTML = '<span class="run-head"><span class="spinner"></span>Creating overview…</span><p>This continues safely if you leave this page.</p>';
+    await watchCreate(started.job_id);
+  };
+  const openCreate = () => openCreateOverviewModal(account, slug, oppName, startCreate);
+  const createButton = document.getElementById("create-overview-btn");
+  if (createButton) createButton.onclick = openCreate;
+  const headerCreateButton = document.getElementById("create-overview-header");
+  if (headerCreateButton) headerCreateButton.onclick = openCreate;
+  view.querySelectorAll("[data-evidence-refs]").forEach((button) => {
+    button.onclick = () => {
+      try {
+        showOverviewEvidenceRefs(workspace.canonical_state?.current, JSON.parse(decodeURIComponent(button.dataset.evidenceRefs)));
+      } catch {
+        showToast("Evidence references could not be opened.", "warn");
+      }
+    };
+  });
+  if (workspace.canonical_state?.create_job?.status === "running") {
+    void watchCreate(workspace.canonical_state.create_job.job_id);
+  }
 
   const wireWorkspace = (root) => {
     wireOutItems(root, outputContext);

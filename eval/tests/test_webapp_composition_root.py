@@ -63,6 +63,10 @@ def test_expected_public_routes_registered() -> None:
         "/api/accounts/{account}/outputs",
         "/api/accounts/{account}/opportunities",
         "/api/accounts/{account}/opportunities/{opp_slug}/workspace",
+        "/api/accounts/{account}/opportunities/{opp_slug}/overview/evidence",
+        "/api/accounts/{account}/opportunities/{opp_slug}/overview/create",
+        "/api/accounts/{account}/opportunities/{opp_slug}/overview/jobs/{job_id}",
+        "/api/accounts/{account}/opportunities/{opp_slug}/overview/state",
         "/api/accounts/{account}/last-run",
         "/api/bulk-create-accounts",
         "/api/bulk/{action}",
@@ -122,6 +126,12 @@ def test_service_identity_preserved() -> None:
     assert fresh.state.account_service is fresh.state.overview_service._account_service
     assert fresh.state.account_service is fresh.state.opportunity_workspace_service._account_service
     assert fresh.state.output_service is fresh.state.opportunity_workspace_service._output_service
+    assert fresh.state.opportunity_state_service is fresh.state.opportunity_workspace_service._state_service
+    assert fresh.state.job_service is fresh.state.opportunity_workspace_service._job_service
+    assert fresh.state.transcription_service is fresh.state.opportunity_workspace_service._transcription_service
+    assert fresh.state.opportunity_state_service is fresh.state.opportunity_state_create_service._state_service
+    assert fresh.state.job_service is fresh.state.opportunity_state_create_service._job_service
+    assert fresh.state.opportunity_state_executor is fresh.state.opportunity_state_create_service._executor
     assert fresh.state.job_service is fresh.state.ask_service.job_service
     assert fresh.state.output_service is fresh.state.ask_service.output_service
     assert fresh.state.job_service is fresh.state.account_service._job_service
