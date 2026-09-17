@@ -84,7 +84,8 @@ def test_routes_reject_no_selection_extra_fields_and_unknown_job(tmp_path) -> No
 
 def test_routes_reject_tampered_and_arbitrary_transcript_identifiers(tmp_path) -> None:
     client, evidence_id = _client(tmp_path)
-    for value in (evidence_id[:-1] + "x", "../Acme-09.17.26.txt", "C:/raw/customer.txt"):
+    replacement = "A" if evidence_id[-1] != "A" else "B"
+    for value in (evidence_id[:-1] + replacement, "../Acme-09.17.26.txt", "C:/raw/customer.txt"):
         response = client.post(
             "/api/accounts/Acme/opportunities/synthetic-opportunity/overview/create",
             json={"transcript_ids": [value]},
