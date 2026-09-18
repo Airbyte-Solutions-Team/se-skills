@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -21,6 +21,15 @@ logger = logging.getLogger(__name__)
 
 _PERSISTENCE_WARNING = "This job will not survive a server restart because state could not be saved."
 _RUN_TIMEOUT_SECONDS = 600
+
+
+class ManagedJobError(Exception):
+    """Safe failure details for non-skill background jobs."""
+
+    def __init__(self, code: str, detail: str) -> None:
+        self.code = code
+        self.detail = detail
+        super().__init__(detail)
 
 
 class JobService:
@@ -75,6 +84,27 @@ class JobService:
                 return jid, j
         return None
 
+    def active_job(self, *, kind: str, account: str, opp_slug: str) -> tuple[str, dict] | None:
+        for job_id, job in self.jobs.items():
+            if (
+                job.get("kind") == kind
+                and job.get("account") == account
+                and job.get("opp_slug") == opp_slug
+                and job.get("status") == "running"
+            ):
+                return job_id, job
+        return None
+
+    def latest_job(self, *, kind: str, account: str, opp_slug: str) -> dict[str, Any] | None:
+        matches = [
+            {"job_id": job_id, **job}
+            for job_id, job in self.jobs.items()
+            if job.get("kind") == kind
+            and job.get("account") == account
+            and job.get("opp_slug") == opp_slug
+        ]
+        return max(matches, key=lambda item: item.get("started_at", 0), default=None)
+
     async def save_snapshot(self, source_job_id: str | None = None) -> str | None:
         """Persist the jobs snapshot and manage per-job persistence warnings.
 
@@ -104,6 +134,7 @@ class JobService:
         """Create a new running job, persist it, and start the background runner."""
         job_id = uuid.uuid4().hex[:12]
         self.jobs[job_id] = {
+            "kind": "skill",
             "status": "running",
             "ok": None,
             "stdout": "",
@@ -118,6 +149,72 @@ class JobService:
         persist_warn = await self.save_snapshot(job_id)
         asyncio.create_task(self._run_job(job_id, prompt, meta))
         return job_id, persist_warn
+
+    async def launch_managed(
+        self,
+        *,
+        kind: str,
+        account: str,
+        opp_slug: str,
+        opportunity: str,
+        sig: Any,
+        safe_metadata: dict[str, Any],
+        runner: Callable[[str], Awaitable[dict[str, Any] | None]],
+    ) -> tuple[str, str | None]:
+        """Launch a discriminated non-skill job with safe persisted metadata."""
+        job_id = uuid.uuid4().hex[:12]
+        self.jobs[job_id] = {
+            "kind": kind,
+            "status": "running",
+            "ok": None,
+            "account": account,
+            "opportunity": opportunity,
+            "opp_slug": opp_slug,
+            "sig": sig,
+            "started_at": datetime.now(timezone.utc).timestamp(),
+            **safe_metadata,
+        }
+        persist_warn = await self.save_snapshot(job_id)
+        asyncio.create_task(self._run_managed_job(job_id, runner))
+        return job_id, persist_warn
+
+    async def _run_managed_job(
+        self,
+        job_id: str,
+        runner: Callable[[str], Awaitable[dict[str, Any] | None]],
+    ) -> None:
+        job = self.jobs[job_id]
+        try:
+            result = await runner(job_id) or {}
+            job.update(
+                status="done",
+                ok=True,
+                finished_at=datetime.now(timezone.utc).timestamp(),
+                **result,
+            )
+        except ManagedJobError as exc:
+            job.update(
+                status="error",
+                ok=False,
+                error_code=exc.code,
+                error_message=exc.detail,
+                finished_at=datetime.now(timezone.utc).timestamp(),
+            )
+        except Exception as exc:
+            # Never log the exception message for evidence-processing jobs: an
+            # unexpected dependency error could contain transcript content.
+            logger.error("Managed job %s failed (%s)", job_id, type(exc).__name__)
+            job.update(
+                status="error",
+                ok=False,
+                error_code="internal_error",
+                error_message="Overview creation failed safely; no state was saved.",
+                finished_at=datetime.now(timezone.utc).timestamp(),
+            )
+        try:
+            await self.save_snapshot(job_id)
+        except Exception:
+            pass
 
     async def _run_job(self, job_id: str, prompt: str, meta: dict[str, Any]) -> None:
         """Run `claude -p` for `job_id`, updating status, output, and run records."""

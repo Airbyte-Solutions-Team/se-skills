@@ -118,11 +118,19 @@ def load_jobs(workspace: Path) -> dict[str, dict]:
             # the interrupted run as the latest finished run for that account.
             if not rec.get("finished_at"):
                 rec["finished_at"] = time.time()
-            existing_stderr = rec.get("stderr") or ""
-            rec["stderr"] = existing_stderr + (
-                "\n[Server restarted while this job was running. Re-run if needed.]"
-                if existing_stderr else "[Server restarted while this job was running. Re-run if needed.]"
-            )
+            if rec.get("kind") == "opportunity_state_create":
+                rec.pop("stdout", None)
+                rec.pop("stderr", None)
+                rec["error_code"] = "interrupted"
+                rec["error_message"] = (
+                    "The server restarted while creating the overview; no state was promoted. Retry when ready."
+                )
+            else:
+                existing_stderr = rec.get("stderr") or ""
+                rec["stderr"] = existing_stderr + (
+                    "\n[Server restarted while this job was running. Re-run if needed.]"
+                    if existing_stderr else "[Server restarted while this job was running. Re-run if needed.]"
+                )
         sig = rec.get("sig")
         if isinstance(sig, list):
             rec["sig"] = tuple(sig)

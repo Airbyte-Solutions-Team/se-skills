@@ -81,6 +81,7 @@ def _build_local_services(app: FastAPI) -> None:
     from routes.feedback import router as feedback_router
     from routes.gallery import router as gallery_router
     from routes.jobs import router as jobs_router
+    from routes.opportunity_state import router as opportunity_state_router
     from routes.outputs import router as outputs_router
     from routes.overview import router as overview_router
     from routes.salesforce import router as salesforce_router
@@ -91,6 +92,9 @@ def _build_local_services(app: FastAPI) -> None:
     from services.feedback_service import FeedbackService
     from services.job_service import JobService
     from services.opportunity_workspace_service import OpportunityWorkspaceService
+    from services.opportunity_state_create_service import OpportunityStateCreateService
+    from services.opportunity_state_executor import ClaudeCanonicalStateExecutor
+    from services.opportunity_state_service import OpportunityStateService
     from services.output_service import OutputService
     from services.overview_service import OverviewService
     from services.skill_runtime_service import SkillRuntimeService
@@ -133,10 +137,6 @@ def _build_local_services(app: FastAPI) -> None:
         se_config_file=config.SE_CONFIG,
         sfdc_opportunities=salesforce_integration.opportunities_for_account,
     )
-    opportunity_workspace_service = OpportunityWorkspaceService(
-        account_service=account_service,
-        output_service=output_service,
-    )
     overview_service = OverviewService(
         account_service=account_service,
         output_service=output_service,
@@ -153,6 +153,28 @@ def _build_local_services(app: FastAPI) -> None:
         workspace=config.WORKSPACE,
         safe_name=config._safe,
         titlecase=config._titlecase_folder,
+    )
+    opportunity_state_service = OpportunityStateService(
+        customers_dir=config.CUSTOMERS_DIR,
+        safe_name=config._safe,
+    )
+    opportunity_workspace_service = OpportunityWorkspaceService(
+        account_service=account_service,
+        output_service=output_service,
+        state_service=opportunity_state_service,
+        job_service=job_service,
+        transcription_service=transcription_service,
+    )
+    opportunity_state_executor = ClaudeCanonicalStateExecutor(
+        model=config._model_for("opportunity-state"),
+        forbidden_roots=[config.WEBAPP_DIR.parent, config.WORKSPACE, config.CUSTOMERS_DIR],
+    )
+    opportunity_state_create_service = OpportunityStateCreateService(
+        workspace_service=opportunity_workspace_service,
+        transcription_service=transcription_service,
+        state_service=opportunity_state_service,
+        job_service=job_service,
+        executor=opportunity_state_executor,
     )
     skill_runtime_service = SkillRuntimeService(
         customers_dir=config.CUSTOMERS_DIR,
@@ -172,6 +194,9 @@ def _build_local_services(app: FastAPI) -> None:
     app.state.salesforce_integration = salesforce_integration
     app.state.account_service = account_service
     app.state.opportunity_workspace_service = opportunity_workspace_service
+    app.state.opportunity_state_service = opportunity_state_service
+    app.state.opportunity_state_create_service = opportunity_state_create_service
+    app.state.opportunity_state_executor = opportunity_state_executor
     app.state.overview_service = overview_service
     app.state.ask_service = ask_service
     app.state.transcription_service = transcription_service
@@ -181,6 +206,7 @@ def _build_local_services(app: FastAPI) -> None:
     app.include_router(skills_router)
     app.include_router(jobs_router)
     app.include_router(accounts_router)
+    app.include_router(opportunity_state_router)
     app.include_router(outputs_router)
     app.include_router(feedback_router)
     app.include_router(overview_router)

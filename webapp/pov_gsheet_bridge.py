@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["pydantic>=2.0", "pyyaml>=6.0"]
+# dependencies = ["httpx>=0.28.1", "pydantic>=2.0", "pyyaml>=6.0"]
 # ///
 """Thin bridge from raw MCP/tool output to normalized `ExternalEvidence` for `pov-gsheet`.
 
