@@ -2101,6 +2101,63 @@ function renderOverviewEvidence(current) {
   </details>`;
 }
 
+function renderOverviewFreshness(workspace) {
+  const freshness = workspace.canonical_state?.freshness;
+  const current = workspace.canonical_state?.current;
+  if (!freshness || !current) return "";
+  const reviewCount = Number(freshness.new_source_count || 0) + Number(freshness.changed_source_count || 0);
+  let status = "Up to date";
+  if (freshness.update_active) status = "Update in progress";
+  else if (freshness.metadata_changed && reviewCount) status = `Metadata changed · ${reviewCount} source${reviewCount === 1 ? "" : "s"} available for review`;
+  else if (freshness.metadata_changed) status = "Metadata changed";
+  else if (reviewCount) status = `${reviewCount} source${reviewCount === 1 ? "" : "s"} available for review`;
+  const updated = new Date(freshness.last_successful_update?.created_at || current.created_at);
+  const updatedLabel = Number.isNaN(updated.getTime()) ? "Updated" : `Updated ${updated.toLocaleString()}`;
+  return `<div class="overview-freshness" aria-live="polite"><strong>${esc(status)}</strong><span>${esc(updatedLabel)} · revision ${Number(current.revision)}</span></div>`;
+}
+
+function renderTypedChanges(items, label) {
+  if (!(items || []).length) return "";
+  const rows = items.map((item) => {
+    const fields = (item.fields || []).length ? ` · ${item.fields.map(overviewLabel).join(", ")}` : "";
+    return `<li><strong>${esc(overviewLabel(item.key))}</strong><span>${esc(overviewLabel(item.change_type))}${esc(fields)}</span></li>`;
+  }).join("");
+  return `<div class="overview-change-group"><h3>${esc(label)}</h3><ul>${rows}</ul></div>`;
+}
+
+function renderWhatChanged(current) {
+  const changes = current?.change_set;
+  if (!changes) return "";
+  const stateGroups = [
+    [changes.brief, "Opportunity Brief"],
+    [changes.health_indicators, "Health indicators"],
+    [changes.risks, "Risks"],
+    [changes.recommended_actions, "Recommended actions"],
+    [changes.missing_information, "Missing information"],
+  ];
+  const materialCount = stateGroups.reduce((total, [items]) => total + (items || []).length, 0);
+  const evidenceItems = (changes.evidence_sources || []).map((item) => ({
+    key: item.source_id, change_type: item.change_type, fields: [],
+  }));
+  const evidenceSummary = [
+    changes.metadata_changed ? "Metadata replaced" : "",
+    evidenceItems.length ? `${evidenceItems.length} evidence source${evidenceItems.length === 1 ? "" : "s"} added or replaced` : "",
+  ].filter(Boolean).join(" · ");
+  const groups = stateGroups.map(([items, label]) => renderTypedChanges(items, label)).filter(Boolean);
+  return `<section class="workspace-panel overview-changes" aria-labelledby="what-changed-title">
+    <div class="workspace-panel-head"><div><div class="workspace-eyebrow">Deterministic revision diff</div><h2 id="what-changed-title">What Changed</h2></div><span class="workspace-state">Revision ${Number(changes.parent_revision)} → Revision ${Number(changes.child_revision)}</span></div>
+    ${materialCount ? `<div class="overview-change-groups">${groups.slice(0, 2).join("")}</div>${groups.length > 2 ? `<details class="overview-change-more"><summary>Show ${groups.length - 2} more change categor${groups.length - 2 === 1 ? "y" : "ies"}</summary><div class="overview-change-groups">${groups.slice(2).join("")}</div></details>` : ""}` : '<p class="overview-no-material"><strong>No material state changes</strong><span>New evidence was evaluated, but the canonical conclusions remained the same.</span></p>'}
+    ${evidenceSummary ? `<p class="muted overview-change-evidence">Provenance: ${esc(evidenceSummary)}.</p>` : ""}
+  </section>`;
+}
+
+function renderRevisionHistory() {
+  return `<details class="workspace-disclosure overview-revision-history" id="overview-revision-history">
+    <summary><span><span class="workspace-eyebrow">Immutable audit trail</span><strong>Revision history</strong><small>Inspect prior canonical versions without changing the current overview.</small></span><span class="workspace-state">History</span></summary>
+    <div class="workspace-disclosure-body" id="overview-history-body"><div class="overview-loading"><span class="spinner"></span> Loading revision history…</div></div>
+  </details>`;
+}
+
 function renderCreateOverviewState(workspace) {
   const canonical = workspace.canonical_state || {};
   const job = canonical.create_job;
@@ -2114,6 +2171,20 @@ function renderCreateOverviewState(workspace) {
     return `<div class="overview-create-status overview-create-status--error" id="overview-create-status"><strong>Overview creation failed</strong><p>${esc(job.error_message || "No state was saved. You can retry with an explicit evidence selection.")}</p><button class="primary small" id="create-overview-btn">Retry Create overview</button></div>`;
   }
   return `<div class="overview-create-status" id="overview-create-status"><p>No canonical opportunity overview exists yet. Create one from read-only opportunity metadata and saved transcripts you explicitly select.</p><button class="primary" id="create-overview-btn">Create overview</button><small>${workspace.eligible_evidence?.count || 0} eligible saved transcript${workspace.eligible_evidence?.count === 1 ? "" : "s"}</small></div>`;
+}
+
+function renderUpdateJobState(workspace) {
+  const job = workspace.canonical_state?.update_job;
+  if (!job || job.status === "done") return "";
+  if (job.status === "running") {
+    return `<div class="overview-create-status" id="overview-update-status"><span class="run-head"><span class="spinner"></span>Updating overview…</span><p>The validated current revision remains active until the update passes every check.</p></div>`;
+  }
+  const codeLabels = {
+    stale_base: "The overview changed before promotion. Refresh and choose evidence again.",
+    no_op: "No valid delta was selected, so no revision was created.",
+    interrupted: "The update was interrupted safely. The prior revision is still current.",
+  };
+  return `<div class="overview-create-status overview-create-status--error" id="overview-update-status"><strong>Overview update failed</strong><p>${esc(codeLabels[job.error_code] || job.error_message || "No revision was created. Refresh and retry.")}</p><button class="ghost small" id="retry-update-overview" type="button">Review evidence and retry</button></div>`;
 }
 
 function renderOpportunityWorkspace(workspace) {
@@ -2139,11 +2210,13 @@ function renderOpportunityWorkspace(workspace) {
             <p class="sub">${esc(account.name)} · current workspace and generated artifacts</p>
             <div class="workspace-meta">${opportunityHeaderMeta(workspace)}</div>
             ${metadataNote}
+            ${renderOverviewFreshness(workspace)}
           </div>
           <div class="row-actions workspace-primary-actions">
             <a class="ghost live-btn" href="#/live/${encodeURIComponent(account.name)}/${encodeURIComponent(opportunity.slug)}/${encodeURIComponent(opportunity.name)}">🎙 Live Transcribe</a>
             <button class="ghost" id="handoff-btn" title="Generate a PTO coverage handoff for a covering SE">🤝 Coverage Handoff</button>
             ${!canonicalCreated && workspace.canonical_state?.status !== "malformed" && workspace.canonical_state?.create_job?.status !== "running" ? '<button class="primary" id="create-overview-header">Create overview</button>' : ""}
+            ${canonicalCreated ? `<button class="ghost" id="update-overview-btn"${workspace.canonical_state?.freshness?.update_active ? " disabled" : ""}>Update Overview</button>` : ""}
             <button class="${canonicalCreated ? "primary" : "ghost"}" id="invoke-btn">Generate</button>
           </div>
         </div>
@@ -2164,9 +2237,11 @@ function renderOpportunityWorkspace(workspace) {
           <span class="workspace-state">${canonicalCreated ? `Revision ${current.revision}` : "Not created"}</span>
         </div>
         ${canonicalCreated ? renderOverviewBrief(current) : renderCreateOverviewState(workspace)}
-        ${canonicalCreated ? '<p class="muted overview-version-note">Canonical opportunity state is separate from generated outputs. Further canonical-state revisions are deferred to Slice 2B.</p>' : '<p class="muted">Create Overview persists one validated canonical version. Generate continues to create separate task-specific artifacts.</p>'}
+        ${canonicalCreated ? renderUpdateJobState(workspace) : ""}
+        ${canonicalCreated ? '<p class="muted overview-version-note">Update Overview reconciles explicitly authorized evidence into a new immutable revision. Generate remains a separate artifact workflow.</p>' : '<p class="muted">Create Overview persists one validated canonical version. Generate continues to create separate task-specific artifacts.</p>'}
       </section>
 
+      ${canonicalCreated ? renderWhatChanged(current) : ""}
       ${canonicalCreated ? renderOverviewHealth(current) : ""}
       ${canonicalCreated ? renderOverviewRisksActions(current) : ""}
 
@@ -2248,6 +2323,7 @@ function renderOpportunityWorkspace(workspace) {
       </div>
 
       ${canonicalCreated ? renderOverviewEvidence(current) : ""}
+      ${canonicalCreated ? renderRevisionHistory() : ""}
 
       <details class="workspace-disclosure workspace-command-panel">
         <summary>
@@ -2345,6 +2421,117 @@ async function openCreateOverviewModal(account, slug, oppName, onStarted) {
   }
 }
 
+async function openUpdateOverviewModal(account, slug, onStarted) {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `<div class="modal overview-create-modal" role="dialog" aria-modal="true" aria-labelledby="update-overview-title">
+    <div class="modal-head"><h2 id="update-overview-title">Update Overview</h2><button class="modal-close" type="button" aria-label="Close">✕</button></div>
+    <div class="overview-modal-body" id="update-overview-body"><div class="overview-loading"><span class="spinner"></span> Checking current evidence…</div></div>
+    <div class="modal-foot"><button class="ghost modal-cancel" type="button">Cancel</button><button class="primary" id="update-overview-confirm" type="button" disabled>Update Overview</button></div>
+  </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector(".modal-close").onclick = close;
+  overlay.querySelector(".modal-cancel").onclick = close;
+  overlay.onclick = (event) => { if (event.target === overlay) close(); };
+  overlay.onkeydown = (event) => { if (event.key === "Escape") close(); };
+  overlay.querySelector(".modal-close").focus();
+  const body = overlay.querySelector("#update-overview-body");
+  const confirmButton = overlay.querySelector("#update-overview-confirm");
+  try {
+    const freshness = await api(`/api/accounts/${encodeURIComponent(account)}/opportunities/${encodeURIComponent(slug)}/overview/freshness`);
+    const metadataRows = Object.entries(freshness.metadata || {}).map(([key, value]) => `<div><span>${esc(overviewLabel(key))}</span><strong>${esc(value == null || value === "" ? "Unknown" : String(value))}</strong></div>`).join("");
+    const selectable = [...(freshness.changed_sources || []), ...(freshness.new_sources || [])];
+    const sourceList = selectable.length ? `<fieldset class="overview-evidence-picker"><legend>Select new or changed transcripts</legend>${selectable.map((item) => `<label><input type="checkbox" value="${esc(item.id)}"><span><strong>${esc(item.display_name)}</strong><small>${item.status === "changed" ? "Previously used source — bytes changed" : "New account transcript — available for review"} · ${Math.max(1, Math.round(item.size_bytes / 1024))} KB</small></span></label>`).join("")}</fieldset>` : '<p class="muted">No new or changed transcript sources are available for selection.</p>';
+    const inherited = (freshness.inherited_sources || []).length ? `<div class="overview-update-source-list"><h3>Inherited evidence</h3>${freshness.inherited_sources.map((item) => `<div><strong>${esc(item.display_name)}</strong><span>Previously used · inherited without resending</span></div>`).join("")}</div>` : "";
+    const missing = (freshness.missing_sources || []).length ? `<div class="overview-update-source-list overview-update-source-list--missing"><h3>No longer locally available</h3>${freshness.missing_sources.map((item) => `<div><strong>${esc(item.display_name)}</strong><span>The immutable prior revision remains valid.</span></div>`).join("")}</div>` : "";
+    body.innerHTML = `<div class="overview-update-metadata"><div class="workspace-panel-head"><h3>Read-only opportunity metadata</h3><span class="workspace-status workspace-status--${freshness.metadata_changed ? "warn" : "success"}">${freshness.metadata_changed ? "Changed" : "Unchanged"}</span></div><div class="overview-metadata-grid">${metadataRows}</div></div>
+      ${sourceList}${inherited}${missing}
+      <p class="overview-consent-note"><strong>Restricted local update boundary</strong><span>Only the checked transcript bodies, current metadata, and validated base state will be sent to the restricted local Claude runtime. Generated outputs and local filesystem paths are excluded.</span></p>
+      <div class="status hidden" id="update-overview-error"></div>`;
+    const boxes = [...body.querySelectorAll('input[type="checkbox"]')];
+    const update = () => {
+      confirmButton.disabled = freshness.update_active || (!freshness.metadata_changed && !boxes.some((box) => box.checked));
+    };
+    boxes.forEach((box) => { box.onchange = update; });
+    update();
+    confirmButton.onclick = async () => {
+      const selected = boxes.filter((box) => box.checked).map((box) => box.value);
+      if (!freshness.metadata_changed && !selected.length) return;
+      confirmButton.disabled = true;
+      confirmButton.textContent = "Starting…";
+      const error = body.querySelector("#update-overview-error");
+      try {
+        const started = await api(`/api/accounts/${encodeURIComponent(account)}/opportunities/${encodeURIComponent(slug)}/overview/update`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            base_version_id: freshness.base_version_id,
+            base_revision: freshness.base_revision,
+            transcript_ids: selected,
+          }),
+        });
+        close();
+        await onStarted(started);
+      } catch (err) {
+        error.className = "status err";
+        error.textContent = err.message;
+        confirmButton.textContent = "Update Overview";
+        update();
+      }
+    };
+  } catch (error) {
+    body.innerHTML = `<div class="overview-no-evidence"><strong>Update readiness could not be loaded</strong><p>${esc(error.message)}</p></div>`;
+  }
+}
+
+function showHistoricalOverview(version) {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  const brief = version.state?.brief || {};
+  const briefRows = Object.entries(brief).map(([key, claim]) => `<article class="overview-claim"><div class="workspace-eyebrow">${esc(overviewLabel(key))}</div><p>${esc(claim.value || overviewLabel(claim.knowledge_state))}</p><small>${esc(overviewLabel(claim.knowledge_state))} · ${esc(overviewLabel(claim.confidence))} confidence</small></article>`).join("");
+  const healthRows = (version.state?.health_indicators || []).map((item) => `<li><strong>${esc(overviewLabel(item.key))}</strong><span>${esc(overviewLabel(item.status))} · ${esc(item.reason)}</span></li>`).join("");
+  overlay.innerHTML = `<div class="modal overview-history-modal" role="dialog" aria-modal="true" aria-labelledby="history-version-title">
+    <div class="modal-head"><div><h2 id="history-version-title">Revision ${Number(version.revision)}</h2><small>Read-only historical canonical state</small></div><button class="modal-close" type="button" aria-label="Close">✕</button></div>
+    <div class="overview-modal-body"><p class="muted">Created ${esc(new Date(version.created_at).toLocaleString())}${version.parent_revision ? ` · parent revision ${Number(version.parent_revision)}` : " · initial revision"}</p><div class="overview-brief-grid">${briefRows}</div><h3>Health indicators</h3><ul class="overview-history-health">${healthRows}</ul><p class="muted">${Number((version.evidence_manifest || []).length)} authorized evidence sources · manifest ${esc(String(version.evidence_manifest_hash || "").slice(0, 12))}…</p></div>
+    <div class="modal-foot"><button class="primary small modal-cancel" type="button">Done</button></div>
+  </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector(".modal-close").onclick = close;
+  overlay.querySelector(".modal-cancel").onclick = close;
+  overlay.onclick = (event) => { if (event.target === overlay) close(); };
+  overlay.onkeydown = (event) => { if (event.key === "Escape") close(); };
+  overlay.querySelector(".modal-close").focus();
+}
+
+async function loadOverviewHistory(account, slug) {
+  const body = document.getElementById("overview-history-body");
+  if (!body) return;
+  try {
+    const history = await api(`/api/accounts/${encodeURIComponent(account)}/opportunities/${encodeURIComponent(slug)}/overview/history`);
+    body.innerHTML = `<div class="overview-history-list">${(history.versions || []).map((item) => {
+      const counts = Object.values(item.change_counts || {}).reduce((sum, value) => sum + Number(value || 0), 0);
+      return `<article class="overview-history-row"><div><strong>Revision ${Number(item.revision)}</strong><span>${esc(new Date(item.created_at).toLocaleString())}${item.parent_revision ? ` · parent ${Number(item.parent_revision)}` : " · initial"}</span><small>${Number(item.evidence_count)} evidence sources · ${esc(String(item.evidence_manifest_hash).slice(0, 12))}… · ${esc(item.provenance?.runtime || "Unknown runtime")} / ${esc(item.provenance?.model || "Unknown model")} / ${esc(item.provenance?.updater_version || "Unknown updater")}</small></div><div><span class="workspace-count">${counts} typed change${counts === 1 ? "" : "s"}</span><button class="ghost small" type="button" data-history-revision="${Number(item.revision)}">Inspect</button></div></article>`;
+    }).join("")}</div>`;
+    body.querySelectorAll("[data-history-revision]").forEach((button) => {
+      button.onclick = async () => {
+        button.disabled = true;
+        try {
+          const version = await api(`/api/accounts/${encodeURIComponent(account)}/opportunities/${encodeURIComponent(slug)}/overview/history/${encodeURIComponent(button.dataset.historyRevision)}`);
+          showHistoricalOverview(version);
+        } catch (error) {
+          showToast(error.message || "Historical revision could not be opened.", "warn");
+        } finally {
+          button.disabled = false;
+        }
+      };
+    });
+  } catch (error) {
+    body.innerHTML = `<div class="status err">${esc(error.message || "Revision history could not be loaded.")}</div>`;
+  }
+}
+
 // ---- Page: opportunity workspace (local mode) ---------------------------
 async function pageOpportunity(account, slug, routeOppName) {
   const workspaceUrl = `/api/accounts/${encodeURIComponent(account)}/opportunities/${encodeURIComponent(slug)}/workspace`;
@@ -2419,6 +2606,31 @@ async function pageOpportunity(account, slug, routeOppName) {
   if (workspace.canonical_state?.create_job?.status === "running") {
     void watchCreate(workspace.canonical_state.create_job.job_id);
   }
+  const watchUpdate = async (jobId) => {
+    while (document.querySelector(".opp-workspace")) {
+      const job = await api(`/api/accounts/${encodeURIComponent(account)}/opportunities/${encodeURIComponent(slug)}/overview/update/jobs/${encodeURIComponent(jobId)}`).catch(() => null);
+      if (!job) return;
+      if (job.status !== "running") {
+        await refreshAfterCreate();
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+  };
+  const startUpdate = async (started) => {
+    const region = document.getElementById("overview-update-status");
+    if (region) region.innerHTML = '<span class="run-head"><span class="spinner"></span>Updating overview…</span><p>The current revision remains active until validation and promotion complete.</p>';
+    await watchUpdate(started.job_id);
+  };
+  const openUpdate = () => openUpdateOverviewModal(account, slug, startUpdate);
+  const updateButton = document.getElementById("update-overview-btn");
+  if (updateButton) updateButton.onclick = openUpdate;
+  const retryUpdateButton = document.getElementById("retry-update-overview");
+  if (retryUpdateButton) retryUpdateButton.onclick = openUpdate;
+  if (workspace.canonical_state?.update_job?.status === "running") {
+    void watchUpdate(workspace.canonical_state.update_job.job_id);
+  }
+  void loadOverviewHistory(account, slug);
 
   const wireWorkspace = (root) => {
     wireOutItems(root, outputContext);

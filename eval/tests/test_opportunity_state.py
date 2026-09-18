@@ -13,6 +13,8 @@ from opportunity_state import (
     GenerationProvenance,
     OpportunityIdentity,
     OpportunityStateCandidate,
+    OpportunityStateChangeSet,
+    deterministic_change_set,
     evidence_manifest_hash,
     validate_candidate_evidence,
 )
@@ -182,3 +184,143 @@ def test_checksums_cannot_move_a_version_to_another_opportunity_scope(tmp_path) 
     (state_dir / "current.json").write_bytes(service._canonical_bytes(pointer))
 
     assert service.inspect_current("Acme", "synthetic-opportunity")["status"] == "malformed"
+
+
+def test_legacy_revision_one_without_parent_fields_remains_valid(tmp_path) -> None:
+    service = _service(tmp_path)
+    promoted = _promote(service)
+    state_dir = (
+        tmp_path / "customers" / "Acme" / "opportunities" / "synthetic-opportunity" /
+        ".opportunity-state"
+    )
+    path = next((state_dir / "versions").glob("*.json"))
+    envelope = json.loads(path.read_text(encoding="utf-8"))
+    for key in ("parent_version_id", "parent_revision", "change_set"):
+        envelope["version"].pop(key, None)
+    checksum = hashlib.sha256(service._canonical_bytes(envelope["version"])).hexdigest()
+    envelope["checksum"] = checksum
+    path.write_bytes(service._canonical_bytes(envelope))
+    pointer = json.loads((state_dir / "current.json").read_text(encoding="utf-8"))
+    pointer["checksum"] = checksum
+    (state_dir / "current.json").write_bytes(service._canonical_bytes(pointer))
+
+    loaded = OpportunityStateService(tmp_path / "customers", safe_name=_safe).read_current(
+        "Acme", "synthetic-opportunity"
+    )
+    assert loaded.version_id == promoted.version_id
+    assert loaded.parent_version_id is None
+    assert loaded.change_set is None
+
+
+def test_deterministic_diff_ignores_order_only_changes_and_tracks_stable_keys(tmp_path) -> None:
+    service = _service(tmp_path)
+    parent = _promote(service)
+    reordered = candidate().model_copy(deep=True)
+    reordered.health_indicators = list(reversed(reordered.health_indicators))
+    changes = deterministic_change_set(
+        parent=parent,
+        child_version_id="c" * 32,
+        child_revision=2,
+        child_state=reordered,
+        child_manifest=list(reversed(manifest())),
+    )
+    assert changes.brief == []
+    assert changes.health_indicators == []
+    assert changes.recommended_actions == []
+    assert changes.evidence_sources == []
+    assert changes.metadata_changed is False
+
+    changed = reordered.model_copy(deep=True)
+    changed.brief.current_status.value = "A materially changed current status"
+    changed.recommended_actions[0].goal = "A changed definition of the desired outcome."
+    diff = deterministic_change_set(
+        parent=parent,
+        child_version_id="d" * 32,
+        child_revision=2,
+        child_state=changed,
+        child_manifest=manifest(),
+    )
+    assert [(item.key, item.fields) for item in diff.brief] == [("current_status", ["value"])]
+    assert diff.recommended_actions[0].key == "confirm-connectors"
+    assert diff.recommended_actions[0].fields == ["goal"]
+
+
+def test_change_set_rejects_duplicate_keys_and_relationship_mismatch(tmp_path) -> None:
+    parent = _promote(_service(tmp_path))
+    changes = deterministic_change_set(
+        parent=parent,
+        child_version_id="e" * 32,
+        child_revision=2,
+        child_state=candidate(),
+        child_manifest=manifest(),
+    ).model_dump(mode="json")
+    changes["brief"] = [
+        {"key": "current_status", "change_type": "changed", "fields": ["value"]},
+        {"key": "current_status", "change_type": "changed", "fields": ["confidence"]},
+    ]
+    with pytest.raises(ValidationError, match="duplicate brief change key"):
+        OpportunityStateChangeSet.model_validate(changes)
+    changes["brief"] = []
+    changes["child_revision"] = 3
+    with pytest.raises(ValidationError, match="consecutive"):
+        OpportunityStateChangeSet.model_validate(changes)
+
+
+def test_update_promotion_preserves_history_and_rejects_stale_base(tmp_path) -> None:
+    service = _service(tmp_path)
+    parent = _promote(service)
+    child = service.promote_update(
+        identity=parent.identity,
+        expected_parent_version_id=parent.version_id,
+        expected_parent_revision=parent.revision,
+        evidence_manifest=manifest(),
+        expected_manifest_hash=evidence_manifest_hash(manifest()),
+        provenance=parent.provenance,
+        candidate=candidate(),
+    )
+    assert child.revision == 2
+    assert service.read_version("Acme", "synthetic-opportunity", 1) == parent
+    assert service.read_version("Acme", "synthetic-opportunity", 2) == child
+    assert [item["revision"] for item in service.list_history("Acme", "synthetic-opportunity")] == [2, 1]
+    with pytest.raises(OpportunityStateError) as stale:
+        service.promote_update(
+            identity=parent.identity,
+            expected_parent_version_id=parent.version_id,
+            expected_parent_revision=1,
+            evidence_manifest=manifest(),
+            expected_manifest_hash=evidence_manifest_hash(manifest()),
+            provenance=parent.provenance,
+            candidate=candidate(),
+        )
+    assert stale.value.code == "stale_base"
+
+
+def test_history_rejects_tampered_parent_relationship_even_with_new_checksum(tmp_path) -> None:
+    service = _service(tmp_path)
+    parent = _promote(service)
+    service.promote_update(
+        identity=parent.identity,
+        expected_parent_version_id=parent.version_id,
+        expected_parent_revision=1,
+        evidence_manifest=manifest(),
+        expected_manifest_hash=evidence_manifest_hash(manifest()),
+        provenance=parent.provenance,
+        candidate=candidate(),
+    )
+    state_dir = (
+        tmp_path / "customers" / "Acme" / "opportunities" / "synthetic-opportunity" /
+        ".opportunity-state"
+    )
+    child_path = sorted((state_dir / "versions").glob("*.json"))[-1]
+    envelope = json.loads(child_path.read_text(encoding="utf-8"))
+    envelope["version"]["parent_version_id"] = "f" * 32
+    envelope["version"]["change_set"]["parent_version_id"] = "f" * 32
+    envelope["checksum"] = hashlib.sha256(
+        service._canonical_bytes(envelope["version"])
+    ).hexdigest()
+    child_path.write_bytes(service._canonical_bytes(envelope))
+    pointer = json.loads((state_dir / "current.json").read_text(encoding="utf-8"))
+    pointer["checksum"] = envelope["checksum"]
+    (state_dir / "current.json").write_bytes(service._canonical_bytes(pointer))
+    with pytest.raises(OpportunityStateError, match="relationship"):
+        service.read_history("Acme", "synthetic-opportunity")

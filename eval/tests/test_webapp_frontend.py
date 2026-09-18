@@ -393,7 +393,9 @@ eval(src.slice(start, end));
 const ref = {{source_type: "transcript", source_id: "tr_synthetic", locator: "00:01:00"}};
 const claim = (value) => ({{knowledge_state: "known", value, confidence: "high", evidence_refs: [ref]}});
 const current = {{
-  revision: 1,
+  revision: 2,
+  created_at: "2026-09-18T12:00:00Z",
+  change_set: {{parent_revision: 1, child_revision: 2, metadata_changed: false, brief: [{{key: "current_status", change_type: "changed", fields: ["value"]}}], health_indicators: [], risks: [], recommended_actions: [], missing_information: [], evidence_sources: [{{source_type: "transcript", source_id: "tr_synthetic", change_type: "added"}}]}},
   evidence_manifest: [{{source_type: "opportunity_metadata", source_id: "opportunity-metadata-v1", display_name: "Opportunity metadata", sha256: "a".repeat(64)}}, {{source_type: "transcript", source_id: "tr_synthetic", display_name: "Synthetic transcript", sha256: "b".repeat(64)}}],
   state: {{
     brief: {{customer_objective: claim("Centralize data"), why_airbyte: claim("Reliable movement"), current_status: claim("Planning"), path_to_decision: claim("Validate then approve"), immediate_priority: claim("Confirm connectors")}},
@@ -404,7 +406,8 @@ const current = {{
   }}
 }};
 const base = {{account: {{name: "Acme"}}, opportunity: {{name: "Synthetic Opportunity", slug: "synthetic-opportunity"}}, outputs: {{opportunity: {{total: 0, groups: []}}, account: {{total: 0, groups: []}}}}, eligible_evidence: {{count: 1}}}};
-const created = renderOpportunityWorkspace({{...base, canonical_state: {{status: "current", available: true, current}}}});
+const freshness = {{metadata_changed: false, new_source_count: 1, changed_source_count: 0, update_active: false, last_successful_update: {{created_at: current.created_at}}}};
+const created = renderOpportunityWorkspace({{...base, canonical_state: {{status: "current", available: true, current, freshness}}}});
 const failed = renderOpportunityWorkspace({{...base, canonical_state: {{status: "not_created", available: false, create_job: {{status: "error", error_message: "Safe failure"}}}}}});
 console.log(JSON.stringify({{
   brief: created.includes("Centralize data") && created.includes("Confirm connectors"),
@@ -412,8 +415,8 @@ console.log(JSON.stringify({{
   risks: created.includes("Security review") && created.includes("Engage security"),
   provenance: created.includes("Evidence and missing information") && created.includes("Synthetic transcript"),
   evidenceButton: created.includes("data-evidence-refs"),
-  separate: created.includes("Canonical opportunity state is separate from generated outputs"),
-  noUpdate: !created.includes("Update overview") && !created.includes("What Changed"),
+  separate: created.includes("Generate remains a separate artifact workflow"),
+  update: created.includes('id="update-overview-btn"') && created.includes("What Changed") && created.includes("Revision 1 → Revision 2"),
   retry: failed.includes("Retry Create overview") && failed.includes("Safe failure")
 }}));
 """
@@ -424,7 +427,7 @@ console.log(JSON.stringify({{
 
 def test_create_overview_frontend_uses_opaque_selection_and_dedicated_routes(repo_root: Path) -> None:
     app_js = (repo_root / "webapp" / "static" / "app.js").read_text(encoding="utf-8")
-    create = app_js.split("async function openCreateOverviewModal")[1].split("// ---- Page: opportunity workspace")[0]
+    create = app_js.split("async function openCreateOverviewModal")[1].split("async function openUpdateOverviewModal")[0]
     assert "/overview/evidence" in create
     assert "/overview/create" in create
     assert "transcript_ids: selected" in create
@@ -433,4 +436,21 @@ def test_create_overview_frontend_uses_opaque_selection_and_dedicated_routes(rep
     page = app_js.split("async function pageOpportunity(account, slug, routeOppName)")[1]
     assert "/overview/jobs/${encodeURIComponent(jobId)}" in page
     assert "showOverviewEvidenceRefs" in page
+
+
+def test_update_overview_frontend_requires_selection_and_loads_history(repo_root: Path) -> None:
+    app_js = (repo_root / "webapp" / "static" / "app.js").read_text(encoding="utf-8")
+    update = app_js.split("async function openUpdateOverviewModal")[1].split("function showHistoricalOverview")[0]
+    assert "/overview/freshness" in update
+    assert "/overview/update" in update
+    assert "base_version_id: freshness.base_version_id" in update
+    assert "transcript_ids: selected" in update
+    assert "!freshness.metadata_changed && !boxes.some" in update
+    assert "Previously used · inherited without resending" in update
+    assert "Generated outputs and local filesystem paths are excluded" in update
+    history = app_js.split("async function loadOverviewHistory")[1].split("// ---- Page: opportunity workspace")[0]
+    assert "/overview/history" in history
+    assert "data-history-revision" in history
+    assert "showHistoricalOverview" in history
+    assert "<details" in app_js.split("function renderRevisionHistory")[1].split("function renderCreateOverviewState")[0]
 

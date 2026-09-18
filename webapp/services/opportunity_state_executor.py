@@ -17,7 +17,7 @@ from opportunity_state import OpportunityStateCandidate
 from services.transcription_service import ResolvedTranscriptEvidence
 
 
-UPDATER_VERSION = "opportunity-overview-slice-2a-v1"
+UPDATER_VERSION = "opportunity-overview-slice-2b-v1"
 VERIFIED_CLAUDE_VERSION = "2.1.272"
 _CLAUDE_VERSION_RE = re.compile(r"^\s*(?P<version>\d+\.\d+\.\d+)(?:\s|\(|$)")
 
@@ -39,6 +39,14 @@ class CanonicalStateExecutionRequest:
     opportunity_metadata: dict[str, Any]
     metadata_source_id: str
     transcripts: list[ResolvedTranscriptEvidence]
+    base_state: OpportunityStateCandidate | None = None
+    base_version_id: str | None = None
+    base_revision: int | None = None
+
+    def __post_init__(self) -> None:
+        values = (self.base_state, self.base_version_id, self.base_revision)
+        if any(value is not None for value in values) and not all(value is not None for value in values):
+            raise ValueError("update execution requires a complete base relationship")
 
 
 @dataclass(frozen=True)
@@ -139,14 +147,25 @@ class ClaudeCanonicalStateExecutor:
 
     @staticmethod
     def _prompt(request: CanonicalStateExecutionRequest) -> bytes:
+        is_update = request.base_state is not None
         payload = {
             "task": (
-                "Create the first canonical opportunity overview from only the supplied opportunity metadata "
-                "and explicitly selected transcripts. Return exactly the requested schema. Do not invent facts. "
-                "Use unknown states when evidence is absent. Do not reproduce transcript text or quotations. "
-                "Every material supported claim must cite one of the supplied source ids; transcript locators "
-                "may contain only a speaker/time or line-range pointer, never quoted evidence. Generated outputs "
-                "are not evidence and are not supplied."
+                (
+                    "Update the canonical opportunity overview. Treat prior_canonical_state as the validated "
+                    "baseline, not as an evidence source. Reconcile only the supplied current metadata and "
+                    "explicitly selected delta transcripts. Preserve prior facts and their evidence references "
+                    "unless new evidence changes, contradicts, or makes them obsolete. Do not cite the baseline "
+                    "JSON as evidence. Use unknown, partial, or conflicting states instead of inventing a "
+                    "resolution. "
+                ) if is_update else (
+                    "Create the first canonical opportunity overview from only the supplied opportunity metadata "
+                    "and explicitly selected transcripts. "
+                )
+            ) + (
+                "Return exactly the requested schema. Do not invent facts. Do not reproduce transcript text or "
+                "quotations. Every material supported claim must cite an authorized source id; transcript "
+                "locators may contain only a speaker/time or line-range pointer, never quoted evidence. "
+                "Generated outputs are not evidence and are not supplied."
             ),
             "opportunity": {
                 "account": request.account,
@@ -164,6 +183,12 @@ class ClaudeCanonicalStateExecutor:
                 for item in request.transcripts
             ],
         }
+        if is_update:
+            payload["base"] = {
+                "version_id": request.base_version_id,
+                "revision": request.base_revision,
+                "prior_canonical_state": request.base_state.model_dump(mode="json"),
+            }
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
     def _assert_isolated(self, cwd: Path) -> None:

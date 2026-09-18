@@ -210,6 +210,11 @@ async def test_hosted_mode_does_not_expose_local_routes(app_client: TestClient) 
         "/api/accounts/example/opportunities/example/overview/evidence",
         "/api/accounts/example/opportunities/example/overview/create",
         "/api/accounts/example/opportunities/example/overview/state",
+        "/api/accounts/example/opportunities/example/overview/freshness",
+        "/api/accounts/example/opportunities/example/overview/update",
+        "/api/accounts/example/opportunities/example/overview/update/jobs/example",
+        "/api/accounts/example/opportunities/example/overview/history",
+        "/api/accounts/example/opportunities/example/overview/history/1",
     ]
     for route in local_routes:
         response = app_client.get(route)

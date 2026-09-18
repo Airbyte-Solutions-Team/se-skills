@@ -95,6 +95,7 @@ def _build_local_services(app: FastAPI) -> None:
     from services.opportunity_state_create_service import OpportunityStateCreateService
     from services.opportunity_state_executor import ClaudeCanonicalStateExecutor
     from services.opportunity_state_service import OpportunityStateService
+    from services.opportunity_state_update_service import OpportunityStateUpdateService
     from services.output_service import OutputService
     from services.overview_service import OverviewService
     from services.skill_runtime_service import SkillRuntimeService
@@ -176,6 +177,14 @@ def _build_local_services(app: FastAPI) -> None:
         job_service=job_service,
         executor=opportunity_state_executor,
     )
+    opportunity_state_update_service = OpportunityStateUpdateService(
+        workspace_service=opportunity_workspace_service,
+        transcription_service=transcription_service,
+        state_service=opportunity_state_service,
+        job_service=job_service,
+        executor=opportunity_state_executor,
+    )
+    opportunity_workspace_service.set_update_service(opportunity_state_update_service)
     skill_runtime_service = SkillRuntimeService(
         customers_dir=config.CUSTOMERS_DIR,
         workspace=config.WORKSPACE,
@@ -196,6 +205,7 @@ def _build_local_services(app: FastAPI) -> None:
     app.state.opportunity_workspace_service = opportunity_workspace_service
     app.state.opportunity_state_service = opportunity_state_service
     app.state.opportunity_state_create_service = opportunity_state_create_service
+    app.state.opportunity_state_update_service = opportunity_state_update_service
     app.state.opportunity_state_executor = opportunity_state_executor
     app.state.overview_service = overview_service
     app.state.ask_service = ask_service

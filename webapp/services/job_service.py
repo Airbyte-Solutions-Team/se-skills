@@ -48,6 +48,9 @@ class JobService:
         self.persist_run = persist_run
         self.has_output_since = has_output_since
         self.jobs: dict[str, dict] = persistence.load_jobs(workspace)
+        # Create and update orchestration share this lock so their conflict
+        # checks and managed-job registration are one event-loop transaction.
+        self.opportunity_state_start_lock = asyncio.Lock()
 
     def get_job(self, job_id: str) -> dict | None:
         return self.jobs.get(job_id)
@@ -92,6 +95,23 @@ class JobService:
                 and job.get("opp_slug") == opp_slug
                 and job.get("status") == "running"
             ):
+                return job_id, job
+        return None
+
+    def active_opportunity_state_job(self, *, account: str, opp_slug: str) -> tuple[str, dict] | None:
+        for job_id, job in self.jobs.items():
+            if (
+                job.get("kind") in {"opportunity_state_create", "opportunity_state_update"}
+                and job.get("account") == account
+                and job.get("opp_slug") == opp_slug
+                and job.get("status") == "running"
+            ):
+                return job_id, job
+        return None
+
+    def find_managed_job(self, *, kind: str, sig: Any) -> tuple[str, dict] | None:
+        for job_id, job in self.jobs.items():
+            if job.get("kind") == kind and job.get("sig") == sig:
                 return job_id, job
         return None
 
@@ -204,11 +224,12 @@ class JobService:
             # Never log the exception message for evidence-processing jobs: an
             # unexpected dependency error could contain transcript content.
             logger.error("Managed job %s failed (%s)", job_id, type(exc).__name__)
+            action = "update" if job.get("kind") == "opportunity_state_update" else "creation"
             job.update(
                 status="error",
                 ok=False,
                 error_code="internal_error",
-                error_message="Overview creation failed safely; no state was saved.",
+                error_message=f"Overview {action} failed safely; no state was saved.",
                 finished_at=datetime.now(timezone.utc).timestamp(),
             )
         try:

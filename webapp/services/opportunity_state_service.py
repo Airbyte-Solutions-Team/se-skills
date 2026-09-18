@@ -18,6 +18,7 @@ from opportunity_state import (
     OpportunityIdentity,
     OpportunityStateCandidate,
     OpportunityStateVersion,
+    deterministic_change_set,
     evidence_manifest_hash,
     validate_candidate_evidence,
 )
@@ -129,19 +130,34 @@ class OpportunityStateService:
         version_path = resolve_within(versions_dir, filename)
         if not version_path.exists():
             raise OpportunityStateError(409, "Opportunity state version is unavailable.", code="malformed_storage")
+        version = self._read_version_path(account, opp_slug, version_path)
+        match = _VERSION_FILE.fullmatch(filename)
+        if version.revision != raw_pointer["revision"] or version.revision != int(match.group("revision")):
+            raise OpportunityStateError(409, "Opportunity state revision mismatch.", code="malformed_storage")
+        if version.version_id != match.group("version"):
+            raise OpportunityStateError(409, "Opportunity state identity mismatch.", code="malformed_storage")
+        raw_envelope = self._read_json_file(version_path)
+        if checksum != raw_envelope.get("checksum"):
+            raise OpportunityStateError(409, "Opportunity state checksum mismatch.", code="malformed_storage")
+        return version
+
+    def _read_version_path(self, account: str, opp_slug: str, version_path: Path) -> OpportunityStateVersion:
+        """Read one immutable version envelope and enforce checksum and scope."""
+        match = _VERSION_FILE.fullmatch(version_path.name)
+        if match is None:
+            raise OpportunityStateError(409, "Opportunity state version is malformed.", code="malformed_storage")
         raw_envelope = self._read_json_file(version_path)
         if not isinstance(raw_envelope, dict) or set(raw_envelope) != {"version", "checksum"}:
             raise OpportunityStateError(409, "Opportunity state version is malformed.", code="malformed_storage")
         encoded = self._canonical_bytes(raw_envelope.get("version"))
         actual_checksum = hashlib.sha256(encoded).hexdigest()
-        if raw_envelope.get("checksum") != actual_checksum or checksum != actual_checksum:
+        if raw_envelope.get("checksum") != actual_checksum:
             raise OpportunityStateError(409, "Opportunity state checksum mismatch.", code="malformed_storage")
         try:
             version = OpportunityStateVersion.model_validate(raw_envelope["version"])
         except (TypeError, ValueError) as exc:
             raise OpportunityStateError(409, "Opportunity state version is invalid.", code="malformed_storage") from exc
-        match = _VERSION_FILE.fullmatch(filename)
-        if version.revision != raw_pointer["revision"] or version.revision != int(match.group("revision")):
+        if version.revision != int(match.group("revision")):
             raise OpportunityStateError(409, "Opportunity state revision mismatch.", code="malformed_storage")
         if version.version_id != match.group("version"):
             raise OpportunityStateError(409, "Opportunity state identity mismatch.", code="malformed_storage")
@@ -178,6 +194,55 @@ class OpportunityStateService:
             },
             "current": current.model_dump(mode="json"),
         }
+
+    def read_history(self, account: str, opp_slug: str) -> list[OpportunityStateVersion]:
+        """Load and validate the complete immutable chain oldest first."""
+        _state_dir, versions_dir, _pointer = self._paths(account, opp_slug)
+        current = self._read_current(account, opp_slug)
+        if current is None:
+            return []
+        entries = list(versions_dir.iterdir())
+        if any(not _VERSION_FILE.fullmatch(path.name) for path in entries):
+            raise OpportunityStateError(409, "Opportunity state history is malformed.", code="malformed_storage")
+        paths = sorted(
+            entries,
+            key=lambda path: int(_VERSION_FILE.fullmatch(path.name).group("revision")),
+        )
+        versions = [self._read_version_path(account, opp_slug, path) for path in paths]
+        if not versions or versions[-1].version_id != current.version_id:
+            raise OpportunityStateError(409, "Opportunity state history is malformed.", code="malformed_storage")
+        for index, version in enumerate(versions):
+            if version.revision != index + 1:
+                raise OpportunityStateError(409, "Opportunity state history has a revision gap.", code="malformed_storage")
+            if index == 0:
+                continue
+            parent = versions[index - 1]
+            if version.parent_revision != parent.revision or version.parent_version_id != parent.version_id:
+                raise OpportunityStateError(409, "Opportunity state history relationship is invalid.", code="malformed_storage")
+        return versions
+
+    def list_history(self, account: str, opp_slug: str) -> list[dict[str, Any]]:
+        summaries: list[dict[str, Any]] = []
+        for version in reversed(self.read_history(account, opp_slug)):
+            summaries.append({
+                "version_id": version.version_id,
+                "revision": version.revision,
+                "created_at": version.created_at.isoformat(),
+                "parent_revision": version.parent_revision,
+                "evidence_count": len(version.evidence_manifest),
+                "evidence_manifest_hash": version.evidence_manifest_hash,
+                "provenance": version.provenance.model_dump(mode="json"),
+                "change_counts": version.change_set.high_level_counts() if version.change_set else {},
+            })
+        return summaries
+
+    def read_version(self, account: str, opp_slug: str, revision: int) -> OpportunityStateVersion:
+        if revision < 1 or revision > 1_000_000:
+            raise OpportunityStateError(404, "Unknown opportunity state revision.", code="unknown_version")
+        for version in self.read_history(account, opp_slug):
+            if version.revision == revision:
+                return version
+        raise OpportunityStateError(404, "Unknown opportunity state revision.", code="unknown_version")
 
     @staticmethod
     def _next_revision(versions_dir: Path) -> int:
@@ -244,4 +309,85 @@ class OpportunityStateService:
                 "checksum": checksum,
             })
             self._atomic_write(pointer, pointer_payload)
+            return version
+
+    def promote_update(
+        self,
+        *,
+        identity: OpportunityIdentity,
+        expected_parent_version_id: str,
+        expected_parent_revision: int,
+        evidence_manifest: list[EvidenceManifestEntry],
+        expected_manifest_hash: str,
+        provenance: GenerationProvenance,
+        candidate: OpportunityStateCandidate,
+    ) -> OpportunityStateVersion:
+        """Atomically promote a later revision only from the exact current base."""
+        validate_candidate_evidence(candidate, evidence_manifest)
+        actual_manifest_hash = evidence_manifest_hash(evidence_manifest)
+        if actual_manifest_hash != expected_manifest_hash:
+            raise OpportunityStateError(409, "Authorized evidence changed.", code="evidence_changed")
+
+        with self._lock:
+            parent = self._read_current(identity.account, identity.opportunity_slug)
+            if (
+                parent is None
+                or parent.version_id != expected_parent_version_id
+                or parent.revision != expected_parent_revision
+            ):
+                raise OpportunityStateError(409, "The overview changed while this update ran.", code="stale_base")
+            _state_dir, versions_dir, pointer = self._paths(
+                identity.account, identity.opportunity_slug, create=True
+            )
+            revision = self._next_revision(versions_dir)
+            if revision != parent.revision + 1:
+                raise OpportunityStateError(409, "Opportunity state history is inconsistent.", code="malformed_storage")
+            version_id = uuid.uuid4().hex
+            change_set = deterministic_change_set(
+                parent=parent,
+                child_version_id=version_id,
+                child_revision=revision,
+                child_state=candidate,
+                child_manifest=evidence_manifest,
+            )
+            version = OpportunityStateVersion(
+                schema_version=1,
+                version_id=version_id,
+                revision=revision,
+                identity=identity,
+                created_at=datetime.now(timezone.utc),
+                evidence_manifest=evidence_manifest,
+                evidence_manifest_hash=actual_manifest_hash,
+                provenance=provenance,
+                state=candidate,
+                parent_version_id=parent.version_id,
+                parent_revision=parent.revision,
+                change_set=change_set,
+            )
+            version_payload = version.model_dump(mode="json")
+            version_bytes = self._canonical_bytes(version_payload)
+            checksum = hashlib.sha256(version_bytes).hexdigest()
+            filename = f"{revision:08d}-{version.version_id}.json"
+            version_path = resolve_within(versions_dir, filename)
+            if version_path.exists():
+                raise OpportunityStateError(409, "Opportunity state version collision.", code="storage_conflict")
+            self._atomic_write(
+                version_path,
+                self._canonical_bytes({"version": version_payload, "checksum": checksum}),
+            )
+            try:
+                self._atomic_write(pointer, self._canonical_bytes({
+                    "schema_version": 1,
+                    "revision": revision,
+                    "filename": filename,
+                    "checksum": checksum,
+                }))
+            except OSError:
+                # The immutable child is not committed until the current pointer
+                # is durable. Remove only the version created by this call.
+                try:
+                    version_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                raise
             return version
