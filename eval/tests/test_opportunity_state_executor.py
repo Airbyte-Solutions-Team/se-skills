@@ -79,6 +79,29 @@ def test_authorized_evidence_is_in_stdin_not_command_line(tmp_path) -> None:
     assert all("SYNTHETIC_SENTINEL" not in arg for arg in executor.command())
 
 
+def test_update_prompt_supplies_baseline_without_treating_it_as_evidence(tmp_path) -> None:
+    executor = _executor(tmp_path)
+    request = _request()
+    update_request = CanonicalStateExecutionRequest(
+        account=request.account,
+        opportunity_slug=request.opportunity_slug,
+        opportunity_name=request.opportunity_name,
+        opportunity_metadata=request.opportunity_metadata,
+        metadata_source_id=request.metadata_source_id,
+        transcripts=request.transcripts,
+        base_state=candidate(),
+        base_version_id="a" * 32,
+        base_revision=1,
+    )
+    payload = json.loads(executor._prompt(update_request))
+    assert payload["base"]["prior_canonical_state"] == candidate().model_dump(mode="json")
+    assert payload["base"]["version_id"] == "a" * 32
+    assert "not as an evidence source" in payload["task"]
+    assert [item["source_id"] for item in payload["selected_transcripts"]] == [TRANSCRIPT_ID]
+    assert "generated output sentinel" not in json.dumps(payload).lower()
+    assert str(tmp_path) not in json.dumps(payload)
+
+
 def test_extract_candidate_accepts_cli_string_and_fenced_json_envelopes() -> None:
     payload = json.dumps(candidate().model_dump(mode="json"))
     for outer in (

@@ -132,6 +132,10 @@ def test_service_identity_preserved() -> None:
     assert fresh.state.opportunity_state_service is fresh.state.opportunity_state_create_service._state_service
     assert fresh.state.job_service is fresh.state.opportunity_state_create_service._job_service
     assert fresh.state.opportunity_state_executor is fresh.state.opportunity_state_create_service._executor
+    assert fresh.state.opportunity_state_service is fresh.state.opportunity_state_update_service._state_service
+    assert fresh.state.job_service is fresh.state.opportunity_state_update_service._job_service
+    assert fresh.state.opportunity_state_executor is fresh.state.opportunity_state_update_service._executor
+    assert fresh.state.opportunity_workspace_service._update_service is fresh.state.opportunity_state_update_service
     assert fresh.state.job_service is fresh.state.ask_service.job_service
     assert fresh.state.output_service is fresh.state.ask_service.output_service
     assert fresh.state.job_service is fresh.state.account_service._job_service

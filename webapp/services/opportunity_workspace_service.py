@@ -44,12 +44,18 @@ class OpportunityWorkspaceService:
         state_service: OpportunityStateService | None = None,
         job_service: JobService | None = None,
         transcription_service: TranscriptionService | None = None,
+        update_service: Any | None = None,
     ) -> None:
         self._account_service = account_service
         self._output_service = output_service
         self._state_service = state_service
         self._job_service = job_service
         self._transcription_service = transcription_service
+        self._update_service = update_service
+
+    def set_update_service(self, update_service: Any) -> None:
+        """Complete the local composition cycle after both services exist."""
+        self._update_service = update_service
 
     @staticmethod
     def _group_outputs(outputs: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -139,13 +145,15 @@ class OpportunityWorkspaceService:
         }
 
     @staticmethod
-    def _safe_create_job(job: dict[str, Any] | None) -> dict[str, Any] | None:
+    def _safe_state_job(job: dict[str, Any] | None) -> dict[str, Any] | None:
         if not job:
             return None
         allowed = (
             "job_id", "kind", "status", "ok", "started_at", "finished_at",
             "evidence_manifest_hash", "evidence_count", "result_revision",
             "result_version_id", "error_code", "error_message", "persistence_warning",
+            "base_version_id", "base_revision", "authorized_delta_hash",
+            "selected_transcript_count",
         )
         return {key: job[key] for key in allowed if key in job}
 
@@ -167,7 +175,7 @@ class OpportunityWorkspaceService:
         )
         create_job = None
         if self._job_service is not None:
-            create_job = self._safe_create_job(self._job_service.latest_job(
+            create_job = self._safe_state_job(self._job_service.latest_job(
                 kind="opportunity_state_create", account=safe_account, opp_slug=safe_opp
             ))
         eligible_summary = {"count": 0, "total_bytes": 0}
@@ -178,6 +186,12 @@ class OpportunityWorkspaceService:
                 "total_bytes": sum(item["size_bytes"] for item in eligible),
             }
             canonical_state["create_job"] = create_job
+        if canonical_state["status"] == "current" and self._update_service is not None:
+            canonical_state["freshness"] = await self._update_service.get_readiness(safe_account, safe_opp)
+            if self._job_service is not None:
+                canonical_state["update_job"] = self._safe_state_job(self._job_service.latest_job(
+                    kind="opportunity_state_update", account=safe_account, opp_slug=safe_opp
+                ))
 
         return {
             "schema_version": self.SCHEMA_VERSION,
@@ -189,7 +203,7 @@ class OpportunityWorkspaceService:
                 "generate": True,
                 "live_transcribe": True,
                 "coverage_handoff": True,
-                "update_overview": False,
+                "update_overview": canonical_state["status"] == "current",
                 "create_overview": canonical_state["status"] == "not_created",
                 "local_only": True,
             },

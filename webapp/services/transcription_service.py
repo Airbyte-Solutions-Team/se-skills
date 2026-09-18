@@ -548,6 +548,32 @@ class TranscriptionService:
             ))
         return resolved
 
+    def inspect_evidence_transcripts(
+        self,
+        account: str,
+        *,
+        max_items: int = 200,
+    ) -> list[ResolvedTranscriptEvidence]:
+        """Hash currently eligible sources for freshness without returning bodies to callers."""
+        listed = self.list_evidence_transcripts(account)
+        if len(listed) > max_items:
+            raise TranscriptionError(413, "There are too many saved transcripts to inspect safely.")
+        snapshots: list[ResolvedTranscriptEvidence] = []
+        for item in listed:
+            try:
+                snapshots.extend(self.resolve_evidence_transcripts(
+                    account,
+                    [item["id"]],
+                    max_items=1,
+                    max_total_bytes=500_000,
+                ))
+            except TranscriptionError as exc:
+                # Oversized or unstable files are not eligible update evidence.
+                if exc.status_code in {409, 413}:
+                    continue
+                raise
+        return snapshots
+
     # ------------------------------------------------------------------
     # Whisper model
     # ------------------------------------------------------------------

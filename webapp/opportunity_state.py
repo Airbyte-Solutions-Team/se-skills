@@ -10,7 +10,7 @@ import hashlib
 import json
 from datetime import datetime
 from enum import Enum
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
@@ -262,6 +262,85 @@ class GenerationProvenance(StrictModel):
     cli_version: ShortText
 
 
+class ChangeType(str, Enum):
+    ADDED = "added"
+    REMOVED = "removed"
+    RESOLVED = "resolved"
+    CHANGED = "changed"
+    REPLACED = "replaced"
+
+
+class TypedItemChange(StrictModel):
+    """A bounded, deterministic description of one stable-keyed state change."""
+
+    key: StableKey
+    change_type: ChangeType
+    fields: list[ShortText] = Field(default_factory=list, max_length=20)
+
+    @model_validator(mode="after")
+    def validate_fields(self) -> "TypedItemChange":
+        if self.change_type == ChangeType.CHANGED and not self.fields:
+            raise ValueError("changed items require at least one changed field")
+        if self.change_type != ChangeType.CHANGED and self.fields:
+            raise ValueError("only changed items may list changed fields")
+        if len(self.fields) != len(set(self.fields)):
+            raise ValueError("duplicate changed field")
+        return self
+
+
+class EvidenceSourceChange(StrictModel):
+    source_type: EvidenceSourceType
+    source_id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=8, max_length=160)]
+    change_type: Literal[ChangeType.ADDED, ChangeType.REPLACED]
+
+
+class OpportunityStateChangeSet(StrictModel):
+    """Typed diff computed by the application, never authored by the model."""
+
+    schema_version: Literal[1]
+    parent_version_id: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{32}$")]
+    parent_revision: int = Field(ge=1, le=999_999)
+    child_version_id: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{32}$")]
+    child_revision: int = Field(ge=2, le=1_000_000)
+    brief: list[TypedItemChange] = Field(default_factory=list, max_length=5)
+    health_indicators: list[TypedItemChange] = Field(default_factory=list, max_length=4)
+    risks: list[TypedItemChange] = Field(default_factory=list, max_length=24)
+    recommended_actions: list[TypedItemChange] = Field(default_factory=list, max_length=24)
+    missing_information: list[TypedItemChange] = Field(default_factory=list, max_length=48)
+    evidence_sources: list[EvidenceSourceChange] = Field(default_factory=list, max_length=50)
+    metadata_changed: bool
+
+    @model_validator(mode="after")
+    def validate_change_set(self) -> "OpportunityStateChangeSet":
+        if self.child_revision != self.parent_revision + 1:
+            raise ValueError("change set revisions must be consecutive")
+        for label, values in (
+            ("brief", self.brief),
+            ("health indicator", self.health_indicators),
+            ("risk", self.risks),
+            ("recommended action", self.recommended_actions),
+            ("missing information", self.missing_information),
+        ):
+            keys = [item.key for item in values]
+            if len(keys) != len(set(keys)):
+                raise ValueError(f"duplicate {label} change key")
+        evidence_keys = [(item.source_type, item.source_id) for item in self.evidence_sources]
+        if len(evidence_keys) != len(set(evidence_keys)):
+            raise ValueError("duplicate evidence source change")
+        return self
+
+    def high_level_counts(self) -> dict[str, int]:
+        return {
+            "brief": len(self.brief),
+            "health_indicators": len(self.health_indicators),
+            "risks": len(self.risks),
+            "recommended_actions": len(self.recommended_actions),
+            "missing_information": len(self.missing_information),
+            "evidence_sources": len(self.evidence_sources),
+            "metadata": int(self.metadata_changed),
+        }
+
+
 class OpportunityStateVersion(StrictModel):
     schema_version: Literal[1]
     version_id: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{32}$")]
@@ -272,6 +351,9 @@ class OpportunityStateVersion(StrictModel):
     evidence_manifest_hash: Sha256
     provenance: GenerationProvenance
     state: OpportunityStateCandidate
+    parent_version_id: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{32}$")] | None = None
+    parent_revision: int | None = Field(default=None, ge=1, le=999_999)
+    change_set: OpportunityStateChangeSet | None = None
 
     _aware_timestamp = field_validator("created_at")(_require_aware)
 
@@ -283,7 +365,129 @@ class OpportunityStateVersion(StrictModel):
         if self.evidence_manifest_hash != evidence_manifest_hash(self.evidence_manifest):
             raise ValueError("evidence manifest hash mismatch")
         validate_candidate_evidence(self.state, self.evidence_manifest)
+        if self.revision == 1:
+            if self.parent_version_id is not None or self.parent_revision is not None or self.change_set is not None:
+                raise ValueError("revision 1 must not have a parent or change set")
+        else:
+            if self.parent_version_id is None or self.parent_revision is None or self.change_set is None:
+                raise ValueError("later revisions require a parent and change set")
+            if self.parent_revision != self.revision - 1:
+                raise ValueError("parent revision must immediately precede child revision")
+            if (
+                self.change_set.parent_version_id != self.parent_version_id
+                or self.change_set.parent_revision != self.parent_revision
+                or self.change_set.child_version_id != self.version_id
+                or self.change_set.child_revision != self.revision
+            ):
+                raise ValueError("change set version relationship mismatch")
         return self
+
+
+def _canonical_change_value(value: Any) -> Any:
+    """Normalize semantically unordered evidence references before comparing."""
+    if isinstance(value, BaseModel):
+        value = value.model_dump(mode="json")
+    if isinstance(value, dict):
+        normalized = {key: _canonical_change_value(item) for key, item in value.items()}
+        refs = normalized.get("evidence_refs")
+        if isinstance(refs, list):
+            normalized["evidence_refs"] = sorted(
+                refs,
+                key=lambda item: (
+                    str(item.get("source_type", "")), str(item.get("source_id", "")),
+                    str(item.get("locator") or ""),
+                ),
+            )
+        return normalized
+    if isinstance(value, list):
+        return [_canonical_change_value(item) for item in value]
+    return value
+
+
+def _changed_fields(before: BaseModel, after: BaseModel) -> list[str]:
+    left = _canonical_change_value(before)
+    right = _canonical_change_value(after)
+    return sorted(key for key in set(left) | set(right) if left.get(key) != right.get(key))
+
+
+def _keyed_changes(
+    before: list[BaseModel],
+    after: list[BaseModel],
+    *,
+    removed_type: ChangeType = ChangeType.REMOVED,
+) -> list[TypedItemChange]:
+    left = {str(item.key.value if isinstance(item.key, Enum) else item.key): item for item in before}
+    right = {str(item.key.value if isinstance(item.key, Enum) else item.key): item for item in after}
+    changes: list[TypedItemChange] = []
+    for key in sorted(set(left) | set(right)):
+        if key not in left:
+            changes.append(TypedItemChange(key=key, change_type=ChangeType.ADDED))
+        elif key not in right:
+            changes.append(TypedItemChange(key=key, change_type=removed_type))
+        else:
+            fields = _changed_fields(left[key], right[key])
+            if fields:
+                changes.append(TypedItemChange(key=key, change_type=ChangeType.CHANGED, fields=fields))
+    return changes
+
+
+def deterministic_change_set(
+    *,
+    parent: OpportunityStateVersion,
+    child_version_id: str,
+    child_revision: int,
+    child_state: OpportunityStateCandidate,
+    child_manifest: list[EvidenceManifestEntry],
+) -> OpportunityStateChangeSet:
+    """Compare validated versions deterministically and without list-order noise."""
+    brief_changes: list[TypedItemChange] = []
+    for key in sorted(parent.state.brief.model_fields):
+        fields = _changed_fields(getattr(parent.state.brief, key), getattr(child_state.brief, key))
+        if fields:
+            brief_changes.append(TypedItemChange(key=key, change_type=ChangeType.CHANGED, fields=fields))
+
+    parent_manifest = {(item.source_type, item.source_id): item for item in parent.evidence_manifest}
+    child_manifest_map = {(item.source_type, item.source_id): item for item in child_manifest}
+    evidence_changes: list[EvidenceSourceChange] = []
+    for source_type, source_id in sorted(child_manifest_map, key=lambda item: (item[0].value, item[1])):
+        previous = parent_manifest.get((source_type, source_id))
+        current = child_manifest_map[(source_type, source_id)]
+        if previous is None:
+            evidence_changes.append(EvidenceSourceChange(
+                source_type=source_type, source_id=source_id, change_type=ChangeType.ADDED
+            ))
+        elif previous.sha256 != current.sha256:
+            evidence_changes.append(EvidenceSourceChange(
+                source_type=source_type, source_id=source_id, change_type=ChangeType.REPLACED
+            ))
+    metadata_changed = any(
+        item.source_type == EvidenceSourceType.OPPORTUNITY_METADATA
+        for item in evidence_changes
+    )
+    # Metadata has its own flag and is not duplicated in the evidence-source list.
+    evidence_changes = [
+        item for item in evidence_changes if item.source_type != EvidenceSourceType.OPPORTUNITY_METADATA
+    ]
+    return OpportunityStateChangeSet(
+        schema_version=1,
+        parent_version_id=parent.version_id,
+        parent_revision=parent.revision,
+        child_version_id=child_version_id,
+        child_revision=child_revision,
+        brief=brief_changes,
+        health_indicators=_keyed_changes(parent.state.health_indicators, child_state.health_indicators),
+        risks=_keyed_changes(parent.state.risks, child_state.risks),
+        recommended_actions=_keyed_changes(
+            parent.state.recommended_actions, child_state.recommended_actions
+        ),
+        missing_information=_keyed_changes(
+            parent.state.missing_information,
+            child_state.missing_information,
+            removed_type=ChangeType.RESOLVED,
+        ),
+        evidence_sources=evidence_changes,
+        metadata_changed=metadata_changed,
+    )
 
 
 def evidence_manifest_hash(entries: list[EvidenceManifestEntry]) -> str:

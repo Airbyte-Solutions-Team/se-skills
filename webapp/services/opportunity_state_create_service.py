@@ -63,7 +63,7 @@ class OpportunityStateCreateService:
         self._state_service = state_service
         self._job_service = job_service
         self._executor = executor
-        self._start_lock = asyncio.Lock()
+        self._start_lock = job_service.opportunity_state_start_lock
 
     async def resolve_identity(self, account: str, opp_slug: str) -> dict[str, Any]:
         return await self._workspace_service.resolve_identity(account, opp_slug)
@@ -150,17 +150,15 @@ class OpportunityStateCreateService:
                     409, "Existing opportunity state storage must be repaired before creating an overview.",
                     code="malformed_storage",
                 )
-            active = self._job_service.active_job(
-                kind="opportunity_state_create",
-                account=identity["safe_account"],
-                opp_slug=identity["safe_opp"],
+            active = self._job_service.active_opportunity_state_job(
+                account=identity["safe_account"], opp_slug=identity["safe_opp"]
             )
             if active is not None:
                 job_id, job = active
-                if job.get("evidence_manifest_hash") == manifest_hash:
+                if job.get("kind") == "opportunity_state_create" and job.get("evidence_manifest_hash") == manifest_hash:
                     return {"job_id": job_id, "reused": True}
                 raise OpportunityStateCreateError(
-                    409, "An overview creation is already running for this opportunity.", code="create_in_progress"
+                    409, "Overview work is already running for this opportunity.", code="create_in_progress"
                 )
 
             async def runner(_job_id: str) -> dict[str, Any]:
