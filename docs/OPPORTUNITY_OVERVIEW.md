@@ -1,7 +1,7 @@
 # Opportunity Overview — Product and Implementation Specification
 
-**Status:** Slice 1 and local Slice 2A implemented; Slice 2B and later slices remain proposed
-**Source-of-truth baseline:** Airbyte-Solutions-Team/se-skills main at 6df71210abe9315f175a459c25d2f5e32bbb7fe6, inspected September 17, 2026
+**Status:** Slice 1, local Slice 2A, and local Slice 2B implemented; Slice 3 and later slices remain proposed
+**Source-of-truth baseline:** Airbyte-Solutions-Team/se-skills main at 89df39bec28067f278f68dd66bb7aaf1bc9d51a4, inspected September 18, 2026
 **Scope of this document:** Product behavior, information architecture, domain boundaries, API and persistence direction, implementation slices, and acceptance criteria. This document does not authorize deployment, production data migration, new providers, or expansion of the hosted skill allowlist.
 
 ## 1. Executive decision
@@ -47,18 +47,17 @@ The following remain working hypotheses until a bounded implementation slice is 
 
 ### 3.1 Current local opportunity page
 
-The local opportunity route is implemented by **pageOpportunity** in **webapp/static/app.js**. It currently:
+The local opportunity route is implemented by **pageOpportunity** in **webapp/static/app.js** and backed by **OpportunityWorkspaceService**. It now:
 
-- Loads opportunity-scoped outputs from **GET /api/accounts/{account}/outputs?opp={slug}**.
-- Displays Live Transcribe, Coverage Handoff, Invoke Skill, and a free-text command bar.
-- Displays Generated Outputs grouped by date.
-- Reattaches to running jobs and refreshes the output list when a job finishes.
-- Receives the opportunity display name from the hash route rather than loading a dedicated opportunity-detail read model.
-- Has no opportunity brief, canonical state, technical-evaluation lifecycle, risks/actions summary, stakeholder summary, or evidence/freshness contract.
+- Loads server-authoritative account and opportunity metadata, canonical state, freshness, jobs, and separately scoped opportunity/account outputs.
+- Creates revision 1 only after explicit transcript selection and exposes **Update Overview** as a separate action once canonical state exists.
+- Calculates freshness on the server, showing metadata change plus new, changed, inherited, and missing transcript-source categories without returning paths or transcript bodies.
+- Reconciles only current metadata, the validated base state, and explicitly selected new or changed transcript bodies into later immutable revisions.
+- Renders the typed Opportunity Brief, categorical health indicators, risks/actions, evidence/missing information, deterministic What Changed, and collapsed read-only revision history.
+- Reattaches to running create/update jobs and refreshes when they finish; interrupted state jobs recover as safe retryable failures.
+- Preserves Generate, Live Transcribe, Coverage Handoff, output history/reader/Back, Tech Eval and MEDDPICC disclosures, and account/output separation.
 
-The local output list is produced by **OutputService.list_outputs** in **webapp/services/output_service.py**. It returns generation time, skill, filename, path, validation fields, and reference-freshness fields, but it does not currently return the human review state in the opportunity output-list response.
-
-Local reruns create separate Markdown or HTML files. They are durable artifacts, but they are not represented as an explicit artifact-series and generation-version model.
+Local reruns remain separate Markdown or HTML artifacts. Generated outputs are never parsed or ingested as canonical evidence. Human overrides, lifecycle state, external evidence providers, and hosted canonical-state routes remain outside the implemented boundary.
 
 ### 3.2 Current team landing Overview
 
@@ -1016,11 +1015,23 @@ Scope:
 
 Explicit exclusions: no Update Overview, What Changed, human corrections/overrides, Tech Eval lifecycle state, hosted route, external evidence provider, Salesforce write, deployment, or customer-data fixture.
 
-### Slice 2B — Local Update Overview and typed change history (deferred)
+### Slice 2B — Local Update Overview and typed change history (implemented)
 
 **Outcome:** Reconcile newly authorized evidence into later immutable versions and derive What Changed from typed versions.
 
-Scope remains subject to separate approval. It includes freshness comparison, stale-base promotion rules, typed diffs, and any human correction/conflict behavior. Slice 2A Create refuses to run after a current version exists.
+Implemented scope:
+
+- Server-side freshness compares current metadata and locally eligible transcript hashes with the current cumulative manifest. New account transcripts are only available for review; they are never inferred to belong to the opportunity.
+- Update accepts the exact current version relationship plus only explicitly selected new or changed opaque transcript IDs. Unchanged evidence is inherited without resending, missing historical evidence does not invalidate prior state, and a metadata/selection no-op is refused.
+- The new manifest replaces the metadata snapshot, explicitly replaces changed selected sources, adds selected new sources, and never silently removes inherited evidence.
+- The dedicated Slice 2A executor remains intact: exact Claude Code 2.1.272 preflight, one turn, no tools/MCP/browser/session, isolated cwd, bounded I/O, and schema validation. The update prompt supplies validated prior state as a baseline but forbids citing it as evidence.
+- Before and after execution, the service re-resolves identity, metadata, selected bytes, hashes, and the exact base. Promotion rechecks the base while holding the state lock; stale or mutated work fails without changing the current pointer.
+- Revision 1 remains compatible without parent fields. Revision 2+ requires an exact parent, cumulative manifest, provenance, and application-computed typed change set. History loads oldest-to-newest with checksum, filename, scope, revision-continuity, and parent-chain validation.
+- Typed diffs are stable-keyed and order-insensitive for semantically unordered lists. They cover brief, health, risks, actions, missing-information resolution, transcript additions/replacements, and metadata change.
+- The local UI adds freshness copy, explicit update consent, running/failure/retry states, What Changed with progressive disclosure, and collapsed read-only revision history.
+- `opportunity_state_update` jobs persist safe metadata only, reuse the same exact base/delta request, reject conflicting create/update work, and recover interrupted runs without partial promotion.
+
+Explicit exclusions: no human override or manual conflict-resolution workflow, Tech Eval lifecycle state, MEDDPICC/Business Case/stakeholder state, hosted update route or persistence, external evidence integration, Salesforce write, generated-output ingestion, provider/cost decision, deployment, or customer-data fixture.
 
 ### Slice 3 — Technical Evaluation Lifecycle
 
@@ -1131,7 +1142,7 @@ Scope:
 - **webapp/static/index.html** cache-bust is updated for JavaScript changes.
 - **webapp/README.md** and **webapp/SESSION-LOG.md** are updated in the same change.
 
-## 18. Canonical-state acceptance criteria for later slices
+## 18. Canonical-state acceptance criteria
 
 - A state version cannot reference a cross-organization account, opportunity, job, user, transcript, output, or source.
 - Every new tenant table has non-null **org_id**, RLS, least-privilege grants, and composite same-organization foreign keys.
@@ -1198,7 +1209,7 @@ Risk: planned fields in DATA_MODEL are assumed to exist even though migration 00
 
 Decision: migrations and exact code are implementation truth. New header fields require explicit schema/API work.
 
-## 20. Product decisions required before Slice 2
+## 20. Product decisions for later slices
 
 The Product Owner should explicitly choose:
 
@@ -1224,6 +1235,4 @@ The Product Owner should explicitly choose:
 
 ## 21. Recommended next implementation brief
 
-After this specification is accepted, the first Codex implementation task should be **Slice 1 — Opportunity workspace shell and output launchpad** only.
-
-Codex must begin from the then-current main, inspect uncommitted changes, and restate the verified current behavior before editing. It should implement the existing-data shell, preserve local workflows, avoid fake overview content, add behavior-focused tests, update documentation, and report exact validation evidence. It should not add canonical state persistence, Update overview, a new skill, a hosted runtime, a database migration, a provider, or a deployment in that slice.
+The next bounded product slice is **Slice 3 — Technical Evaluation Lifecycle**, only after its separate write-boundary and human-control decisions are approved. Slice 2B does not authorize manual canonical-state edits, hosted persistence, a new provider, deployment, or generated-output ingestion.
