@@ -416,7 +416,8 @@ console.log(JSON.stringify({{
   provenance: created.includes("Evidence and missing information") && created.includes("Synthetic transcript"),
   evidenceButton: created.includes("data-evidence-refs"),
   separate: created.includes("Generate remains a separate artifact workflow"),
-  update: created.includes('id="update-overview-btn"') && created.includes("What Changed") && created.includes("Revision 1 → Revision 2") && created.includes("Business Case") && created.includes("MEDDPICC"),
+  update: created.includes('id="update-overview-btn"') && created.includes("What Changed") && created.includes("Revision 1 → Revision 2") && created.includes("Business Case") && created.includes("MEDDPICC") && created.includes("Stakeholders"),
+  stakeholderLegacy: created.includes("0 established") && created.includes("Not established from authorized evidence") && !created.includes("No structured stakeholder map is available yet"),
   retry: failed.includes("Retry Create overview") && failed.includes("Safe failure")
 }}));
 """
@@ -425,7 +426,7 @@ console.log(JSON.stringify({{
     assert all(rendered.values()), rendered
 
 
-def test_business_case_and_meddpicc_are_collapsed_nested_and_escaped(repo_root: Path) -> None:
+def test_overview_frameworks_are_collapsed_complete_and_escaped(repo_root: Path) -> None:
     app_js_path = repo_root / "webapp" / "static" / "app.js"
     script = f"""
 const fs = require("fs");
@@ -434,7 +435,7 @@ const start = src.indexOf("const overviewLabel");
 const end = src.indexOf("function renderOverviewBrief", start);
 if (start < 0 || end < 0) throw new Error("framework renderer block missing");
 const esc = (value) => String(value == null ? "" : value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
-eval(src.slice(start, end) + "\\nglobalThis.renderBusinessCase = renderBusinessCase; globalThis.renderMeddpicc = renderMeddpicc;");
+eval(src.slice(start, end) + "\\nglobalThis.renderBusinessCase = renderBusinessCase; globalThis.renderMeddpicc = renderMeddpicc; globalThis.renderStakeholders = renderStakeholders;");
 const ref = {{source_type: "transcript", source_id: "tr_synthetic", locator: "00:01:00"}};
 const knowledge = (state, value, refs = []) => ({{knowledge_state: state, value, confidence: "medium", confirmation: refs.length ? "evidence_backed" : "inferred", evidence_refs: refs}});
 const area = (state, value, missing, refs = []) => ({{knowledge: knowledge(state, value, refs), missing_information: missing}});
@@ -452,24 +453,41 @@ const current = {{state: {{
     missing_information: index < 3 ? [] : ["Missing " + key],
     suggested_discovery: ["Ask about " + key + " </details><script>x</script>"],
   }}))}},
+  stakeholders: {{
+    stakeholders: [{{key: "casey-champion", name: "Casey <script>x</script>", title_or_role: "Data lead <img src=x>", category: "champion", influence: "high", engagement: "active", stance: "supportive", blocker_status: "not_a_blocker", blocker_reason: null, recommended_next_step: "Confirm process </details><script>x</script>", evidence_refs: [ref], missing_information: ["Authority <svg onload=x>"]}}, {{key: "sam-security", name: "Sam", title_or_role: null, category: "security_approver", influence: "medium", engagement: "limited", stance: "skeptical", blocker_status: "active_blocker", blocker_reason: "Security requirements unknown", recommended_next_step: null, evidence_refs: [ref], missing_information: []}}],
+    missing_key_roles: ["economic_buyer", "technical_decision_maker"],
+    missing_information: ["Procurement contact <iframe>"],
+  }},
 }}}};
 const business = renderBusinessCase(current);
 const meddpicc = renderMeddpicc(current);
-const html = business + meddpicc;
+const stakeholders = renderStakeholders(current);
+const html = business + meddpicc + stakeholders;
 console.log(JSON.stringify({{
-  topCollapsed: !/<details[^>]+id="overview-(business-case|meddpicc)"[^>]+open/.test(html),
+  topCollapsed: !/<details[^>]+id="overview-(business-case|meddpicc|stakeholders)"[^>]+open/.test(html),
   nestedCollapsed: !/<details[^>]+data-meddpicc-dimension[^>]+open/.test(html),
   eightDimensions: (meddpicc.match(/data-meddpicc-dimension=/g) || []).length === 8,
   businessSummary: business.includes("1 established · 1 partial · 1 conflicting · 1 unknown"),
   meddpiccSummary: meddpicc.includes("3 established · 2 partial · 3 unknown"),
   sections: ["Known information", "Missing information", "Evidence", "Suggested discovery"].every((label) => meddpicc.includes(label)),
   evidence: html.includes("data-evidence-refs=") && html.includes("1 evidence reference"),
-  escaped: !html.includes("<script>") && !html.includes("<img") && html.includes("&lt;script&gt;") && html.includes("&lt;img src=x&gt;"),
+  stakeholderCount: (stakeholders.match(/data-stakeholder-key=/g) || []).length === 2,
+  stakeholderSummary: stakeholders.includes("2 established · Missing Economic Buyer, Technical Decision Maker · 1 blocker"),
+  stakeholderFields: ["Influence", "Engagement", "Stance", "Blocker information", "Recommended next engagement step", "Missing information", "Evidence"].every((label) => stakeholders.includes(label)),
+  stakeholderDisclosure: stakeholders.startsWith('<details class="workspace-disclosure') && stakeholders.includes("<summary>") && !stakeholders.includes("<details open"),
+  noPlaceholder: !html.includes("No structured stakeholder map is available yet"),
+  escaped: !html.includes("<script>") && !html.includes("<img") && !html.includes("<svg") && !html.includes("<iframe") && html.includes("&lt;script&gt;") && html.includes("&lt;img src=x&gt;"),
 }}));
 """
     result = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
     rendered = json.loads(result.stdout)
     assert all(rendered.values()), rendered
+
+    css = (repo_root / "webapp" / "static" / "style.css").read_text(encoding="utf-8")
+    assert ".overview-stakeholder { min-width: 0" in css
+    assert "overflow-wrap: anywhere" in css
+    assert ".overview-stakeholder-grid { grid-template-columns: minmax(0, 1fr); }" in css
+    assert ".overview-stakeholder-signals { grid-template-columns: minmax(0, 1fr); }" in css
 
 
 def test_create_overview_frontend_uses_opaque_selection_and_dedicated_routes(repo_root: Path) -> None:

@@ -2123,6 +2123,45 @@ function renderMeddpicc(current) {
   </details>`;
 }
 
+function renderStakeholders(current) {
+  const stakeholderMap = current?.state?.stakeholders || {};
+  const stakeholders = stakeholderMap.stakeholders || [];
+  const missingRoles = stakeholderMap.missing_key_roles || ["champion", "economic_buyer", "technical_decision_maker"];
+  const missingInformation = stakeholderMap.missing_information || ["Stakeholders are not established from authorized evidence."];
+  const blockers = stakeholders.filter((item) => ["active_blocker", "potential_blocker"].includes(item.blocker_status));
+  const missingLabel = missingRoles.length
+    ? `Missing ${missingRoles.map(overviewLabel).join(", ")}`
+    : "Key roles established";
+  const summary = `${stakeholders.length} established · ${missingLabel} · ${blockers.length} blocker${blockers.length === 1 ? "" : "s"}`;
+  const cards = stakeholders.map((stakeholder) => `<article class="overview-stakeholder" data-stakeholder-key="${esc(stakeholder.key)}">
+    <div class="overview-stakeholder-head">
+      <div><h3>${esc(stakeholder.name)}</h3><p>${esc(stakeholder.title_or_role || "Title or customer role not established")}</p></div>
+      <span class="workspace-status workspace-status--neutral">${esc(overviewLabel(stakeholder.category))}</span>
+    </div>
+    <dl class="overview-stakeholder-signals">
+      <div><dt>Influence</dt><dd>${esc(overviewLabel(stakeholder.influence))}</dd></div>
+      <div><dt>Engagement</dt><dd>${esc(overviewLabel(stakeholder.engagement))}</dd></div>
+      <div><dt>Stance</dt><dd>${esc(overviewLabel(stakeholder.stance))}</dd></div>
+      <div><dt>Blocker</dt><dd>${esc(overviewLabel(stakeholder.blocker_status))}</dd></div>
+    </dl>
+    <section><h4>Blocker information</h4><p>${esc(stakeholder.blocker_reason || "No blocker reason established.")}</p></section>
+    <section><h4>Recommended next engagement step</h4><p>${esc(stakeholder.recommended_next_step || "Not established.")}</p></section>
+    <section><h4>Missing information</h4>${(stakeholder.missing_information || []).length ? `<ul>${stakeholder.missing_information.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>` : '<p class="muted">No additional stakeholder gap was recorded.</p>'}</section>
+    <section><h4>Evidence</h4>${renderEvidenceButton(stakeholder.evidence_refs)}</section>
+  </article>`).join("");
+  return `<details class="workspace-disclosure overview-framework-card" id="overview-stakeholders">
+    <summary>
+      <span><strong>Stakeholders</strong><small>${stakeholders.length ? "Roles, influence, engagement, stance, blockers, and next steps." : "Not established from authorized evidence."}</small></span>
+      <span class="workspace-state">${esc(summary)}</span>
+    </summary>
+    <div class="workspace-disclosure-body">
+      ${cards ? `<div class="overview-stakeholder-grid">${cards}</div>` : '<p class="overview-not-established"><strong>Not established</strong><span>No people are established from authorized evidence.</span></p>'}
+      <section class="overview-stakeholder-gaps"><h3>Important roles still missing</h3>${missingRoles.length ? `<ul>${missingRoles.map((role) => `<li>${esc(overviewLabel(role))}</li>`).join("")}</ul>` : '<p class="muted">Champion, economic buyer, and technical decision maker are established.</p>'}</section>
+      <section class="overview-stakeholder-gaps"><h3>Map-level missing information</h3>${missingInformation.length ? `<ul>${missingInformation.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>` : '<p class="muted">No additional stakeholder-map gap was recorded.</p>'}</section>
+    </div>
+  </details>`;
+}
+
 function renderOverviewBrief(current) {
   const brief = current?.state?.brief;
   if (!brief) return "";
@@ -2217,6 +2256,7 @@ function renderWhatChanged(current) {
     [changes.brief, "Opportunity Brief"],
     [changes.business_case, "Business Case"],
     [changes.meddpicc, "MEDDPICC"],
+    [changes.stakeholders, "Stakeholders"],
     [changes.health_indicators, "Health indicators"],
     [changes.risks, "Risks"],
     [changes.recommended_actions, "Recommended actions"],
@@ -2459,16 +2499,7 @@ function renderOpportunityWorkspace(workspace) {
       <div class="workspace-frameworks">
         ${renderBusinessCase(current)}
         ${renderMeddpicc(current)}
-        <details class="workspace-disclosure">
-          <summary>
-            <span><strong>Stakeholders</strong><small>Roles, influence, engagement, and blockers.</small></span>
-            <span class="workspace-state">Not established</span>
-          </summary>
-          <div class="workspace-disclosure-body">
-            <p>No structured stakeholder map is available yet.</p>
-            <button class="ghost small" data-run-skill="biz-qual">Generate Business Qualification</button>
-          </div>
-        </details>
+        ${renderStakeholders(current)}
       </div>
 
       ${canonicalCreated ? renderOverviewEvidence(current) : ""}

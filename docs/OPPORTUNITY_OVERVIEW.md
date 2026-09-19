@@ -579,25 +579,25 @@ The page should not derive MEDDPICC from a rendered biz-qual table in browser Ja
 
 The collapsed state shows:
 
-- Number mapped.
-- Champion state.
-- Economic-buyer state.
-- Count of required but unengaged stakeholders.
-- Blocking stakeholder, when present.
+- Number of evidence-established stakeholders.
+- Important roles still missing: Champion, Economic Buyer, and Technical Decision Maker.
+- Count of active or potential blockers.
+- **Not established** when the revision predates stakeholder state or authorized evidence establishes no people.
 
 Expanded rows include:
 
 - Name.
-- Role and title.
-- Authority.
-- Disposition: champion, coach, supporter, neutral, skeptic, blocker, unknown.
+- Title or customer role, when established.
+- Category: champion, economic buyer, technical decision maker, security approver, procurement, end user, or other.
+- Influence: high, medium, low, or unknown.
+- Stance: supportive, neutral, skeptical, opposed, or unknown.
 - Engagement status.
-- Last interaction.
-- Required next engagement.
+- Blocker status and reason, when established.
+- Recommended next engagement step.
+- Explicit missing information.
 - Evidence.
-- Human-confirmation state.
 
-A title alone must not establish Economic Buyer or Champion.
+A person is added only when authorized evidence establishes their identity. The state updater must not invent names, titles, categories, influence, engagement, or sentiment. A title alone must not establish Economic Buyer or Champion. Generated outputs remain outside the evidence boundary.
 
 ### 8.10 Evidence and Recent Activity
 
@@ -1040,28 +1040,28 @@ Scope:
 
 This should be separate from Slice 2 because checklist workflow and human controls create a new write boundary.
 
-### Slice 4A — Canonical Business Case and MEDDPICC (implemented locally)
+### Slice 4 — Canonical overview frameworks (implemented locally)
 
-**Outcome:** Replace the Business Case and MEDDPICC placeholders with evidence-attributable typed canonical state.
+**Outcome:** Complete the local Overview frameworks with evidence-attributable typed Business Case, MEDDPICC, and Stakeholder state.
 
 Implemented scope:
 
 - Four Business Case areas with knowledge state, confidence, confirmation, evidence references, and explicit gaps.
 - Eight stable MEDDPICC dimensions with the same claim semantics plus missing information and suggested discovery.
-- Honest legacy defaults for Slice 2A/2B revisions that predate these fields.
-- Deterministic Business Case and MEDDPICC revision changes.
-- Collapsed framework summaries and nested MEDDPICC disclosures using the existing evidence inspector.
+- A bounded stakeholder map with stable keys, roles, influence, engagement, stance, blocker context, next steps, evidence, and explicit gaps.
+- Explicit missing Champion, Economic Buyer, and Technical Decision Maker roles when the evidence does not establish them.
+- Honest legacy defaults for revisions that predate any framework field.
+- Deterministic Business Case, MEDDPICC, stakeholder, and stakeholder-gap revision changes.
+- Collapsed framework summaries, nested MEDDPICC disclosures, responsive stakeholder cards, and the existing evidence inspector.
 
-Explicit exclusions: Stakeholder state, manual corrections, numeric scoring, hosted canonical-state routes or persistence, and generated-output ingestion.
+Explicit exclusions: manual corrections, Tech Eval evidence automation, numeric scoring, hosted canonical-state routes or persistence, external evidence providers, and generated-output ingestion.
 
-### Later Slice 4 — Remaining overview frameworks
+### Later Slice 4 — Human correction controls
 
-**Outcome:** Add Stakeholders, richer evidence drawers, and approved human correction flows on the typed state contract.
+**Outcome:** Add approved human correction flows on the typed state contract.
 
 Scope:
 
-- Typed stakeholder dimensions and validation.
-- Explicit missing-data behavior.
 - Human corrections with precedence and history.
 
 ### Slice 5 — Hosted opportunity workspace read model
