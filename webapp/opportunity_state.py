@@ -93,6 +93,86 @@ class Claim(StrictModel):
         return self
 
 
+class BusinessCaseArea(StrictModel):
+    """One evidence-attributable part of the commercial business case."""
+
+    knowledge: Claim
+    missing_information: list[LongText] = Field(max_length=10)
+
+
+class BusinessCase(StrictModel):
+    current_state: BusinessCaseArea
+    future_state: BusinessCaseArea
+    negative_consequences: BusinessCaseArea
+    positive_business_outcomes: BusinessCaseArea
+
+
+class MeddpiccDimensionKey(str, Enum):
+    METRICS = "metrics"
+    ECONOMIC_BUYER = "economic_buyer"
+    DECISION_CRITERIA = "decision_criteria"
+    DECISION_PROCESS = "decision_process"
+    PAPER_PROCESS = "paper_process"
+    IDENTIFY_PAIN = "identify_pain"
+    CHAMPION = "champion"
+    COMPETITION = "competition"
+
+
+class MeddpiccDimension(StrictModel):
+    key: MeddpiccDimensionKey
+    knowledge: Claim
+    missing_information: list[LongText] = Field(max_length=10)
+    suggested_discovery: list[LongText] = Field(max_length=10)
+
+
+class Meddpicc(StrictModel):
+    dimensions: list[MeddpiccDimension] = Field(min_length=8, max_length=8)
+
+    @model_validator(mode="after")
+    def validate_dimensions(self) -> "Meddpicc":
+        keys = [item.key for item in self.dimensions]
+        if len(set(keys)) != 8 or set(keys) != set(MeddpiccDimensionKey):
+            raise ValueError("MEDDPICC must contain each dimension exactly once")
+        return self
+
+
+def _unknown_claim() -> Claim:
+    return Claim(
+        knowledge_state=KnowledgeState.UNKNOWN,
+        value=None,
+        confidence=Confidence.LOW,
+        confirmation=ConfirmationMode.UNKNOWN,
+        evidence_refs=[],
+    )
+
+
+def _legacy_business_case() -> BusinessCase:
+    def area() -> BusinessCaseArea:
+        return BusinessCaseArea(
+            knowledge=_unknown_claim(),
+            missing_information=["Not established from authorized evidence."],
+        )
+
+    return BusinessCase(
+        current_state=area(),
+        future_state=area(),
+        negative_consequences=area(),
+        positive_business_outcomes=area(),
+    )
+
+
+def _legacy_meddpicc() -> Meddpicc:
+    return Meddpicc(dimensions=[
+        MeddpiccDimension(
+            key=key,
+            knowledge=_unknown_claim(),
+            missing_information=["Not established from authorized evidence."],
+            suggested_discovery=[f"Ask the customer to establish {key.value.replace('_', ' ')}."],
+        )
+        for key in MeddpiccDimensionKey
+    ])
+
+
 class OpportunityBrief(StrictModel):
     customer_objective: Claim
     why_airbyte: Claim
@@ -218,10 +298,22 @@ class MissingInformation(StrictModel):
 class OpportunityStateCandidate(StrictModel):
     schema_version: Literal[1]
     brief: OpportunityBrief
+    business_case: BusinessCase
+    meddpicc: Meddpicc
     health_indicators: list[HealthIndicator] = Field(min_length=4, max_length=4)
     risks: list[OpportunityRisk] = Field(default_factory=list, max_length=12)
     recommended_actions: list[RecommendedAction] = Field(default_factory=list, max_length=12)
     missing_information: list[MissingInformation] = Field(default_factory=list, max_length=24)
+
+    @model_validator(mode="before")
+    @classmethod
+    def upgrade_legacy_candidate(cls, value: Any) -> Any:
+        """Load Slice 2A/2B state while keeping new executor schema fields required."""
+        if isinstance(value, dict):
+            value = dict(value)
+            value.setdefault("business_case", _legacy_business_case().model_dump(mode="json"))
+            value.setdefault("meddpicc", _legacy_meddpicc().model_dump(mode="json"))
+        return value
 
     @model_validator(mode="after")
     def validate_stable_keys(self) -> "OpportunityStateCandidate":
@@ -303,6 +395,8 @@ class OpportunityStateChangeSet(StrictModel):
     child_version_id: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{32}$")]
     child_revision: int = Field(ge=2, le=1_000_000)
     brief: list[TypedItemChange] = Field(default_factory=list, max_length=5)
+    business_case: list[TypedItemChange] = Field(default_factory=list, max_length=4)
+    meddpicc: list[TypedItemChange] = Field(default_factory=list, max_length=8)
     health_indicators: list[TypedItemChange] = Field(default_factory=list, max_length=4)
     risks: list[TypedItemChange] = Field(default_factory=list, max_length=24)
     recommended_actions: list[TypedItemChange] = Field(default_factory=list, max_length=24)
@@ -316,6 +410,8 @@ class OpportunityStateChangeSet(StrictModel):
             raise ValueError("change set revisions must be consecutive")
         for label, values in (
             ("brief", self.brief),
+            ("business case", self.business_case),
+            ("MEDDPICC", self.meddpicc),
             ("health indicator", self.health_indicators),
             ("risk", self.risks),
             ("recommended action", self.recommended_actions),
@@ -332,6 +428,8 @@ class OpportunityStateChangeSet(StrictModel):
     def high_level_counts(self) -> dict[str, int]:
         return {
             "brief": len(self.brief),
+            "business_case": len(self.business_case),
+            "meddpicc": len(self.meddpicc),
             "health_indicators": len(self.health_indicators),
             "risks": len(self.risks),
             "recommended_actions": len(self.recommended_actions),
@@ -475,6 +573,14 @@ def deterministic_change_set(
         child_version_id=child_version_id,
         child_revision=child_revision,
         brief=brief_changes,
+        business_case=[
+            TypedItemChange(key=key, change_type=ChangeType.CHANGED, fields=fields)
+            for key in sorted(parent.state.business_case.model_fields)
+            if (fields := _changed_fields(
+                getattr(parent.state.business_case, key), getattr(child_state.business_case, key)
+            ))
+        ],
+        meddpicc=_keyed_changes(parent.state.meddpicc.dimensions, child_state.meddpicc.dimensions),
         health_indicators=_keyed_changes(parent.state.health_indicators, child_state.health_indicators),
         risks=_keyed_changes(parent.state.risks, child_state.risks),
         recommended_actions=_keyed_changes(
@@ -511,6 +617,10 @@ def evidence_manifest_hash(entries: list[EvidenceManifestEntry]) -> str:
 def iter_evidence_references(candidate: OpportunityStateCandidate):
     for claim in candidate.brief.model_dump().keys():
         yield from getattr(candidate.brief, claim).evidence_refs
+    for area in candidate.business_case.model_dump().keys():
+        yield from getattr(candidate.business_case, area).knowledge.evidence_refs
+    for dimension in candidate.meddpicc.dimensions:
+        yield from dimension.knowledge.evidence_refs
     for indicator in candidate.health_indicators:
         yield from indicator.evidence_refs
     for risk in candidate.risks:

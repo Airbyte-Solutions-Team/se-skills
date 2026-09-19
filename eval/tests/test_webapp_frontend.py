@@ -395,7 +395,7 @@ const claim = (value) => ({{knowledge_state: "known", value, confidence: "high",
 const current = {{
   revision: 2,
   created_at: "2026-09-18T12:00:00Z",
-  change_set: {{parent_revision: 1, child_revision: 2, metadata_changed: false, brief: [{{key: "current_status", change_type: "changed", fields: ["value"]}}], health_indicators: [], risks: [], recommended_actions: [], missing_information: [], evidence_sources: [{{source_type: "transcript", source_id: "tr_synthetic", change_type: "added"}}]}},
+  change_set: {{parent_revision: 1, child_revision: 2, metadata_changed: false, brief: [{{key: "current_status", change_type: "changed", fields: ["value"]}}], business_case: [{{key: "current_state", change_type: "changed", fields: ["knowledge"]}}], meddpicc: [{{key: "metrics", change_type: "changed", fields: ["knowledge"]}}], health_indicators: [], risks: [], recommended_actions: [], missing_information: [], evidence_sources: [{{source_type: "transcript", source_id: "tr_synthetic", change_type: "added"}}]}},
   evidence_manifest: [{{source_type: "opportunity_metadata", source_id: "opportunity-metadata-v1", display_name: "Opportunity metadata", sha256: "a".repeat(64)}}, {{source_type: "transcript", source_id: "tr_synthetic", display_name: "Synthetic transcript", sha256: "b".repeat(64)}}],
   state: {{
     brief: {{customer_objective: claim("Centralize data"), why_airbyte: claim("Reliable movement"), current_status: claim("Planning"), path_to_decision: claim("Validate then approve"), immediate_priority: claim("Confirm connectors")}},
@@ -416,8 +416,55 @@ console.log(JSON.stringify({{
   provenance: created.includes("Evidence and missing information") && created.includes("Synthetic transcript"),
   evidenceButton: created.includes("data-evidence-refs"),
   separate: created.includes("Generate remains a separate artifact workflow"),
-  update: created.includes('id="update-overview-btn"') && created.includes("What Changed") && created.includes("Revision 1 → Revision 2"),
+  update: created.includes('id="update-overview-btn"') && created.includes("What Changed") && created.includes("Revision 1 → Revision 2") && created.includes("Business Case") && created.includes("MEDDPICC"),
   retry: failed.includes("Retry Create overview") && failed.includes("Safe failure")
+}}));
+"""
+    result = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+    rendered = json.loads(result.stdout)
+    assert all(rendered.values()), rendered
+
+
+def test_business_case_and_meddpicc_are_collapsed_nested_and_escaped(repo_root: Path) -> None:
+    app_js_path = repo_root / "webapp" / "static" / "app.js"
+    script = f"""
+const fs = require("fs");
+const src = fs.readFileSync({json.dumps(str(app_js_path))}, "utf8");
+const start = src.indexOf("const overviewLabel");
+const end = src.indexOf("function renderOverviewBrief", start);
+if (start < 0 || end < 0) throw new Error("framework renderer block missing");
+const esc = (value) => String(value == null ? "" : value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+eval(src.slice(start, end) + "\\nglobalThis.renderBusinessCase = renderBusinessCase; globalThis.renderMeddpicc = renderMeddpicc;");
+const ref = {{source_type: "transcript", source_id: "tr_synthetic", locator: "00:01:00"}};
+const knowledge = (state, value, refs = []) => ({{knowledge_state: state, value, confidence: "medium", confirmation: refs.length ? "evidence_backed" : "inferred", evidence_refs: refs}});
+const area = (state, value, missing, refs = []) => ({{knowledge: knowledge(state, value, refs), missing_information: missing}});
+const keys = ["metrics", "economic_buyer", "decision_criteria", "decision_process", "paper_process", "identify_pain", "champion", "competition"];
+const current = {{state: {{
+  business_case: {{
+    current_state: area("known", "Manual work <script>alert(1)</script>", [], [ref]),
+    future_state: area("partial", "Automated movement", ["Target SLA <img src=x>"]),
+    negative_consequences: area("conflicting", "Conflicting cost estimates", ["Validated cost"]),
+    positive_business_outcomes: area("unknown", null, ["Quantified outcome"]),
+  }},
+  meddpicc: {{dimensions: keys.map((key, index) => ({{
+    key,
+    knowledge: knowledge(index < 3 ? "known" : index < 5 ? "partial" : "unknown", index < 5 ? key + " detail" : null, index === 0 ? [ref] : []),
+    missing_information: index < 3 ? [] : ["Missing " + key],
+    suggested_discovery: ["Ask about " + key + " </details><script>x</script>"],
+  }}))}},
+}}}};
+const business = renderBusinessCase(current);
+const meddpicc = renderMeddpicc(current);
+const html = business + meddpicc;
+console.log(JSON.stringify({{
+  topCollapsed: !/<details[^>]+id="overview-(business-case|meddpicc)"[^>]+open/.test(html),
+  nestedCollapsed: !/<details[^>]+data-meddpicc-dimension[^>]+open/.test(html),
+  eightDimensions: (meddpicc.match(/data-meddpicc-dimension=/g) || []).length === 8,
+  businessSummary: business.includes("1 established · 1 partial · 1 conflicting · 1 unknown"),
+  meddpiccSummary: meddpicc.includes("3 established · 2 partial · 3 unknown"),
+  sections: ["Known information", "Missing information", "Evidence", "Suggested discovery"].every((label) => meddpicc.includes(label)),
+  evidence: html.includes("data-evidence-refs=") && html.includes("1 evidence reference"),
+  escaped: !html.includes("<script>") && !html.includes("<img") && html.includes("&lt;script&gt;") && html.includes("&lt;img src=x&gt;"),
 }}));
 """
     result = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)

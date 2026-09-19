@@ -81,6 +81,69 @@ def test_candidate_rejects_unauthorized_evidence_reference() -> None:
         validate_candidate_evidence(parsed, manifest())
 
 
+def test_legacy_candidate_defaults_business_case_and_meddpicc_to_unknown() -> None:
+    payload = candidate().model_dump(mode="json")
+    payload.pop("business_case")
+    payload.pop("meddpicc")
+    parsed = OpportunityStateCandidate.model_validate(payload)
+
+    assert {
+        getattr(parsed.business_case, key).knowledge.knowledge_state.value
+        for key in parsed.business_case.model_fields
+    } == {"unknown"}
+    assert len(parsed.meddpicc.dimensions) == 8
+    assert {item.knowledge.knowledge_state.value for item in parsed.meddpicc.dimensions} == {"unknown"}
+    assert all(item.knowledge.value is None for item in parsed.meddpicc.dimensions)
+
+
+def test_typed_business_case_and_all_meddpicc_states_validate() -> None:
+    payload = candidate().model_dump(mode="json")
+    payload["business_case"]["current_state"] = {
+        "knowledge": payload["brief"]["current_status"],
+        "missing_information": [],
+    }
+    payload["business_case"]["future_state"] = {
+        "knowledge": {
+            "knowledge_state": "partial", "value": "Target workflow is described but not quantified.",
+            "confidence": "medium", "confirmation": "inferred", "last_confirmed_at": None,
+            "evidence_refs": [],
+        },
+        "missing_information": ["Quantified target outcome"],
+    }
+    payload["meddpicc"]["dimensions"][0] = {
+        "key": "metrics",
+        "knowledge": {
+            "knowledge_state": "conflicting", "value": "Two target latency values were stated.",
+            "confidence": "low", "confirmation": "evidence_backed", "last_confirmed_at": None,
+            "evidence_refs": [payload["brief"]["customer_objective"]["evidence_refs"][0]],
+        },
+        "missing_information": ["Authoritative target latency"],
+        "suggested_discovery": ["Which latency target will be used for approval?"],
+    }
+
+    parsed = OpportunityStateCandidate.model_validate(payload)
+    assert parsed.business_case.current_state.knowledge.knowledge_state.value == "known"
+    assert parsed.business_case.future_state.knowledge.knowledge_state.value == "partial"
+    assert parsed.meddpicc.dimensions[0].knowledge.knowledge_state.value == "conflicting"
+    assert {item.key.value for item in parsed.meddpicc.dimensions} == {
+        "metrics", "economic_buyer", "decision_criteria", "decision_process",
+        "paper_process", "identify_pain", "champion", "competition",
+    }
+
+
+@pytest.mark.parametrize(("section", "index"), [("business_case", None), ("meddpicc", 0)])
+def test_new_sections_use_existing_evidence_manifest_validation(section, index) -> None:
+    parsed = candidate().model_copy(deep=True)
+    tampered = parsed.brief.customer_objective.model_copy(deep=True)
+    tampered.evidence_refs[0].source_id = "tr_tampered-identifier"
+    if section == "business_case":
+        parsed.business_case.current_state.knowledge = tampered
+    else:
+        parsed.meddpicc.dimensions[index].knowledge = tampered
+    with pytest.raises(ValueError, match="unauthorized evidence"):
+        validate_candidate_evidence(parsed, manifest())
+
+
 def test_manifest_hash_is_order_independent_and_content_sensitive() -> None:
     entries = manifest()
     assert evidence_manifest_hash(entries) == evidence_manifest_hash(list(reversed(entries)))
@@ -197,6 +260,8 @@ def test_legacy_revision_one_without_parent_fields_remains_valid(tmp_path) -> No
     envelope = json.loads(path.read_text(encoding="utf-8"))
     for key in ("parent_version_id", "parent_revision", "change_set"):
         envelope["version"].pop(key, None)
+    envelope["version"]["state"].pop("business_case")
+    envelope["version"]["state"].pop("meddpicc")
     checksum = hashlib.sha256(service._canonical_bytes(envelope["version"])).hexdigest()
     envelope["checksum"] = checksum
     path.write_bytes(service._canonical_bytes(envelope))
@@ -210,6 +275,8 @@ def test_legacy_revision_one_without_parent_fields_remains_valid(tmp_path) -> No
     assert loaded.version_id == promoted.version_id
     assert loaded.parent_version_id is None
     assert loaded.change_set is None
+    assert loaded.state.business_case.current_state.knowledge.knowledge_state.value == "unknown"
+    assert len(loaded.state.meddpicc.dimensions) == 8
 
 
 def test_deterministic_diff_ignores_order_only_changes_and_tracks_stable_keys(tmp_path) -> None:
@@ -225,6 +292,8 @@ def test_deterministic_diff_ignores_order_only_changes_and_tracks_stable_keys(tm
         child_manifest=list(reversed(manifest())),
     )
     assert changes.brief == []
+    assert changes.business_case == []
+    assert changes.meddpicc == []
     assert changes.health_indicators == []
     assert changes.recommended_actions == []
     assert changes.evidence_sources == []
@@ -233,6 +302,11 @@ def test_deterministic_diff_ignores_order_only_changes_and_tracks_stable_keys(tm
     changed = reordered.model_copy(deep=True)
     changed.brief.current_status.value = "A materially changed current status"
     changed.recommended_actions[0].goal = "A changed definition of the desired outcome."
+    changed.business_case.current_state.knowledge = changed.brief.current_status.model_copy(deep=True)
+    changed.business_case.current_state.missing_information = []
+    changed.meddpicc.dimensions[0].knowledge = changed.brief.customer_objective.model_copy(deep=True)
+    changed.meddpicc.dimensions[0].missing_information = ["A quantified baseline"]
+    changed.meddpicc.dimensions[0].suggested_discovery = ["What is the current baseline?"]
     diff = deterministic_change_set(
         parent=parent,
         child_version_id="d" * 32,
@@ -241,6 +315,12 @@ def test_deterministic_diff_ignores_order_only_changes_and_tracks_stable_keys(tm
         child_manifest=manifest(),
     )
     assert [(item.key, item.fields) for item in diff.brief] == [("current_status", ["value"])]
+    assert [(item.key, item.fields) for item in diff.business_case] == [
+        ("current_state", ["knowledge", "missing_information"])
+    ]
+    assert [(item.key, item.fields) for item in diff.meddpicc] == [
+        ("metrics", ["knowledge", "missing_information", "suggested_discovery"])
+    ]
     assert diff.recommended_actions[0].key == "confirm-connectors"
     assert diff.recommended_actions[0].fields == ["goal"]
 

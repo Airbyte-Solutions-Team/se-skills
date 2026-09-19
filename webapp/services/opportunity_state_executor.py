@@ -17,7 +17,7 @@ from opportunity_state import OpportunityStateCandidate
 from services.transcription_service import ResolvedTranscriptEvidence
 
 
-UPDATER_VERSION = "opportunity-overview-slice-2b-v1"
+UPDATER_VERSION = "opportunity-overview-slice-4a-v1"
 VERIFIED_CLAUDE_VERSION = "2.1.272"
 _CLAUDE_VERSION_RE = re.compile(r"^\s*(?P<version>\d+\.\d+\.\d+)(?:\s|\(|$)")
 
@@ -165,7 +165,11 @@ class ClaudeCanonicalStateExecutor:
                 "Return exactly the requested schema. Do not invent facts. Do not reproduce transcript text or "
                 "quotations. Every material supported claim must cite an authorized source id; transcript "
                 "locators may contain only a speaker/time or line-range pointer, never quoted evidence. "
-                "Generated outputs are not evidence and are not supplied."
+                "Generated outputs are not evidence and are not supplied. Complete all four business_case "
+                "areas and all eight meddpicc dimensions. Use each knowledge claim's explicit unknown, partial, "
+                "or conflicting state when evidence is absent, incomplete, or contradictory. Record concrete "
+                "missing_information for incomplete business-case areas and MEDDPICC dimensions, and record "
+                "suggested_discovery for every MEDDPICC gap."
             ),
             "opportunity": {
                 "account": request.account,
