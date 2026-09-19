@@ -295,11 +295,105 @@ class MissingInformation(StrictModel):
     evidence_refs: list[EvidenceReference] = Field(default_factory=list, max_length=10)
 
 
+class StakeholderCategory(str, Enum):
+    CHAMPION = "champion"
+    ECONOMIC_BUYER = "economic_buyer"
+    TECHNICAL_DECISION_MAKER = "technical_decision_maker"
+    SECURITY_APPROVER = "security_approver"
+    PROCUREMENT = "procurement"
+    END_USER = "end_user"
+    OTHER = "other"
+
+
+class StakeholderInfluence(str, Enum):
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+    UNKNOWN = "unknown"
+
+
+class StakeholderEngagement(str, Enum):
+    ACTIVE = "active"
+    ENGAGED = "engaged"
+    LIMITED = "limited"
+    UNENGAGED = "unengaged"
+    UNKNOWN = "unknown"
+
+
+class StakeholderStance(str, Enum):
+    SUPPORTIVE = "supportive"
+    NEUTRAL = "neutral"
+    SKEPTICAL = "skeptical"
+    OPPOSED = "opposed"
+    UNKNOWN = "unknown"
+
+
+class StakeholderBlockerStatus(str, Enum):
+    NOT_A_BLOCKER = "not_a_blocker"
+    POTENTIAL_BLOCKER = "potential_blocker"
+    ACTIVE_BLOCKER = "active_blocker"
+    UNKNOWN = "unknown"
+
+
+class Stakeholder(StrictModel):
+    key: StableKey
+    name: ShortText
+    title_or_role: ShortText | None = None
+    category: StakeholderCategory
+    influence: StakeholderInfluence
+    engagement: StakeholderEngagement
+    stance: StakeholderStance
+    blocker_status: StakeholderBlockerStatus
+    blocker_reason: LongText | None = None
+    recommended_next_step: LongText | None = None
+    evidence_refs: list[EvidenceReference] = Field(min_length=1, max_length=20)
+    missing_information: list[LongText] = Field(default_factory=list, max_length=10)
+
+
+_KEY_STAKEHOLDER_ROLES = {
+    StakeholderCategory.CHAMPION,
+    StakeholderCategory.ECONOMIC_BUYER,
+    StakeholderCategory.TECHNICAL_DECISION_MAKER,
+}
+
+
+class StakeholderMap(StrictModel):
+    stakeholders: list[Stakeholder] = Field(default_factory=list, max_length=24)
+    missing_key_roles: list[StakeholderCategory] = Field(max_length=3)
+    missing_information: list[LongText] = Field(default_factory=list, max_length=10)
+
+    @model_validator(mode="after")
+    def validate_stakeholder_map(self) -> "StakeholderMap":
+        keys = [item.key for item in self.stakeholders]
+        if len(keys) != len(set(keys)):
+            raise ValueError("duplicate stakeholder key")
+        if "stakeholder-gaps" in keys:
+            raise ValueError("stakeholder-gaps is reserved for deterministic change history")
+        if len(self.missing_key_roles) != len(set(self.missing_key_roles)):
+            raise ValueError("duplicate missing stakeholder role")
+        if not set(self.missing_key_roles) <= _KEY_STAKEHOLDER_ROLES:
+            raise ValueError("missing key roles may only identify champion, economic buyer, or technical decision maker")
+        established = {item.category for item in self.stakeholders}
+        overlap = established & set(self.missing_key_roles)
+        if overlap:
+            raise ValueError("an established stakeholder category cannot also be listed as a missing key role")
+        return self
+
+
+def _legacy_stakeholder_map() -> StakeholderMap:
+    return StakeholderMap(
+        stakeholders=[],
+        missing_key_roles=sorted(_KEY_STAKEHOLDER_ROLES, key=lambda item: item.value),
+        missing_information=["Stakeholders are not established from authorized evidence."],
+    )
+
+
 class OpportunityStateCandidate(StrictModel):
     schema_version: Literal[1]
     brief: OpportunityBrief
     business_case: BusinessCase
     meddpicc: Meddpicc
+    stakeholders: StakeholderMap
     health_indicators: list[HealthIndicator] = Field(min_length=4, max_length=4)
     risks: list[OpportunityRisk] = Field(default_factory=list, max_length=12)
     recommended_actions: list[RecommendedAction] = Field(default_factory=list, max_length=12)
@@ -308,11 +402,12 @@ class OpportunityStateCandidate(StrictModel):
     @model_validator(mode="before")
     @classmethod
     def upgrade_legacy_candidate(cls, value: Any) -> Any:
-        """Load Slice 2A/2B state while keeping new executor schema fields required."""
+        """Load earlier state while keeping the current executor schema fields required."""
         if isinstance(value, dict):
             value = dict(value)
             value.setdefault("business_case", _legacy_business_case().model_dump(mode="json"))
             value.setdefault("meddpicc", _legacy_meddpicc().model_dump(mode="json"))
+            value.setdefault("stakeholders", _legacy_stakeholder_map().model_dump(mode="json"))
         return value
 
     @model_validator(mode="after")
@@ -397,6 +492,7 @@ class OpportunityStateChangeSet(StrictModel):
     brief: list[TypedItemChange] = Field(default_factory=list, max_length=5)
     business_case: list[TypedItemChange] = Field(default_factory=list, max_length=4)
     meddpicc: list[TypedItemChange] = Field(default_factory=list, max_length=8)
+    stakeholders: list[TypedItemChange] = Field(default_factory=list, max_length=48)
     health_indicators: list[TypedItemChange] = Field(default_factory=list, max_length=4)
     risks: list[TypedItemChange] = Field(default_factory=list, max_length=24)
     recommended_actions: list[TypedItemChange] = Field(default_factory=list, max_length=24)
@@ -412,6 +508,7 @@ class OpportunityStateChangeSet(StrictModel):
             ("brief", self.brief),
             ("business case", self.business_case),
             ("MEDDPICC", self.meddpicc),
+            ("stakeholder", self.stakeholders),
             ("health indicator", self.health_indicators),
             ("risk", self.risks),
             ("recommended action", self.recommended_actions),
@@ -430,6 +527,7 @@ class OpportunityStateChangeSet(StrictModel):
             "brief": len(self.brief),
             "business_case": len(self.business_case),
             "meddpicc": len(self.meddpicc),
+            "stakeholders": len(self.stakeholders),
             "health_indicators": len(self.health_indicators),
             "risks": len(self.risks),
             "recommended_actions": len(self.recommended_actions),
@@ -566,6 +664,22 @@ def deterministic_change_set(
     evidence_changes = [
         item for item in evidence_changes if item.source_type != EvidenceSourceType.OPPORTUNITY_METADATA
     ]
+    stakeholder_changes = _keyed_changes(
+        parent.state.stakeholders.stakeholders,
+        child_state.stakeholders.stakeholders,
+    )
+    stakeholder_gap_fields = [
+        field for field in ("missing_information", "missing_key_roles")
+        if _canonical_change_value(getattr(parent.state.stakeholders, field))
+        != _canonical_change_value(getattr(child_state.stakeholders, field))
+    ]
+    if stakeholder_gap_fields:
+        stakeholder_changes.append(TypedItemChange(
+            key="stakeholder-gaps",
+            change_type=ChangeType.CHANGED,
+            fields=stakeholder_gap_fields,
+        ))
+
     return OpportunityStateChangeSet(
         schema_version=1,
         parent_version_id=parent.version_id,
@@ -581,6 +695,7 @@ def deterministic_change_set(
             ))
         ],
         meddpicc=_keyed_changes(parent.state.meddpicc.dimensions, child_state.meddpicc.dimensions),
+        stakeholders=stakeholder_changes,
         health_indicators=_keyed_changes(parent.state.health_indicators, child_state.health_indicators),
         risks=_keyed_changes(parent.state.risks, child_state.risks),
         recommended_actions=_keyed_changes(
@@ -621,6 +736,8 @@ def iter_evidence_references(candidate: OpportunityStateCandidate):
         yield from getattr(candidate.business_case, area).knowledge.evidence_refs
     for dimension in candidate.meddpicc.dimensions:
         yield from dimension.knowledge.evidence_refs
+    for stakeholder in candidate.stakeholders.stakeholders:
+        yield from stakeholder.evidence_refs
     for indicator in candidate.health_indicators:
         yield from indicator.evidence_refs
     for risk in candidate.risks:

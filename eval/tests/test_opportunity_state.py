@@ -81,10 +81,11 @@ def test_candidate_rejects_unauthorized_evidence_reference() -> None:
         validate_candidate_evidence(parsed, manifest())
 
 
-def test_legacy_candidate_defaults_business_case_and_meddpicc_to_unknown() -> None:
+def test_legacy_candidate_defaults_frameworks_and_stakeholders_honestly() -> None:
     payload = candidate().model_dump(mode="json")
     payload.pop("business_case")
     payload.pop("meddpicc")
+    payload.pop("stakeholders")
     parsed = OpportunityStateCandidate.model_validate(payload)
 
     assert {
@@ -94,6 +95,54 @@ def test_legacy_candidate_defaults_business_case_and_meddpicc_to_unknown() -> No
     assert len(parsed.meddpicc.dimensions) == 8
     assert {item.knowledge.knowledge_state.value for item in parsed.meddpicc.dimensions} == {"unknown"}
     assert all(item.knowledge.value is None for item in parsed.meddpicc.dimensions)
+    assert parsed.stakeholders.stakeholders == []
+    assert {item.value for item in parsed.stakeholders.missing_key_roles} == {
+        "champion", "economic_buyer", "technical_decision_maker",
+    }
+    assert parsed.stakeholders.missing_information == [
+        "Stakeholders are not established from authorized evidence."
+    ]
+
+
+def test_typed_stakeholders_validate_bounded_roles_and_honest_unknowns() -> None:
+    payload = candidate().model_dump(mode="json")
+    payload["stakeholders"] = {
+        "stakeholders": [{
+            "key": "sam-security",
+            "name": "Sam Rivera",
+            "title_or_role": "Security lead",
+            "category": "security_approver",
+            "influence": "high",
+            "engagement": "limited",
+            "stance": "unknown",
+            "blocker_status": "potential_blocker",
+            "blocker_reason": "Security review requirements are not established.",
+            "recommended_next_step": "Schedule a security requirements review.",
+            "evidence_refs": [payload["brief"]["customer_objective"]["evidence_refs"][0]],
+            "missing_information": ["Required security reviewers"],
+        }],
+        "missing_key_roles": ["champion", "economic_buyer", "technical_decision_maker"],
+        "missing_information": ["Procurement contact is not established."],
+    }
+    parsed = OpportunityStateCandidate.model_validate(payload)
+    assert parsed.stakeholders.stakeholders[0].stance.value == "unknown"
+    assert parsed.stakeholders.stakeholders[0].blocker_status.value == "potential_blocker"
+
+    payload["stakeholders"]["stakeholders"][0]["evidence_refs"] = []
+    with pytest.raises(ValidationError):
+        OpportunityStateCandidate.model_validate(payload)
+
+    payload = candidate().model_dump(mode="json")
+    payload["stakeholders"]["stakeholders"] = [{
+        "key": "known-champion", "name": "Casey", "title_or_role": None,
+        "category": "champion", "influence": "unknown", "engagement": "unknown",
+        "stance": "unknown", "blocker_status": "unknown", "blocker_reason": None,
+        "recommended_next_step": None,
+        "evidence_refs": [payload["brief"]["customer_objective"]["evidence_refs"][0]],
+        "missing_information": ["Title is not established."],
+    }]
+    with pytest.raises(ValidationError, match="cannot also be listed as a missing key role"):
+        OpportunityStateCandidate.model_validate(payload)
 
 
 def test_typed_business_case_and_all_meddpicc_states_validate() -> None:
@@ -131,15 +180,28 @@ def test_typed_business_case_and_all_meddpicc_states_validate() -> None:
     }
 
 
-@pytest.mark.parametrize(("section", "index"), [("business_case", None), ("meddpicc", 0)])
+@pytest.mark.parametrize(("section", "index"), [("business_case", None), ("meddpicc", 0), ("stakeholders", 0)])
 def test_new_sections_use_existing_evidence_manifest_validation(section, index) -> None:
     parsed = candidate().model_copy(deep=True)
     tampered = parsed.brief.customer_objective.model_copy(deep=True)
     tampered.evidence_refs[0].source_id = "tr_tampered-identifier"
     if section == "business_case":
         parsed.business_case.current_state.knowledge = tampered
-    else:
+    elif section == "meddpicc":
         parsed.meddpicc.dimensions[index].knowledge = tampered
+    else:
+        stakeholder_payload = {
+            "stakeholders": [{
+                "key": "security-lead", "name": "Sam Rivera", "title_or_role": None,
+                "category": "security_approver", "influence": "unknown", "engagement": "unknown",
+                "stance": "unknown", "blocker_status": "unknown", "blocker_reason": None,
+                "recommended_next_step": None, "evidence_refs": tampered.evidence_refs,
+                "missing_information": [],
+            }],
+            "missing_key_roles": ["champion", "economic_buyer", "technical_decision_maker"],
+            "missing_information": [],
+        }
+        parsed.stakeholders = parsed.stakeholders.model_validate(stakeholder_payload)
     with pytest.raises(ValueError, match="unauthorized evidence"):
         validate_candidate_evidence(parsed, manifest())
 
@@ -262,6 +324,7 @@ def test_legacy_revision_one_without_parent_fields_remains_valid(tmp_path) -> No
         envelope["version"].pop(key, None)
     envelope["version"]["state"].pop("business_case")
     envelope["version"]["state"].pop("meddpicc")
+    envelope["version"]["state"].pop("stakeholders")
     checksum = hashlib.sha256(service._canonical_bytes(envelope["version"])).hexdigest()
     envelope["checksum"] = checksum
     path.write_bytes(service._canonical_bytes(envelope))
@@ -277,6 +340,8 @@ def test_legacy_revision_one_without_parent_fields_remains_valid(tmp_path) -> No
     assert loaded.change_set is None
     assert loaded.state.business_case.current_state.knowledge.knowledge_state.value == "unknown"
     assert len(loaded.state.meddpicc.dimensions) == 8
+    assert loaded.state.stakeholders.stakeholders == []
+    assert len(loaded.state.stakeholders.missing_key_roles) == 3
 
 
 def test_deterministic_diff_ignores_order_only_changes_and_tracks_stable_keys(tmp_path) -> None:
@@ -294,6 +359,7 @@ def test_deterministic_diff_ignores_order_only_changes_and_tracks_stable_keys(tm
     assert changes.brief == []
     assert changes.business_case == []
     assert changes.meddpicc == []
+    assert changes.stakeholders == []
     assert changes.health_indicators == []
     assert changes.recommended_actions == []
     assert changes.evidence_sources == []
@@ -307,6 +373,18 @@ def test_deterministic_diff_ignores_order_only_changes_and_tracks_stable_keys(tm
     changed.meddpicc.dimensions[0].knowledge = changed.brief.customer_objective.model_copy(deep=True)
     changed.meddpicc.dimensions[0].missing_information = ["A quantified baseline"]
     changed.meddpicc.dimensions[0].suggested_discovery = ["What is the current baseline?"]
+    stakeholder_ref = changed.brief.customer_objective.evidence_refs[0].model_dump(mode="json")
+    changed.stakeholders = changed.stakeholders.model_validate({
+        "stakeholders": [{
+            "key": "casey-champion", "name": "Casey", "title_or_role": "Data lead",
+            "category": "champion", "influence": "high", "engagement": "active",
+            "stance": "supportive", "blocker_status": "not_a_blocker", "blocker_reason": None,
+            "recommended_next_step": "Confirm the decision process.", "evidence_refs": [stakeholder_ref],
+            "missing_information": [],
+        }],
+        "missing_key_roles": ["economic_buyer", "technical_decision_maker"],
+        "missing_information": ["Procurement contact is not established."],
+    })
     diff = deterministic_change_set(
         parent=parent,
         child_version_id="d" * 32,
@@ -321,6 +399,11 @@ def test_deterministic_diff_ignores_order_only_changes_and_tracks_stable_keys(tm
     assert [(item.key, item.fields) for item in diff.meddpicc] == [
         ("metrics", ["knowledge", "missing_information", "suggested_discovery"])
     ]
+    assert [(item.key, item.change_type.value, item.fields) for item in diff.stakeholders] == [
+        ("casey-champion", "added", []),
+        ("stakeholder-gaps", "changed", ["missing_information", "missing_key_roles"]),
+    ]
+    assert diff.high_level_counts()["stakeholders"] == 2
     assert diff.recommended_actions[0].key == "confirm-connectors"
     assert diff.recommended_actions[0].fields == ["goal"]
 
