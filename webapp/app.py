@@ -86,6 +86,7 @@ def _build_local_services(app: FastAPI) -> None:
     from routes.overview import router as overview_router
     from routes.salesforce import router as salesforce_router
     from routes.skills import router as skills_router
+    from routes.tech_eval import router as tech_eval_router
     from routes.transcription import router as transcription_router
     from services.account_service import AccountService
     from services.ask_service import AskService, anthropic_api_key
@@ -99,6 +100,7 @@ def _build_local_services(app: FastAPI) -> None:
     from services.output_service import OutputService
     from services.overview_service import OverviewService
     from services.skill_runtime_service import SkillRuntimeService
+    from services.tech_eval_service import TechEvalService
     from services.transcription_service import TranscriptionService
 
     output_service = OutputService(
@@ -159,12 +161,17 @@ def _build_local_services(app: FastAPI) -> None:
         customers_dir=config.CUSTOMERS_DIR,
         safe_name=config._safe,
     )
+    tech_eval_service = TechEvalService(
+        customers_dir=config.CUSTOMERS_DIR,
+        safe_name=config._safe,
+    )
     opportunity_workspace_service = OpportunityWorkspaceService(
         account_service=account_service,
         output_service=output_service,
         state_service=opportunity_state_service,
         job_service=job_service,
         transcription_service=transcription_service,
+        tech_eval_service=tech_eval_service,
     )
     opportunity_state_executor = ClaudeCanonicalStateExecutor(
         model=config._model_for("opportunity-state"),
@@ -207,6 +214,7 @@ def _build_local_services(app: FastAPI) -> None:
     app.state.opportunity_state_create_service = opportunity_state_create_service
     app.state.opportunity_state_update_service = opportunity_state_update_service
     app.state.opportunity_state_executor = opportunity_state_executor
+    app.state.tech_eval_service = tech_eval_service
     app.state.overview_service = overview_service
     app.state.ask_service = ask_service
     app.state.transcription_service = transcription_service
@@ -217,6 +225,7 @@ def _build_local_services(app: FastAPI) -> None:
     app.include_router(jobs_router)
     app.include_router(accounts_router)
     app.include_router(opportunity_state_router)
+    app.include_router(tech_eval_router)
     app.include_router(outputs_router)
     app.include_router(feedback_router)
     app.include_router(overview_router)
