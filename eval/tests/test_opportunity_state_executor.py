@@ -79,6 +79,23 @@ def test_authorized_evidence_is_in_stdin_not_command_line(tmp_path) -> None:
     assert all("SYNTHETIC_SENTINEL" not in arg for arg in executor.command())
 
 
+def test_create_schema_and_prompt_require_business_case_and_meddpicc(tmp_path) -> None:
+    executor = _executor(tmp_path)
+    schema = executor.json_schema()
+    assert {"business_case", "meddpicc"} <= set(schema["required"])
+    assert set(schema["$defs"]["BusinessCase"]["required"]) == {
+        "current_state", "future_state", "negative_consequences", "positive_business_outcomes",
+    }
+    assert schema["$defs"]["Meddpicc"]["properties"]["dimensions"]["minItems"] == 8
+    assert schema["$defs"]["Meddpicc"]["properties"]["dimensions"]["maxItems"] == 8
+
+    task = json.loads(executor._prompt(_request()))["task"]
+    assert "all four business_case areas" in task
+    assert "all eight meddpicc dimensions" in task
+    assert "suggested_discovery" in task
+    assert "Generated outputs are not evidence" in task
+
+
 def test_update_prompt_supplies_baseline_without_treating_it_as_evidence(tmp_path) -> None:
     executor = _executor(tmp_path)
     request = _request()
@@ -100,6 +117,9 @@ def test_update_prompt_supplies_baseline_without_treating_it_as_evidence(tmp_pat
     assert [item["source_id"] for item in payload["selected_transcripts"]] == [TRANSCRIPT_ID]
     assert "generated output sentinel" not in json.dumps(payload).lower()
     assert str(tmp_path) not in json.dumps(payload)
+    assert "all four business_case areas" in payload["task"]
+    assert "all eight meddpicc dimensions" in payload["task"]
+    assert len(payload["base"]["prior_canonical_state"]["meddpicc"]["dimensions"]) == 8
 
 
 def test_extract_candidate_accepts_cli_string_and_fenced_json_envelopes() -> None:

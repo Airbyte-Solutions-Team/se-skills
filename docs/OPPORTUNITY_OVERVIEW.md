@@ -1,6 +1,6 @@
 # Opportunity Overview — Product and Implementation Specification
 
-**Status:** Slice 1, local Slice 2A, and local Slice 2B implemented; Slice 3 and later slices remain proposed
+**Status:** Slice 1, local Slices 2A/2B, Slice 3, and local Slice 4A implemented; later slices remain proposed
 **Source-of-truth baseline:** Airbyte-Solutions-Team/se-skills main at 89df39bec28067f278f68dd66bb7aaf1bc9d51a4, inspected September 18, 2026
 **Scope of this document:** Product behavior, information architecture, domain boundaries, API and persistence direction, implementation slices, and acceptance criteria. This document does not authorize deployment, production data migration, new providers, or expansion of the hosted skill allowlist.
 
@@ -53,7 +53,7 @@ The local opportunity route is implemented by **pageOpportunity** in **webapp/st
 - Creates revision 1 only after explicit transcript selection and exposes **Update Overview** as a separate action once canonical state exists.
 - Calculates freshness on the server, showing metadata change plus new, changed, inherited, and missing transcript-source categories without returning paths or transcript bodies.
 - Reconciles only current metadata, the validated base state, and explicitly selected new or changed transcript bodies into later immutable revisions.
-- Renders the typed Opportunity Brief, categorical health indicators, risks/actions, evidence/missing information, deterministic What Changed, and collapsed read-only revision history.
+- Renders the typed Opportunity Brief, categorical health indicators, risks/actions, Business Case, MEDDPICC, evidence/missing information, deterministic What Changed, and collapsed read-only revision history.
 - Reattaches to running create/update jobs and refreshes when they finish; interrupted state jobs recover as safe retryable failures.
 - Preserves Generate, Live Transcribe, Coverage Handoff, output history/reader/Back, Tech Eval and MEDDPICC disclosures, and account/output separation.
 
@@ -533,20 +533,16 @@ Opportunity-scoped output rules:
 
 The collapsed state shows:
 
-- Established dimensions / applicable dimensions.
-- Strongest known business driver.
-- Largest missing business-evidence gap.
+- Counts of established, partial, conflicting, unknown, or not-applicable areas.
 
 Expanded content uses predictable sections:
 
 - Current state.
-- Required future state.
+- Future state.
 - Negative consequences of staying put.
 - Positive business outcomes.
-- Required capabilities.
-- Quantified metrics or missing measurement.
-- Why now / compelling event.
-- Why Airbyte.
+
+Each area shows its knowledge state, known content, missing information, confidence, confirmation mode, last-confirmed time, and evidence references.
 
 Every inferred value remains labeled as inferred. Product claims require the existing product-truth verification discipline.
 
@@ -554,10 +550,7 @@ Every inferred value remains labeled as inferred. Product claims require the exi
 
 The overall card is collapsed by default and shows:
 
-- Overall qualification label.
-- Count confirmed, partial, and unknown.
-- Weakest or blocking dimension.
-- Last updated and evidence count.
+- Counts of established, partial, conflicting, unknown, or not-applicable dimensions.
 
 When expanded, each dimension is independently expandable:
 
@@ -575,10 +568,9 @@ Each dimension displays:
 - Status.
 - Known.
 - Missing.
-- Why it matters.
 - Evidence.
 - Suggested discovery.
-- Human confirmation state.
+- Confirmation state.
 - Last confirmed.
 
 The page should not derive MEDDPICC from a rendered biz-qual table in browser JavaScript. The state updater must emit a validated typed structure or the card must show Not available.
@@ -1048,17 +1040,28 @@ Scope:
 
 This should be separate from Slice 2 because checklist workflow and human controls create a new write boundary.
 
-### Slice 4 — Remaining overview frameworks
+### Slice 4A — Canonical Business Case and MEDDPICC (implemented locally)
 
-**Outcome:** Add Business Case, MEDDPICC, Stakeholders, and richer evidence drawers on the typed state contract.
+**Outcome:** Replace the Business Case and MEDDPICC placeholders with evidence-attributable typed canonical state.
+
+Implemented scope:
+
+- Four Business Case areas with knowledge state, confidence, confirmation, evidence references, and explicit gaps.
+- Eight stable MEDDPICC dimensions with the same claim semantics plus missing information and suggested discovery.
+- Honest legacy defaults for Slice 2A/2B revisions that predate these fields.
+- Deterministic Business Case and MEDDPICC revision changes.
+- Collapsed framework summaries and nested MEDDPICC disclosures using the existing evidence inspector.
+
+Explicit exclusions: Stakeholder state, manual corrections, numeric scoring, hosted canonical-state routes or persistence, and generated-output ingestion.
+
+### Later Slice 4 — Remaining overview frameworks
+
+**Outcome:** Add Stakeholders, richer evidence drawers, and approved human correction flows on the typed state contract.
 
 Scope:
 
-- Typed dimensions and validation.
-- Nested disclosures.
-- Explicit missing-data and suggested-discovery behavior.
-- No opaque numeric scoring.
-- Field-level evidence inspection.
+- Typed stakeholder dimensions and validation.
+- Explicit missing-data behavior.
 - Human corrections with precedence and history.
 
 ### Slice 5 — Hosted opportunity workspace read model
@@ -1235,4 +1238,4 @@ The Product Owner should explicitly choose:
 
 ## 21. Recommended next implementation brief
 
-The next bounded product slice is **Slice 3 — Technical Evaluation Lifecycle**, only after its separate write-boundary and human-control decisions are approved. Slice 2B does not authorize manual canonical-state edits, hosted persistence, a new provider, deployment, or generated-output ingestion.
+The next bounded product slice requires separate approval. Slice 4A does not authorize stakeholder state, manual canonical-state edits, hosted persistence, a new provider, deployment, or generated-output ingestion.

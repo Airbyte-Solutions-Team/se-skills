@@ -2038,6 +2038,91 @@ function renderOverviewClaim(label, claim) {
   </article>`;
 }
 
+const overviewUnknownClaim = () => ({
+  knowledge_state: "unknown", value: null, confidence: "low", confirmation: "unknown", evidence_refs: [],
+});
+
+function overviewKnowledgeSummary(areas) {
+  const counts = {established: 0, partial: 0, conflicting: 0, unknown: 0, "not applicable": 0};
+  (areas || []).forEach((area) => {
+    const state = area?.knowledge?.knowledge_state || "unknown";
+    if (state === "known") counts.established += 1;
+    else if (state === "partial") counts.partial += 1;
+    else if (state === "conflicting") counts.conflicting += 1;
+    else if (state === "not_applicable") counts["not applicable"] += 1;
+    else counts.unknown += 1;
+  });
+  return Object.entries(counts)
+    .filter(([label, count]) => count || ["established", "partial", "unknown"].includes(label))
+    .map(([label, count]) => `${count} ${label}`)
+    .join(" · ");
+}
+
+function overviewKnowledgeValue(claim) {
+  return claim?.value || ({
+    unknown: "Not established",
+    not_applicable: "Not applicable",
+    conflicting: "Conflicting evidence — review needed",
+    partial: "Partial information only",
+  }[claim?.knowledge_state] || "Not established");
+}
+
+function renderFrameworkKnowledge(area, {suggestedDiscovery = false} = {}) {
+  const claim = area?.knowledge || overviewUnknownClaim();
+  const missing = area?.missing_information || [];
+  const discovery = area?.suggested_discovery || [];
+  return `<div class="overview-framework-content">
+    <section><h4>Known information</h4><p>${esc(overviewKnowledgeValue(claim))}</p></section>
+    <section><h4>Missing information</h4>${missing.length ? `<ul>${missing.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>` : '<p class="muted">No additional gap was recorded.</p>'}</section>
+    <section><h4>Evidence</h4><div class="overview-claim-meta"><span>${esc(overviewLabel(claim.confidence))} confidence</span><span>${esc(overviewLabel(claim.confirmation))}</span><span>${claim.last_confirmed_at ? `Last confirmed ${esc(new Date(claim.last_confirmed_at).toLocaleString())}` : "Not confirmed"}</span>${renderEvidenceButton(claim.evidence_refs)}</div></section>
+    ${suggestedDiscovery ? `<section><h4>Suggested discovery</h4>${discovery.length ? `<ul>${discovery.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>` : '<p class="muted">No discovery prompt was recorded.</p>'}</section>` : ""}
+  </div>`;
+}
+
+function renderBusinessCase(current) {
+  const businessCase = current?.state?.business_case || {};
+  const areas = [
+    ["current_state", "Current state"],
+    ["future_state", "Future state"],
+    ["negative_consequences", "Negative consequences"],
+    ["positive_business_outcomes", "Positive business outcomes"],
+  ];
+  const values = areas.map(([key]) => businessCase[key] || {knowledge: overviewUnknownClaim(), missing_information: ["Not established from authorized evidence."]});
+  return `<details class="workspace-disclosure overview-framework-card" id="overview-business-case">
+    <summary>
+      <span><strong>Business Case</strong><small>Current state, future state, consequences, and outcomes.</small></span>
+      <span class="workspace-state">${esc(overviewKnowledgeSummary(values))}</span>
+    </summary>
+    <div class="workspace-disclosure-body overview-business-case-grid">
+      ${areas.map(([key, label], index) => `<article class="overview-framework-area">
+        <div class="overview-framework-head"><h3>${esc(label)}</h3><span class="workspace-status workspace-status--neutral">${esc(overviewLabel(values[index].knowledge?.knowledge_state))}</span></div>
+        ${renderFrameworkKnowledge(values[index])}
+      </article>`).join("")}
+    </div>
+  </details>`;
+}
+
+function renderMeddpicc(current) {
+  const expected = ["metrics", "economic_buyer", "decision_criteria", "decision_process", "paper_process", "identify_pain", "champion", "competition"];
+  const byKey = Object.fromEntries((current?.state?.meddpicc?.dimensions || []).map((item) => [item.key, item]));
+  const dimensions = expected.map((key) => byKey[key] || {
+    key, knowledge: overviewUnknownClaim(),
+    missing_information: ["Not established from authorized evidence."], suggested_discovery: [],
+  });
+  return `<details class="workspace-disclosure overview-framework-card" id="overview-meddpicc">
+    <summary>
+      <span><strong>MEDDPICC</strong><small>Qualification dimensions, evidence, gaps, and discovery.</small></span>
+      <span class="workspace-state">${esc(overviewKnowledgeSummary(dimensions))}</span>
+    </summary>
+    <div class="workspace-disclosure-body overview-meddpicc-dimensions">
+      ${dimensions.map((dimension) => `<details class="overview-meddpicc-dimension" data-meddpicc-dimension="${esc(dimension.key)}">
+        <summary><strong>${esc(overviewLabel(dimension.key))}</strong><span class="workspace-status workspace-status--neutral">${esc(overviewLabel(dimension.knowledge?.knowledge_state))}</span></summary>
+        ${renderFrameworkKnowledge(dimension, {suggestedDiscovery: true})}
+      </details>`).join("")}
+    </div>
+  </details>`;
+}
+
 function renderOverviewBrief(current) {
   const brief = current?.state?.brief;
   if (!brief) return "";
@@ -2130,6 +2215,8 @@ function renderWhatChanged(current) {
   if (!changes) return "";
   const stateGroups = [
     [changes.brief, "Opportunity Brief"],
+    [changes.business_case, "Business Case"],
+    [changes.meddpicc, "MEDDPICC"],
     [changes.health_indicators, "Health indicators"],
     [changes.risks, "Risks"],
     [changes.recommended_actions, "Recommended actions"],
@@ -2370,26 +2457,8 @@ function renderOpportunityWorkspace(workspace) {
       </div>
 
       <div class="workspace-frameworks">
-        <details class="workspace-disclosure">
-          <summary>
-            <span><strong>Business Case</strong><small>Current state, future state, consequences, and outcomes.</small></span>
-            <span class="workspace-state">Not established</span>
-          </summary>
-          <div class="workspace-disclosure-body">
-            <p>No structured business case is available yet.</p>
-            <button class="ghost small" data-run-skill="biz-qual">Generate Business Qualification</button>
-          </div>
-        </details>
-        <details class="workspace-disclosure">
-          <summary>
-            <span><strong>MEDDPICC</strong><small>Qualification dimensions, evidence, gaps, and discovery.</small></span>
-            <span class="workspace-state">Not established</span>
-          </summary>
-          <div class="workspace-disclosure-body">
-            <p>No canonical MEDDPICC scorecard is available yet. Generated qualification remains a separate artifact until reviewed state is implemented.</p>
-            <button class="ghost small" data-run-skill="biz-qual">Generate Business Qualification</button>
-          </div>
-        </details>
+        ${renderBusinessCase(current)}
+        ${renderMeddpicc(current)}
         <details class="workspace-disclosure">
           <summary>
             <span><strong>Stakeholders</strong><small>Roles, influence, engagement, and blockers.</small></span>
