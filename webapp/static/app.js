@@ -2187,6 +2187,100 @@ function renderUpdateJobState(workspace) {
   return `<div class="overview-create-status overview-create-status--error" id="overview-update-status"><strong>Overview update failed</strong><p>${esc(codeLabels[job.error_code] || job.error_message || "No revision was created. Refresh and retry.")}</p><button class="ghost small" id="retry-update-overview" type="button">Review evidence and retry</button></div>`;
 }
 
+const techEvalStatuses = [
+  ["not_started", "Not started"],
+  ["in_progress", "In progress"],
+  ["blocked", "Blocked"],
+  ["done", "Done"],
+  ["not_applicable", "Not applicable"],
+];
+
+function renderTechEvalTracker(tracker) {
+  if (!tracker?.summary || !(tracker.items || []).length) {
+    return `<details class="workspace-disclosure workspace-disclosure--priority" id="tech-eval-tracker">
+      <summary><span><span class="workspace-eyebrow">Technical evaluation lifecycle</span><strong>Tech Eval / POV Readiness</strong><small>Tracker unavailable.</small></span><span class="workspace-state">Unavailable</span></summary>
+      <div class="workspace-disclosure-body"><p class="muted">The local readiness tracker could not be loaded.</p></div>
+    </details>`;
+  }
+  const summary = tracker.summary;
+  const itemsByPhase = Object.groupBy
+    ? Object.groupBy(tracker.items, (item) => item.phase)
+    : tracker.items.reduce((groups, item) => {
+        (groups[item.phase] ||= []).push(item);
+        return groups;
+      }, {});
+  const phaseHtml = (summary.phases || []).map((phase) => {
+    const phaseItems = itemsByPhase[phase.phase] || [];
+    return `<section class="tech-eval-phase" aria-labelledby="tech-eval-phase-${esc(phase.phase)}">
+      <div class="tech-eval-phase-head">
+        <h3 id="tech-eval-phase-${esc(phase.phase)}">${esc(overviewLabel(phase.phase))}</h3>
+        <span>${Number(phase.completed)}/${Number(phase.total_applicable)} complete${phase.blocking_gates ? ` · ${Number(phase.blocking_gates)} gate${phase.blocking_gates === 1 ? "" : "s"} open` : ""}</span>
+      </div>
+      <div class="tech-eval-items">${phaseItems.map((item) => {
+        const updated = item.last_updated
+          ? `Manually updated ${new Date(item.last_updated).toLocaleString()}`
+          : "Not updated yet";
+        return `<article class="tech-eval-item" data-tech-eval-item="${esc(item.id)}">
+          <div class="tech-eval-item-head">
+            <div><span class="tech-eval-type tech-eval-type--${esc(item.type)}">${esc(overviewLabel(item.type))}</span><strong>${esc(item.label)}</strong></div>
+            <small>${esc(updated)}</small>
+          </div>
+          <div class="tech-eval-fields">
+            <label>Status<select data-tech-eval-status>${techEvalStatuses.map(([value, label]) => `<option value="${value}"${item.status === value ? " selected" : ""}>${label}</option>`).join("")}</select></label>
+            <label>Owner<input data-tech-eval-owner type="text" maxlength="120" value="${esc(item.owner || "")}" placeholder="Optional owner"></label>
+            <label class="tech-eval-note">Short note<textarea data-tech-eval-note maxlength="500" rows="2" placeholder="Optional context">${esc(item.note || "")}</textarea></label>
+          </div>
+          <div class="tech-eval-item-actions"><span class="muted">Saved as a manual change, not model evidence.</span><button class="ghost small" type="button" data-tech-eval-save>Save</button></div>
+        </article>`;
+      }).join("")}</div>
+    </section>`;
+  }).join("");
+  return `<details class="workspace-disclosure workspace-disclosure--priority tech-eval-tracker" id="tech-eval-tracker">
+    <summary>
+      <span>
+        <span class="workspace-eyebrow">Technical evaluation lifecycle · ${esc(overviewLabel(summary.current_phase))}</span>
+        <strong>Tech Eval / POV Readiness</strong>
+        <small>${Number(summary.completed)}/${Number(summary.total_applicable)} applicable items complete · ${Number(summary.blocking_gates)} blocking gate${summary.blocking_gates === 1 ? "" : "s"}</small>
+        <small class="tech-eval-remaining">${esc(summary.remaining)}</small>
+      </span>
+      <span class="workspace-state workspace-status--${summary.overall_state === "blocked" ? "error" : summary.overall_state === "complete" ? "success" : summary.overall_state === "ready_with_risks" ? "warn" : "neutral"}">${esc(summary.overall_label)}</span>
+    </summary>
+    <div class="workspace-disclosure-body">
+      <p class="muted tech-eval-intro">This local checklist is separate from canonical Overview revisions. Every edit is recorded as manual.</p>
+      <div class="tech-eval-phases">${phaseHtml}</div>
+    </div>
+  </details>`;
+}
+
+function wireTechEvalTracker(root, account, slug, onUpdated) {
+  if (!root) return;
+  root.querySelectorAll("[data-tech-eval-save]").forEach((button) => {
+    button.onclick = async () => {
+      const item = button.closest("[data-tech-eval-item]");
+      if (!item) return;
+      const payload = {
+        status: item.querySelector("[data-tech-eval-status]").value,
+        owner: item.querySelector("[data-tech-eval-owner]").value,
+        note: item.querySelector("[data-tech-eval-note]").value,
+      };
+      button.disabled = true;
+      button.textContent = "Saving…";
+      try {
+        const tracker = await api(`/api/accounts/${encodeURIComponent(account)}/opportunities/${encodeURIComponent(slug)}/tech-eval/items/${encodeURIComponent(item.dataset.techEvalItem)}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        onUpdated(tracker, root.open);
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = "Save";
+        showToast(error.message || "Tech Eval item could not be saved.", "warn");
+      }
+    };
+  });
+}
+
 function renderOpportunityWorkspace(workspace) {
   const opportunity = workspace.opportunity || {};
   const account = workspace.account || {};
@@ -2247,21 +2341,7 @@ function renderOpportunityWorkspace(workspace) {
 
       <div id="freebar-status" class="status-stack"></div>
 
-      <details class="workspace-disclosure workspace-disclosure--priority">
-        <summary>
-          <span>
-            <span class="workspace-eyebrow">Technical evaluation lifecycle</span>
-            <strong>Tech Eval / POV Readiness</strong>
-            <small>No structured readiness plan exists yet.</small>
-          </span>
-          <span class="workspace-state">Not established</span>
-        </summary>
-        <div class="workspace-disclosure-body">
-          <p>Readiness, gates, POV progress, and technical-win criteria will appear here once the canonical lifecycle model is implemented.</p>
-          <p class="muted">For now, generate a POC Plan as a separate, reviewable output. It will not silently become opportunity state.</p>
-          <button class="ghost small" data-run-skill="poc-plan">Generate POC Plan</button>
-        </div>
-      </details>
+      ${renderTechEvalTracker(workspace.tech_eval)}
 
       <section class="workspace-section" aria-labelledby="opportunity-outputs-title">
         <div class="workspace-section-head">
@@ -2568,6 +2648,20 @@ async function pageOpportunity(account, slug, routeOppName) {
     workspaceOutputItems(workspace).map((o) => [o.path, normalizeOutputMeta(o)])
   );
   view.innerHTML = renderOpportunityWorkspace(workspace);
+
+  const wireTechEval = () => {
+    const trackerRoot = document.getElementById("tech-eval-tracker");
+    wireTechEvalTracker(trackerRoot, account, slug, (tracker, wasOpen) => {
+      workspace.tech_eval = tracker;
+      const currentRoot = document.getElementById("tech-eval-tracker");
+      if (!currentRoot) return;
+      currentRoot.outerHTML = renderTechEvalTracker(tracker);
+      const nextRoot = document.getElementById("tech-eval-tracker");
+      if (nextRoot) nextRoot.open = wasOpen;
+      wireTechEval();
+    });
+  };
+  wireTechEval();
 
   const refreshAfterCreate = async () => {
     if (!document.querySelector(".opp-workspace")) return;

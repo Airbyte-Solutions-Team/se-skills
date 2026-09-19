@@ -98,7 +98,7 @@ async def test_workspace_uses_authoritative_opportunity_and_groups_history() -> 
 
     workspace = await service.get_workspace("Acme", "acme-expansion")
 
-    assert workspace["schema_version"] == 2
+    assert workspace["schema_version"] == 3
     assert workspace["account"] == {
         "name": "Acme",
         "owner_id": "gary",
@@ -111,6 +111,7 @@ async def test_workspace_uses_authoritative_opportunity_and_groups_history() -> 
         "available": False,
         "status": "not_created",
     }
+    assert workspace["tech_eval"] is None
 
     groups = workspace["outputs"]["opportunity"]["groups"]
     assert [group["skill"] for group in groups] == ["tech-qual", "post-call"]

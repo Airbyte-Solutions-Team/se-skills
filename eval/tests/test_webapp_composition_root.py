@@ -67,6 +67,8 @@ def test_expected_public_routes_registered() -> None:
         "/api/accounts/{account}/opportunities/{opp_slug}/overview/create",
         "/api/accounts/{account}/opportunities/{opp_slug}/overview/jobs/{job_id}",
         "/api/accounts/{account}/opportunities/{opp_slug}/overview/state",
+        "/api/accounts/{account}/opportunities/{opp_slug}/tech-eval",
+        "/api/accounts/{account}/opportunities/{opp_slug}/tech-eval/items/{item_id}",
         "/api/accounts/{account}/last-run",
         "/api/bulk-create-accounts",
         "/api/bulk/{action}",
@@ -129,6 +131,7 @@ def test_service_identity_preserved() -> None:
     assert fresh.state.opportunity_state_service is fresh.state.opportunity_workspace_service._state_service
     assert fresh.state.job_service is fresh.state.opportunity_workspace_service._job_service
     assert fresh.state.transcription_service is fresh.state.opportunity_workspace_service._transcription_service
+    assert fresh.state.tech_eval_service is fresh.state.opportunity_workspace_service._tech_eval_service
     assert fresh.state.opportunity_state_service is fresh.state.opportunity_state_create_service._state_service
     assert fresh.state.job_service is fresh.state.opportunity_state_create_service._job_service
     assert fresh.state.opportunity_state_executor is fresh.state.opportunity_state_create_service._executor

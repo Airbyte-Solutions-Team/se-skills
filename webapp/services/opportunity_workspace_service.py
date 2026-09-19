@@ -14,6 +14,7 @@ from .account_service import AccountError, AccountService
 from .job_service import JobService
 from .opportunity_state_service import OpportunityStateService
 from .output_service import OutputService
+from .tech_eval_service import TechEvalService
 from .transcription_service import TranscriptionService
 
 
@@ -34,7 +35,7 @@ _OPPORTUNITY_FIELDS = (
 class OpportunityWorkspaceService:
     """Build the local opportunity workspace payload from existing data only."""
 
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
 
     def __init__(
         self,
@@ -44,6 +45,7 @@ class OpportunityWorkspaceService:
         state_service: OpportunityStateService | None = None,
         job_service: JobService | None = None,
         transcription_service: TranscriptionService | None = None,
+        tech_eval_service: TechEvalService | None = None,
         update_service: Any | None = None,
     ) -> None:
         self._account_service = account_service
@@ -51,6 +53,7 @@ class OpportunityWorkspaceService:
         self._state_service = state_service
         self._job_service = job_service
         self._transcription_service = transcription_service
+        self._tech_eval_service = tech_eval_service
         self._update_service = update_service
 
     def set_update_service(self, update_service: Any) -> None:
@@ -166,6 +169,12 @@ class OpportunityWorkspaceService:
         opportunity = identity["opportunity"]
         opportunity_outputs = identity["opportunity_outputs"]
 
+        tech_eval = (
+            self._tech_eval_service.get_tracker(safe_account, safe_opp)
+            if self._tech_eval_service is not None
+            else None
+        )
+
         account_outputs = self._output_service.list_outputs(safe_account)
 
         canonical_state = (
@@ -198,6 +207,7 @@ class OpportunityWorkspaceService:
             "account": account_payload,
             "opportunity": opportunity,
             "canonical_state": canonical_state,
+            "tech_eval": tech_eval,
             "eligible_evidence": eligible_summary,
             "capabilities": {
                 "generate": True,
