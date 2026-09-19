@@ -454,3 +454,45 @@ def test_update_overview_frontend_requires_selection_and_loads_history(repo_root
     assert "showHistoricalOverview" in history
     assert "<details" in app_js.split("function renderRevisionHistory")[1].split("function renderCreateOverviewState")[0]
 
+
+def test_tech_eval_tracker_is_collapsed_grouped_and_escapes_user_fields(repo_root: Path) -> None:
+    app_js = (repo_root / "webapp" / "static" / "app.js").read_text(encoding="utf-8")
+    script = f"""
+const fs = require("fs");
+const src = fs.readFileSync({json.dumps(str(repo_root / 'webapp' / 'static' / 'app.js'))}, "utf8");
+const start = src.indexOf("const techEvalStatuses");
+const end = src.indexOf("function renderOpportunityWorkspace", start);
+if (start < 0 || end < 0) throw new Error("Tech Eval renderer missing");
+const esc = (value) => String(value == null ? "" : value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+const overviewLabel = (value) => String(value || "unknown").replaceAll("_", " ").replace(/\\b\\w/g, (c) => c.toUpperCase());
+eval(src.slice(start, end) + "\\nglobalThis.renderTechEvalTracker = renderTechEvalTracker;");
+const items = [
+  {{id:"gate",phase:"plan",type:"gate",label:"Gate <script>alert(1)</script>",status:"blocked",owner:"<img src=x>",note:"</textarea><script>x</script>",last_updated:"2026-09-18T12:00:00Z"}},
+  {{id:"required",phase:"prepare",type:"required",label:"Required",status:"done",owner:null,note:null,last_updated:null}},
+  {{id:"recommended",phase:"execute",type:"recommended",label:"Recommended",status:"in_progress",owner:null,note:null,last_updated:null}},
+  {{id:"optional",phase:"validate",type:"optional",label:"Optional",status:"not_applicable",owner:null,note:null,last_updated:null}},
+];
+const tracker = {{items, summary:{{current_phase:"plan",overall_state:"blocked",overall_label:"Blocked",completed:1,total_applicable:3,blocking_gates:1,remaining:"Blocked gate: Gate <script>.",phases:[
+  {{phase:"plan",completed:0,total_applicable:1,blocking_gates:1}},{{phase:"prepare",completed:1,total_applicable:1,blocking_gates:0}},{{phase:"execute",completed:0,total_applicable:1,blocking_gates:0}},{{phase:"validate",completed:0,total_applicable:0,blocking_gates:0}},{{phase:"close",completed:0,total_applicable:0,blocking_gates:0}}
+]}}}};
+const html = renderTechEvalTracker(tracker);
+console.log(JSON.stringify({{
+  collapsed: !/<details[^>]+open/.test(html),
+  phases: ["Plan", "Prepare", "Execute", "Validate", "Close"].every((phase) => html.includes(">" + phase + "</h3>")),
+  types: ["Gate", "Required", "Recommended", "Optional"].every((type) => html.includes(">" + type + "</span>")),
+  controls: html.includes("data-tech-eval-status") && html.includes("data-tech-eval-owner") && html.includes("data-tech-eval-note"),
+  escaped: !html.includes("<script>") && !html.includes("<img") && html.includes("&lt;script&gt;") && html.includes("&lt;img src=x&gt;"),
+  manual: html.includes("Saved as a manual change, not model evidence."),
+  summary: html.includes("1/3 applicable items complete") && html.includes("1 blocking gate")
+}}));
+"""
+    result = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+    rendered = json.loads(result.stdout)
+    assert all(rendered.values()), rendered
+
+    page = app_js.split("async function pageOpportunity(account, slug, routeOppName)")[1]
+    assert "renderTechEvalTracker(workspace.tech_eval)" in app_js
+    assert "/tech-eval/items/${encodeURIComponent(item.dataset.techEvalItem)}" in app_js
+    assert "wireTechEval();" in page
+    assert "No structured readiness plan exists yet." not in app_js
+
