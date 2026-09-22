@@ -21,6 +21,13 @@ StableKey = Annotated[
     str,
     StringConstraints(strip_whitespace=True, pattern=r"^[a-z][a-z0-9_-]{0,79}$"),
 ]
+# Real opportunity slugs (config._slug()) preserve the source name's casing -- e.g.
+# "latecoere-Opportunity-2026-06-01" -- unlike StableKey, which is for lowercase
+# model-generated identifiers (stakeholder/risk/action keys). Do not conflate the two.
+OpportunitySlug = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$"),
+]
 Sha256 = Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")]
 
 
@@ -359,7 +366,16 @@ _KEY_STAKEHOLDER_ROLES = {
 
 class StakeholderMap(StrictModel):
     stakeholders: list[Stakeholder] = Field(default_factory=list, max_length=24)
-    missing_key_roles: list[StakeholderCategory] = Field(max_length=3)
+    # Restricted to the 3 "key" roles at the type level (not just the validator below) so the
+    # JSON schema itself -- what the model actually sees -- rules out other categories, instead
+    # of relying on prose alone to prevent e.g. security_approver ending up here.
+    missing_key_roles: list[
+        Literal[
+            StakeholderCategory.CHAMPION,
+            StakeholderCategory.ECONOMIC_BUYER,
+            StakeholderCategory.TECHNICAL_DECISION_MAKER,
+        ]
+    ] = Field(max_length=3)
     missing_information: list[LongText] = Field(default_factory=list, max_length=10)
 
     @model_validator(mode="after")
@@ -427,7 +443,7 @@ class OpportunityStateCandidate(StrictModel):
 
 class OpportunityIdentity(StrictModel):
     account: ShortText
-    opportunity_slug: StableKey
+    opportunity_slug: OpportunitySlug
     opportunity_name: ShortText
 
 
@@ -755,4 +771,10 @@ def validate_candidate_evidence(
     allowed = {(entry.source_type, entry.source_id) for entry in manifest}
     for ref in iter_evidence_references(candidate):
         if (ref.source_type, ref.source_id) not in allowed:
-            raise ValueError("candidate contains an unauthorized evidence reference")
+            # source_type/source_id are opaque identifiers (not evidence content) -- safe to
+            # include for diagnostics.
+            raise ValueError(
+                "candidate contains an unauthorized evidence reference: "
+                f"got ({ref.source_type!r}, {ref.source_id!r}), "
+                f"allowed={sorted(allowed)}"
+            )

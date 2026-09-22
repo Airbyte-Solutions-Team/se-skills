@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -32,6 +33,7 @@ from services.transcription_service import (
     TranscriptionService,
 )
 
+logger = logging.getLogger(__name__)
 
 METADATA_SOURCE_ID = "opportunity-metadata-v1"
 _METADATA_FIELDS = (
@@ -219,6 +221,9 @@ class OpportunityStateCreateService:
                     }
                     raise ManagedJobError(exc.code, safe_messages.get(exc.code, "Overview creation failed safely; no state was saved.")) from exc
                 except (ValidationError, ValueError) as exc:
+                    # exc.args are opaque source_type/source_id identifiers or Pydantic field
+                    # paths -- never evidence content -- safe to log for diagnostics.
+                    logger.warning("Opportunity overview candidate rejected post-generation: %s", exc)
                     raise ManagedJobError(
                         "invalid_model_output", "Claude returned an invalid canonical-state candidate; no state was saved."
                     ) from exc

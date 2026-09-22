@@ -1952,10 +1952,10 @@ function renderWorkspaceOutputArtifact(output, latest = false) {
     </div>`;
 }
 
-function renderWorkspaceOutputGroups(scope, { accountLevel = false } = {}) {
+function renderWorkspaceOutputGroups(scope) {
   const groups = scope?.groups || [];
   if (!groups.length) {
-    return accountLevel ? "" : emptyBox({
+    return emptyBox({
       icon: "⊘",
       title: "No opportunity outputs yet",
       body: "Generate a specialized output for this opportunity. Nothing will be treated as canonical opportunity state.",
@@ -1963,24 +1963,29 @@ function renderWorkspaceOutputGroups(scope, { accountLevel = false } = {}) {
     });
   }
 
-  return `<div class="workspace-output-grid">${groups.map((group) => `
-    <article class="workspace-output-card">
-      <div class="workspace-output-card-head">
-        <div>
-          <div class="workspace-eyebrow">${accountLevel ? "Account artifact" : "Opportunity output"}</div>
-          <h3>${esc(prettySkill(group.skill))}</h3>
-        </div>
-        <span class="workspace-count">${group.generation_count} generation${group.generation_count === 1 ? "" : "s"}</span>
+  return `<div class="workspace-output-list">${groups.map((group) => `
+    <details class="workspace-disclosure workspace-output-row">
+      <summary>
+        <span class="workspace-output-row-title">
+          <strong>${esc(prettySkill(group.skill))}</strong>
+          <small>${esc(group.latest.modified || "")}${group.latest.modified ? " UTC" : ""}</small>
+        </span>
+        <span class="workspace-output-card-summary-right">
+          <span class="workspace-output-statuses">${workspaceOutputBadges(group.latest)}</span>
+          <span class="workspace-count">${group.generation_count} generation${group.generation_count === 1 ? "" : "s"}</span>
+        </span>
+      </summary>
+      <div class="workspace-disclosure-body">
+        ${renderWorkspaceOutputArtifact(group.latest, true)}
+        ${group.history_count ? `
+          <details class="workspace-history">
+            <summary>View ${group.history_count} earlier generation${group.history_count === 1 ? "" : "s"}</summary>
+            <div class="workspace-history-list">
+              ${(group.generations || []).slice(1).map((output) => renderWorkspaceOutputArtifact(output)).join("")}
+            </div>
+          </details>` : ""}
       </div>
-      ${renderWorkspaceOutputArtifact(group.latest, true)}
-      ${group.history_count ? `
-        <details class="workspace-history">
-          <summary>View ${group.history_count} earlier generation${group.history_count === 1 ? "" : "s"}</summary>
-          <div class="workspace-history-list">
-            ${(group.generations || []).slice(1).map((output) => renderWorkspaceOutputArtifact(output)).join("")}
-          </div>
-        </details>` : ""}
-    </article>`).join("")}</div>`;
+    </details>`).join("")}</div>`;
 }
 
 function workspaceFact(value, label) {
@@ -2289,15 +2294,30 @@ function renderCreateOverviewState(workspace) {
   const canonical = workspace.canonical_state || {};
   const job = canonical.create_job;
   if (canonical.status === "malformed") {
-    return `<div class="overview-create-status overview-create-status--error"><strong>Overview unavailable</strong><p>Stored canonical state could not be validated. No replacement was attempted.</p></div>`;
+    return emptyBox({
+      icon: "⚠",
+      title: "Overview unavailable",
+      body: "Stored canonical state could not be validated. No replacement was attempted.",
+    });
   }
   if (job?.status === "running") {
-    return `<div class="overview-create-status" id="overview-create-status"><span class="run-head"><span class="spinner"></span>Creating overview from ${Number(job.evidence_count || 0) - 1} selected transcript${job.evidence_count === 2 ? "" : "s"}…</span><p>This continues safely if you leave this page.</p></div>`;
+    return `<div class="overview-create-status overview-create-status--centered" id="overview-create-status"><span class="spinner"></span><p>Creating overview from ${Number(job.evidence_count || 0) - 1} selected transcript${job.evidence_count === 2 ? "" : "s"}…<br><small>This continues safely if you leave this page.</small></p></div>`;
   }
   if (job?.status === "error") {
-    return `<div class="overview-create-status overview-create-status--error" id="overview-create-status"><strong>Overview creation failed</strong><p>${esc(job.error_message || "No state was saved. You can retry with an explicit evidence selection.")}</p><button class="primary small" id="create-overview-btn">Retry Create overview</button></div>`;
+    return `<div id="overview-create-status">${emptyBox({
+      icon: "⚠",
+      title: "Overview creation failed",
+      body: esc(job.error_message || "No state was saved. You can retry with an explicit evidence selection."),
+      actions: '<button class="primary" id="create-overview-btn">Create Overview</button>',
+    })}</div>`;
   }
-  return `<div class="overview-create-status" id="overview-create-status"><p>No canonical opportunity overview exists yet. Create one from read-only opportunity metadata and saved transcripts you explicitly select.</p><button class="primary" id="create-overview-btn">Create overview</button><small>${workspace.eligible_evidence?.count || 0} eligible saved transcript${workspace.eligible_evidence?.count === 1 ? "" : "s"}</small></div>`;
+  const evidenceCount = workspace.eligible_evidence?.count || 0;
+  return `<div id="overview-create-status">${emptyBox({
+    icon: "◎",
+    title: "No overview created yet",
+    body: `Create one from read-only opportunity metadata and saved transcripts you explicitly select. ${esc(String(evidenceCount))} eligible saved transcript${evidenceCount === 1 ? "" : "s"}.`,
+    actions: '<button class="primary" id="create-overview-btn">Create Overview</button>',
+  })}</div>`;
 }
 
 function renderUpdateJobState(workspace) {
@@ -2423,6 +2443,13 @@ function renderOpportunityWorkspace(workspace) {
 
   return `
     <div class="opp-workspace">
+      <div class="row-actions workspace-primary-actions workspace-toolbar">
+        <a class="ghost live-btn" href="#/live/${encodeURIComponent(account.name)}/${encodeURIComponent(opportunity.slug)}/${encodeURIComponent(opportunity.name)}">🎙 Live Transcribe</a>
+        <button class="ghost" id="handoff-btn" title="Generate a PTO coverage handoff for a covering SE">🤝 Coverage Handoff</button>
+        ${!canonicalCreated && workspace.canonical_state?.status !== "malformed" && workspace.canonical_state?.create_job?.status !== "running" ? '<button class="primary" id="create-overview-header">Create overview</button>' : ""}
+        ${canonicalCreated ? `<button class="ghost" id="update-overview-btn"${workspace.canonical_state?.freshness?.update_active ? " disabled" : ""}>Update Overview</button>` : ""}
+        <button class="${canonicalCreated ? "primary" : "ghost"}" id="invoke-btn">Generate</button>
+      </div>
       <section class="workspace-hero">
         <div class="row workspace-title-row">
           <div>
@@ -2432,13 +2459,6 @@ function renderOpportunityWorkspace(workspace) {
             <div class="workspace-meta">${opportunityHeaderMeta(workspace)}</div>
             ${metadataNote}
             ${renderOverviewFreshness(workspace)}
-          </div>
-          <div class="row-actions workspace-primary-actions">
-            <a class="ghost live-btn" href="#/live/${encodeURIComponent(account.name)}/${encodeURIComponent(opportunity.slug)}/${encodeURIComponent(opportunity.name)}">🎙 Live Transcribe</a>
-            <button class="ghost" id="handoff-btn" title="Generate a PTO coverage handoff for a covering SE">🤝 Coverage Handoff</button>
-            ${!canonicalCreated && workspace.canonical_state?.status !== "malformed" && workspace.canonical_state?.create_job?.status !== "running" ? '<button class="primary" id="create-overview-header">Create overview</button>' : ""}
-            ${canonicalCreated ? `<button class="ghost" id="update-overview-btn"${workspace.canonical_state?.freshness?.update_active ? " disabled" : ""}>Update Overview</button>` : ""}
-            <button class="${canonicalCreated ? "primary" : "ghost"}" id="invoke-btn">Generate</button>
           </div>
         </div>
         <div class="workspace-facts" aria-label="Known opportunity context">
@@ -2468,7 +2488,12 @@ function renderOpportunityWorkspace(workspace) {
 
       <div id="freebar-status" class="status-stack"></div>
 
-      ${renderTechEvalTracker(workspace.tech_eval)}
+      <div class="workspace-frameworks">
+        ${renderTechEvalTracker(workspace.tech_eval)}
+        ${renderBusinessCase(current)}
+        ${renderMeddpicc(current)}
+        ${renderStakeholders(current)}
+      </div>
 
       <section class="workspace-section" aria-labelledby="opportunity-outputs-title">
         <div class="workspace-section-head">
@@ -2492,14 +2517,8 @@ function renderOpportunityWorkspace(workspace) {
               </span>
               <span class="workspace-count">${accountOutputs.total} total</span>
             </summary>
-            <div class="workspace-disclosure-body">${renderWorkspaceOutputGroups(accountOutputs, { accountLevel: true })}</div>
+            <div class="workspace-disclosure-body">${renderWorkspaceOutputGroups(accountOutputs)}</div>
           </details>` : ""}
-      </div>
-
-      <div class="workspace-frameworks">
-        ${renderBusinessCase(current)}
-        ${renderMeddpicc(current)}
-        ${renderStakeholders(current)}
       </div>
 
       ${canonicalCreated ? renderOverviewEvidence(current) : ""}
@@ -2780,7 +2799,9 @@ async function pageOpportunity(account, slug, routeOppName) {
   };
   const startCreate = async (started) => {
     const region = document.getElementById("overview-create-status");
-    if (region) region.innerHTML = '<span class="run-head"><span class="spinner"></span>Creating overview…</span><p>This continues safely if you leave this page.</p>';
+    if (region) {
+      region.innerHTML = '<div class="overview-create-status overview-create-status--centered"><span class="spinner"></span><p>Creating overview…<br><small>This continues safely if you leave this page.</small></p></div>';
+    }
     await watchCreate(started.job_id);
   };
   const openCreate = () => openCreateOverviewModal(account, slug, oppName, startCreate);
@@ -2871,7 +2892,7 @@ async function pageOpportunity(account, slug, routeOppName) {
             </span>
             <span class="workspace-count">${scope.total} total</span>
           </summary>
-          <div class="workspace-disclosure-body">${renderWorkspaceOutputGroups(scope, { accountLevel: true })}</div>
+          <div class="workspace-disclosure-body">${renderWorkspaceOutputGroups(scope)}</div>
         </details>` : "";
       wireWorkspace(accountRegion);
     }
@@ -4188,6 +4209,108 @@ function initTheme() {
   };
 }
 
+// ---- Salesforce connection-health badge (header) --------------------------
+let sfdcHealthMenuOpen = false;
+
+async function initSfdcHealth() {
+  try {
+    renderSfdcHealth(await api("/api/sfdc/status"));
+  } catch {
+    // Best-effort: never let this block or break the app shell.
+  }
+}
+
+function renderSfdcHealth(raw) {
+  const el = document.getElementById("sfdc-health");
+  if (!el) return;
+  const decision = window.sfdcStatus(raw);
+  if (!decision.visible) {
+    el.className = "sfdc-health hidden";
+    el.onclick = null;
+    return;
+  }
+  el.className = `sfdc-health sfdc-health--${decision.severity}`;
+  el.innerHTML = `☁ ${esc(decision.label)}`;
+  el.onclick = (e) => { e.stopPropagation(); toggleSfdcHealthMenu(el, decision); };
+}
+
+function toggleSfdcHealthMenu(anchor, decision) {
+  document.getElementById("sfdc-health-menu")?.remove();
+  if (sfdcHealthMenuOpen) { sfdcHealthMenuOpen = false; return; }
+  sfdcHealthMenuOpen = true;
+  const menu = document.createElement("div");
+  menu.id = "sfdc-health-menu";
+  menu.className = "dropdown-menu sfdc-health-menu";
+  menu.innerHTML = `
+    <p class="sfdc-health-msg">${esc(decision.message)}</p>
+    ${decision.reauthCommand
+      ? `<button class="primary small" id="sfdc-health-reauth">Reauthenticate now</button>
+         <p class="sfdc-health-hint">Opens a browser window to log in to Salesforce. If nothing
+           opens, run this yourself:</p>
+         <code class="sfdc-health-cmd">${esc(decision.reauthCommand)}</code>`
+      : `<button class="small" id="sfdc-health-recheck">Recheck now</button>`}`;
+  anchor.appendChild(menu);
+
+  const closeMenu = () => { menu.remove(); sfdcHealthMenuOpen = false; };
+
+  menu.querySelector("#sfdc-health-recheck")?.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    closeMenu();
+    try { renderSfdcHealth(await api("/api/sfdc/status?force=true")); } catch {}
+  });
+
+  menu.querySelector("#sfdc-health-reauth")?.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.textContent = "Opening browser…";
+    let res;
+    try {
+      res = await api("/api/sfdc/reauthenticate", { method: "POST" });
+    } catch {
+      res = { started: false, message: "Couldn't reach the app to start reauthentication." };
+    }
+    if (!res.started) {
+      btn.textContent = res.message || "Couldn't start reauthentication.";
+      return;
+    }
+    btn.textContent = "Waiting for login in your browser…";
+    pollSfdcReauth(anchor, menu, btn);
+  });
+
+  document.addEventListener("click", function closeOnce() {
+    closeMenu();
+    document.removeEventListener("click", closeOnce);
+  }, { once: true });
+}
+
+async function pollSfdcReauth(anchor, menu, btn) {
+  const maxAttempts = 20; // ~60s at 3s intervals — a user completing a browser login
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise((r) => setTimeout(r, 3000));
+    if (!document.body.contains(menu)) return; // popover was closed; stop polling
+    let raw;
+    try {
+      raw = await api("/api/sfdc/status?force=true");
+    } catch {
+      continue;
+    }
+    if (raw.state === "ok") {
+      btn.textContent = "Connected!";
+      const msg = menu.querySelector(".sfdc-health-msg");
+      if (msg) msg.textContent = raw.message || "Connected to Salesforce.";
+      setTimeout(() => {
+        menu.remove();
+        sfdcHealthMenuOpen = false;
+        renderSfdcHealth(raw);
+      }, 1200);
+      return;
+    }
+  }
+  btn.disabled = false;
+  btn.textContent = "Reauthenticate now";
+}
+
 // ---- Router ---------------------------------------------------------------
 async function route() {
   const h = location.hash.slice(1) || "/";
@@ -5346,6 +5469,7 @@ async function pageHosted() {
       const help = await api("/api/skills/help");
       SKILLS_HELP = Object.fromEntries(help.map((h) => [h.id, h]));
     } catch { SKILLS_HELP = {}; }
+    initSfdcHealth(); // fire-and-forget; never blocks first route render
   }
   window.addEventListener("hashchange", route);
   route();

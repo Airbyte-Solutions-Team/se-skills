@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import shutil
@@ -16,10 +17,15 @@ from pydantic import ValidationError
 from opportunity_state import OpportunityStateCandidate
 from services.transcription_service import ResolvedTranscriptEvidence
 
+logger = logging.getLogger(__name__)
 
 UPDATER_VERSION = "opportunity-overview-complete-v1"
-VERIFIED_CLAUDE_VERSION = "2.1.272"
+MINIMUM_CLAUDE_VERSION = "2.1.272"
 _CLAUDE_VERSION_RE = re.compile(r"^\s*(?P<version>\d+\.\d+\.\d+)(?:\s|\(|$)")
+
+
+def _version_tuple(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split("."))
 
 
 class CanonicalStateExecutionError(Exception):
@@ -87,7 +93,7 @@ class ClaudeCanonicalStateExecutor:
         model: str,
         forbidden_roots: list[Path],
         executable: str = "claude",
-        timeout_seconds: float = 180.0,
+        timeout_seconds: float = 600.0,
         version_timeout_seconds: float = 5.0,
         max_stdin_bytes: int = 900_000,
         max_stdout_bytes: int = 1_000_000,
@@ -115,7 +121,7 @@ class ClaudeCanonicalStateExecutor:
         return [executable or shutil.which(self.executable) or self.executable, "--version"]
 
     def command(self, executable: str | None = None) -> list[str]:
-        """Return the audited 2.1.272 command contract, without any evidence."""
+        """Return the command contract audited against Claude Code 2.1.272+, without any evidence."""
         return [
             executable or shutil.which(self.executable) or self.executable,
             "-p",
@@ -172,8 +178,14 @@ class ClaudeCanonicalStateExecutor:
                 "engagement, stance, blocker status or reason, recommended_next_step, and explicit "
                 "missing_information honestly, using unknown enum values or null when evidence is absent. "
                 "Explicitly list champion, economic_buyer, and technical_decision_maker in missing_key_roles "
-                "when no authorized evidence establishes those categories. Use each knowledge claim's explicit unknown, partial, "
-                "or conflicting state when evidence is absent, incomplete, or contradictory. Record concrete "
+                "when no authorized evidence establishes those categories. missing_key_roles may contain only "
+                "those three categories and never a category also held by an established stakeholder; note any "
+                "other missing stakeholder category (e.g. security_approver, procurement, end_user) in the map's "
+                "general missing_information list instead. Use each knowledge claim's explicit unknown, partial, "
+                "or conflicting state when evidence is absent, incomplete, or contradictory. A claim's value must "
+                "be null whenever its knowledge_state is unknown or not_applicable -- never fill in a guess, "
+                "placeholder, or explanatory sentence there; a value is required only for known, partial, or "
+                "conflicting states. Record concrete "
                 "missing_information for incomplete business-case areas and MEDDPICC dimensions, and record "
                 "suggested_discovery for every MEDDPICC gap."
             ),
@@ -258,10 +270,10 @@ class ClaudeCanonicalStateExecutor:
                 "runtime_version_invalid", "Claude Code returned an invalid version response."
             )
         actual = match.group("version")
-        if actual != VERIFIED_CLAUDE_VERSION:
+        if _version_tuple(actual) < _version_tuple(MINIMUM_CLAUDE_VERSION):
             raise CanonicalStateExecutionError(
                 "runtime_version_unsupported",
-                f"Claude Code {VERIFIED_CLAUDE_VERSION} is required to create an overview.",
+                f"Claude Code {MINIMUM_CLAUDE_VERSION} or newer is required to create an overview.",
             )
         return actual
 
@@ -272,7 +284,7 @@ class ClaudeCanonicalStateExecutor:
         cwd: Path,
         subprocess_options: dict[str, Any],
     ) -> str:
-        """Verify the exact audited CLI before constructing or sending evidence."""
+        """Verify the CLI meets the minimum audited version before constructing or sending evidence."""
         proc: asyncio.subprocess.Process | None = None
         stdout_task: asyncio.Task[bytes] | None = None
         stderr_task: asyncio.Task[bytes] | None = None
@@ -288,7 +300,7 @@ class ClaudeCanonicalStateExecutor:
                 )
             except FileNotFoundError as exc:
                 raise CanonicalStateExecutionError(
-                    "runtime_unavailable", f"Claude Code {VERIFIED_CLAUDE_VERSION} is required to create an overview."
+                    "runtime_unavailable", f"Claude Code {MINIMUM_CLAUDE_VERSION} or newer is required to create an overview."
                 ) from exc
             assert proc.stdout is not None and proc.stderr is not None
             safe_detail = "Claude Code version check exceeded its output limit."
@@ -349,7 +361,20 @@ class ClaudeCanonicalStateExecutor:
             elif not isinstance(candidate, dict):
                 raise TypeError("candidate must be a JSON object")
             return OpportunityStateCandidate.model_validate(candidate)
-        except (UnicodeError, json.JSONDecodeError, TypeError, ValueError, ValidationError) as exc:
+        except ValidationError as exc:
+            # `msg`/`type`/`loc` are safe to log: Pydantic v2 never embeds the actual offending
+            # value in `msg` (that only appears in `input`/`ctx`, which we deliberately omit,
+            # since it could echo back model-generated, evidence-derived text).
+            safe_errors = [
+                {"loc": ".".join(str(p) for p in e["loc"]), "type": e["type"], "msg": e["msg"]}
+                for e in exc.errors()
+            ]
+            logger.warning("Canonical-state candidate failed schema validation: %s", safe_errors)
+            raise CanonicalStateExecutionError(
+                "invalid_model_output", "Claude returned an invalid canonical-state candidate."
+            ) from exc
+        except (UnicodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            logger.warning("Canonical-state candidate could not be parsed: %s: %s", type(exc).__name__, exc)
             raise CanonicalStateExecutionError(
                 "invalid_model_output", "Claude returned an invalid canonical-state candidate."
             ) from exc
@@ -364,7 +389,7 @@ class ClaudeCanonicalStateExecutor:
             executable = shutil.which(self.executable)
             if executable is None:
                 raise CanonicalStateExecutionError(
-                    "runtime_unavailable", f"Claude Code {VERIFIED_CLAUDE_VERSION} is required to create an overview."
+                    "runtime_unavailable", f"Claude Code {MINIMUM_CLAUDE_VERSION} or newer is required to create an overview."
                 )
             subprocess_options: dict[str, Any] = {}
             if os.name == "nt":

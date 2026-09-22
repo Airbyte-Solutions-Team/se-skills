@@ -27,6 +27,18 @@ class PullAccounts(BaseModel):
     aes: list[str] = []
 
 
+@router.get("/api/sfdc/status")
+async def api_sfdc_status(request: Request, force: bool = False):
+    """Best-effort live Salesforce connection health, for the header status badge."""
+    return await _get_salesforce(request).status(force=force)
+
+
+@router.post("/api/sfdc/reauthenticate")
+async def api_sfdc_reauthenticate(request: Request):
+    """Kick off `sf org login web` in the background; the UI polls /api/sfdc/status after."""
+    return await _get_salesforce(request).reauthenticate()
+
+
 @router.post("/api/sfdc/stage-amount")
 async def api_sfdc_stage_amount(body: dict, request: Request):
     """Batched SFDC stage+amount for a list of account names. Best-effort; the UI

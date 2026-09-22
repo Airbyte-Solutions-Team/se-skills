@@ -22,6 +22,25 @@ from services.path_utils import resolve_within
 
 logger = logging.getLogger(__name__)
 
+# Known `sf` CLI stderr substrings (lowercased) indicating the stored org auth is
+# invalid/expired rather than some other failure (network, CLI bug, etc.). Best-known
+# sf/sfdx CLI conventions — verify against real stderr from an actually-expired session
+# and extend this list if a new failure mode is seen misclassified as generic "error".
+_AUTH_ERROR_PATTERNS = (
+    "expired access/refresh token",
+    "no authorization information found",
+    "notorgfound",
+    "invalid_grant",
+    "authinfooverwriteerror",
+    "invalid session id",
+)
+
+
+def _classify_sf_failure(stderr: str) -> str:
+    """Classify a non-zero `sf` CLI exit as "auth_error" or generic "error"."""
+    low = (stderr or "").lower()
+    return "auth_error" if any(p in low for p in _AUTH_ERROR_PATTERNS) else "error"
+
 
 class SalesforceIntegrationError(Exception):
     """Raised for Salesforce-specific failures that callers may choose to surface."""
@@ -80,6 +99,24 @@ class SalesforceIntegration:
         """
         return shutil.which("sf") or "sf"
 
+    async def _org_display_raw(self) -> tuple[int, str, str]:
+        """Run `sf org display --json` once; return (returncode, stdout, stderr).
+
+        Never raises; returncode -1 signals a local exception (timeout, spawn failure).
+        """
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                self._sf_executable(), "org", "display", "--target-org", self._org_alias(), "--json",
+                cwd=str(self.workspace),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            out, err = await asyncio.wait_for(proc.communicate(), timeout=self._timeout)
+            return proc.returncode, out.decode(errors="replace"), err.decode(errors="replace")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Salesforce org display failed: %s", exc)
+            return -1, "", str(exc)
+
     async def instance_url(self) -> str | None:
         """Return the org's Salesforce base URL (e.g. https://airbyte.my.salesforce.com),
         used to build Lightning record links. Prefers an explicit `instance_url` in the
@@ -94,25 +131,18 @@ class SalesforceIntegration:
         if cached != "__unset__":
             return cached
         url: str | None = None
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                self._sf_executable(), "org", "display", "--target-org", self._org_alias(), "--json",
-                cwd=str(self.workspace),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            out, _ = await asyncio.wait_for(proc.communicate(), timeout=self._timeout)
-            if proc.returncode == 0:
-                # `sf` may prepend a non-JSON update-warning line; parse from the first `{`.
-                text = out.decode(errors="replace")
-                brace = text.find("{")
-                if brace != -1:
-                    data = json.loads(text[brace:])
+        rc, out, _ = await self._org_display_raw()
+        if rc == 0:
+            # `sf` may prepend a non-JSON update-warning line; parse from the first `{`.
+            brace = out.find("{")
+            if brace != -1:
+                try:
+                    data = json.loads(out[brace:])
                     raw = (data.get("result") or {}).get("instanceUrl")
                     if raw:
                         url = str(raw).rstrip("/")
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("Salesforce instance_url lookup failed: %s", exc)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("Salesforce instance_url parse failed: %s", exc)
         self._instance_url_cache = url
         return url
 
@@ -122,6 +152,114 @@ class SalesforceIntegration:
         if not base_url or not record_id:
             return None
         return f"{base_url}/lightning/r/{object_name}/{record_id}/view"
+
+    # -----------------------------------------------------------------------
+    # Connection health (for the UI status badge)
+    # -----------------------------------------------------------------------
+    _STATUS_CACHE_TTL = 60.0
+
+    async def status(self, *, force: bool = False) -> dict[str, Any]:
+        """Live Salesforce connection health for the UI status badge.
+
+        `state` is one of "ok" | "auth_error" | "not_installed" | "error" | "disabled".
+        Cached for `_STATUS_CACHE_TTL` seconds (auth state can change at runtime, e.g.
+        after the user runs `sf org login web`, without a server restart); `force=True`
+        bypasses the cache for an immediate recheck.
+        """
+        alias = self._org_alias()
+        if not self.is_enabled():
+            return {
+                "enabled": False,
+                "state": "disabled",
+                "message": "Salesforce integration is disabled in .se-config.yaml.",
+                "org_alias": alias,
+            }
+        if shutil.which("sf") is None:
+            return {
+                "enabled": True,
+                "state": "not_installed",
+                "message": "The Salesforce CLI (`sf`) isn't installed or isn't on PATH.",
+                "org_alias": alias,
+            }
+
+        now = asyncio.get_event_loop().time()
+        cached = getattr(self, "_status_cache", None)
+        if cached and not force and (now - cached[0]) < self._STATUS_CACHE_TTL:
+            return cached[1]
+
+        rc, out, err = await self._org_display_raw()
+        # `sf org display` can exit 0 even with a dead session: a stale/expired refresh
+        # token surfaces only inside the "successful" JSON, as a non-"Connected"
+        # `connectedStatus` string (plus a "unable to refresh auth for org" warning) —
+        # NOT as a non-zero exit code. Must inspect connectedStatus, not just rc.
+        username = None
+        connected_status = None
+        brace = out.find("{")
+        if brace != -1:
+            try:
+                result_obj = json.loads(out[brace:]).get("result") or {}
+                username = result_obj.get("username")
+                connected_status = result_obj.get("connectedStatus")
+            except Exception:  # noqa: BLE001
+                pass
+
+        if rc == 0 and (connected_status is None or connected_status.lower() == "connected"):
+            result = {
+                "enabled": True,
+                "state": "ok",
+                "message": f"Connected to Salesforce as {username}." if username else "Connected to Salesforce.",
+                "org_alias": alias,
+            }
+        else:
+            state = _classify_sf_failure(connected_status or err)
+            logger.info("Salesforce health check failed (state=%s): %s", state, (connected_status or err).strip()[:300])
+            result = {
+                "enabled": True,
+                "state": state,
+                "message": (
+                    "Salesforce session needs to be reconnected (often happens after a password reset)."
+                    if state == "auth_error"
+                    else "Salesforce commands are currently failing."
+                ),
+                "org_alias": alias,
+            }
+        self._status_cache = (now, result)
+        return result
+
+    async def reauthenticate(self) -> dict[str, Any]:
+        """Kick off `sf org login web` in the background.
+
+        This opens a real browser window on this machine for the user to complete
+        Salesforce OAuth — since the webapp runs locally, that's the same flow as
+        running the command in a terminal. Does not wait for the flow to finish (the
+        user may take a while); the caller polls `status(force=True)` to detect
+        completion. Refuses to double-spawn while one is already in flight.
+        """
+        if getattr(self, "_reauth_in_flight", False):
+            return {"started": False, "message": "A reauthentication is already in progress."}
+        alias = self._org_alias()
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                self._sf_executable(), "org", "login", "web", "--alias", alias,
+                cwd=str(self.workspace),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.info("Salesforce reauthenticate spawn failed: %s", exc)
+            return {"started": False, "message": f"Couldn't launch `sf org login web`: {exc}"}
+
+        self._reauth_in_flight = True
+
+        async def _wait_and_clear() -> None:
+            try:
+                await proc.wait()
+            finally:
+                self._reauth_in_flight = False
+                self._status_cache = None  # force a fresh check next time status() is called
+
+        asyncio.create_task(_wait_and_clear())
+        return {"started": True, "message": f"Opening a browser to log in to {alias}…"}
 
     # -----------------------------------------------------------------------
     # Sidecar helpers
