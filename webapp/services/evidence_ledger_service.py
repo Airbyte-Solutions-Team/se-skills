@@ -3,12 +3,34 @@
 Layout under `<customers_dir>/.command-center/`:
 
     scope.json                         scope identity for this workspace
+    .lock                              cross-process write lock (advisory)
     sources/<source_id>.json           source record (metadata, statuses, history)
-    content/<source_id>/<hash>.json    private content per revision (never listed)
+    content/<source_id>/<hash>.json    private snapshot per revision (never listed)
 
-Source records grow by appending revisions and association decisions; content
+Source records grow by appending revisions and association decisions; snapshot
 files are written once and never rewritten. Every record embeds the scope
 identity and is rejected on read if it belongs to another workspace.
+
+A snapshot holds the private per-revision metadata (title, attendees, times,
+URL) plus the body, and its hash is the revision key, so a metadata-only edit
+is a new revision rather than a silent `duplicate`.
+
+Access policy: once a source's latest revision is `access_lost`, `deleted`, or
+`pending_unknown`, `read_content` withholds *every* cached revision. Files stay
+on disk unchanged; whether they are purged or unlocked again is a documented
+follow-up decision (retention / re-authorization), not something the pilot
+decides implicitly.
+
+File permissions: directories are created 0700 and files 0600 on POSIX. On
+Windows `os.chmod` cannot express this; the ledger then relies on the ACLs the
+user profile directory inherits (private to the logged-in user by default) and
+sets nothing further. The local pilot is single-user by definition.
+
+Concurrency: all mutations take an in-process lock *and* an advisory
+cross-process lock on `.lock` (`fcntl.flock` on POSIX, `msvcrt.locking` on
+Windows), so a second process (e.g. a future reconciliation worker) cannot
+interleave a read-modify-write of the same source record. Readers do not lock;
+they rely on the atomic rename plus the record checksum.
 """
 from __future__ import annotations
 
@@ -19,17 +41,28 @@ import re
 import stat
 import threading
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Iterable
+from typing import Any, Awaitable, Callable, Iterable, Iterator
 
 from pydantic import ValidationError
+
+try:  # POSIX
+    import fcntl
+except ImportError:  # pragma: no cover - Windows
+    fcntl = None  # type: ignore[assignment]
+try:  # Windows
+    import msvcrt
+except ImportError:  # pragma: no cover - POSIX
+    msvcrt = None  # type: ignore[assignment]
 
 from command_center_evidence import (
     AUTO_ASSOCIATION_METHODS,
     HEX64,
     HUMAN_ASSOCIATION_METHODS,
     SOURCE_ID,
+    WITHHOLD_CONTENT_AVAILABILITY,
     AssociationCandidate,
     AssociationDecision,
     AssociationMethod,
@@ -52,6 +85,16 @@ _UNPROCESSED: frozenset[str] = frozenset({
     "discovered", "awaiting_association", "awaiting_content", "queued", "processing", "failed"
 })
 _LIST_LIMIT = 200
+_MAX_LIST_LIMIT = 500
+_DIR_MODE = 0o700
+_FILE_MODE = 0o600
+
+
+def _mkdir_private(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True, mode=_DIR_MODE)
+    if os.name == "posix":
+        os.chmod(path, _DIR_MODE)
+
 
 IdentityResolver = Callable[[str, str], Awaitable[dict[str, Any]]]
 
@@ -108,10 +151,31 @@ class EvidenceLedgerService:
         if ledger.exists() and ledger.is_symlink():
             raise EvidenceLedgerError(409, "Ledger storage is unsafe.", code="unsafe_storage")
         if create:
-            ledger.mkdir(parents=True, exist_ok=True)
-            (ledger / "sources").mkdir(exist_ok=True)
-            (ledger / "content").mkdir(exist_ok=True)
+            _mkdir_private(ledger)
+            _mkdir_private(ledger / "sources")
+            _mkdir_private(ledger / "content")
         return ledger
+
+    @contextmanager
+    def _exclusive(self) -> Iterator[None]:
+        """In-process lock plus advisory cross-process lock on `<ledger>/.lock`."""
+        with self._lock:
+            lock_path = self._ledger_dir(create=True) / ".lock"
+            fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, _FILE_MODE)
+            try:
+                if fcntl is not None:
+                    fcntl.flock(fd, fcntl.LOCK_EX)
+                elif msvcrt is not None:  # pragma: no cover - Windows
+                    msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+                yield
+            finally:
+                try:
+                    if fcntl is not None:
+                        fcntl.flock(fd, fcntl.LOCK_UN)
+                    elif msvcrt is not None:  # pragma: no cover - Windows
+                        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                finally:
+                    os.close(fd)
 
     def _scope_path(self) -> Path:
         return self._ledger_dir() / "scope.json"
@@ -126,7 +190,7 @@ class EvidenceLedgerService:
             raise EvidenceLedgerError(404, "Unknown content revision.", code="unknown_content")
         directory = resolve_within(self._ledger_dir(create=create) / "content", source_id)
         if create:
-            directory.mkdir(parents=True, exist_ok=True)
+            _mkdir_private(directory)
         return resolve_within(directory, f"{content_hash}.json")
 
     # -------------------------------------------------------------------- io
@@ -135,10 +199,13 @@ class EvidenceLedgerService:
     def _atomic_write(path: Path, payload: bytes) -> None:
         temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
         try:
-            with temp.open("xb") as handle:
+            fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, _FILE_MODE)
+            with os.fdopen(fd, "wb") as handle:
                 handle.write(payload)
                 handle.flush()
                 os.fsync(handle.fileno())
+            if os.name == "posix":
+                os.chmod(temp, _FILE_MODE)
             os.replace(temp, path)
         finally:
             try:
@@ -208,12 +275,12 @@ class EvidenceLedgerService:
         *,
         import_id: str | None = None,
     ) -> dict[str, Any]:
-        """Record user-selected meetings; idempotent on (scope, object, content hash)."""
+        """Record user-selected meetings; idempotent on (scope, object, snapshot hash)."""
         import_token = import_id or uuid.uuid4().hex[:16]
         if not re.fullmatch(r"[a-f0-9]{16}", import_token):
             raise EvidenceLedgerError(400, "Invalid import id.", code="invalid_import_id")
         results: list[dict[str, Any]] = []
-        with self._lock:
+        with self._exclusive():
             self._ensure_scope_file()
             for meeting in meetings:
                 results.append(self._record_meeting(meeting, import_token))
@@ -228,9 +295,12 @@ class EvidenceLedgerService:
         scope = self.scope()
         source_id = source_id_for(scope, meeting.identity)
         now = self._now()
-        content_hash = meeting.content.content_hash() if meeting.availability == "content_available" else (
-            sha256_hex(canonical_bytes({"availability": meeting.availability, "reason": meeting.unavailable_reason}))
-        )
+        snapshot = meeting.snapshot()
+        snapshot_bytes = canonical_bytes(snapshot)
+        if len(snapshot_bytes) > _MAX_CONTENT_BYTES:
+            raise EvidenceLedgerError(413, "Content exceeds the ledger bound.", code="content_too_large")
+        content_hash = sha256_hex(snapshot_bytes)
+        body_hash = meeting.content.content_hash()
         metrics = meeting.content.metrics(
             title_present=meeting.title is not None, attendee_count=len(meeting.attendees)
         )
@@ -238,17 +308,26 @@ class EvidenceLedgerService:
         path = self._source_path(source_id, create=True)
         existing = self._read_source(source_id) if path.exists() else None
 
+        change = "initial"
         if existing is not None:
             if existing.identity != meeting.identity:
                 raise EvidenceLedgerError(409, "Source identity collision.", code="storage_conflict")
             latest = existing.revisions[-1]
-            if latest.content_hash == content_hash and latest.availability == meeting.availability:
+            if latest.content_hash == content_hash:
                 return self._import_result(existing, latest, created=False, outcome="duplicate")
+            if latest.availability != meeting.availability:
+                change = "availability"
+            elif latest.body_hash != body_hash:
+                change = "content"
+            else:
+                change = "metadata"
 
         revision_number = 1 if existing is None else existing.latest_revision + 1
         revision = SourceRevision(
             revision=revision_number,
             content_hash=content_hash,
+            body_hash=body_hash,
+            change=change,
             availability=meeting.availability,
             trigger="manual_import",
             import_id=import_id,
@@ -259,13 +338,9 @@ class EvidenceLedgerService:
             metrics=metrics,
             unavailable_reason=meeting.unavailable_reason,
         )
-        if meeting.availability == "content_available":
-            content_path = self._content_path(source_id, content_hash, create=True)
-            if not content_path.exists():
-                body = canonical_bytes(meeting.content.model_dump(mode="json"))
-                if len(body) > _MAX_CONTENT_BYTES:
-                    raise EvidenceLedgerError(413, "Content exceeds the ledger bound.", code="content_too_large")
-                self._atomic_write(content_path, body)
+        content_path = self._content_path(source_id, content_hash, create=True)
+        if not content_path.exists():
+            self._atomic_write(content_path, snapshot_bytes)
 
         if existing is None:
             decision = AssociationDecision(
@@ -332,6 +407,8 @@ class EvidenceLedgerService:
             "created_revision": created,
             "revision": revision.revision,
             "content_hash": revision.content_hash,
+            "body_hash": revision.body_hash,
+            "change": revision.change,
             "availability": revision.availability,
             "processing_status": source.processing.status,
             "association_state": source.association.state,
@@ -347,7 +424,7 @@ class EvidenceLedgerService:
             raise EvidenceLedgerError(400, "At least one candidate is required.", code="no_candidates")
         if any(candidate.method in AUTO_ASSOCIATION_METHODS for candidate in candidates):
             raise EvidenceLedgerError(400, "Explicit methods must confirm, not propose.", code="invalid_method")
-        with self._lock:
+        with self._exclusive():
             source = self._read_source(source_id)
             if source.association.state == "associated":
                 raise EvidenceLedgerError(
@@ -384,7 +461,7 @@ class EvidenceLedgerService:
         safe_account = identity["safe_account"]
         safe_opp = identity["safe_opp"]
         opportunity = identity.get("opportunity") or {}
-        with self._lock:
+        with self._exclusive():
             source = self._read_source(source_id)
             current = source.association
             if (
@@ -422,7 +499,7 @@ class EvidenceLedgerService:
             return self.summarize(source)
 
     def clear_association(self, source_id: str, *, reason: str, actor: str | None = None) -> dict[str, Any]:
-        with self._lock:
+        with self._exclusive():
             source = self._read_source(source_id)
             current = source.association
             if current.state == "unassociated":
@@ -458,7 +535,7 @@ class EvidenceLedgerService:
     # ------------------------------------------------------------- processing
 
     def mark_processing(self, source_id: str) -> dict[str, Any]:
-        with self._lock:
+        with self._exclusive():
             source = self._read_source(source_id)
             if source.processing.status not in {"queued", "failed"}:
                 raise EvidenceLedgerError(
@@ -478,7 +555,7 @@ class EvidenceLedgerService:
 
     def mark_processed(self, source_id: str, *, revision: int) -> dict[str, Any]:
         """Complete processing of exactly `revision`; a newer revision supersedes it."""
-        with self._lock:
+        with self._exclusive():
             source = self._read_source(source_id)
             if source.processing.status != "processing":
                 raise EvidenceLedgerError(409, "Source is not being processed.", code="not_processing")
@@ -504,7 +581,7 @@ class EvidenceLedgerService:
     def mark_failed(self, source_id: str, *, error_code: str, retry_eligible: bool) -> dict[str, Any]:
         if not re.fullmatch(r"[a-z0-9_]{1,80}", error_code):
             raise EvidenceLedgerError(400, "Invalid error code.", code="invalid_error_code")
-        with self._lock:
+        with self._exclusive():
             source = self._read_source(source_id)
             if source.processing.status != "processing":
                 raise EvidenceLedgerError(409, "Source is not being processed.", code="not_processing")
@@ -521,7 +598,7 @@ class EvidenceLedgerService:
 
     def retry(self, source_id: str) -> dict[str, Any]:
         """Idempotent manual retry: failed+eligible -> queued; anything else is a no-op."""
-        with self._lock:
+        with self._exclusive():
             source = self._read_source(source_id)
             processing = source.processing
             if processing.status == "failed" and processing.retry_eligible:
@@ -542,8 +619,18 @@ class EvidenceLedgerService:
         return self.summarize(self._read_source(source_id), include_history=True)
 
     def read_content(self, source_id: str, *, revision: int) -> dict[str, Any]:
-        """Private content for one revision; for the analysis path only, never for lists."""
+        """Private snapshot for one revision; for the analysis path only, never for lists.
+
+        Withheld for every revision once the source's *latest* state is
+        `access_lost`, `deleted`, or `pending_unknown` (see module docstring).
+        """
         source = self._read_source(source_id)
+        if source.availability in WITHHOLD_CONTENT_AVAILABILITY:
+            raise EvidenceLedgerError(
+                403,
+                f"Content is withheld: source is {source.availability}.",
+                code="content_withheld",
+            )
         matching = next((item for item in source.revisions if item.revision == revision), None)
         if matching is None:
             raise EvidenceLedgerError(404, "Unknown source revision.", code="unknown_revision")
@@ -557,7 +644,16 @@ class EvidenceLedgerService:
             raise EvidenceLedgerError(409, "Revision content checksum mismatch.", code="malformed_storage")
         return raw
 
-    def list_sources(self, *, status: str | None = None, unprocessed_only: bool = False) -> dict[str, Any]:
+    def list_sources(
+        self,
+        *,
+        status: str | None = None,
+        unprocessed_only: bool = False,
+        limit: int = _LIST_LIMIT,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        if not 1 <= limit <= _MAX_LIST_LIMIT or offset < 0:
+            raise EvidenceLedgerError(400, "Invalid page bounds.", code="invalid_page")
         ledger = self._ledger_dir()
         sources_dir = ledger / "sources"
         items: list[dict[str, Any]] = []
@@ -578,24 +674,31 @@ class EvidenceLedgerService:
                 if unprocessed_only and source.processing.status not in _UNPROCESSED:
                     continue
                 items.append(self.summarize(source))
-        items.sort(key=lambda item: item["updated_at"], reverse=True)
-        truncated = len(items) > _LIST_LIMIT
+        items.sort(key=lambda item: (item["updated_at"], item["source_id"]), reverse=True)
+        counts: dict[str, int] = {}
+        for item in items:
+            counts[item["processing"]["status"]] = counts.get(item["processing"]["status"], 0) + 1
+        page = items[offset:offset + limit]
+        next_offset = offset + limit if offset + limit < len(items) else None
         return {
             "scope": self.scope().model_dump(mode="json"),
             "total": len(items),
-            "truncated": truncated,
+            "counts_by_status": counts,
+            "offset": offset,
+            "limit": limit,
+            "next_offset": next_offset,
+            "truncated": next_offset is not None,
             "malformed_records": malformed,
-            "sources": items[:_LIST_LIMIT],
+            "sources": page,
         }
 
-    def unprocessed_sources(self) -> dict[str, Any]:
-        """The Unprocessed Sources queue: everything not yet processed for its latest revision."""
-        listing = self.list_sources(unprocessed_only=True)
-        counts: dict[str, int] = {}
-        for item in listing["sources"]:
-            counts[item["processing"]["status"]] = counts.get(item["processing"]["status"], 0) + 1
-        listing["counts_by_status"] = counts
-        return listing
+    def unprocessed_sources(self, *, limit: int = _LIST_LIMIT, offset: int = 0) -> dict[str, Any]:
+        """The Unprocessed Sources queue: everything not yet processed for its latest revision.
+
+        `total` and `counts_by_status` cover every match; `sources` is one page
+        and `next_offset` makes the remainder reachable.
+        """
+        return self.list_sources(unprocessed_only=True, limit=limit, offset=offset)
 
     @staticmethod
     def summarize(source: EvidenceSource, *, include_history: bool = False) -> dict[str, Any]:
@@ -616,6 +719,8 @@ class EvidenceLedgerService:
             "latest": {
                 "revision": latest.revision,
                 "content_hash": latest.content_hash,
+                "body_hash": latest.body_hash,
+                "change": latest.change,
                 "availability": latest.availability,
                 "trigger": latest.trigger,
                 "import_id": latest.import_id,

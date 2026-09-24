@@ -139,7 +139,11 @@ class GranolaUnavailableNote(_Doc):
     """Metadata-only import when the transcript/summary could not be retrieved.
 
     Mirrors the documented failure shapes: `413 TRANSCRIPT_TOO_LARGE`, `404`
-    after transcript auto-deletion, and `401` when access is lost.
+    (`NOT_FOUND`), `401` when access is lost, and `TRANSCRIPT_DELETED` after
+    transcript auto-deletion. Granola returns 404 both for deleted notes and
+    for notes that are still processing / were never summarized, so
+    `NOT_FOUND` maps to `pending_unknown`, never to `deleted`; deletion has to
+    be established separately.
     """
 
     id: str = Field(pattern=GRANOLA_NOTE_ID.pattern)
@@ -250,6 +254,7 @@ class ManualGranolaImportAdapter:
             summary_text=note.summary_text or None,
             summary_markdown=note.summary_markdown or None,
             private_notes_text=note.private_notes_text or None,
+            private_notes_markdown=note.private_notes_markdown or None,
             transcript=[
                 NormalizedTranscriptSegment(
                     speaker_source=item.speaker.source,
@@ -262,9 +267,7 @@ class ManualGranolaImportAdapter:
                 for item in (note.transcript or [])
             ],
         )
-        has_content = bool(
-            content.summary_text or content.summary_markdown or content.private_notes_text or content.transcript
-        )
+        has_content = not content.is_empty()
         return NormalizedMeeting(
             identity=SourceIdentity(
                 provider="granola",
@@ -288,7 +291,7 @@ class ManualGranolaImportAdapter:
         note = GranolaUnavailableNote.model_validate(dict(payload))
         availability = {
             "TRANSCRIPT_TOO_LARGE": "metadata_only",
-            "NOT_FOUND": "deleted",
+            "NOT_FOUND": "pending_unknown",
             "UNAUTHORIZED": "access_lost",
             "TRANSCRIPT_DELETED": "metadata_only",
         }[note.error_code]

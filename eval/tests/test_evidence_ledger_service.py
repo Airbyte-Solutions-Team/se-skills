@@ -4,6 +4,12 @@ workspace isolation, and restart safety. All fixtures are synthetic."""
 from __future__ import annotations
 
 import json
+import os
+import stat
+import subprocess
+import sys
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -80,7 +86,7 @@ def test_import_is_idempotent_and_edits_create_new_immutable_revisions(tmp_path)
     assert detail["revisions"][1]["provider_updated_at"] == "2026-09-23T09:00:00Z"
     assert all(item["trigger"] == "manual_import" for item in detail["revisions"])
 
-    original = service.read_content(result["source_id"], revision=1)
+    original = service.read_content(result["source_id"], revision=1)["content"]
     assert original["summary_text"] == "Synthetic summary. Fixture only; no customer content."
     content_files = list((tmp_path / "customers" / ".command-center" / "content" / result["source_id"]).iterdir())
     assert len(content_files) == 2
@@ -319,7 +325,7 @@ async def test_restart_reloads_state_and_rejects_tampered_records(tmp_path) -> N
     assert loaded["processing"]["status"] == "processing"
     assert loaded["association"]["opportunity_slug"] == "expansion"
     assert restarted.unprocessed_sources()["counts_by_status"] == {"processing": 1}
-    assert restarted.read_content(source_id, revision=1)["transcript"][0]["text"] == "Synthetic line one."
+    assert restarted.read_content(source_id, revision=1)["content"]["transcript"][0]["text"] == "Synthetic line one."
     duplicate = restarted.import_meetings([meeting("note_synthetic_v1.json")])["results"][0]
     assert duplicate["outcome"] == "duplicate"
 
@@ -359,3 +365,179 @@ def test_observed_mcp_meeting_shape_imports_without_edit_signal(tmp_path) -> Non
         ADAPTER.normalize({**fixture("mcp_meeting_synthetic.json"), "updated_at": "2026-09-24T00:00:00Z"}, connection_id="c")
     with pytest.raises(GranolaImportError):
         ADAPTER.normalize({**fixture("mcp_meeting_synthetic.json"), "transcript": [{"text": "x"}]}, connection_id="c")
+
+
+def test_content_is_withheld_once_source_is_access_lost_or_deleted(tmp_path) -> None:
+    service = ledger(tmp_path)
+    created = service.import_meetings([meeting("note_synthetic_v1.json")])["results"][0]
+    source_id = created["source_id"]
+    assert service.read_content(source_id, revision=1)["content"]["summary_text"]
+
+    lost = fixture("note_synthetic_access_lost.json") | {"id": fixture("note_synthetic_v1.json")["id"]}
+    revision = service.import_meetings([ADAPTER.normalize(lost, connection_id="local-manual")])["results"][0]
+    assert revision["revision"] == 2
+    assert revision["change"] == "availability"
+    for rev in (1, 2):
+        with pytest.raises(EvidenceLedgerError) as exc:
+            service.read_content(source_id, revision=rev)
+        assert exc.value.code == "content_withheld"
+        assert exc.value.status_code == 403
+
+    # Cached files stay on disk; withholding is a service-level policy.
+    content_dir = tmp_path / "customers" / ".command-center" / "content" / source_id
+    assert len(list(content_dir.iterdir())) == 2
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX modes only; Windows relies on inherited ACLs")
+def test_ledger_files_and_directories_are_private(tmp_path) -> None:
+    service = ledger(tmp_path)
+    source_id = service.import_meetings([meeting("note_synthetic_v1.json")])["results"][0]["source_id"]
+    root = tmp_path / "customers" / ".command-center"
+    for directory in (root, root / "sources", root / "content", root / "content" / source_id):
+        assert stat.S_IMODE(directory.stat().st_mode) == 0o700, directory
+    for file in list((root / "sources").iterdir()) + list((root / "content" / source_id).iterdir()) + [root / "scope.json"]:
+        assert stat.S_IMODE(file.stat().st_mode) == 0o600, file
+
+
+def test_metadata_only_edits_are_new_revisions_and_unchanged_reimports_are_duplicates(tmp_path) -> None:
+    service = ledger(tmp_path)
+    base = fixture("note_synthetic_v1.json")
+    created = service.import_meetings([ADAPTER.normalize(base, connection_id="local-manual")])["results"][0]
+    source_id = created["source_id"]
+
+    def import_variant(**changes):
+        payload = base | changes
+        return service.import_meetings([ADAPTER.normalize(payload, connection_id="local-manual")])["results"][0]
+
+    assert import_variant()["outcome"] == "duplicate"
+
+    retitled = import_variant(title="Synthetic title, renamed")
+    assert (retitled["outcome"], retitled["revision"], retitled["change"]) == ("new_revision", 2, "metadata")
+    assert retitled["body_hash"] == created["body_hash"]
+    assert retitled["content_hash"] != created["content_hash"]
+
+    bumped = import_variant(title="Synthetic title, renamed", updated_at="2026-09-23T10:00:00Z")
+    assert (bumped["revision"], bumped["change"]) == (3, "metadata")
+
+    attendees = list(base["attendees"]) + [{"name": "Synthetic Extra", "email": "extra@example.invalid"}]
+    with_attendee = import_variant(title="Synthetic title, renamed", updated_at="2026-09-23T10:00:00Z", attendees=attendees)
+    assert (with_attendee["revision"], with_attendee["change"]) == (4, "metadata")
+
+    with_notes = import_variant(
+        title="Synthetic title, renamed", updated_at="2026-09-23T10:00:00Z", attendees=attendees,
+        private_notes_markdown="- synthetic private note",
+    )
+    assert (with_notes["revision"], with_notes["change"]) == (5, "content")
+    assert with_notes["body_hash"] != created["body_hash"]
+
+    # The private snapshot carries the metadata; list responses still do not.
+    snapshot = service.read_content(source_id, revision=4)
+    assert snapshot["metadata"]["title"] == "Synthetic title, renamed"
+    assert len(snapshot["metadata"]["attendees"]) == len(attendees)
+    listing = json.dumps(service.list_sources()) + json.dumps(service.get_source(source_id))
+    assert "Synthetic Extra" not in listing
+    assert "Synthetic title, renamed" not in listing
+    assert "synthetic private note" not in listing
+    assert [r["change"] for r in service.get_source(source_id)["revisions"]] == [
+        "initial", "metadata", "metadata", "metadata", "content"
+    ]
+
+
+def test_not_found_is_pending_unknown_not_deleted(tmp_path) -> None:
+    service = ledger(tmp_path)
+    pending = meeting("note_synthetic_not_yet_generated.json")
+    assert pending.availability == "pending_unknown"
+    result = service.import_meetings([pending])["results"][0]
+    assert result["availability"] == "pending_unknown"
+    source = service.get_source(result["source_id"])
+    assert source["availability"] == "pending_unknown"
+    assert source["processing"]["status"] in {"awaiting_association", "awaiting_content"}
+    assert service.unprocessed_sources()["total"] == 1
+    with pytest.raises(EvidenceLedgerError) as exc:
+        service.read_content(result["source_id"], revision=1)
+    assert exc.value.code == "content_withheld"
+
+    # Once the note is generated, the same object becomes content_available (rev 2).
+    generated = fixture("note_synthetic_v1.json") | {"id": fixture("note_synthetic_not_yet_generated.json")["id"]}
+    later = service.import_meetings([ADAPTER.normalize(generated, connection_id="local-manual")])["results"][0]
+    assert (later["revision"], later["change"], later["availability"]) == (2, "availability", "content_available")
+    assert service.read_content(result["source_id"], revision=2)["content"]["summary_text"]
+
+
+def test_unprocessed_queue_counts_all_matches_and_pages_remainder(tmp_path) -> None:
+    service = ledger(tmp_path)
+    base = fixture("note_synthetic_v1.json")
+    notes = [
+        ADAPTER.normalize(base | {"id": f"not_SYNTHQ{index:08d}"}, connection_id="local-manual")
+        for index in range(7)
+    ]
+    service.import_meetings(notes)
+
+    page = service.unprocessed_sources(limit=3)
+    assert page["total"] == 7
+    assert page["counts_by_status"] == {"awaiting_association": 7}
+    assert len(page["sources"]) == 3 and page["truncated"] and page["next_offset"] == 3
+
+    seen = [item["source_id"] for item in page["sources"]]
+    while page["next_offset"] is not None:
+        page = service.unprocessed_sources(limit=3, offset=page["next_offset"])
+        seen.extend(item["source_id"] for item in page["sources"])
+    assert len(seen) == len(set(seen)) == 7
+    assert page["truncated"] is False
+
+    with pytest.raises(EvidenceLedgerError) as exc:
+        service.list_sources(limit=0)
+    assert exc.value.code == "invalid_page"
+
+
+def test_writes_are_serialized_across_service_instances_and_processes(tmp_path) -> None:
+    """Two service instances (as two processes would) share one advisory lock."""
+    first = ledger(tmp_path)
+    second = EvidenceLedgerService(tmp_path / "customers", clock=Clock())
+    first.import_meetings([meeting("note_synthetic_v1.json")])
+
+    lock_path = tmp_path / "customers" / ".command-center" / ".lock"
+    assert lock_path.exists()
+
+    entered = threading.Event()
+    release = threading.Event()
+    finished: list[float] = []
+
+    def hold_lock() -> None:
+        with first._exclusive():
+            entered.set()
+            release.wait(timeout=5)
+
+    def import_from_second() -> None:
+        second.import_meetings([meeting("note_synthetic_v2_edited.json")])
+        finished.append(time.monotonic())
+
+    holder = threading.Thread(target=hold_lock)
+    holder.start()
+    assert entered.wait(timeout=5)
+    waiter = threading.Thread(target=import_from_second)
+    waiter.start()
+    time.sleep(0.3)
+    assert not finished, "second instance must block while the lock is held"
+    released_at = time.monotonic()
+    release.set()
+    holder.join(timeout=5)
+    waiter.join(timeout=5)
+    assert finished and finished[0] >= released_at
+
+    # A subprocess sharing the directory also serializes and sees the same ledger.
+    script = (
+        "import sys; sys.path.insert(0, sys.argv[1]);"
+        "from pathlib import Path;"
+        "from services.evidence_ledger_service import EvidenceLedgerService;"
+        "s = EvidenceLedgerService(Path(sys.argv[2]));"
+        "print(s.unprocessed_sources()['total'])"
+    )
+    webapp_dir = Path(__file__).resolve().parents[2] / "webapp"
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(webapp_dir), str(tmp_path / "customers")],
+        check=True, capture_output=True, text=True, timeout=60,
+    )
+    assert completed.stdout.strip() == "1"
+    detail = first.get_source(first.list_sources()["sources"][0]["source_id"])
+    assert [item["revision"] for item in detail["revisions"]] == [1, 2]

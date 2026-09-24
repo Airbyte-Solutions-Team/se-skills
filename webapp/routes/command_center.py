@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from command_center_evidence import AssociationCandidate
@@ -76,17 +76,23 @@ async def api_command_center_sources(
         "discovered", "awaiting_association", "awaiting_content", "queued",
         "processing", "processed", "failed",
     ] | None = None,
+    limit: int = Query(default=200, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
 ) -> dict:
     try:
-        return _ledger(request).list_sources(status=status)
+        return _ledger(request).list_sources(status=status, limit=limit, offset=offset)
     except EvidenceLedgerError as exc:
         _raise_domain(exc)
 
 
 @router.get("/api/command-center/sources/unprocessed")
-async def api_command_center_unprocessed(request: Request) -> dict:
+async def api_command_center_unprocessed(
+    request: Request,
+    limit: int = Query(default=200, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> dict:
     try:
-        payload = _ledger(request).unprocessed_sources()
+        payload = _ledger(request).unprocessed_sources(limit=limit, offset=offset)
     except EvidenceLedgerError as exc:
         _raise_domain(exc)
     payload["statuses"] = list(_UNPROCESSED_STATUSES)

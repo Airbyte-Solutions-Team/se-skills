@@ -22,7 +22,14 @@ SCHEMA_VERSION = 1
 ScopeKind = Literal["local_workspace"]
 Provider = Literal["granola", "manual"]
 SourceKind = Literal["meeting", "manual_transcript", "crm_snapshot", "email_message"]
-ContentAvailability = Literal["metadata_only", "content_available", "access_lost", "deleted", "failed"]
+ContentAvailability = Literal[
+    "metadata_only", "content_available", "pending_unknown", "access_lost", "deleted", "failed"
+]
+# Once the latest revision is in one of these states the service withholds every
+# earlier cached revision as well, until a retention/re-authorization decision
+# is recorded (spec §4). `pending_unknown` covers a provider 404, which Granola
+# documents for notes that are still processing as well as for deleted notes.
+WITHHOLD_CONTENT_AVAILABILITY: frozenset[str] = frozenset({"pending_unknown", "access_lost", "deleted"})
 ProcessingStatus = Literal[
     "discovered",
     "awaiting_association",
@@ -101,7 +108,11 @@ class SourceRevision(_Strict):
     """One immutable observation of a source object's content."""
 
     revision: int = Field(ge=1, le=1_000_000)
+    # Hash of the private snapshot (metadata + content); the dedup key.
     content_hash: str = Field(pattern=HEX64.pattern)
+    # Hash of the body only, so metadata-only edits are distinguishable.
+    body_hash: str = Field(pattern=HEX64.pattern)
+    change: Literal["initial", "content", "metadata", "availability"] = "initial"
     availability: ContentAvailability
     trigger: ImportTrigger
     import_id: str = Field(pattern=HEX16.pattern)
@@ -235,7 +246,14 @@ class NormalizedMeetingContent(_Strict):
     summary_text: str | None = Field(default=None, max_length=200_000)
     summary_markdown: str | None = Field(default=None, max_length=400_000)
     private_notes_text: str | None = Field(default=None, max_length=200_000)
+    private_notes_markdown: str | None = Field(default=None, max_length=400_000)
     transcript: list[NormalizedTranscriptSegment] = Field(default_factory=list, max_length=20_000)
+
+    def is_empty(self) -> bool:
+        return not (
+            self.summary_text or self.summary_markdown or self.private_notes_text
+            or self.private_notes_markdown or self.transcript
+        )
 
     def content_hash(self) -> str:
         return sha256_hex(canonical_bytes(self.model_dump(mode="json")))
@@ -245,7 +263,7 @@ class NormalizedMeetingContent(_Strict):
             title_present=title_present,
             attendee_count=attendee_count,
             summary_chars=len(self.summary_text or "") + len(self.summary_markdown or ""),
-            private_notes_chars=len(self.private_notes_text or ""),
+            private_notes_chars=len(self.private_notes_text or "") + len(self.private_notes_markdown or ""),
             transcript_segments=len(self.transcript),
             transcript_chars=sum(len(segment.text) for segment in self.transcript),
         )
@@ -271,12 +289,30 @@ class NormalizedMeeting(_Strict):
             raise ValueError("provider_web_url must be https")
         return value
 
+    def private_metadata(self) -> dict[str, Any]:
+        """Body-free but still private metadata, versioned alongside content."""
+        return {
+            "title": self.title,
+            "occurred_at": self.occurred_at.isoformat() if self.occurred_at else None,
+            "provider_updated_at": (
+                self.provider_updated_at.isoformat() if self.provider_updated_at else None
+            ),
+            "attendees": [person.model_dump(mode="json") for person in self.attendees],
+            "provider_web_url": self.provider_web_url,
+        }
+
+    def snapshot(self) -> dict[str, Any]:
+        """The private per-revision record persisted by the ledger."""
+        return {
+            "availability": self.availability,
+            "unavailable_reason": self.unavailable_reason,
+            "metadata": self.private_metadata(),
+            "content": self.content.model_dump(mode="json"),
+        }
+
     @model_validator(mode="after")
     def _availability_matches_content(self) -> "NormalizedMeeting":
-        has_content = bool(
-            self.content.summary_text or self.content.summary_markdown
-            or self.content.private_notes_text or self.content.transcript
-        )
+        has_content = not self.content.is_empty()
         if self.availability == "content_available" and not has_content:
             raise ValueError("content_available requires some content")
         if self.availability != "content_available" and has_content:
