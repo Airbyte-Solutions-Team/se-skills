@@ -180,6 +180,24 @@ def test_typed_business_case_and_all_meddpicc_states_validate() -> None:
     }
 
 
+def test_business_case_points_are_optional_bounded_and_backward_compatible() -> None:
+    payload = candidate().model_dump(mode="json")
+    payload["business_case"]["current_state"] = {
+        "knowledge": payload["brief"]["current_status"],
+        "missing_information": [],
+    }
+    parsed = OpportunityStateCandidate.model_validate(payload)
+    assert parsed.business_case.current_state.points == []
+
+    payload["business_case"]["current_state"]["points"] = [f"Point {i}" for i in range(6)]
+    parsed = OpportunityStateCandidate.model_validate(payload)
+    assert len(parsed.business_case.current_state.points) == 6
+
+    payload["business_case"]["current_state"]["points"] = [f"Point {i}" for i in range(7)]
+    with pytest.raises(ValidationError):
+        OpportunityStateCandidate.model_validate(payload)
+
+
 @pytest.mark.parametrize(("section", "index"), [("business_case", None), ("meddpicc", 0), ("stakeholders", 0)])
 def test_new_sections_use_existing_evidence_manifest_validation(section, index) -> None:
     parsed = candidate().model_copy(deep=True)

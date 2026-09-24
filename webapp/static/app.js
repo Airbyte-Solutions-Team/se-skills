@@ -2098,11 +2098,16 @@ function renderBusinessCase(current) {
       <span><strong>Business Case</strong><small>Current state, future state, consequences, and outcomes.</small></span>
       <span class="workspace-state">${esc(overviewKnowledgeSummary(values))}</span>
     </summary>
-    <div class="workspace-disclosure-body overview-business-case-grid">
-      ${areas.map(([key, label], index) => `<article class="overview-framework-area">
+    <div class="workspace-disclosure-body overview-business-case-quad">
+      ${areas.map(([key, label], index) => {
+        const points = values[index].points || [];
+        return `<article class="overview-framework-area">
         <div class="overview-framework-head"><h3>${esc(label)}</h3><span class="workspace-status workspace-status--neutral">${esc(overviewLabel(values[index].knowledge?.knowledge_state))}</span></div>
         ${renderFrameworkKnowledge(values[index])}
-      </article>`).join("")}
+        ${points.length ? `<ul class="overview-framework-points">${points.slice(0, 6).map((point) => `<li>${esc(point)}</li>`).join("")}</ul>` : ""}
+      </article>`;
+      }).join("")}
+      <div class="overview-business-case-arrow" aria-hidden="true">→</div>
     </div>
   </details>`;
 }
@@ -2120,10 +2125,15 @@ function renderMeddpicc(current) {
       <span class="workspace-state">${esc(overviewKnowledgeSummary(dimensions))}</span>
     </summary>
     <div class="workspace-disclosure-body overview-meddpicc-dimensions">
-      ${dimensions.map((dimension) => `<details class="overview-meddpicc-dimension" data-meddpicc-dimension="${esc(dimension.key)}">
-        <summary><strong>${esc(overviewLabel(dimension.key))}</strong><span class="workspace-status workspace-status--neutral">${esc(overviewLabel(dimension.knowledge?.knowledge_state))}</span></summary>
+      ${dimensions.map((dimension) => {
+        const state = dimension.knowledge?.knowledge_state || "unknown";
+        const missing = dimension.missing_information || [];
+        return `<div class="overview-meddpicc-dimension overview-meddpicc-dimension--${esc(state)}" data-meddpicc-dimension="${esc(dimension.key)}">
+        <div class="overview-meddpicc-dimension-head"><strong>${esc(overviewLabel(dimension.key))}</strong><span class="workspace-status workspace-status--neutral">${esc(overviewLabel(state))}</span></div>
+        ${missing.length ? `<p class="overview-meddpicc-gap"><span class="overview-meddpicc-gap-label">GAP</span> ${esc(missing[0])}</p>` : ""}
         ${renderFrameworkKnowledge(dimension, {suggestedDiscovery: true})}
-      </details>`).join("")}
+      </div>`;
+      }).join("")}
     </div>
   </details>`;
 }
@@ -2356,30 +2366,46 @@ function renderTechEvalTracker(tracker) {
         (groups[item.phase] ||= []).push(item);
         return groups;
       }, {});
+  const railStatus = (phase) => {
+    if (phase.blocking_gates) return "blocked";
+    if (phase.total_applicable > 0 && phase.completed === phase.total_applicable) return "done";
+    if (phase.completed > 0) return "risk";
+    return "neutral";
+  };
+  const railHtml = (summary.phases || []).map((phase) => `<div class="tech-eval-rail-step tech-eval-rail-step--${railStatus(phase)}">
+    <span class="tech-eval-rail-dot">${esc(overviewLabel(phase.phase)).charAt(0)}</span>
+    <span class="tech-eval-rail-label">${esc(overviewLabel(phase.phase))}</span>
+  </div>`).join("");
   const phaseHtml = (summary.phases || []).map((phase) => {
     const phaseItems = itemsByPhase[phase.phase] || [];
+    const pct = phase.total_applicable > 0 ? Math.round((phase.completed / phase.total_applicable) * 100) : 0;
     return `<section class="tech-eval-phase" aria-labelledby="tech-eval-phase-${esc(phase.phase)}">
       <div class="tech-eval-phase-head">
         <h3 id="tech-eval-phase-${esc(phase.phase)}">${esc(overviewLabel(phase.phase))}</h3>
         <span>${Number(phase.completed)}/${Number(phase.total_applicable)} complete${phase.blocking_gates ? ` · ${Number(phase.blocking_gates)} gate${phase.blocking_gates === 1 ? "" : "s"} open` : ""}</span>
       </div>
-      <div class="tech-eval-items">${phaseItems.map((item) => {
-        const updated = item.last_updated
-          ? `Manually updated ${new Date(item.last_updated).toLocaleString()}`
-          : "Not updated yet";
-        return `<article class="tech-eval-item" data-tech-eval-item="${esc(item.id)}">
-          <div class="tech-eval-item-head">
-            <div><span class="tech-eval-type tech-eval-type--${esc(item.type)}">${esc(overviewLabel(item.type))}</span><strong>${esc(item.label)}</strong></div>
-            <small>${esc(updated)}</small>
-          </div>
-          <div class="tech-eval-fields">
-            <label>Status<select data-tech-eval-status>${techEvalStatuses.map(([value, label]) => `<option value="${value}"${item.status === value ? " selected" : ""}>${label}</option>`).join("")}</select></label>
-            <label>Owner<input data-tech-eval-owner type="text" maxlength="120" value="${esc(item.owner || "")}" placeholder="Optional owner"></label>
-            <label class="tech-eval-note">Short note<textarea data-tech-eval-note maxlength="500" rows="2" placeholder="Optional context">${esc(item.note || "")}</textarea></label>
-          </div>
-          <div class="tech-eval-item-actions"><span class="muted">Saved as a manual change, not model evidence.</span><button class="ghost small" type="button" data-tech-eval-save>Save</button></div>
-        </article>`;
-      }).join("")}</div>
+      <div class="tech-eval-phase-bar"><div class="tech-eval-phase-bar-fill" style="width:${pct}%"></div></div>
+      ${phase.blocking_gates ? `<span class="tech-eval-phase-chip">${Number(phase.blocking_gates)} blocking gate${phase.blocking_gates === 1 ? "" : "s"}</span>` : ""}
+      <details class="tech-eval-phase-details">
+        <summary>Details</summary>
+        <div class="tech-eval-items">${phaseItems.map((item) => {
+          const updated = item.last_updated
+            ? `Manually updated ${new Date(item.last_updated).toLocaleString()}`
+            : "Not updated yet";
+          return `<article class="tech-eval-item" data-tech-eval-item="${esc(item.id)}">
+            <div class="tech-eval-item-head">
+              <div><span class="tech-eval-type tech-eval-type--${esc(item.type)}">${esc(overviewLabel(item.type))}</span><strong>${esc(item.label)}</strong></div>
+              <small>${esc(updated)}</small>
+            </div>
+            <div class="tech-eval-fields">
+              <label>Status<select data-tech-eval-status>${techEvalStatuses.map(([value, label]) => `<option value="${value}"${item.status === value ? " selected" : ""}>${label}</option>`).join("")}</select></label>
+              <label>Owner<input data-tech-eval-owner type="text" maxlength="120" value="${esc(item.owner || "")}" placeholder="Optional owner"></label>
+              <label class="tech-eval-note">Short note<textarea data-tech-eval-note maxlength="500" rows="2" placeholder="Optional context">${esc(item.note || "")}</textarea></label>
+            </div>
+            <div class="tech-eval-item-actions"><span class="muted">Saved as a manual change, not model evidence.</span><button class="ghost small" type="button" data-tech-eval-save>Save</button></div>
+          </article>`;
+        }).join("")}</div>
+      </details>
     </section>`;
   }).join("");
   return `<details class="workspace-disclosure workspace-disclosure--priority tech-eval-tracker" id="tech-eval-tracker">
@@ -2394,6 +2420,7 @@ function renderTechEvalTracker(tracker) {
     </summary>
     <div class="workspace-disclosure-body">
       <p class="muted tech-eval-intro">This local checklist is separate from canonical Overview revisions. Every edit is recorded as manual.</p>
+      <div class="tech-eval-rail">${railHtml}</div>
       <div class="tech-eval-phases">${phaseHtml}</div>
     </div>
   </details>`;
@@ -2488,12 +2515,10 @@ function renderOpportunityWorkspace(workspace) {
 
       <div id="freebar-status" class="status-stack"></div>
 
-      <div class="workspace-frameworks">
-        ${renderTechEvalTracker(workspace.tech_eval)}
-        ${renderBusinessCase(current)}
-        ${renderMeddpicc(current)}
-        ${renderStakeholders(current)}
-      </div>
+      ${renderBusinessCase(current)}
+      ${renderMeddpicc(current)}
+      ${renderTechEvalTracker(workspace.tech_eval)}
+      ${renderStakeholders(current)}
 
       <section class="workspace-section" aria-labelledby="opportunity-outputs-title">
         <div class="workspace-section-head">

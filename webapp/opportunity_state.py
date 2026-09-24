@@ -105,6 +105,7 @@ class BusinessCaseArea(StrictModel):
 
     knowledge: Claim
     missing_information: list[LongText] = Field(max_length=10)
+    points: list[ShortText] = Field(default_factory=list, max_length=6)
 
 
 class BusinessCase(StrictModel):

@@ -55,7 +55,7 @@ The local opportunity route is implemented by **pageOpportunity** in **webapp/st
 - Reconciles only current metadata, the validated base state, and explicitly selected new or changed transcript bodies into later immutable revisions.
 - Renders the typed Opportunity Brief, categorical health indicators, risks/actions, Business Case, MEDDPICC, evidence/missing information, deterministic What Changed, and collapsed read-only revision history.
 - Reattaches to running create/update jobs and refreshes when they finish; interrupted state jobs recover as safe retryable failures.
-- Preserves Generate, Live Transcribe, Coverage Handoff, output history/reader/Back, Tech Eval and MEDDPICC disclosures, and account/output separation.
+- Preserves Generate, Live Transcribe, Coverage Handoff, output history/reader/Back, Tech Eval and MEDDPICC disclosures, and account/output separation (MEDDPICC dimensions render as flat, always-visible rows rather than nested disclosures as of the Overview redesign).
 
 Local reruns remain separate Markdown or HTML artifacts. Generated outputs are never parsed or ingested as canonical evidence. Human overrides, lifecycle state, external evidence providers, and hosted canonical-state routes remain outside the implemented boundary.
 
@@ -174,11 +174,11 @@ The desktop page order is:
 2. Opportunity Brief.
 3. Deal / technical / commercial / timeline indicators.
 4. Top Risks and Recommended Actions.
-5. Technical Evaluation Lifecycle.
-6. Opportunity Outputs.
-7. Business Case.
-8. MEDDPICC.
-9. Stakeholders.
+5. Business Case.
+6. MEDDPICC.
+7. Technical Evaluation Lifecycle.
+8. Stakeholders.
+9. Opportunity Outputs.
 10. Evidence and Recent Activity.
 
 At narrow widths, two-column regions stack in the same order. Critical information must not disappear behind a responsive breakpoint.
@@ -203,27 +203,29 @@ Security approval                      Engage security approver
 Connector gap                          Validate named connector
 Compressed timeline                    Confirm evaluation calendar
 
+BUSINESS CASE
+Current state → Future state / Negative consequences → Positive outcomes
+Each area may show up to six evidence-sourced supporting points
+[collapsed summary; expand]
+
+MEDDPICC
+Moderate · 2 unknown · 3 partial
+[expand overall; each dimension is a flat row, always visible]
+
 TECHNICAL EVALUATION
 Ready with risks · 8/11 required items complete · 2 blockers
 Primary blocker remains visible
 [expand phases and items]
+
+STAKEHOLDERS
+1 blocking approver not engaged · 1 champion · 4 mapped
+[expand]
 
 OPPORTUNITY OUTPUTS
 Call Prep        Post Call        Tech Qual        POC Plan
 Latest status    Reviewed         Needs review     Not generated
 Open             Open             Open             Generate
 View all outputs
-
-BUSINESS CASE
-[collapsed summary; expand]
-
-MEDDPICC
-Moderate · 2 unknown · 3 partial
-[expand overall, then expand each dimension]
-
-STAKEHOLDERS
-1 blocking approver not engaged · 1 champion · 4 mapped
-[expand]
 
 EVIDENCE AND RECENT ACTIVITY
 7 authorized sources · last customer interaction · update history
@@ -383,7 +385,7 @@ If a hard gate is incomplete, the summary must say **Blocked** or **Not ready**,
 
 #### Expanded state
 
-Expanding the card reveals phase rows. Each phase remains individually expandable.
+Expanding the card reveals phase rows. Each phase remains individually expandable, with a horizontal five-step progress rail summarizing phase state above the detail rows.
 
 Example phase summaries:
 
@@ -542,7 +544,7 @@ Expanded content uses predictable sections:
 - Negative consequences of staying put.
 - Positive business outcomes.
 
-Each area shows its knowledge state, known content, missing information, confidence, confirmation mode, last-confirmed time, and evidence references.
+Each area shows its knowledge state, known content, missing information, confidence, confirmation mode, last-confirmed time, and evidence references. Each area may also show up to six short supporting points sourced from authorized evidence by the state updater; the frontend never fabricates points, and an area with no supporting points shows none rather than a placeholder.
 
 Every inferred value remains labeled as inferred. Product claims require the existing product-truth verification discipline.
 
@@ -552,7 +554,7 @@ The overall card is collapsed by default and shows:
 
 - Counts of established, partial, conflicting, unknown, or not-applicable dimensions.
 
-When expanded, each dimension is independently expandable:
+When expanded, each dimension renders as an always-visible row (not independently collapsible) with a colored status accent and a compact gap callout when information is missing:
 
 - Metrics
 - Economic Buyer
@@ -1052,7 +1054,7 @@ Implemented scope:
 - Explicit missing Champion, Economic Buyer, and Technical Decision Maker roles when the evidence does not establish them.
 - Honest legacy defaults for revisions that predate any framework field.
 - Deterministic Business Case, MEDDPICC, stakeholder, and stakeholder-gap revision changes.
-- Collapsed framework summaries, nested MEDDPICC disclosures, responsive stakeholder cards, and the existing evidence inspector.
+- Collapsed framework summaries, flat always-visible MEDDPICC dimension rows with colored status accents, responsive stakeholder cards, evidence-sourced Business Case supporting points, and the existing evidence inspector.
 
 Explicit exclusions: manual corrections, Tech Eval evidence automation, numeric scoring, hosted canonical-state routes or persistence, external evidence providers, and generated-output ingestion.
 

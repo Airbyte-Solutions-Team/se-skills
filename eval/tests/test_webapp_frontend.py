@@ -438,11 +438,11 @@ const esc = (value) => String(value == null ? "" : value).replaceAll("&", "&amp;
 eval(src.slice(start, end) + "\\nglobalThis.renderBusinessCase = renderBusinessCase; globalThis.renderMeddpicc = renderMeddpicc; globalThis.renderStakeholders = renderStakeholders;");
 const ref = {{source_type: "transcript", source_id: "tr_synthetic", locator: "00:01:00"}};
 const knowledge = (state, value, refs = []) => ({{knowledge_state: state, value, confidence: "medium", confirmation: refs.length ? "evidence_backed" : "inferred", evidence_refs: refs}});
-const area = (state, value, missing, refs = []) => ({{knowledge: knowledge(state, value, refs), missing_information: missing}});
+const area = (state, value, missing, refs = [], points = []) => ({{knowledge: knowledge(state, value, refs), missing_information: missing, points}});
 const keys = ["metrics", "economic_buyer", "decision_criteria", "decision_process", "paper_process", "identify_pain", "champion", "competition"];
 const current = {{state: {{
   business_case: {{
-    current_state: area("known", "Manual work <script>alert(1)</script>", [], [ref]),
+    current_state: area("known", "Manual work <script>alert(1)</script>", [], [ref], ["Manual export takes 6 hours weekly <script>x</script>"]),
     future_state: area("partial", "Automated movement", ["Target SLA <img src=x>"]),
     negative_consequences: area("conflicting", "Conflicting cost estimates", ["Validated cost"]),
     positive_business_outcomes: area("unknown", null, ["Quantified outcome"]),
@@ -465,8 +465,11 @@ const stakeholders = renderStakeholders(current);
 const html = business + meddpicc + stakeholders;
 console.log(JSON.stringify({{
   topCollapsed: !/<details[^>]+id="overview-(business-case|meddpicc|stakeholders)"[^>]+open/.test(html),
-  nestedCollapsed: !/<details[^>]+data-meddpicc-dimension[^>]+open/.test(html),
+  flatDimensions: !/<details[^>]*data-meddpicc-dimension/.test(meddpicc),
   eightDimensions: (meddpicc.match(/data-meddpicc-dimension=/g) || []).length === 8,
+  gapCallout: meddpicc.includes('class="overview-meddpicc-gap-label">GAP<'),
+  pointsRendered: business.includes("overview-framework-points") && business.includes("Manual export takes 6 hours weekly"),
+  noEmptyPointsList: !business.includes('<ul class="overview-framework-points"></ul>'),
   businessSummary: business.includes("1 established · 1 partial · 1 conflicting · 1 unknown"),
   meddpiccSummary: meddpicc.includes("3 established · 2 partial · 3 unknown"),
   sections: ["Known information", "Missing information", "Evidence", "Suggested discovery"].every((label) => meddpicc.includes(label)),
