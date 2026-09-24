@@ -1,0 +1,7 @@
+{
+  "id": "meeting-123",
+  "title": "Wrong id shape",
+  "created_at": "2026-09-22T16:00:00Z",
+  "updated_at": "2026-09-22T16:00:00Z",
+  "transcript": "not a list"
+}

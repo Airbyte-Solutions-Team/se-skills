@@ -29,6 +29,8 @@ _OPPORTUNITY_FIELDS = (
     "is_closed",
     "ae",
     "sfdc_url",
+    "sfdc_id",
+    "sfdc_account_id",
 )
 
 
@@ -94,6 +96,8 @@ class OpportunityWorkspaceService:
             "is_closed": None,
             "ae": None,
             "sfdc_url": None,
+            "sfdc_id": None,
+            "sfdc_account_id": None,
             "metadata_source": "local_outputs",
             "metadata_complete": False,
         }
