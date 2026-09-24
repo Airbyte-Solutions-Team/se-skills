@@ -75,9 +75,11 @@ def _build_local_services(app: FastAPI) -> None:
     Imports are deferred so the hosted mode surface can start without optional
     local dependencies such as faster-whisper or anthropic.
     """
+    from integrations.granola import ManualGranolaImportAdapter
     from integrations.salesforce import SalesforceIntegration
     from routes.accounts import router as accounts_router
     from routes.ask import router as ask_router
+    from routes.command_center import router as command_center_router
     from routes.feedback import router as feedback_router
     from routes.gallery import router as gallery_router
     from routes.jobs import router as jobs_router
@@ -90,6 +92,7 @@ def _build_local_services(app: FastAPI) -> None:
     from routes.transcription import router as transcription_router
     from services.account_service import AccountService
     from services.ask_service import AskService, anthropic_api_key
+    from services.evidence_ledger_service import EvidenceLedgerService
     from services.feedback_service import FeedbackService
     from services.job_service import JobService
     from services.opportunity_workspace_service import OpportunityWorkspaceService
@@ -192,6 +195,9 @@ def _build_local_services(app: FastAPI) -> None:
         executor=opportunity_state_executor,
     )
     opportunity_workspace_service.set_update_service(opportunity_state_update_service)
+    # Command Center pilot: local, single-user, manually triggered intake only.
+    evidence_ledger_service = EvidenceLedgerService(customers_dir=config.CUSTOMERS_DIR)
+    granola_adapter = ManualGranolaImportAdapter()
     skill_runtime_service = SkillRuntimeService(
         customers_dir=config.CUSTOMERS_DIR,
         workspace=config.WORKSPACE,
@@ -219,6 +225,8 @@ def _build_local_services(app: FastAPI) -> None:
     app.state.ask_service = ask_service
     app.state.transcription_service = transcription_service
     app.state.skill_runtime_service = skill_runtime_service
+    app.state.evidence_ledger_service = evidence_ledger_service
+    app.state.granola_adapter = granola_adapter
 
     # Public local routes — registered exactly once.
     app.include_router(skills_router)
@@ -232,6 +240,7 @@ def _build_local_services(app: FastAPI) -> None:
     app.include_router(salesforce_router)
     app.include_router(ask_router)
     app.include_router(transcription_router)
+    app.include_router(command_center_router)
     # Developer-only: renders committed synthetic fixtures through the real
     # reader path. Local mode only — never registered in hosted mode.
     app.include_router(gallery_router)

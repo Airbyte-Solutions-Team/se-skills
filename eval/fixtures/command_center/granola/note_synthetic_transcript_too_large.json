@@ -1,0 +1,8 @@
+{
+  "id": "not_SYNTH000000002",
+  "title": "Synthetic oversized transcript",
+  "created_at": "2026-09-22T16:00:00Z",
+  "updated_at": "2026-09-22T16:30:00Z",
+  "attendees": [],
+  "error_code": "TRANSCRIPT_TOO_LARGE"
+}
