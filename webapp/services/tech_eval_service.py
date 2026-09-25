@@ -263,6 +263,22 @@ class TechEvalService:
     def _with_summary(self, tracker: dict[str, Any]) -> dict[str, Any]:
         return {**tracker, "summary": self._summary(tracker["items"])}
 
+    def peek_summary(self, account: str, opp_slug: str) -> dict[str, Any] | None:
+        """Summary of an existing tracker, or None when none was ever created; never writes."""
+        with self._lock:
+            try:
+                safe_account, safe_opp, _tracker_dir, path = self._paths(account, opp_slug, create=False)
+            except TechEvalError:
+                return None
+            if not path.exists():
+                return None
+            try:
+                tracker = self._read_json(path)
+                self._validate_loaded(tracker, safe_account, safe_opp)
+            except TechEvalError:
+                return None
+            return self._summary(tracker["items"])
+
     def get_tracker(self, account: str, opp_slug: str) -> dict[str, Any]:
         """Load the scoped tracker, creating the deterministic template once."""
         with self._lock:

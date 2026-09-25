@@ -93,6 +93,7 @@ def _build_local_services(app: FastAPI) -> None:
     from services.account_service import AccountService
     from services.ask_service import AskService, anthropic_api_key
     from services.command_center_operations_service import CommandCenterOperationsService
+    from services.command_center_read_service import CommandCenterReadService
     from services.evidence_ledger_service import EvidenceLedgerService
     from services.feedback_service import FeedbackService
     from services.job_service import JobService
@@ -207,6 +208,14 @@ def _build_local_services(app: FastAPI) -> None:
         job_service=job_service,
         executor=opportunity_state_executor,
     )
+    # Aggregate Command Center reads (Today/Portfolio/Actions/Changes): persisted local records only.
+    command_center_read_service = CommandCenterReadService(
+        customers_dir=config.CUSTOMERS_DIR,
+        ledger=evidence_ledger_service,
+        operations=command_center_operations_service,
+        state_service=opportunity_state_service,
+        tech_eval_summary=tech_eval_service.peek_summary,
+    )
     skill_runtime_service = SkillRuntimeService(
         customers_dir=config.CUSTOMERS_DIR,
         workspace=config.WORKSPACE,
@@ -237,6 +246,7 @@ def _build_local_services(app: FastAPI) -> None:
     app.state.evidence_ledger_service = evidence_ledger_service
     app.state.granola_adapter = granola_adapter
     app.state.command_center_operations_service = command_center_operations_service
+    app.state.command_center_read_service = command_center_read_service
 
     # Public local routes — registered exactly once.
     app.include_router(skills_router)

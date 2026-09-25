@@ -12,6 +12,7 @@ from integrations.granola import ManualGranolaImportAdapter
 from routes.command_center import router
 from services.account_service import AccountError
 from services.command_center_operations_service import CommandCenterOperationsService, evidence_id_for
+from services.command_center_read_service import CommandCenterReadService
 from services.evidence_ledger_service import EvidenceLedgerService
 from services.job_service import JobService
 from services.opportunity_state_executor import FakeCanonicalStateExecutor
@@ -214,6 +215,10 @@ def test_reconcile_actions_and_changes_over_http(tmp_path) -> None:
     app.state.command_center_operations_service = CommandCenterOperationsService(
         ledger=ledger, workspace_service=create._workspace_service, state_service=state,
         job_service=jobs, executor=executor,
+    )
+    app.state.command_center_read_service = CommandCenterReadService(
+        customers_dir=tmp_path / "customers", ledger=ledger, operations=app.state.command_center_operations_service,
+        state_service=state,
     )
     app.include_router(router)
 
