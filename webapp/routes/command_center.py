@@ -8,6 +8,7 @@ runtime as a background job whose status is polled.
 """
 from __future__ import annotations
 
+from datetime import date
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -29,6 +30,12 @@ from services.command_center_read_service import (
     CommandCenterReadService,
 )
 from services.evidence_ledger_service import EvidenceLedgerError, EvidenceLedgerService
+from services.granola_retrieval_service import (
+    MAX_SELECTION,
+    GranolaRetrievalError,
+    GranolaRetrievalService,
+    TimeRange,
+)
 
 
 router = APIRouter()
@@ -113,9 +120,95 @@ def _raise_domain(exc: Exception) -> None:
     raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
+def _retrieval(request: Request) -> GranolaRetrievalService:
+    return request.app.state.granola_retrieval_service
+
+
+def _raise_retrieval(exc: GranolaRetrievalError) -> None:
+    raise HTTPException(
+        status_code=exc.status, detail={"code": exc.code, "message": f"{exc.detail} [{exc.code}]"}
+    ) from exc
+
+
 @router.get("/api/command-center/adapters")
 async def api_command_center_adapters(request: Request) -> dict:
-    return {"adapters": [_adapter(request).describe().model_dump(mode="json")]}
+    return {
+        "adapters": [
+            _adapter(request).describe().model_dump(mode="json"),
+            _retrieval(request).describe(),
+        ]
+    }
+
+
+# ---------------------------------------------------------------------------
+# User-triggered Granola retrieval. Each POST below performs exactly the
+# provider calls the user asked for, through their own Claude Code MCP
+# connection; GETs read persisted state only. Responses are metadata and
+# outcome codes; no meeting text or tool output is ever returned or logged.
+# ---------------------------------------------------------------------------
+
+
+class GranolaConnectionCheckBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    repin_workspace: bool = False
+
+
+class GranolaListBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    time_range: TimeRange = "this_week"
+    custom_start: date | None = None
+    custom_end: date | None = None
+    workspace_only: bool = False
+
+
+class GranolaRetrievalBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    meeting_ids: list[str] = Field(min_length=1, max_length=MAX_SELECTION)
+
+
+@router.get("/api/command-center/granola/connection")
+async def api_granola_connection(request: Request) -> dict:
+    return _retrieval(request).connection()
+
+
+@router.post("/api/command-center/granola/connection/check")
+async def api_granola_connection_check(body: GranolaConnectionCheckBody, request: Request) -> dict:
+    try:
+        return await _retrieval(request).check_connection(repin=body.repin_workspace)
+    except GranolaRetrievalError as exc:
+        _raise_retrieval(exc)
+
+
+@router.post("/api/command-center/granola/meetings/list")
+async def api_granola_list_meetings(body: GranolaListBody, request: Request) -> dict:
+    try:
+        return await _retrieval(request).list_meetings(
+            time_range=body.time_range,
+            custom_start=body.custom_start,
+            custom_end=body.custom_end,
+            workspace_only=body.workspace_only,
+        )
+    except GranolaRetrievalError as exc:
+        _raise_retrieval(exc)
+
+
+@router.post("/api/command-center/granola/retrievals", status_code=202)
+async def api_granola_start_retrieval(body: GranolaRetrievalBody, request: Request) -> dict:
+    try:
+        return await _retrieval(request).start_retrieval(body.meeting_ids)
+    except GranolaRetrievalError as exc:
+        _raise_retrieval(exc)
+
+
+@router.get("/api/command-center/granola/retrievals/{job_id}")
+async def api_granola_retrieval(job_id: str, request: Request) -> dict:
+    job = _retrieval(request).job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown retrieval job")
+    return job
 
 
 # ---------------------------------------------------------------------------

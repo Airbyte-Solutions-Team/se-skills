@@ -2053,3 +2053,17 @@ a.live-btn { text-decoration: none; display: inline-flex; align-items: center; }
   .cc-att-when, .cc-action-due, .cc-card-when { margin-left: 0; flex: 1 1 100%; }
   .cc-action-controls button { flex: 1 1 auto; }
 }
+
+/* Command Center: manual Granola check */
+.cc-granola h3 { margin: 0 0 6px; font-size: 15px; }
+.cc-granola-step { padding: 8px 0; border-bottom: 1px dashed var(--line); }
+.cc-granola-step .row-actions label { display: inline-flex; align-items: center; gap: 4px; }
+.cc-gm-label { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.cc-gm-label input { margin-top: 3px; flex: 0 0 auto; }
+.cc-gm-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cc-gm-list { margin-top: 10px; max-height: 50vh; overflow: auto; }
+.cc-gm-actions { margin-top: 10px; }
+.cc-gm-h { margin: 12px 0 6px; font-size: 14px; }
+.cc-gm--ok { border-left-color: var(--accent2); }
+.cc-gm--warn { border-left-color: var(--warn, #d9a441); }
+.cc-gm--error { border-left-color: var(--danger, #d05353); }

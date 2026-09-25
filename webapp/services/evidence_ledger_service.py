@@ -57,6 +57,7 @@ from command_center_evidence import (
     AssociationDecision,
     AssociationMethod,
     EvidenceSource,
+    ImportTrigger,
     NormalizedMeeting,
     ProcessingState,
     ProcessingStatus,
@@ -245,8 +246,12 @@ class EvidenceLedgerService:
         meetings: Iterable[NormalizedMeeting],
         *,
         import_id: str | None = None,
+        trigger: ImportTrigger = "manual_import",
     ) -> dict[str, Any]:
-        """Record user-selected meetings; idempotent on (scope, object, snapshot hash)."""
+        """Record user-selected meetings; idempotent on (scope, object, snapshot hash).
+
+        Both triggers are explicit user actions; neither is unattended discovery.
+        """
         import_token = import_id or uuid.uuid4().hex[:16]
         if not re.fullmatch(r"[a-f0-9]{16}", import_token):
             raise EvidenceLedgerError(400, "Invalid import id.", code="invalid_import_id")
@@ -254,15 +259,15 @@ class EvidenceLedgerService:
         with self._exclusive():
             self._ensure_scope_file()
             for meeting in meetings:
-                results.append(self._record_meeting(meeting, import_token))
+                results.append(self._record_meeting(meeting, import_token, trigger))
         return {
             "import_id": import_token,
-            "trigger": "manual_import",
+            "trigger": trigger,
             "unattended_discovery": False,
             "results": results,
         }
 
-    def _record_meeting(self, meeting: NormalizedMeeting, import_id: str) -> dict[str, Any]:
+    def _record_meeting(self, meeting: NormalizedMeeting, import_id: str, trigger: ImportTrigger) -> dict[str, Any]:
         scope = self.scope()
         source_id = source_id_for(scope, meeting.identity)
         now = self._now()
@@ -300,7 +305,7 @@ class EvidenceLedgerService:
             body_hash=body_hash,
             change=change,
             availability=meeting.availability,
-            trigger="manual_import",
+            trigger=trigger,
             import_id=import_id,
             occurred_at=meeting.occurred_at,
             provider_updated_at=meeting.provider_updated_at,

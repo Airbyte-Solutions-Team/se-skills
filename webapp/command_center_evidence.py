@@ -44,7 +44,7 @@ AssociationMethod = Literal[
     "explicit", "verified_external_id", "thread_mapping", "contact", "domain", "title", "attendee", "manual"
 ]
 AssociationState = Literal["unassociated", "proposed", "associated"]
-ImportTrigger = Literal["manual_import"]
+ImportTrigger = Literal["manual_import", "user_triggered_retrieval"]
 
 # Methods that may set `associated` without a human decision. Everything else
 # is a proposal for review (spec §5.4). The pilot has no verified external
