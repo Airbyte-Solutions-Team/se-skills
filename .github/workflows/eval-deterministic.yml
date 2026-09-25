@@ -101,6 +101,26 @@ jobs:
           path: eval/results/
           if-no-files-found: ignore
 
+  granola-relay-windows:
+    name: Verify the Granola relay subprocess path on Windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Run the relay and retrieval tests (fake claude.cmd, no Granola)
+        run: uv run --extra dev pytest eval/tests/test_granola_retrieval.py -v
+
   hosted-extra:
     name: Verify the hosted extra alone runs the export path
     runs-on: ubuntu-latest

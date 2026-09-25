@@ -9,11 +9,13 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from integrations.granola import ManualGranolaImportAdapter
+from integrations.granola_mcp_relay import FakeGranolaRetrievalTransport
 from routes.command_center import router
 from services.account_service import AccountError
 from services.command_center_operations_service import CommandCenterOperationsService, evidence_id_for
 from services.command_center_read_service import CommandCenterReadService
 from services.evidence_ledger_service import EvidenceLedgerService
+from services.granola_retrieval_service import GranolaRetrievalService
 from services.job_service import JobService
 from services.opportunity_state_executor import FakeCanonicalStateExecutor
 from eval.tests.test_command_center_operations_service import ACCOUNT, OPP, DEFAULT_RECS, _candidate_with
@@ -73,6 +75,12 @@ def _client(tmp_path) -> tuple[TestClient, ResolvedWorkspace]:
         job_service=app.state.job_service,
         executor=UnusedExecutor(),
     )
+    app.state.granola_retrieval_service = GranolaRetrievalService(
+        transport=FakeGranolaRetrievalTransport(),
+        adapter=app.state.granola_adapter,
+        ledger=ledger,
+        job_service=app.state.job_service,
+    )
     app.include_router(router)
     return TestClient(app), workspace
 
@@ -80,7 +88,7 @@ def _client(tmp_path) -> tuple[TestClient, ResolvedWorkspace]:
 def test_adapter_listing_is_manual_only(tmp_path) -> None:
     client, _ = _client(tmp_path)
     adapters = client.get("/api/command-center/adapters").json()["adapters"]
-    assert adapters == [{
+    assert adapters[0] == {
         "provider": "granola",
         "transport": "manual_import",
         "mode": "manual_import",
@@ -88,7 +96,9 @@ def test_adapter_listing_is_manual_only(tmp_path) -> None:
         "requires_credentials": False,
         "label": "Manual Granola import (user-selected notes)",
         "payload_contracts": ["granola-rest-note-v1", "granola-mcp-meeting-v1"],
-    }]
+    }
+    assert adapters[1]["mode"] == "user_triggered_retrieval" and adapters[1]["unattended_discovery"] is False
+    assert len(adapters) == 2
 
 
 def test_import_association_and_unprocessed_flow(tmp_path) -> None:

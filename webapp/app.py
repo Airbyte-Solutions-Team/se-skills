@@ -76,6 +76,10 @@ def _build_local_services(app: FastAPI) -> None:
     local dependencies such as faster-whisper or anthropic.
     """
     from integrations.granola import ManualGranolaImportAdapter
+    from integrations.granola_mcp_relay import (
+        ClaudeCodeMcpRelay,
+        scoped_server_definition,
+    )
     from integrations.salesforce import SalesforceIntegration
     from routes.accounts import router as accounts_router
     from routes.ask import router as ask_router
@@ -96,6 +100,7 @@ def _build_local_services(app: FastAPI) -> None:
     from services.command_center_read_service import CommandCenterReadService
     from services.evidence_ledger_service import EvidenceLedgerService
     from services.feedback_service import FeedbackService
+    from services.granola_retrieval_service import GranolaRetrievalService
     from services.job_service import JobService
     from services.opportunity_workspace_service import OpportunityWorkspaceService
     from services.opportunity_state_create_service import OpportunityStateCreateService
@@ -200,6 +205,19 @@ def _build_local_services(app: FastAPI) -> None:
     # Command Center pilot: local, single-user, manually triggered intake only.
     evidence_ledger_service = EvidenceLedgerService(customers_dir=config.CUSTOMERS_DIR)
     granola_adapter = ManualGranolaImportAdapter()
+    # User-triggered Granola retrieval: one restricted `claude -p` per MCP tool call, using
+    # the credentials Claude Code already holds for the signed-in user. No polling, no keys.
+    granola_relay = ClaudeCodeMcpRelay(
+        model=config._model_for("quick-ask"),
+        forbidden_roots=[config.WEBAPP_DIR.parent, config.WORKSPACE, config.CUSTOMERS_DIR],
+        server_definition=scoped_server_definition([config.WEBAPP_DIR.parent]),
+    )
+    granola_retrieval_service = GranolaRetrievalService(
+        transport=granola_relay,
+        adapter=granola_adapter,
+        ledger=evidence_ledger_service,
+        job_service=job_service,
+    )
     # Reconciliation reuses the same local overview runtime/provider as Opportunity Overview.
     command_center_operations_service = CommandCenterOperationsService(
         ledger=evidence_ledger_service,
@@ -245,6 +263,7 @@ def _build_local_services(app: FastAPI) -> None:
     app.state.skill_runtime_service = skill_runtime_service
     app.state.evidence_ledger_service = evidence_ledger_service
     app.state.granola_adapter = granola_adapter
+    app.state.granola_retrieval_service = granola_retrieval_service
     app.state.command_center_operations_service = command_center_operations_service
     app.state.command_center_read_service = command_center_read_service
 

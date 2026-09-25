@@ -485,22 +485,43 @@ async function ccPageSources(params, sourceId) {
   const status = params.get("status") || "";
   const offset = Number(params.get("offset") || 0);
   const body = ccShell("sources", "Sources", "Imported meeting sources: review association, retry, and reconcile.", ccLoading());
+  const fetchList = () => queue
+    ? api(`/api/command-center/sources/unprocessed${ccQuery({ limit: CC_PAGE, offset })}`)
+    : api(`/api/command-center/sources${ccQuery({ status, limit: CC_PAGE, offset })}`);
   let data;
-  try {
-    data = queue
-      ? await api(`/api/command-center/sources/unprocessed${ccQuery({ limit: CC_PAGE, offset })}`)
-      : await api(`/api/command-center/sources${ccQuery({ status, limit: CC_PAGE, offset })}`);
-  } catch (e) { body.innerHTML = ccError(e, `${CC_BASE}/sources`); return; }
-
-  const counts = Object.entries(data.counts_by_status || {}).map(([s, n]) => `<span class="cc-count cc-count--${ccTone(s)}">${n} ${esc(ccLabel(s))}</span>`).join("");
+  try { data = await fetchList(); }
+  catch (e) { body.innerHTML = ccError(e, `${CC_BASE}/sources`); return; }
+  const listHtml = (d) => {
+    const counts = Object.entries(d.counts_by_status || {}).map(([s, n]) => `<span class="cc-count cc-count--${ccTone(s)}">${n} ${esc(ccLabel(s))}</span>`).join("");
+    return `
+    <div class="cc-summary">${counts || `<span class="muted">${queue ? "queue is empty" : "no sources"}</span>`}${d.malformed_records ? `<span class="cc-count cc-count--error">${d.malformed_records} malformed record(s) skipped</span>` : ""}</div>
+    ${d.sources.length ? `<ul class="cc-sources" aria-label="Sources">${d.sources.map(ccSourceRow).join("")}</ul>`
+      : emptyBox({ icon: queue ? "✓" : "⊘", title: queue ? "Nothing waiting" : "No sources imported", body: queue ? "Every imported source is processed, or none has been imported yet." : "Use the manual import above to add a meeting exported from Granola." })}
+    ${ccPager(d)}`;
+  };
+  const refreshList = async () => {
+    const listEl = body.querySelector("#cc-sources-list");
+    try {
+      listEl.innerHTML = listHtml(await fetchList());
+      ccWirePager(listEl, { view: queue ? "" : "all", status }, "sources");
+    } catch (e) { listEl.innerHTML = ccError(e, `${CC_BASE}/sources`); }
+  };
   body.innerHTML = `
     <div class="row cc-sources-bar">
       <div class="cc-subtabs" role="tablist">
         <a class="tab${queue ? " active" : ""}" role="tab" aria-selected="${queue}" href="${CC_BASE}/sources">Unprocessed queue</a>
         <a class="tab${queue ? "" : " active"}" role="tab" aria-selected="${!queue}" href="${CC_BASE}/sources?view=all">All sources</a>
       </div>
-      <button class="primary small" type="button" id="cc-import-toggle" aria-expanded="false" aria-controls="cc-import">Manual Granola import</button>
+      <div class="row-actions">
+        <button class="primary small" type="button" id="cc-granola-toggle" aria-expanded="false" aria-controls="cc-granola">Check Granola (manual)</button>
+        <button class="small" type="button" id="cc-import-toggle" aria-expanded="false" aria-controls="cc-import">Paste note JSON</button>
+      </div>
     </div>
+    <section id="cc-granola" class="cc-import cc-granola hidden" aria-labelledby="cc-granola-title">
+      <h3 id="cc-granola-title">Check Granola for meetings — manual, on request only</h3>
+      <p class="muted">Each step below runs only when you click it, through the Granola MCP connection you already authorized in Claude Code. Nothing runs in the background, nothing is polled, and the list is a snapshot from the moment you clicked — it is not a freshness or sync status. Only meeting titles, dates and counts are shown here; note and transcript text goes straight into the local ledger.</p>
+      <div id="cc-granola-body">${ccLoading()}</div>
+    </section>
     <div id="cc-import" class="cc-import hidden">
       <p class="muted">Paste one or more Granola note payloads (a JSON array or a single object) exported by you. This is a manual, user-triggered import: nothing is polled or synced, and no credentials are stored. Transcript text is kept in the local ledger and never shown in aggregate views.</p>
       <label for="cc-import-json" class="muted">Note payload(s)</label>
@@ -510,11 +531,8 @@ async function ccPageSources(params, sourceId) {
         <span id="cc-import-status" class="muted" role="status"></span>
       </div>
     </div>
-    <div class="cc-summary">${counts || `<span class="muted">${queue ? "queue is empty" : "no sources"}</span>`}${data.malformed_records ? `<span class="cc-count cc-count--error">${data.malformed_records} malformed record(s) skipped</span>` : ""}</div>
-    ${data.sources.length ? `<ul class="cc-sources" aria-label="Sources">${data.sources.map(ccSourceRow).join("")}</ul>`
-      : emptyBox({ icon: queue ? "✓" : "⊘", title: queue ? "Nothing waiting" : "No sources imported", body: queue ? "Every imported source is processed, or none has been imported yet." : "Use the manual import above to add a meeting exported from Granola." })}
-    ${ccPager(data)}`;
-  ccWirePager(body, { view: queue ? "" : "all", status }, "sources");
+    <div id="cc-sources-list">${listHtml(data)}</div>`;
+  ccWirePager(body.querySelector("#cc-sources-list"), { view: queue ? "" : "all", status }, "sources");
 
   const toggle = body.querySelector("#cc-import-toggle");
   const panel = body.querySelector("#cc-import");
@@ -523,6 +541,16 @@ async function ccPageSources(params, sourceId) {
     toggle.setAttribute("aria-expanded", String(open));
     if (open) body.querySelector("#cc-import-json").focus();
   });
+  const gToggle = body.querySelector("#cc-granola-toggle");
+  const gPanel = body.querySelector("#cc-granola");
+  let granolaLoaded = false;
+  gToggle.addEventListener("click", () => {
+    const open = gPanel.classList.toggle("hidden") === false;
+    gToggle.setAttribute("aria-expanded", String(open));
+    if (open && !granolaLoaded) { granolaLoaded = true; ccGranolaPanel(gPanel.querySelector("#cc-granola-body"), refreshList); }
+    if (open) gPanel.querySelector("h3").focus?.();
+  });
+  if (params.get("granola") === "1") gToggle.click();
   body.querySelector("#cc-import-run").addEventListener("click", async () => {
     const statusEl = body.querySelector("#cc-import-status");
     let notes;
@@ -540,11 +568,209 @@ async function ccPageSources(params, sourceId) {
       const summary = results.map((r) => r.outcome || r.status || "ok");
       statusEl.textContent = `Imported ${results.length} note(s): ${summary.join(", ")}`;
       showToast(`Imported ${results.length} note(s)`, "ok");
-      ccPageSources(params);
+      refreshList();
     } catch (e) {
       statusEl.textContent = e.message || String(e);
     }
   });
+}
+
+const CC_GRANOLA_OUTCOME = {
+  imported: ["New source imported", "ok"],
+  already_known: ["Already known · no change", "muted"],
+  edited: ["Edited · new revision", "warn"],
+  pending_content: ["Pending content · metadata only for now", "warn"],
+  inaccessible: ["Inaccessible · access lost or not granted", "error"],
+  failed_retryable: ["Failed · retry", "error"],
+  rejected: ["Rejected · unexpected shape", "error"],
+};
+const CC_GRANOLA_ERRORS = {
+  runtime_unavailable: "Claude Code (`claude`) was not found on this machine, so the MCP connection cannot be used from here.",
+  tool_auth_required: "Granola asked for sign-in. Re-authorize the granola MCP server in Claude Code, then check again.",
+  tool_access_denied: "Granola refused access with this connection.",
+  tool_not_found: "Granola reported the meeting was not found (it may still be processing).",
+  relay_timeout: "The check timed out. Try again.",
+  relay_no_tool_result: "Claude Code did not call the Granola tool. Try again; if it persists, check the MCP server name.",
+  relay_wrong_tool: "Claude Code called a tool that is not allowed; the result was discarded.",
+  relay_unparseable_result: "Granola returned a result this app could not parse; nothing was imported.",
+  relay_output_too_large: "The Granola response exceeded the size bound; nothing was imported.",
+  relay_exit_error: "Claude Code exited with an error before returning a result.",
+  not_checked: "Run the connection check first.",
+  retrieval_in_progress: "A retrieval is already running.",
+  selection_too_large: "Too many meetings selected.",
+};
+function ccGranolaErr(code, fallback) { return CC_GRANOLA_ERRORS[code] || fallback || `Failed (${code || "unknown"}).`; }
+function ccApiErrCode(e) { const m = /\[([a-z_]+)\]\s*$/.exec((e && e.message) || ""); return m ? m[1] : null; }
+
+async function ccGranolaPanel(root, onImported) {
+  let conn;
+  try { conn = await api("/api/command-center/granola/connection"); }
+  catch (e) { root.innerHTML = `<p class="cc-err" role="alert">${esc(e.message || "Could not read connection state.")}</p>`; return; }
+  const last = conn.last_check;
+  root.innerHTML = `
+    <p class="muted cc-granola-terms">${esc(conn.workspace_note || "Meetings come from the Granola account/workspace currently active in your Claude Code sign-in. This pilot cannot verify workspace switches by a stable provider id; inspect and select meetings before import.")}</p>
+    <div class="cc-granola-step">
+      <div class="row-actions">
+        <button class="small" type="button" id="cc-g-check">1 · Check connection</button>
+        <span id="cc-g-conn" class="muted" role="status">${last ? `Last checked ${ccWhen(last.checked_at)} · not checked this session` : "Not checked yet. The check runs one read-only account lookup through Claude Code."}</span>
+      </div>
+    </div>
+    <div class="cc-granola-step">
+      <div class="row-actions">
+        <label for="cc-g-range" class="muted">Range</label>
+        <select id="cc-g-range">
+          <option value="today">Today</option>
+          <option value="yesterday">Yesterday</option>
+          <option value="this_week" selected>This week</option>
+          <option value="last_week">Last week</option>
+          <option value="last_30_days">Last 30 days</option>
+          <option value="custom">Custom dates</option>
+        </select>
+        <span id="cc-g-custom" class="row-actions hidden">
+          <label for="cc-g-start" class="muted">from</label><input id="cc-g-start" type="date">
+          <label for="cc-g-end" class="muted">to</label><input id="cc-g-end" type="date">
+        </span>
+        <label class="muted"><input id="cc-g-wsonly" type="checkbox"> workspace-visible only</label>
+        <button class="small" type="button" id="cc-g-list" ${last ? "" : "disabled"}>2 · List meetings</button>
+        <span id="cc-g-list-status" class="muted" role="status"></span>
+      </div>
+    </div>
+    <div id="cc-g-results"></div>
+    <div id="cc-g-outcomes"></div>`;
+
+  const connEl = root.querySelector("#cc-g-conn");
+  const listBtn = root.querySelector("#cc-g-list");
+  root.querySelector("#cc-g-range").addEventListener("change", (ev) => {
+    root.querySelector("#cc-g-custom").classList.toggle("hidden", ev.target.value !== "custom");
+  });
+
+  async function check() {
+    const btn = root.querySelector("#cc-g-check");
+    btn.disabled = true; connEl.textContent = "Checking…";
+    try {
+      const r = await api("/api/command-center/granola/connection/check", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}),
+      });
+      if (!r.connected) {
+        connEl.textContent = `Not connected · ${ccGranolaErr(r.error_code)}`;
+        listBtn.disabled = true;
+      } else {
+        connEl.textContent = `Connected at ${ccWhen(r.checked_at)} via the Granola account active in Claude Code${r.note_access_scope.length ? ` · scope: ${r.note_access_scope.join(", ")}` : ""}${r.note_access_scope_hidden ? ` (+${r.note_access_scope_hidden} unrecognized scope label${r.note_access_scope_hidden === 1 ? "" : "s"} not shown)` : ""} · workspace not verified by id`;
+        listBtn.disabled = false;
+      }
+    } catch (e) {
+      connEl.textContent = ccGranolaErr(ccApiErrCode(e), e.message);
+    } finally { btn.disabled = false; }
+  }
+  root.querySelector("#cc-g-check").addEventListener("click", () => check());
+
+  listBtn.addEventListener("click", async () => {
+    const statusEl = root.querySelector("#cc-g-list-status");
+    const results = root.querySelector("#cc-g-results");
+    const range = root.querySelector("#cc-g-range").value;
+    const payload = { time_range: range, workspace_only: root.querySelector("#cc-g-wsonly").checked };
+    if (range === "custom") {
+      payload.custom_start = root.querySelector("#cc-g-start").value || null;
+      payload.custom_end = root.querySelector("#cc-g-end").value || null;
+      if (!payload.custom_start || !payload.custom_end) { statusEl.textContent = "Pick both dates."; return; }
+    }
+    listBtn.disabled = true; statusEl.textContent = "Listing…"; results.innerHTML = "";
+    try {
+      const r = await api("/api/command-center/granola/meetings/list", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+      });
+      statusEl.textContent = `${r.shown} meeting(s) listed at ${ccWhen(r.listed_at)}${r.truncated ? ` · only the first ${r.shown} of ${r.returned} shown — narrow the range` : ""}${r.rejected ? ` · ${r.rejected} skipped (unexpected shape)` : ""}. Snapshot only; not kept.`;
+      ccGranolaList(results, r, onImported, root.querySelector("#cc-g-outcomes"));
+    } catch (e) {
+      statusEl.textContent = ccGranolaErr(ccApiErrCode(e), e.message);
+    } finally { listBtn.disabled = false; }
+  });
+}
+
+function ccGranolaList(root, listing, onImported, outcomesEl) {
+  const max = listing.max_selection;
+  if (!listing.meetings.length) {
+    root.innerHTML = emptyBox({ icon: "⊘", title: "No meetings in this range", body: "Granola returned nothing for the selected range with this connection. Recently recorded meetings sometimes need a narrow custom date range to appear." });
+    return;
+  }
+  const rows = listing.meetings.map((m, i) => {
+    const led = m.ledger;
+    const known = led ? `<span class="cc-count cc-count--${ccTone(led.processing_status)}">known · rev ${led.latest_revision} · ${esc(ccLabel(led.processing_status))}${led.association_state === "associated" ? " · associated" : ""}</span>` : `<span class="cc-count">new to ledger</span>`;
+    const flags = [m.captured_by_me ? "captured by me" : null, m.listed_as_participant ? "participant" : null, m.is_workspace_visible ? "workspace-visible" : null].filter(Boolean).join(" · ");
+    return `<li class="cc-source cc-gm">
+      <label class="cc-gm-label">
+        <input type="checkbox" class="cc-gm-pick" value="${esc(m.meeting_id)}" aria-label="Select ${esc(m.title || "untitled meeting")}">
+        <span class="cc-gm-main">
+          <span class="cc-source-head"><strong>${esc(m.title || "(untitled)")}</strong> ${known}</span>
+          <span class="muted cc-source-meta">${esc(m.date || "date unknown")} · ${m.participant_count} participant(s)${flags ? ` · ${flags}` : ""}${led ? ` · <a href="${CC_BASE}/sources/${esc(led.source_id)}">open source</a>` : ""}${m.url ? ` · <a href="${esc(m.url)}" target="_blank" rel="noopener">Granola ↗</a>` : ""}</span>
+        </span>
+      </label>
+    </li>`;
+  }).join("");
+  root.innerHTML = `
+    <p class="muted">Snapshot from the Granola account active in Claude Code when you clicked. Review each meeting and tick only the ones to import; nothing is imported until you choose.</p>
+    <ul class="cc-sources cc-gm-list" aria-label="Granola meetings (snapshot)">${rows}</ul>
+    <div class="row-actions cc-gm-actions">
+      <button class="primary small" type="button" id="cc-g-retrieve" disabled>3 · Retrieve selected</button>
+      <span id="cc-g-sel" class="muted" role="status">0 of ${max} selected</span>
+    </div>`;
+  const picks = [...root.querySelectorAll(".cc-gm-pick")];
+  const btn = root.querySelector("#cc-g-retrieve");
+  const sel = root.querySelector("#cc-g-sel");
+  function refresh() {
+    const chosen = picks.filter((p) => p.checked);
+    const over = chosen.length > max;
+    sel.textContent = `${chosen.length} of ${max} selected${over ? " — too many; deselect some" : ""}`;
+    sel.classList.toggle("cc-err", over);
+    btn.disabled = chosen.length === 0 || over;
+  }
+  picks.forEach((p) => p.addEventListener("change", refresh));
+  btn.addEventListener("click", async () => {
+    const ids = picks.filter((p) => p.checked).map((p) => p.value);
+    btn.disabled = true; sel.textContent = `Retrieving ${ids.length} meeting(s)…`;
+    try {
+      const start = await api("/api/command-center/granola/retrievals", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ meeting_ids: ids }),
+      });
+      const job = await ccGranolaPoll(start.job_id, (j) => { sel.textContent = `Retrieving ${ids.length} meeting(s)… (${j.status})`; });
+      ccGranolaOutcomes(outcomesEl, job, listing.meetings);
+      if (job.ok) {
+        sel.textContent = `Done at ${ccWhen(new Date(job.finished_at * 1000).toISOString())}.`;
+        showToast("Granola retrieval finished", "ok");
+        onImported?.();
+      } else {
+        sel.textContent = ccGranolaErr(job.error_code, job.error_message);
+      }
+    } catch (e) {
+      sel.textContent = ccGranolaErr(ccApiErrCode(e), e.message);
+    } finally { refresh(); }
+  });
+}
+
+async function ccGranolaPoll(jobId, onTick) {
+  for (let i = 0; i < 600; i++) {
+    const j = await api(`/api/command-center/granola/retrievals/${encodeURIComponent(jobId)}`);
+    if (j.status !== "running") return j;
+    onTick?.(j);
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  throw new Error("Retrieval is still running; check back on the Sources queue.");
+}
+
+function ccGranolaOutcomes(root, job, meetings) {
+  const titles = Object.fromEntries((meetings || []).map((m) => [m.meeting_id, m.title]));
+  const rows = (job.results || []).map((r) => {
+    const [label, tone] = CC_GRANOLA_OUTCOME[r.outcome] || [r.outcome, "muted"];
+    const err = r.error_code ? ` · ${esc(ccGranolaErr(r.error_code))}` : "";
+    const link = r.source_id ? ` · <a href="${CC_BASE}/sources/${esc(r.source_id)}">review association / reconcile</a>` : "";
+    return `<li class="cc-source cc-gm cc-gm--${tone}"><span class="cc-source-head"><strong>${esc(titles[r.meeting_id] || r.meeting_id)}</strong> <span class="cc-count cc-count--${tone}">${esc(label)}</span></span><span class="muted cc-source-meta">${r.revision ? `rev ${r.revision}` : ""}${r.availability ? ` · ${esc(ccLabel(r.availability))}` : ""}${err}${link}</span></li>`;
+  }).join("");
+  const counts = Object.entries(job.counts || {}).map(([k, n]) => `${n} ${(CC_GRANOLA_OUTCOME[k] || [k])[0].split(" ·")[0].toLowerCase()}`).join(", ");
+  root.innerHTML = `
+    <h4 class="cc-gm-h">Retrieval result${counts ? ` — ${esc(counts)}` : ""}</h4>
+    ${job.ok ? "" : `<p class="cc-err" role="alert">${esc(ccGranolaErr(job.error_code, job.error_message))}</p>`}
+    ${rows ? `<ul class="cc-sources" aria-label="Retrieval outcomes">${rows}</ul>` : ""}
+    <p class="muted">Imported and edited meetings now sit in the Unprocessed queue below: confirm the association there, then reconcile against the current Overview.</p>`;
 }
 
 async function ccPageSourceReview(sourceId) {

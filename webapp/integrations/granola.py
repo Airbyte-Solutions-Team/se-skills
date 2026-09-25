@@ -45,6 +45,7 @@ from command_center_evidence import (
 
 GRANOLA_NOTE_ID = re.compile(r"^not_[a-zA-Z0-9]{14}$")
 GRANOLA_MCP_MEETING_ID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+GRANOLA_UNAVAILABLE_ID = re.compile(f"(?:{GRANOLA_NOTE_ID.pattern})|(?:{GRANOLA_MCP_MEETING_ID.pattern})")
 REST_CONTRACT = "granola-rest-note-v1"
 MCP_CONTRACT = "granola-mcp-meeting-v1"
 MAX_NOTE_BYTES = 2_000_000
@@ -146,7 +147,7 @@ class GranolaUnavailableNote(_Doc):
     be established separately.
     """
 
-    id: str = Field(pattern=GRANOLA_NOTE_ID.pattern)
+    id: str = Field(pattern=GRANOLA_UNAVAILABLE_ID.pattern)
     title: str | None = Field(default=None, max_length=500)
     created_at: datetime | None = None
     updated_at: datetime | None = None
