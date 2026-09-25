@@ -11,7 +11,7 @@ from services.opportunity_state_executor import (
     CanonicalStateExecutionError,
     CanonicalStateExecutionRequest,
     ClaudeCanonicalStateExecutor,
-    VERIFIED_CLAUDE_VERSION,
+    MINIMUM_CLAUDE_VERSION,
 )
 from services.transcription_service import ResolvedTranscriptEvidence
 from eval.tests.opportunity_state_helpers import TRANSCRIPT_ID, candidate
@@ -44,7 +44,7 @@ def _executor(tmp_path, **kwargs) -> ClaudeCanonicalStateExecutor:
 
 
 def _set_version_command(monkeypatch, executor, code: str | None = None) -> None:
-    script = code or f"print({(VERIFIED_CLAUDE_VERSION + ' (Claude Code)')!r})"
+    script = code or f"print({(MINIMUM_CLAUDE_VERSION + ' (Claude Code)')!r})"
     monkeypatch.setattr(
         executor,
         "version_command",
@@ -148,7 +148,7 @@ async def test_executor_accepts_exact_version_and_records_it_in_result(tmp_path,
     monkeypatch.setattr(executor, "command", lambda executable=None: [sys.executable, "-c", code])
     result = await executor.execute(_request())
     assert result.candidate == candidate()
-    assert result.cli_version == VERIFIED_CLAUDE_VERSION
+    assert result.cli_version == MINIMUM_CLAUDE_VERSION
 
 
 @pytest.mark.asyncio
@@ -156,14 +156,14 @@ async def test_version_check_receives_no_evidence_or_stdin(tmp_path, monkeypatch
     executor = _executor(tmp_path)
     version_code = (
         "import sys; data=sys.stdin.buffer.read(); "
-        f"print({(VERIFIED_CLAUDE_VERSION + ' (Claude Code)')!r} if not data else 'EVIDENCE_LEAK')"
+        f"print({(MINIMUM_CLAUDE_VERSION + ' (Claude Code)')!r} if not data else 'EVIDENCE_LEAK')"
     )
     _set_version_command(monkeypatch, executor, version_code)
     structured = json.dumps({"structured_output": candidate().model_dump(mode="json")})
     run_code = f"import sys; sys.stdin.buffer.read(); print({structured!r})"
     monkeypatch.setattr(executor, "command", lambda executable=None: [sys.executable, "-c", run_code])
     result = await executor.execute(_request())
-    assert result.cli_version == VERIFIED_CLAUDE_VERSION
+    assert result.cli_version == MINIMUM_CLAUDE_VERSION
 
 
 @pytest.mark.asyncio
@@ -180,7 +180,7 @@ async def test_missing_executable_fails_before_prompt_construction(tmp_path, mon
 @pytest.mark.parametrize(
     ("version_code", "expected_code"),
     [
-        ("print('2.1.273 (Claude Code)')", "runtime_version_unsupported"),
+        ("print('2.1.271 (Claude Code)')", "runtime_version_unsupported"),
         ("print('Claude Code unknown')", "runtime_version_invalid"),
     ],
 )
