@@ -32,6 +32,8 @@ from services.granola_retrieval_service import (
     MAX_SELECTION,
     GranolaRetrievalError,
     GranolaRetrievalService,
+    account_identity_source,
+    account_shape_report,
 )
 from services.job_service import JobService
 
@@ -825,3 +827,94 @@ def test_live_check_script_probes_scope_before_spawning_and_accepts_trusted_proj
     assert set(report["steps"]) == {"claude_version", "mcp_scope"}
     with pytest.raises(SystemExit):
         module._args([])
+
+
+def test_account_shape_report_is_value_free_and_bounded() -> None:
+    email = "person@example.invalid"
+    raw = {
+        "workspaces": [
+            {"id": _uuid(7), "display_name": "Acme " + SECRET, "url": "https://granola.example/" + SECRET},
+            {"id": _uuid(8), "display_name": SECRET + "-two"},
+        ],
+        "user": {"email": email, "name": SECRET, SECRET + "-freeform-key": {"token": "Bearer " + SECRET}},
+        "note_access_scope": ["personal"],
+        "created_at": "2026-09-24T10:00:00Z",
+        "count": 2,
+        "active": True,
+        "nested": {"a": {"b": {"c": {"d": {"e": {"f": SECRET}}}}}},
+    }
+    report = account_shape_report(raw)
+    printed = json.dumps(report)
+    for needle in (SECRET, email, "person", "granola.example", _uuid(7), _uuid(8), "Acme", "Bearer", "freeform"):
+        assert needle not in printed
+    assert report["top_kind"] == "object" and report["looks_like_error_envelope"] is False
+    assert report["identity_source"] is None  # `workspaces[]` is not a documented pin source
+    assert report["candidate_id_paths"] == ["workspaces[0].id", "workspaces[1].id"]
+    shape = report["shape"]
+    assert shape["key_count"] == 7 and shape["other_keys"] == 1 and "nested" not in shape["keys"]
+    assert shape["keys"]["workspaces"]["length"] == 2
+    ws = shape["keys"]["workspaces"]["items"][0]["keys"]
+    assert ws["id"] == {"kind": "string", "class": "uuid", "length": "<=64"}
+    assert ws["display_name"]["class"] == "text" and ws["url"]["class"] == "url"
+    user = shape["keys"]["user"]
+    assert user["keys"]["email"]["class"] == "email" and user["other_keys"] == 1 and len(user["keys"]) == 2
+    assert shape["keys"]["created_at"]["class"] == "datetime"
+    assert shape["keys"]["count"] == {"kind": "number"} and shape["keys"]["active"] == {"kind": "bool"}
+
+    # Documented shapes resolve; error envelopes and non-objects are flagged, never echoed.
+    assert account_identity_source({"workspace": {"id": "ws-1", "display_name": SECRET}}) == "workspace.id"
+    assert account_identity_source({"workspace_id": "ws-1"}) == "workspace_id"
+    assert account_identity_source(["ws-1"]) is None
+    envelope = account_shape_report({"error": SECRET, "message": SECRET, "code": 7})
+    assert envelope["looks_like_error_envelope"] is True and SECRET not in json.dumps(envelope)
+    assert account_shape_report([{"id": _uuid(1)}])["top_kind"] == "array"
+    assert account_shape_report(SECRET)["shape"]["class"] == "token" and SECRET not in json.dumps(account_shape_report(SECRET))
+    deep = {"data": {"data": {"data": {"data": {"data": {"data": {"id": SECRET}}}}}}}
+    assert SECRET not in json.dumps(account_shape_report(deep))
+
+
+def test_live_check_account_shape_and_connection_only_modes(capsys) -> None:
+    module = _live_check_module()
+    with pytest.raises(SystemExit):
+        module._args(["--account-shape", "--date", "2026-09-24"])
+    with pytest.raises(SystemExit):
+        module._args(["--account-shape", "--probe-only"])
+
+    # Undocumented account shape: the app would fail `no_workspace`; the probe still reports the shape.
+    transport = _live_check_transport()
+    transport.account = {"workspaces": [{"id": _uuid(7), "display_name": SECRET}], "user": {"email": "a@b.invalid"}}
+    report = asyncio.run(
+        module.run(module._args(["--account-shape"]), transport_factory=lambda _a: transport, version_probe=lambda: "2.1.282")
+    )
+    assert report["verdict"] == {"ok": True, "failures": []}
+    step = report["steps"]["account_shape"]
+    assert step["ok"] is True and step["identity_source"] is None and step["candidate_id_paths"] == ["workspaces[0].id"]
+    assert transport.calls == [("get_account_info", {})]
+    printed = json.dumps(report)
+    assert SECRET not in printed and _uuid(7) not in printed and "a@b" not in printed
+    assert "connection_check" not in report["steps"]
+
+    # The same undocumented shape through the connection-only gate fails closed with the safe code.
+    transport = _live_check_transport()
+    transport.account = {"workspaces": [{"id": _uuid(7)}]}
+    report = asyncio.run(
+        module.run(module._args(["--connection-only"]), transport_factory=lambda _a: transport, version_probe=lambda: "2.1.282")
+    )
+    assert report["verdict"]["ok"] is False and report["error"] == {"kind": "retrieval", "code": "no_workspace", "status": 502}
+
+    # Tool error → safe code, no shape; documented shape → connection-only passes without listing.
+    failing = _live_check_transport()
+    failing.fail("get_account_info", "*", GranolaRelayError("tool_auth_required", retryable=False))
+    report = asyncio.run(
+        module.run(module._args(["--account-shape"]), transport_factory=lambda _a: failing, version_probe=lambda: "2.1.282")
+    )
+    assert report["verdict"]["ok"] is False
+    assert report["steps"]["account_shape"] == {"ok": False, "error_code": "tool_auth_required", "retryable": False}
+
+    good = _live_check_transport()
+    report = asyncio.run(
+        module.run(module._args(["--connection-only"]), transport_factory=lambda _a: good, version_probe=lambda: "2.1.282")
+    )
+    assert report["verdict"] == {"ok": True, "failures": []}
+    assert report["steps"]["connection_check"]["connected"] is True and "list" not in report["steps"]
+    assert [call[0] for call in good.calls] == ["get_account_info"]

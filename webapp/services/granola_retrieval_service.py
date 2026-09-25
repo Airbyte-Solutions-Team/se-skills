@@ -93,6 +93,124 @@ class _AccountInfo(_Loose):
         raise GranolaRetrievalError(502, "Connection check returned no workspace identity.", code="no_workspace")
 
 
+def account_identity_source(raw: Any) -> str | None:
+    """Which documented field `check_connection` would pin from, or None (fails `no_workspace`)."""
+    try:
+        info = _AccountInfo.model_validate(raw if isinstance(raw, Mapping) else {})
+    except ValidationError:
+        return None
+    if info.workspace is not None:
+        return "workspace.id"
+    if info.workspace_id:
+        return "workspace_id"
+    return None
+
+
+# Shape probe: structure only. Key names outside this allow-list are counted, never echoed;
+# string values are reduced to a class + length bucket; numbers/bools to their type.
+_SHAPE_KEYS = frozenset(
+    {
+        "id", "ids", "uuid", "slug", "name", "display_name", "title", "type", "kind", "status", "code", "error",
+        "message", "detail", "count", "created_at", "updated_at", "url", "email", "user", "user_id", "account",
+        "account_id", "accounts", "workspace", "workspace_id", "workspace_name", "workspaces", "organization",
+        "organization_id", "org", "org_id", "team", "team_id", "tenant", "tenant_id", "plan", "role", "roles",
+        "scope", "scopes", "note_access_scope", "access_scope", "access_notice", "folders", "folder_id",
+        "settings", "features", "data", "result", "results", "items", "meta", "metadata", "current", "default",
+        "primary", "active", "is_active", "is_default", "personal", "public",
+    }
+)
+_SHAPE_MAX_DEPTH = 5
+_SHAPE_MAX_KEYS = 40
+_SHAPE_MAX_ITEMS = 3
+_UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+_ERROR_ENVELOPE_KEYS = frozenset({"error", "message", "code", "detail", "status"})
+
+
+def _string_class(text: str) -> str:
+    if text == "":
+        return "empty"
+    if _UUID_RE.fullmatch(text):
+        return "uuid"
+    if "@" in text and "." in text.rsplit("@", 1)[-1] and " " not in text:
+        return "email"
+    if text.startswith(("http://", "https://")):
+        return "url"
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}([T ].*)?", text):
+        return "datetime"
+    if re.fullmatch(r"[A-Za-z0-9._:-]{1,120}", text):
+        return "token"
+    return "text"
+
+
+def _length_bucket(length: int) -> str:
+    for bound in (0, 16, 64, 256):
+        if length <= bound:
+            return f"<={bound}"
+    return ">256"
+
+
+def shape_of(value: Any, *, depth: int = 0) -> dict[str, Any]:
+    """Bounded, value-free description of a parsed tool result (see `account_shape_report`)."""
+    if depth >= _SHAPE_MAX_DEPTH:
+        return {"kind": "truncated"}
+    if value is None:
+        return {"kind": "null"}
+    if isinstance(value, bool):
+        return {"kind": "bool"}
+    if isinstance(value, int | float):
+        return {"kind": "number"}
+    if isinstance(value, str):
+        return {"kind": "string", "class": _string_class(value), "length": _length_bucket(len(value))}
+    if isinstance(value, list):
+        out: dict[str, Any] = {"kind": "array", "length": len(value)}
+        if value:
+            out["items"] = [shape_of(item, depth=depth + 1) for item in value[:_SHAPE_MAX_ITEMS]]
+        return out
+    if isinstance(value, Mapping):
+        keys = sorted(str(k) for k in value)
+        listed = [k for k in keys if k in _SHAPE_KEYS][:_SHAPE_MAX_KEYS]
+        out = {
+            "kind": "object",
+            "key_count": len(keys),
+            "other_keys": len(keys) - len(listed),
+            "keys": {k: shape_of(value[k], depth=depth + 1) for k in listed},
+        }
+        return out
+    return {"kind": "other"}
+
+
+def _id_paths(value: Any, prefix: str, depth: int = 0) -> list[str]:
+    if depth >= _SHAPE_MAX_DEPTH:
+        return []
+    found: list[str] = []
+    if isinstance(value, Mapping):
+        for key in sorted(str(k) for k in value):
+            if key not in _SHAPE_KEYS:
+                continue
+            path = f"{prefix}.{key}" if prefix else key
+            item = value[key]
+            if isinstance(item, str) and (_UUID_RE.fullmatch(item) or key in {"id", "workspace_id", "account_id"}):
+                found.append(path)
+            found.extend(_id_paths(item, path, depth + 1))
+    elif isinstance(value, list):
+        for index, item in enumerate(value[:_SHAPE_MAX_ITEMS]):
+            found.extend(_id_paths(item, f"{prefix}[{index}]", depth + 1))
+    return found[:20]
+
+
+def account_shape_report(raw: Any) -> dict[str, Any]:
+    """Safe description of a successful `get_account_info` result: structure, allow-listed key
+    names, value classes and presence flags only. No values are copied."""
+    top_keys = {str(k) for k in raw} if isinstance(raw, Mapping) else set()
+    return {
+        "top_kind": shape_of(raw)["kind"],
+        "looks_like_error_envelope": bool(top_keys) and top_keys <= _ERROR_ENVELOPE_KEYS,
+        "identity_source": account_identity_source(raw),
+        "candidate_id_paths": _id_paths(raw, ""),
+        "shape": shape_of(raw),
+    }
+
+
 class _ListedParticipant(_Loose):
     name: str | None = Field(default=None, max_length=200)
     email: str | None = Field(default=None, max_length=320)

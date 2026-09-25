@@ -2,39 +2,51 @@
 r"""Local, user-run check of the Granola retrieval path through the real app code.
 
 Runs the same `ClaudeCodeMcpRelay` → `GranolaRetrievalService` → adapter → ledger
-chain the web app uses, against a throwaway ledger directory, for ONE synthetic
-meeting whose title contains `--marker` (default `SE-SKILLS-CAPCHECK`):
+chain the web app uses, against a throwaway ledger directory. Four modes, each a
+strict gate that exits 0 only when it passes:
 
-    claude version preflight → MCP scope probe → connection check → metadata
-    list for one day → retrieve the marked meeting → ledger outcome → retrieve again
+  --probe-only        claude version preflight → MCP scope probe (no subprocess)
+  --account-shape     …→ one restricted `get_account_info` call, reported as a
+                      value-free SHAPE (allow-listed key names, value classes,
+                      presence flags, safe error codes) so the workspace-identity
+                      mapping can be fixed against the real response
+  --connection-only   …→ the app's connection check (pins the throwaway ledger)
+  --date YYYY-MM-DD   …→ connection check → metadata list for that day →
+                      retrieve the ONE meeting whose title contains --marker →
+                      retrieve again (expects `imported` then `already_known`)
 
-Verdict (`verdict.ok`, also the exit code) is true only when:
+Verdict (`verdict.ok`, also the exit code) requires, cumulatively per mode:
   * `claude --version` is at least MIN_CLAUDE_VERSION (`--permission-prompts` exists),
   * the `granola` server is found at local scope for a trusted project path
     (this checkout, or `--claude-project <original checkout>` when running from
     a sibling worktree) or at user scope,
-  * the connection check succeeds,
-  * exactly one meeting on that day carries the marker,
-  * the first retrieval finishes `done` with the single outcome `imported`,
-  * the second retrieval finishes `done` with the single outcome `already_known`.
+  * (--account-shape) the tool returned a successful, parseable result — its
+    shape is reported even when the app cannot resolve a workspace id from it,
+  * (--connection-only / --date) the connection check succeeds,
+  * (--date) exactly one meeting on that day carries the marker, the first
+    retrieval yields the single outcome `imported`, the second `already_known`.
 Anything else is reported under `verdict.failures` and exits 1.
 
 Output is a single JSON object containing step statuses, safe error codes,
 counts, outcome codes from the fixed outcome allow-list, and a SHA-256 prefix
 of the workspace id and meeting id. It never prints titles, summaries,
-transcripts, tokens, or raw tool output. The throwaway ledger is deleted on
-exit. Nothing is written to your customers directory or to the app's ledger.
+transcripts, tokens, emails, URLs, raw tool output or model output. The
+throwaway ledger is deleted on exit. Nothing is written to your customers
+directory or to the app's ledger.
 
-    uv run scripts/granola_live_check.py --date 2026-09-24
     uv run scripts/granola_live_check.py --probe-only --claude-project C:\path\to\original\checkout
+    uv run scripts/granola_live_check.py --account-shape --claude-project C:\path\to\original\checkout
+    uv run scripts/granola_live_check.py --connection-only --claude-project C:\path\to\original\checkout
+    uv run scripts/granola_live_check.py --date 2026-09-24 --claude-project C:\path\to\original\checkout
 
-`--probe-only` prints just the version and scope steps (booleans, scope and
-transport type — never the URL or config) and exits 0 when the server is found.
-
-Prerequisites: `claude` on PATH, the `granola` MCP server configured in your
-own Claude Code (`claude mcp add` default local scope in the project you ran
-it from, or `--scope user`), and a synthetic meeting on that date whose title
-contains the marker.
+Prerequisites: `claude` on PATH and the `granola` MCP server configured in your
+own Claude Code (`claude mcp add` default local scope in the project you ran it
+from, or `--scope user`). The `--date` mode additionally needs a Granola note
+that YOU created in YOUR Granola account for this purpose (synthetic content,
+no customer material) whose title contains the marker. The default marker
+`SE-SKILLS-CAPCHECK` is only a string this repo's test fixtures use — no such
+Granola note exists unless you make one; pass `--marker` to match a note you
+already own instead.
 """
 from __future__ import annotations
 
@@ -67,6 +79,7 @@ from services.evidence_ledger_service import EvidenceLedgerService
 from services.granola_retrieval_service import (
     GranolaRetrievalError,
     GranolaRetrievalService,
+    account_shape_report,
 )
 from services.job_service import JobService
 
@@ -94,15 +107,30 @@ def _args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Additional trusted checkout whose local-scope Claude MCP servers may be used "
         "(the original checkout, when running from a sibling worktree). Repeatable.",
     )
-    parser.add_argument("--probe-only", action="store_true", help="Only report claude version and MCP scope, then exit")
-    parser.add_argument("--marker", default=DEFAULT_MARKER, help="Substring the synthetic meeting title must contain")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--probe-only", action="store_true", help="Only report claude version and MCP scope, then exit")
+    mode.add_argument(
+        "--account-shape",
+        action="store_true",
+        help="One restricted get_account_info call; print its value-free shape (key names, value classes) and exit",
+    )
+    mode.add_argument("--connection-only", action="store_true", help="Stop after the app's connection check")
+    parser.add_argument(
+        "--marker",
+        default=DEFAULT_MARKER,
+        help="Substring the title of YOUR synthetic Granola note must contain (default is the repo fixture marker; "
+        "no such note exists in Granola unless you create one)",
+    )
     parser.add_argument(
         "--model", default=config._model_for("quick-ask"), help="Model for the restricted relay subprocess (app default)"
     )
     parser.add_argument("--timeout", type=float, default=180.0, help="Seconds per relay call")
     args = parser.parse_args(argv)
-    if not args.probe_only and not args.date:
-        parser.error("--date is required unless --probe-only is given")
+    preflight_only = args.probe_only or args.account_shape or args.connection_only
+    if not preflight_only and not args.date:
+        parser.error("--date is required unless --probe-only, --account-shape or --connection-only is given")
+    if preflight_only and args.date:
+        parser.error("--date cannot be combined with --probe-only, --account-shape or --connection-only")
     return args
 
 
@@ -227,10 +255,22 @@ async def run(
                 "pass --claude-project <original checkout> if it was added there"
             )
             return report
-        if args.probe_only or day is None:
+        if args.probe_only:
             return report
 
         relay = transport_factory(args)
+        if args.account_shape:
+            try:
+                raw = await relay.call("get_account_info", {})
+            except GranolaRelayError as exc:
+                report["steps"]["account_shape"] = {"ok": False, "error_code": exc.code, "retryable": exc.retryable}
+                failures.append(f"get_account_info failed: {exc.code!r}")
+                return report
+            shape = account_shape_report(raw)
+            report["steps"]["account_shape"] = {"ok": True, **shape}
+            if shape["looks_like_error_envelope"]:
+                failures.append("get_account_info returned an error-shaped object without the error flag")
+            return report
         report["relay_contract"] = relay.describe()
         if isinstance(relay, ClaudeCodeMcpRelay):
             report["relay_argv_shape"] = [
@@ -256,6 +296,8 @@ async def run(
         if not check.get("connected"):
             failures.append(f"connection check failed: {check.get('error_code')!r}")
             return report
+        if args.connection_only or day is None:
+            return report
 
         listing = await service.list_meetings(time_range="custom", custom_start=day, custom_end=day)
         marked = [row for row in listing["meetings"] if args.marker.lower() in (row.get("title") or "").lower()]
@@ -267,7 +309,10 @@ async def run(
             "marked_matches": len(marked),
         }
         if len(marked) != 1:
-            failures.append(f"expected exactly 1 marked meeting on {day.isoformat()}, found {len(marked)}")
+            failures.append(
+                f"expected exactly 1 meeting titled with the marker on {day.isoformat()}, found {len(marked)}; "
+                "the marker must match a synthetic note you created in your own Granola account"
+            )
             return report
         target = marked[0]["meeting_id"]
         report["steps"]["list"]["target_digest"] = _digest(target)
