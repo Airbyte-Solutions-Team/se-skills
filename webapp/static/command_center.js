@@ -485,14 +485,27 @@ async function ccPageSources(params, sourceId) {
   const status = params.get("status") || "";
   const offset = Number(params.get("offset") || 0);
   const body = ccShell("sources", "Sources", "Imported meeting sources: review association, retry, and reconcile.", ccLoading());
+  const fetchList = () => queue
+    ? api(`/api/command-center/sources/unprocessed${ccQuery({ limit: CC_PAGE, offset })}`)
+    : api(`/api/command-center/sources${ccQuery({ status, limit: CC_PAGE, offset })}`);
   let data;
-  try {
-    data = queue
-      ? await api(`/api/command-center/sources/unprocessed${ccQuery({ limit: CC_PAGE, offset })}`)
-      : await api(`/api/command-center/sources${ccQuery({ status, limit: CC_PAGE, offset })}`);
-  } catch (e) { body.innerHTML = ccError(e, `${CC_BASE}/sources`); return; }
-
-  const counts = Object.entries(data.counts_by_status || {}).map(([s, n]) => `<span class="cc-count cc-count--${ccTone(s)}">${n} ${esc(ccLabel(s))}</span>`).join("");
+  try { data = await fetchList(); }
+  catch (e) { body.innerHTML = ccError(e, `${CC_BASE}/sources`); return; }
+  const listHtml = (d) => {
+    const counts = Object.entries(d.counts_by_status || {}).map(([s, n]) => `<span class="cc-count cc-count--${ccTone(s)}">${n} ${esc(ccLabel(s))}</span>`).join("");
+    return `
+    <div class="cc-summary">${counts || `<span class="muted">${queue ? "queue is empty" : "no sources"}</span>`}${d.malformed_records ? `<span class="cc-count cc-count--error">${d.malformed_records} malformed record(s) skipped</span>` : ""}</div>
+    ${d.sources.length ? `<ul class="cc-sources" aria-label="Sources">${d.sources.map(ccSourceRow).join("")}</ul>`
+      : emptyBox({ icon: queue ? "✓" : "⊘", title: queue ? "Nothing waiting" : "No sources imported", body: queue ? "Every imported source is processed, or none has been imported yet." : "Use the manual import above to add a meeting exported from Granola." })}
+    ${ccPager(d)}`;
+  };
+  const refreshList = async () => {
+    const listEl = body.querySelector("#cc-sources-list");
+    try {
+      listEl.innerHTML = listHtml(await fetchList());
+      ccWirePager(listEl, { view: queue ? "" : "all", status }, "sources");
+    } catch (e) { listEl.innerHTML = ccError(e, `${CC_BASE}/sources`); }
+  };
   body.innerHTML = `
     <div class="row cc-sources-bar">
       <div class="cc-subtabs" role="tablist">
@@ -518,11 +531,8 @@ async function ccPageSources(params, sourceId) {
         <span id="cc-import-status" class="muted" role="status"></span>
       </div>
     </div>
-    <div class="cc-summary">${counts || `<span class="muted">${queue ? "queue is empty" : "no sources"}</span>`}${data.malformed_records ? `<span class="cc-count cc-count--error">${data.malformed_records} malformed record(s) skipped</span>` : ""}</div>
-    ${data.sources.length ? `<ul class="cc-sources" aria-label="Sources">${data.sources.map(ccSourceRow).join("")}</ul>`
-      : emptyBox({ icon: queue ? "✓" : "⊘", title: queue ? "Nothing waiting" : "No sources imported", body: queue ? "Every imported source is processed, or none has been imported yet." : "Use the manual import above to add a meeting exported from Granola." })}
-    ${ccPager(data)}`;
-  ccWirePager(body, { view: queue ? "" : "all", status }, "sources");
+    <div id="cc-sources-list">${listHtml(data)}</div>`;
+  ccWirePager(body.querySelector("#cc-sources-list"), { view: queue ? "" : "all", status }, "sources");
 
   const toggle = body.querySelector("#cc-import-toggle");
   const panel = body.querySelector("#cc-import");
@@ -537,7 +547,7 @@ async function ccPageSources(params, sourceId) {
   gToggle.addEventListener("click", () => {
     const open = gPanel.classList.toggle("hidden") === false;
     gToggle.setAttribute("aria-expanded", String(open));
-    if (open && !granolaLoaded) { granolaLoaded = true; ccGranolaPanel(gPanel.querySelector("#cc-granola-body"), () => ccPageSources(params)); }
+    if (open && !granolaLoaded) { granolaLoaded = true; ccGranolaPanel(gPanel.querySelector("#cc-granola-body"), refreshList); }
     if (open) gPanel.querySelector("h3").focus?.();
   });
   if (params.get("granola") === "1") gToggle.click();
@@ -558,7 +568,7 @@ async function ccPageSources(params, sourceId) {
       const summary = results.map((r) => r.outcome || r.status || "ok");
       statusEl.textContent = `Imported ${results.length} note(s): ${summary.join(", ")}`;
       showToast(`Imported ${results.length} note(s)`, "ok");
-      ccPageSources(params);
+      refreshList();
     } catch (e) {
       statusEl.textContent = e.message || String(e);
     }
