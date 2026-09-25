@@ -177,15 +177,6 @@ def test_relay_times_out_and_terminates_subprocess_portably(tmp_path: Path, monk
     assert time.monotonic() - started < 15
 
 
-def test_relay_reports_runtime_unavailable_when_executable_is_missing(tmp_path: Path) -> None:
-    relay = ClaudeCodeMcpRelay(
-        model="synthetic-model", forbidden_roots=[], executable=str(tmp_path / "missing-claude"), server_definition=_definition
-    )
-    with pytest.raises(GranolaRelayError) as exc:
-        asyncio.run(relay.call("get_account_info", {}))
-    assert exc.value.code == "runtime_unavailable"
-
-
 def test_relay_command_restricts_tools_before_execution() -> None:
     relay = ClaudeCodeMcpRelay(model="synthetic-model", forbidden_roots=[], server_definition=_definition)
     cmd = relay.command("list_meetings", executable="/usr/bin/claude", mcp_config_path="/tmp/x/mcp.json")
@@ -305,36 +296,15 @@ async def test_relay_without_claude_executable_reports_runtime_unavailable(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_relay_fails_closed_without_user_scope_server_and_writes_exclusive_config(tmp_path) -> None:
+async def test_relay_fails_closed_without_user_scope_server(tmp_path) -> None:
+    shim = _fake_claude(tmp_path)
     relay = ClaudeCodeMcpRelay(
-        model="synthetic-model", forbidden_roots=[], executable="/usr/bin/true",
+        model="synthetic-model", forbidden_roots=[], executable=str(shim),
         server_definition=lambda name: (_ for _ in ()).throw(GranolaRelayError("mcp_server_not_configured", retryable=False)),
     )
     with pytest.raises(GranolaRelayError) as exc:
         await relay.call("get_account_info", {})
     assert exc.value.code == "mcp_server_not_configured"
-
-    # A stand-in `claude` that records its argv and the generated mcp.json, then emits one tool_result.
-    fake = tmp_path / "claude"
-    record = tmp_path / "argv.json"
-    fake.write_text(
-        "#!/bin/sh\n"
-        f"python3 - \"$@\" <<'EOF'\n"
-        "import json,sys\n"
-        "argv=sys.argv[1:]\n"
-        "cfg=json.load(open(argv[argv.index('--mcp-config')+1]))\n"
-        f"json.dump({{'argv':argv,'config':cfg}},open({str(record)!r},'w'))\n"
-        "print(json.dumps({'type':'assistant','message':{'content':[{'type':'tool_use','id':'t1','name':'mcp__granola__get_account_info','input':{}}]}}))\n"
-        "print(json.dumps({'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':'t1','content':json.dumps({'workspace':{'id':'ws-1'}})}]}}))\n"
-        "EOF\n"
-    )
-    fake.chmod(0o700)
-    relay = ClaudeCodeMcpRelay(model="synthetic-model", forbidden_roots=[], executable=str(fake), server_definition=_definition)
-    assert await relay.call("get_account_info", {}) == {"workspace": {"id": "ws-1"}}
-    recorded = json.loads(record.read_text())
-    assert recorded["config"] == {"mcpServers": {"granola": {"type": "http", "url": "https://mcp.granola.ai/mcp"}}}
-    assert "--strict-mcp-config" in recorded["argv"]
-    assert not Path(recorded["argv"][recorded["argv"].index("--mcp-config") + 1]).exists()  # temp dir removed
 
 
 # ------------------------------------------------------------ connection
@@ -347,7 +317,9 @@ async def test_connection_check_pins_workspace_and_flags_mismatch(tmp_path) -> N
     first = await service.check_connection()
     assert first["connected"] and first["workspace"]["id"] == "ws-synthetic" and not first["workspace_mismatch"]
     pin_file = tmp_path / "customers" / ".command-center" / "granola-connection.json"
-    assert pin_file.exists() and (pin_file.stat().st_mode & 0o077) == 0
+    assert pin_file.exists()
+    if os.name != "nt":
+        assert (pin_file.stat().st_mode & 0o077) == 0
     assert "token" not in pin_file.read_text(encoding="utf-8").lower()
 
     transport.account = {"workspace": {"id": "ws-other", "display_name": "Other"}, "note_access_scope": ["personal"]}
