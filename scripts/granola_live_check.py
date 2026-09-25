@@ -1,15 +1,18 @@
 #!/usr/bin/env -S uv run --script
-"""Local, user-run check of the Granola retrieval path through the real app code.
+r"""Local, user-run check of the Granola retrieval path through the real app code.
 
 Runs the same `ClaudeCodeMcpRelay` → `GranolaRetrievalService` → adapter → ledger
 chain the web app uses, against a throwaway ledger directory, for ONE synthetic
 meeting whose title contains `--marker` (default `SE-SKILLS-CAPCHECK`):
 
-    claude version preflight → connection check → metadata list for one day
-    → retrieve the marked meeting → ledger outcome → retrieve again
+    claude version preflight → MCP scope probe → connection check → metadata
+    list for one day → retrieve the marked meeting → ledger outcome → retrieve again
 
 Verdict (`verdict.ok`, also the exit code) is true only when:
   * `claude --version` is at least MIN_CLAUDE_VERSION (`--permission-prompts` exists),
+  * the `granola` server is found at local scope for a trusted project path
+    (this checkout, or `--claude-project <original checkout>` when running from
+    a sibling worktree) or at user scope,
   * the connection check succeeds,
   * exactly one meeting on that day carries the marker,
   * the first retrieval finishes `done` with the single outcome `imported`,
@@ -23,10 +26,15 @@ transcripts, tokens, or raw tool output. The throwaway ledger is deleted on
 exit. Nothing is written to your customers directory or to the app's ledger.
 
     uv run scripts/granola_live_check.py --date 2026-09-24
+    uv run scripts/granola_live_check.py --probe-only --claude-project C:\path\to\original\checkout
 
-Prerequisites: `claude` on PATH, the `granola` MCP server configured at user
-scope (`claude mcp list` shows it as connected), and a synthetic meeting on
-that date whose title contains the marker.
+`--probe-only` prints just the version and scope steps (booleans, scope and
+transport type — never the URL or config) and exits 0 when the server is found.
+
+Prerequisites: `claude` on PATH, the `granola` MCP server configured in your
+own Claude Code (`claude mcp add` default local scope in the project you ran
+it from, or `--scope user`), and a synthetic meeting on that date whose title
+contains the marker.
 """
 from __future__ import annotations
 
@@ -52,6 +60,8 @@ from integrations.granola_mcp_relay import (
     ClaudeCodeMcpRelay,
     GranolaRelayError,
     GranolaRetrievalTransport,
+    probe_server_scope,
+    scoped_server_definition,
 )
 from services.evidence_ledger_service import EvidenceLedgerService
 from services.granola_retrieval_service import (
@@ -75,13 +85,29 @@ TransportFactory = Callable[[argparse.Namespace], GranolaRetrievalTransport]
 
 def _args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Granola retrieval live check (same code path as the app)")
-    parser.add_argument("--date", required=True, help="Day of the synthetic meeting, YYYY-MM-DD")
+    parser.add_argument("--date", help="Day of the synthetic meeting, YYYY-MM-DD (required unless --probe-only)")
+    parser.add_argument(
+        "--claude-project",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="Additional trusted checkout whose local-scope Claude MCP servers may be used "
+        "(the original checkout, when running from a sibling worktree). Repeatable.",
+    )
+    parser.add_argument("--probe-only", action="store_true", help="Only report claude version and MCP scope, then exit")
     parser.add_argument("--marker", default=DEFAULT_MARKER, help="Substring the synthetic meeting title must contain")
     parser.add_argument(
         "--model", default=config._model_for("quick-ask"), help="Model for the restricted relay subprocess (app default)"
     )
     parser.add_argument("--timeout", type=float, default=180.0, help="Seconds per relay call")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if not args.probe_only and not args.date:
+        parser.error("--date is required unless --probe-only is given")
+    return args
+
+
+def trusted_projects(args: argparse.Namespace) -> list[Path]:
+    return [repo_root, *(Path(p) for p in args.claude_project)]
 
 
 def _digest(value: str | None) -> str | None:
@@ -118,7 +144,12 @@ def parse_version(text: str | None) -> tuple[int, int, int] | None:
 
 
 def default_transport(args: argparse.Namespace) -> GranolaRetrievalTransport:
-    return ClaudeCodeMcpRelay(model=args.model, forbidden_roots=[repo_root], timeout_seconds=args.timeout)
+    return ClaudeCodeMcpRelay(
+        model=args.model,
+        forbidden_roots=[repo_root],
+        timeout_seconds=args.timeout,
+        server_definition=scoped_server_definition(trusted_projects(args)),
+    )
 
 
 async def _wait(jobs: JobService, job_id: str) -> dict[str, Any]:
@@ -163,9 +194,14 @@ async def run(
     transport_factory: TransportFactory = default_transport,
     version_probe: VersionProbe = claude_version_string,
 ) -> dict[str, Any]:
-    day = date.fromisoformat(args.date)
+    day = date.fromisoformat(args.date) if args.date else None
     scratch = Path(tempfile.mkdtemp(prefix="se-granola-live-check-"))
-    report: dict[str, Any] = {"marker": args.marker, "date": day.isoformat(), "steps": {}}
+    report: dict[str, Any] = {
+        "marker": args.marker,
+        "date": day.isoformat() if day else None,
+        "trusted_project_count": len(trusted_projects(args)),
+        "steps": {},
+    }
     failures: list[str] = []
     report["verdict"] = {"ok": False, "failures": failures}
     try:
@@ -181,6 +217,17 @@ async def run(
             return report
         if version < MIN_CLAUDE_VERSION:
             failures.append("claude older than minimum; run `claude update` (needs --permission-prompts)")
+            return report
+
+        scope = probe_server_scope("granola", project_paths=trusted_projects(args))
+        report["steps"]["mcp_scope"] = scope
+        if not scope["configured"]:
+            failures.append(
+                "granola MCP server not found at local scope for a trusted project or at user scope; "
+                "pass --claude-project <original checkout> if it was added there"
+            )
+            return report
+        if args.probe_only or day is None:
             return report
 
         relay = transport_factory(args)

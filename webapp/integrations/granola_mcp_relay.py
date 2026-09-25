@@ -18,8 +18,10 @@ Boundary, stated plainly:
 
   - ``--strict-mcp-config --mcp-config <tmp>/mcp.json`` loads *only* the
     ``granola`` server. The file is generated per call from the user's own
-    user-scope definition in ``~/.claude.json`` (``type`` and ``url`` only —
-    never ``headers``). Claude Code stores MCP OAuth sign-ins per endpoint, so
+    definition in ``~/.claude.json`` — local scope (``claude mcp add``'s
+    default, keyed by the project path the user ran it from) for an explicitly
+    trusted project path, else user scope; ``type`` and ``url`` only, never
+    ``headers``. Claude Code stores MCP OAuth sign-ins per endpoint, so
     the same name + URL reuses the grant without this app touching it. No
     definition → fail closed (``mcp_server_not_configured``).
   - ``--tools ""`` removes every built-in tool (the flag does not affect MCP
@@ -209,27 +211,108 @@ def extract_tool_result(
     return parsed
 
 
-def user_scope_server_definition(name: str, *, claude_json: Path | None = None) -> dict[str, str]:
-    """Copy `type` and `url` of the user's own remote MCP server definition — nothing else.
+def claude_json_path(claude_json: Path | None = None) -> Path:
+    return claude_json or Path(os.environ.get("CLAUDE_USER_CONFIG_JSON") or Path.home() / ".claude.json")
 
-    User-scope servers live at the top level of ``~/.claude.json`` under
-    ``mcpServers``. Headers, env, and anything that could carry a secret are
-    deliberately not copied; OAuth state stays inside Claude Code.
+
+def _project_key(path: str | os.PathLike[str]) -> str:
+    """Normalize a project path the way two spellings of one directory should compare.
+
+    Claude Code keys local-scope servers by the absolute project path as the
+    OS spells it (``C:\\Users\\…`` on Windows, ``/home/…`` on POSIX). Case
+    folding and separator/`..` normalization follow the host OS, so a trusted
+    path given with forward slashes or a trailing separator still matches.
     """
-    path = claude_json or Path(os.environ.get("CLAUDE_USER_CONFIG_JSON") or Path.home() / ".claude.json")
-    try:
-        raw = json.loads(path.read_bytes()[:2_000_000])
-    except (OSError, ValueError) as exc:
-        raise GranolaRelayError("mcp_server_not_configured", retryable=False) from exc
-    servers = raw.get("mcpServers") if isinstance(raw, dict) else None
-    entry = servers.get(name) if isinstance(servers, dict) else None
+    text = os.fspath(path)
+    if os.name == "nt":
+        text = text.replace("/", "\\")
+    return os.path.normcase(os.path.normpath(os.path.abspath(text)))
+
+
+def _validated_definition(entry: Any) -> dict[str, str] | None:
     if not isinstance(entry, dict):
-        raise GranolaRelayError("mcp_server_not_configured", retryable=False)
+        return None
     kind = entry.get("type")
     url = entry.get("url")
     if kind not in _REMOTE_SERVER_TYPES or not isinstance(url, str) or not url.startswith("https://"):
-        raise GranolaRelayError("mcp_server_not_configured", retryable=False)
+        return None
     return {"type": str(kind), "url": url}
+
+
+def locate_server_definition(
+    name: str,
+    *,
+    project_paths: list[Path] | None = None,
+    claude_json: Path | None = None,
+) -> tuple[str, dict[str, str]]:
+    """Find the user's own remote MCP server definition and return ``(scope, {type, url})``.
+
+    Claude Code stores ``claude mcp add`` servers in ``~/.claude.json`` at
+    **local scope** by default (``projects[<abs project path>].mcpServers``)
+    and at **user scope** with ``--scope user`` (top-level ``mcpServers``).
+    Lookup follows Claude Code's precedence — local before user — but only for
+    the explicitly trusted ``project_paths`` (the app's own checkout, or an
+    original checkout named on the live-check command line); other projects'
+    entries are never read. Two trusted projects defining the server
+    differently is ambiguous and fails closed. Headers, env, and anything else
+    that could carry a secret are never copied; OAuth state stays in Claude Code.
+    """
+    try:
+        raw = json.loads(claude_json_path(claude_json).read_bytes()[:2_000_000])
+    except (OSError, ValueError) as exc:
+        raise GranolaRelayError("mcp_server_not_configured", retryable=False) from exc
+    if not isinstance(raw, dict):
+        raise GranolaRelayError("mcp_server_not_configured", retryable=False)
+
+    wanted = {_project_key(p) for p in project_paths or []}
+    projects = raw.get("projects")
+    local_matches: list[dict[str, str]] = []
+    if wanted and isinstance(projects, dict):
+        for key, project in projects.items():
+            if not isinstance(key, str) or _project_key(key) not in wanted or not isinstance(project, dict):
+                continue
+            servers = project.get("mcpServers")
+            entry = servers.get(name) if isinstance(servers, dict) else None
+            if entry is None:
+                continue
+            definition = _validated_definition(entry)
+            if definition is None:
+                raise GranolaRelayError("mcp_server_not_configured", retryable=False)
+            local_matches.append(definition)
+    if local_matches:
+        if any(match != local_matches[0] for match in local_matches[1:]):
+            raise GranolaRelayError("mcp_server_not_configured", retryable=False)
+        return "local", local_matches[0]
+
+    servers = raw.get("mcpServers")
+    entry = servers.get(name) if isinstance(servers, dict) else None
+    definition = _validated_definition(entry) if entry is not None else None
+    if definition is None:
+        raise GranolaRelayError("mcp_server_not_configured", retryable=False)
+    return "user", definition
+
+
+def user_scope_server_definition(name: str, *, claude_json: Path | None = None) -> dict[str, str]:
+    """User-scope-only lookup (top-level ``mcpServers`` of ``~/.claude.json``)."""
+    return locate_server_definition(name, project_paths=None, claude_json=claude_json)[1]
+
+
+def scoped_server_definition(project_paths: list[Path]) -> Callable[[str], dict[str, str]]:
+    """Lookup bound to explicit trusted project paths: local scope there, then user scope."""
+
+    def lookup(name: str) -> dict[str, str]:
+        return locate_server_definition(name, project_paths=project_paths)[1]
+
+    return lookup
+
+
+def probe_server_scope(name: str, *, project_paths: list[Path], claude_json: Path | None = None) -> dict[str, Any]:
+    """Metadata-only description of where the server is configured — no URL, headers or raw config."""
+    try:
+        scope, definition = locate_server_definition(name, project_paths=project_paths, claude_json=claude_json)
+    except GranolaRelayError as exc:
+        return {"configured": False, "scope": None, "type": None, "error_code": exc.code}
+    return {"configured": True, "scope": scope, "type": definition["type"], "error_code": None}
 
 
 class ClaudeCodeMcpRelay:

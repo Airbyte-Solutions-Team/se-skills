@@ -76,7 +76,10 @@ def _build_local_services(app: FastAPI) -> None:
     local dependencies such as faster-whisper or anthropic.
     """
     from integrations.granola import ManualGranolaImportAdapter
-    from integrations.granola_mcp_relay import ClaudeCodeMcpRelay
+    from integrations.granola_mcp_relay import (
+        ClaudeCodeMcpRelay,
+        scoped_server_definition,
+    )
     from integrations.salesforce import SalesforceIntegration
     from routes.accounts import router as accounts_router
     from routes.ask import router as ask_router
@@ -207,6 +210,7 @@ def _build_local_services(app: FastAPI) -> None:
     granola_relay = ClaudeCodeMcpRelay(
         model=config._model_for("quick-ask"),
         forbidden_roots=[config.WEBAPP_DIR.parent, config.WORKSPACE, config.CUSTOMERS_DIR],
+        server_definition=scoped_server_definition([config.WEBAPP_DIR.parent]),
     )
     granola_retrieval_service = GranolaRetrievalService(
         transport=granola_relay,

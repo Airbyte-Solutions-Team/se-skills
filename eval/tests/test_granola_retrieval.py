@@ -222,6 +222,97 @@ def test_relay_mcp_config_copies_only_type_and_url_from_user_scope(tmp_path) -> 
     assert exc.value.code == "mcp_server_not_configured"
 
 
+def _claude_json(tmp_path: Path, **payload) -> Path:
+    path = tmp_path / ".claude.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+_GRANOLA = {"type": "http", "url": "https://mcp.granola.ai/mcp"}
+
+
+def test_relay_finds_local_scope_server_only_for_trusted_projects(tmp_path: Path) -> None:
+    from integrations.granola_mcp_relay import (
+        locate_server_definition,
+        probe_server_scope,
+    )
+
+    original = tmp_path / "original-checkout"
+    sibling = tmp_path / "sibling-worktree"
+    original.mkdir()
+    sibling.mkdir()
+    claude_json = _claude_json(
+        tmp_path,
+        projects={
+            str(original): {"mcpServers": {"granola": {**_GRANOLA, "headers": {"Authorization": "Bearer " + SECRET}}}},
+            str(tmp_path / "unrelated"): {"mcpServers": {"granola": {"type": "http", "url": "https://other.invalid/mcp"}}},
+        },
+    )
+    # The app's own checkout (the sibling) has no local entry and there is no user-scope entry: fail closed.
+    with pytest.raises(GranolaRelayError) as exc:
+        locate_server_definition("granola", project_paths=[sibling], claude_json=claude_json)
+    assert exc.value.code == "mcp_server_not_configured"
+    probe = probe_server_scope("granola", project_paths=[sibling], claude_json=claude_json)
+    assert probe == {"configured": False, "scope": None, "type": None, "error_code": "mcp_server_not_configured"}
+
+    # Naming the original checkout explicitly picks up its local-scope entry (type+url only, no headers).
+    scope, definition = locate_server_definition("granola", project_paths=[sibling, original], claude_json=claude_json)
+    assert (scope, definition) == ("local", _GRANOLA)
+    probe = probe_server_scope("granola", project_paths=[sibling, original], claude_json=claude_json)
+    assert probe == {"configured": True, "scope": "local", "type": "http", "error_code": None}
+    assert SECRET not in json.dumps(probe) and "mcp.granola.ai" not in json.dumps(probe)
+
+    # Path spelling differences (trailing separator, `..`, forward slashes on Windows) still match.
+    spelled = Path(str(original) + os.sep + "sub" + os.sep + "..")
+    assert locate_server_definition("granola", project_paths=[spelled], claude_json=claude_json)[0] == "local"
+    if os.name == "nt":
+        forward = Path(str(original).replace("\\", "/").upper())
+        assert locate_server_definition("granola", project_paths=[forward], claude_json=claude_json)[0] == "local"
+
+    # Local scope wins over user scope for a trusted project; user scope is the fallback otherwise.
+    claude_json = _claude_json(
+        tmp_path,
+        mcpServers={"granola": {"type": "sse", "url": "https://user.granola.ai/mcp"}},
+        projects={str(original): {"mcpServers": {"granola": _GRANOLA}}},
+    )
+    assert locate_server_definition("granola", project_paths=[original], claude_json=claude_json) == ("local", _GRANOLA)
+    assert locate_server_definition("granola", project_paths=[sibling], claude_json=claude_json) == (
+        "user", {"type": "sse", "url": "https://user.granola.ai/mcp"},
+    )
+
+    # Two trusted projects with different definitions is ambiguous; a non-remote local entry is refused.
+    claude_json = _claude_json(
+        tmp_path,
+        projects={
+            str(original): {"mcpServers": {"granola": _GRANOLA}},
+            str(sibling): {"mcpServers": {"granola": {"type": "http", "url": "https://other.granola.ai/mcp"}}},
+        },
+    )
+    with pytest.raises(GranolaRelayError):
+        locate_server_definition("granola", project_paths=[original, sibling], claude_json=claude_json)
+    claude_json = _claude_json(
+        tmp_path, mcpServers={"granola": _GRANOLA},
+        projects={str(original): {"mcpServers": {"granola": {"type": "stdio", "command": "evil"}}}},
+    )
+    with pytest.raises(GranolaRelayError):
+        locate_server_definition("granola", project_paths=[original], claude_json=claude_json)
+
+
+def test_relay_scoped_definition_feeds_strict_single_server_config(tmp_path: Path, monkeypatch) -> None:
+    from integrations.granola_mcp_relay import scoped_server_definition
+
+    project = tmp_path / "checkout"
+    project.mkdir()
+    monkeypatch.setenv(
+        "CLAUDE_USER_CONFIG_JSON",
+        str(_claude_json(tmp_path, projects={str(project): {"mcpServers": {"granola": _GRANOLA, "other": _GRANOLA}}})),
+    )
+    relay = ClaudeCodeMcpRelay(
+        model="synthetic-model", forbidden_roots=[], server_definition=scoped_server_definition([project])
+    )
+    assert relay.mcp_config() == {"mcpServers": {"granola": _GRANOLA}}
+
+
 def test_relay_rejects_argument_mismatch_and_duplicate_calls() -> None:
     wanted = {"time_range": "custom", "custom_start": "2026-09-24", "custom_end": "2026-09-24"}
     ok = "\n".join([
@@ -611,8 +702,16 @@ def _live_check_module():
     return module
 
 
-def _live_check_args(module):
-    return module._args(["--date", "2026-09-24"])
+def _live_check_args(module, *extra: str):
+    return module._args(["--date", "2026-09-24", *extra])
+
+
+@pytest.fixture(autouse=True)
+def _fake_claude_json(tmp_path_factory, monkeypatch):
+    path = tmp_path_factory.mktemp("claude") / ".claude.json"
+    path.write_text(json.dumps({"mcpServers": {"granola": _GRANOLA}}), encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_USER_CONFIG_JSON", str(path))
+    return path
 
 
 def _live_check_transport(marked: int = 1) -> FakeGranolaRetrievalTransport:
@@ -633,6 +732,7 @@ def test_live_check_script_reads_top_level_job_fields_and_passes_on_imported_the
     )
     assert report["verdict"] == {"ok": True, "failures": []}
     assert report["steps"]["claude_version"]["sufficient"] is True
+    assert report["steps"]["mcp_scope"] == {"configured": True, "scope": "user", "type": "http", "error_code": None}
     assert report["steps"]["connection_check"]["connected"] is True
     assert report["steps"]["list"]["marked_matches"] == 1
     assert report["steps"]["first_retrieval"]["counts"] == {"imported": 1}
@@ -684,3 +784,44 @@ def test_live_check_script_fails_verdict_on_old_claude_no_marker_or_unexpected_o
         "workspace_digest": None,
         "note_access_scope": None,
     }
+
+
+def test_live_check_script_probes_scope_before_spawning_and_accepts_trusted_project(
+    tmp_path: Path, monkeypatch, _fake_claude_json: Path, capsys
+) -> None:
+    module = _live_check_module()
+    original = tmp_path / "original-checkout"
+    original.mkdir()
+    _fake_claude_json.write_text(
+        json.dumps({"projects": {str(original): {"mcpServers": {"granola": _GRANOLA}}}}), encoding="utf-8"
+    )
+
+    def must_not_spawn(_args):
+        raise AssertionError("transport must not be created when the server is not configured")
+
+    # Sibling worktree without --claude-project: fail closed before any subprocess, with a hint.
+    report = asyncio.run(
+        module.run(_live_check_args(module), transport_factory=must_not_spawn, version_probe=lambda: "2.1.282")
+    )
+    assert report["verdict"]["ok"] is False
+    assert report["steps"]["mcp_scope"]["configured"] is False
+    assert "connection_check" not in report["steps"]
+    assert "--claude-project" in report["verdict"]["failures"][0]
+
+    # Naming the original checkout finds the local-scope server and the full check proceeds.
+    args = _live_check_args(module, "--claude-project", str(original))
+    transport = _live_check_transport()
+    report = asyncio.run(module.run(args, transport_factory=lambda _a: transport, version_probe=lambda: "2.1.282"))
+    assert report["verdict"] == {"ok": True, "failures": []}
+    assert report["steps"]["mcp_scope"] == {"configured": True, "scope": "local", "type": "http", "error_code": None}
+    assert report["trusted_project_count"] == 2
+    printed = json.dumps(report)
+    assert str(original) not in printed and "mcp.granola.ai" not in printed
+
+    # --probe-only prints only the preflight steps and exits 0 when configured.
+    probe_args = module._args(["--probe-only", "--claude-project", str(original)])
+    report = asyncio.run(module.run(probe_args, transport_factory=must_not_spawn, version_probe=lambda: "2.1.282"))
+    assert report["verdict"]["ok"] is True
+    assert set(report["steps"]) == {"claude_version", "mcp_scope"}
+    with pytest.raises(SystemExit):
+        module._args([])
