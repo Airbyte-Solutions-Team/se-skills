@@ -105,17 +105,87 @@ def _event(kind: str, block: dict) -> str:
     return json.dumps({"type": kind, "message": {"role": kind, "content": [block]}})
 
 
-def test_relay_command_is_restricted_to_one_allowlisted_tool() -> None:
-    relay = ClaudeCodeMcpRelay(model="synthetic-model", forbidden_roots=[])
-    cmd = relay.command("list_meetings", executable="/usr/bin/claude")
+def _definition(_name: str) -> dict[str, str]:
+    return {"type": "http", "url": "https://mcp.granola.ai/mcp"}
+
+
+def test_relay_command_restricts_tools_before_execution() -> None:
+    relay = ClaudeCodeMcpRelay(model="synthetic-model", forbidden_roots=[], server_definition=_definition)
+    cmd = relay.command("list_meetings", executable="/usr/bin/claude", mcp_config_path="/tmp/x/mcp.json")
     assert cmd[:2] == ["/usr/bin/claude", "-p"]
-    assert cmd[cmd.index("--allowedTools") + 1] == "mcp__granola__list_meetings"
+    assert cmd[cmd.index("--max-turns") + 1] == "1"
+    assert "--strict-mcp-config" in cmd and cmd[cmd.index("--mcp-config") + 1] == "/tmp/x/mcp.json"
+    assert cmd[cmd.index("--setting-sources") + 1] == "user"
     assert cmd[cmd.index("--tools") + 1] == ""
+    assert cmd[cmd.index("--allowedTools") + 1] == "mcp__granola__list_meetings"
+    denied_start = cmd.index("--disallowedTools") + 1
+    denied = cmd[denied_start:cmd.index("--permission-mode")]
+    assert set(denied) == {
+        "mcp__granola__get_account_info", "mcp__granola__list_meeting_folders", "mcp__granola__get_meetings",
+        "mcp__granola__get_meeting_transcript", "mcp__granola__query_granola_meetings",
+    }
+    assert "mcp__granola__list_meetings" not in denied
     assert "--no-session-persistence" in cmd and "--disable-slash-commands" in cmd
     assert "dontAsk" in cmd and "--output-format" in cmd
+    assert relay.mcp_config() == {"mcpServers": {"granola": {"type": "http", "url": "https://mcp.granola.ai/mcp"}}}
     with pytest.raises(GranolaRelayError) as exc:
         relay.command("query_granola_meetings")  # type: ignore[arg-type]
     assert exc.value.code == "relay_wrong_tool"
+
+
+def test_relay_mcp_config_copies_only_type_and_url_from_user_scope(tmp_path) -> None:
+    from integrations.granola_mcp_relay import user_scope_server_definition
+
+    claude_json = tmp_path / ".claude.json"
+    claude_json.write_text(json.dumps({"mcpServers": {"granola": {
+        "type": "http", "url": "https://mcp.granola.ai/mcp", "headers": {"Authorization": "Bearer SECRET-TOKEN"},
+    }}}))
+    assert user_scope_server_definition("granola", claude_json=claude_json) == {"type": "http", "url": "https://mcp.granola.ai/mcp"}
+    claude_json.write_text(json.dumps({"mcpServers": {"other": {"type": "http", "url": "https://x.invalid/"}}}))
+    with pytest.raises(GranolaRelayError) as exc:
+        user_scope_server_definition("granola", claude_json=claude_json)
+    assert exc.value.code == "mcp_server_not_configured"
+    claude_json.write_text(json.dumps({"mcpServers": {"granola": {"type": "stdio", "command": "evil"}}}))
+    with pytest.raises(GranolaRelayError) as exc:
+        user_scope_server_definition("granola", claude_json=claude_json)
+    assert exc.value.code == "mcp_server_not_configured"
+    with pytest.raises(GranolaRelayError) as exc:
+        user_scope_server_definition("granola", claude_json=tmp_path / "absent.json")
+    assert exc.value.code == "mcp_server_not_configured"
+
+
+def test_relay_rejects_argument_mismatch_and_duplicate_calls() -> None:
+    wanted = {"time_range": "custom", "custom_start": "2026-09-24", "custom_end": "2026-09-24"}
+    ok = "\n".join([
+        _event("assistant", {"type": "tool_use", "id": "t1", "name": "mcp__granola__list_meetings",
+                             "input": {"custom_end": "2026-09-24", "custom_start": "2026-09-24", "time_range": "custom"}}),
+        _event("user", {"type": "tool_result", "tool_use_id": "t1", "content": json.dumps({"meetings": []})}),
+    ]).encode()
+    assert extract_tool_result(ok, tool="list_meetings", arguments=wanted) == {"meetings": []}
+    broadened = "\n".join([
+        _event("assistant", {"type": "tool_use", "id": "t1", "name": "mcp__granola__list_meetings",
+                             "input": {"time_range": "custom", "custom_start": "2025-01-01", "custom_end": "2026-09-24"}}),
+        _event("user", {"type": "tool_result", "tool_use_id": "t1", "content": json.dumps({"meetings": [{"id": SECRET}]})}),
+    ]).encode()
+    with pytest.raises(GranolaRelayError) as exc:
+        extract_tool_result(broadened, tool="list_meetings", arguments=wanted)
+    assert exc.value.code == "relay_wrong_arguments" and SECRET not in str(exc.value)
+    duplicated = "\n".join([
+        _event("assistant", {"type": "tool_use", "id": "t1", "name": "mcp__granola__get_meetings", "input": {"meeting_ids": [MID]}}),
+        _event("assistant", {"type": "tool_use", "id": "t2", "name": "mcp__granola__get_meetings", "input": {"meeting_ids": [MID]}}),
+        _event("user", {"type": "tool_result", "tool_use_id": "t1", "content": json.dumps({"meetings": []})}),
+        _event("user", {"type": "tool_result", "tool_use_id": "t2", "content": json.dumps({"meetings": [{"id": SECRET}]})}),
+    ]).encode()
+    with pytest.raises(GranolaRelayError) as exc:
+        extract_tool_result(duplicated, tool="get_meetings", arguments={"meeting_ids": [MID]})
+    assert exc.value.code == "relay_unexpected_call"
+    unselected = "\n".join([
+        _event("assistant", {"type": "tool_use", "id": "t1", "name": "mcp__granola__get_meetings", "input": {"meeting_ids": [MID, _uuid(9)]}}),
+        _event("user", {"type": "tool_result", "tool_use_id": "t1", "content": json.dumps({"meetings": []})}),
+    ]).encode()
+    with pytest.raises(GranolaRelayError) as exc:
+        extract_tool_result(unselected, tool="get_meetings", arguments={"meeting_ids": [MID]})
+    assert exc.value.code == "relay_wrong_arguments"
 
 
 def test_relay_extracts_only_the_tool_result_and_ignores_prose() -> None:
@@ -149,10 +219,45 @@ def test_relay_rejects_wrong_tool_missing_result_and_tool_errors() -> None:
 
 @pytest.mark.asyncio
 async def test_relay_without_claude_executable_reports_runtime_unavailable(tmp_path) -> None:
-    relay = ClaudeCodeMcpRelay(model="synthetic-model", forbidden_roots=[], executable=str(tmp_path / "missing-claude"))
+    relay = ClaudeCodeMcpRelay(
+        model="synthetic-model", forbidden_roots=[], executable=str(tmp_path / "missing-claude"), server_definition=_definition
+    )
     with pytest.raises(GranolaRelayError) as exc:
         await relay.call("get_account_info", {})
     assert exc.value.code == "runtime_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_relay_fails_closed_without_user_scope_server_and_writes_exclusive_config(tmp_path) -> None:
+    relay = ClaudeCodeMcpRelay(
+        model="synthetic-model", forbidden_roots=[], executable="/usr/bin/true",
+        server_definition=lambda name: (_ for _ in ()).throw(GranolaRelayError("mcp_server_not_configured", retryable=False)),
+    )
+    with pytest.raises(GranolaRelayError) as exc:
+        await relay.call("get_account_info", {})
+    assert exc.value.code == "mcp_server_not_configured"
+
+    # A stand-in `claude` that records its argv and the generated mcp.json, then emits one tool_result.
+    fake = tmp_path / "claude"
+    record = tmp_path / "argv.json"
+    fake.write_text(
+        "#!/bin/sh\n"
+        f"python3 - \"$@\" <<'EOF'\n"
+        "import json,sys\n"
+        "argv=sys.argv[1:]\n"
+        "cfg=json.load(open(argv[argv.index('--mcp-config')+1]))\n"
+        f"json.dump({{'argv':argv,'config':cfg}},open({str(record)!r},'w'))\n"
+        "print(json.dumps({'type':'assistant','message':{'content':[{'type':'tool_use','id':'t1','name':'mcp__granola__get_account_info','input':{}}]}}))\n"
+        "print(json.dumps({'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':'t1','content':json.dumps({'workspace':{'id':'ws-1'}})}]}}))\n"
+        "EOF\n"
+    )
+    fake.chmod(0o700)
+    relay = ClaudeCodeMcpRelay(model="synthetic-model", forbidden_roots=[], executable=str(fake), server_definition=_definition)
+    assert await relay.call("get_account_info", {}) == {"workspace": {"id": "ws-1"}}
+    recorded = json.loads(record.read_text())
+    assert recorded["config"] == {"mcpServers": {"granola": {"type": "http", "url": "https://mcp.granola.ai/mcp"}}}
+    assert "--strict-mcp-config" in recorded["argv"]
+    assert not Path(recorded["argv"][recorded["argv"].index("--mcp-config") + 1]).exists()  # temp dir removed
 
 
 # ------------------------------------------------------------ connection
@@ -331,6 +436,22 @@ async def test_retrieval_wrong_workspace_fails_before_any_import_and_job_is_body
     assert ledger.list_sources()["total"] == 0
     assert SECRET not in json.dumps(job)
     assert set(job.keys()) >= {"kind", "status", "error_code"} and "raw" not in json.dumps(job).lower()
+
+
+@pytest.mark.asyncio
+async def test_workspace_switch_between_fetch_and_import_fails_closed(tmp_path) -> None:
+    service, transport, ledger, jobs = _service(tmp_path)
+    await service.check_connection()
+    _prime(transport, MID)
+    pinned = transport.account
+    # First re-check (before get_meetings) still sees the pinned workspace; the check that runs
+    # after the transcript fetch, right before the ledger write, sees another one.
+    transport.account_sequence = [pinned, {"workspace": {"id": "ws-switched", "display_name": "Switched"}}]
+    job = await _retrieve(service, jobs, [MID])
+    assert job["status"] == "error" and job["error_code"] == "wrong_workspace"
+    assert [tool for tool, _ in transport.calls[-4:]] == ["get_account_info", "get_meetings", "get_meeting_transcript", "get_account_info"]
+    assert ledger.list_sources()["total"] == 0
+    assert SECRET not in json.dumps(job)
 
 
 @pytest.mark.asyncio

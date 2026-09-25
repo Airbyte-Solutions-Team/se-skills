@@ -14,8 +14,10 @@ Three explicit user steps, each one bounded and each one a fresh provider call:
 3. **Retrieve selected** — for up to `MAX_SELECTION` ids, `get_meetings` in
    one batch plus one `get_meeting_transcript` per meeting, merged into the
    observed MCP payload shape and passed through the existing adapter and
-   ledger. Runs as a managed job whose metadata and result hold ids, counts
-   and outcome codes only — never titles, summaries, transcript text, tokens
+   ledger. The pinned workspace is verified before the first fetch and again
+   after the last one, immediately before the ledger write; a switch in between
+   fails the whole job closed with nothing imported. Runs as a managed job
+   whose metadata and result hold ids, counts and outcome codes only — never titles, summaries, transcript text, tokens
    or raw tool output.
 
 Per-meeting outcomes: `imported`, `already_known`, `edited`, `pending_content`,
@@ -444,6 +446,14 @@ class GranolaRetrievalService:
         results: list[dict[str, Any]] = []
         import_id: str | None = None
         if meetings:
+            # Each relay call is a separate subprocess, so the MCP sign-in could have changed
+            # mid-batch. Re-verify the workspace after the last fetch; on mismatch import nothing.
+            try:
+                self._assert_pinned(await self._current_workspace())
+            except GranolaRelayError as exc:
+                raise ManagedJobError(exc.code, "Workspace re-check failed after retrieval; nothing was imported.")
+            except GranolaRetrievalError as exc:
+                raise ManagedJobError(exc.code, f"{exc.detail} Nothing was imported.")
             try:
                 recorded = self._ledger.import_meetings(meetings, trigger="user_triggered_retrieval")
             except EvidenceLedgerError as exc:

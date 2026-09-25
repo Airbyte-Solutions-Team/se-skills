@@ -14,13 +14,38 @@ Boundary, stated plainly:
 
 * Every call is one bounded subprocess started by an explicit user action.
   There is no scheduler, no polling loop, no webhook and no cached listing.
-* Only ``mcp__granola__get_account_info``, ``list_meetings``, ``get_meetings``
-  and ``get_meeting_transcript`` are allowed; built-in tools are disabled.
+* **Pre-execution restriction** (Claude Code CLI reference, checked 2026-09-25):
+
+  - ``--strict-mcp-config --mcp-config <tmp>/mcp.json`` loads *only* the
+    ``granola`` server. The file is generated per call from the user's own
+    user-scope definition in ``~/.claude.json`` (``type`` and ``url`` only —
+    never ``headers``). Claude Code stores MCP OAuth sign-ins per endpoint, so
+    the same name + URL reuses the grant without this app touching it. No
+    definition → fail closed (``mcp_server_not_configured``).
+  - ``--tools ""`` removes every built-in tool (the flag does not affect MCP
+    tools, which is why the two lines above and below exist).
+  - ``--disallowedTools`` names every *other* Granola tool observed in the
+    capability check; a bare deny rule removes the tool from the model's
+    context before any turn runs, and deny beats any allow in user settings.
+  - ``--permission-mode dontAsk`` denies anything not pre-approved, and only
+    ``mcp__granola__<tool>`` is pre-approved via ``--allowedTools``.
+  - ``--max-turns 1``: the model gets one turn, whose only input is this app's
+    prompt. The tool result (untrusted meeting text) is never shown to a model
+    turn that could issue another call.
+
+  Residual gap, stated honestly: the CLI cannot constrain MCP *arguments*
+  before execution. The arguments come from a trusted prompt on turn 1, and
+  ``extract_tool_result`` refuses the whole call unless exactly one
+  ``tool_use`` occurred, for the expected tool, with byte-identical
+  arguments. A Granola tool this app does not know about, combined with a
+  user-level ``mcp__granola`` allow rule, would not be removed from context;
+  its result would still be rejected here.
 * Nothing from the subprocess (stdout, stderr, tool text) is logged or placed
   in job metadata or HTTP error bodies. Failures surface as short codes.
-* Whether ``claude -p`` reuses the interactive session's OAuth grant is a
-  documented behaviour that has **not** been verified by the app's authors;
-  the connection check exists so the user can establish it locally.
+* Whether ``claude -p`` reuses the interactive session's OAuth grant under
+  ``--strict-mcp-config`` is documented but has **not** been verified by the
+  app's authors; ``scripts/granola_live_check.py`` exercises exactly this code
+  path so the user can verify it locally with a synthetic meeting.
 
 ``FakeGranolaRetrievalTransport`` scripts responses for tests.
 """
@@ -28,9 +53,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
@@ -38,6 +64,18 @@ GranolaTool = Literal["get_account_info", "list_meetings", "get_meetings", "get_
 ALLOWED_TOOLS: tuple[GranolaTool, ...] = (
     "get_account_info", "list_meetings", "get_meetings", "get_meeting_transcript"
 )
+# Every Granola MCP tool observed in the 2026-09-24 capability check. Tools not needed by
+# a step are denied by name so they are removed from the model's context before it runs.
+KNOWN_GRANOLA_TOOLS: tuple[str, ...] = (
+    "get_account_info",
+    "list_meeting_folders",
+    "list_meetings",
+    "get_meetings",
+    "get_meeting_transcript",
+    "query_granola_meetings",
+)
+MCP_CONFIG_FILE = "mcp.json"
+_REMOTE_SERVER_TYPES = {"http", "sse", "streamable-http"}
 MAX_MEETINGS_PER_GET = 10  # `get_meetings` accepts 1–10 ids (observed schema).
 MAX_RESULT_BYTES = 4_000_000
 
@@ -49,6 +87,9 @@ RelayErrorCode = Literal[
     "relay_no_tool_result",
     "relay_unparseable_result",
     "relay_wrong_tool",
+    "relay_wrong_arguments",
+    "relay_unexpected_call",
+    "mcp_server_not_configured",
     "tool_error",
     "tool_not_found",
     "tool_access_denied",
@@ -94,18 +135,30 @@ def _result_text(content: Any) -> str:
     return ""
 
 
-def extract_tool_result(stream: bytes, *, tool: GranolaTool) -> Any:
+def canonical_arguments(arguments: Mapping[str, Any]) -> str:
+    return json.dumps(dict(arguments), sort_keys=True, separators=(",", ":"))
+
+
+def extract_tool_result(
+    stream: bytes,
+    *,
+    tool: GranolaTool,
+    arguments: Mapping[str, Any] | None = None,
+    mcp_server: str = "granola",
+) -> Any:
     """Return the parsed result of the single allowed tool call in a `stream-json` transcript.
 
     Accepts the event shapes Claude Code emits with ``--output-format stream-json
     --verbose``: ``assistant`` messages carrying ``tool_use`` blocks and ``user``
     messages carrying ``tool_result`` blocks that reference them. Any text the
     model wrote is ignored. Raises with a safe code when the tool was not
-    called, another tool was called, the result is an error, or the result is
-    not JSON.
+    called, another tool was called, the tool was called more than once, the
+    call's ``input`` differs from the requested ``arguments``, the result is an
+    error, or the result is not JSON. Rejection discards the entire call:
+    nothing from a broadened or duplicated fetch reaches the caller.
     """
-    expected = f"mcp__granola__{tool}"
-    uses: dict[str, str] = {}
+    expected = f"mcp__{mcp_server}__{tool}"
+    uses: dict[str, tuple[str, Any]] = {}
     results: list[tuple[str, Any, bool]] = []
     for raw in stream.splitlines():
         raw = raw.strip()
@@ -125,15 +178,23 @@ def extract_tool_result(stream: bytes, *, tool: GranolaTool) -> Any:
             if not isinstance(block, dict):
                 continue
             if block.get("type") == "tool_use" and isinstance(block.get("id"), str):
-                uses[block["id"]] = str(block.get("name", ""))
+                uses[block["id"]] = (str(block.get("name", "")), block.get("input"))
             elif block.get("type") == "tool_result" and isinstance(block.get("tool_use_id"), str):
                 results.append((block["tool_use_id"], block.get("content"), bool(block.get("is_error"))))
-    for name in uses.values():
+    for name, _input in uses.values():
         if name != expected:
             raise GranolaRelayError("relay_wrong_tool", retryable=False)
-    matched = [(content, is_error) for use_id, content, is_error in results if uses.get(use_id) == expected]
+    if len(uses) > 1:
+        raise GranolaRelayError("relay_unexpected_call", retryable=False)
+    if arguments is not None:
+        for _name, actual in uses.values():
+            if not isinstance(actual, Mapping) or canonical_arguments(actual) != canonical_arguments(arguments):
+                raise GranolaRelayError("relay_wrong_arguments", retryable=False)
+    matched = [(content, is_error) for use_id, content, is_error in results if use_id in uses]
     if not matched:
         raise GranolaRelayError("relay_no_tool_result", retryable=True)
+    if len(matched) > 1:
+        raise GranolaRelayError("relay_unexpected_call", retryable=False)
     content, is_error = matched[0]
     text = _result_text(content)
     if is_error:
@@ -145,6 +206,29 @@ def extract_tool_result(stream: bytes, *, tool: GranolaTool) -> Any:
     if isinstance(parsed, dict) and parsed.get("error") and len(parsed) <= 3:
         raise GranolaRelayError(classify_tool_error(json.dumps(parsed)), retryable=False)
     return parsed
+
+
+def user_scope_server_definition(name: str, *, claude_json: Path | None = None) -> dict[str, str]:
+    """Copy `type` and `url` of the user's own remote MCP server definition — nothing else.
+
+    User-scope servers live at the top level of ``~/.claude.json`` under
+    ``mcpServers``. Headers, env, and anything that could carry a secret are
+    deliberately not copied; OAuth state stays inside Claude Code.
+    """
+    path = claude_json or Path(os.environ.get("CLAUDE_USER_CONFIG_JSON") or Path.home() / ".claude.json")
+    try:
+        raw = json.loads(path.read_bytes()[:2_000_000])
+    except (OSError, ValueError) as exc:
+        raise GranolaRelayError("mcp_server_not_configured", retryable=False) from exc
+    servers = raw.get("mcpServers") if isinstance(raw, dict) else None
+    entry = servers.get(name) if isinstance(servers, dict) else None
+    if not isinstance(entry, dict):
+        raise GranolaRelayError("mcp_server_not_configured", retryable=False)
+    kind = entry.get("type")
+    url = entry.get("url")
+    if kind not in _REMOTE_SERVER_TYPES or not isinstance(url, str) or not url.startswith("https://"):
+        raise GranolaRelayError("mcp_server_not_configured", retryable=False)
+    return {"type": str(kind), "url": url}
 
 
 class ClaudeCodeMcpRelay:
@@ -159,13 +243,27 @@ class ClaudeCodeMcpRelay:
         mcp_server: str = "granola",
         timeout_seconds: float = 180.0,
         max_stderr_bytes: int = 65_536,
+        max_turns: int = 1,
+        server_definition: Callable[[str], Mapping[str, str]] = user_scope_server_definition,
     ) -> None:
         self.model = model
         self.executable = executable
         self.mcp_server = mcp_server
         self.timeout_seconds = timeout_seconds
         self.max_stderr_bytes = max_stderr_bytes
+        self.max_turns = max_turns
+        self.server_definition = server_definition
         self.forbidden_roots = [Path(root).resolve() for root in forbidden_roots]
+
+    def denied_tools(self, tool: GranolaTool) -> list[str]:
+        return [f"mcp__{self.mcp_server}__{other}" for other in KNOWN_GRANOLA_TOOLS if other != tool]
+
+    def mcp_config(self) -> dict[str, Any]:
+        """The exclusive MCP config for one call: the user's granola endpoint and nothing else."""
+        definition = dict(self.server_definition(self.mcp_server))
+        if set(definition) - {"type", "url"}:
+            raise GranolaRelayError("mcp_server_not_configured", retryable=False)
+        return {"mcpServers": {self.mcp_server: definition}}
 
     def describe(self) -> dict[str, Any]:
         return {
@@ -176,22 +274,40 @@ class ClaudeCodeMcpRelay:
             "credential_holder": "claude_code_user_oauth",
             "mcp_server": self.mcp_server,
             "allowed_tools": [f"mcp__{self.mcp_server}__{tool}" for tool in ALLOWED_TOOLS],
+            "denied_tools": [f"mcp__{self.mcp_server}__{tool}" for tool in KNOWN_GRANOLA_TOOLS if tool not in ALLOWED_TOOLS],
+            "strict_mcp_config": True,
+            "max_turns": self.max_turns,
             "label": "Manual Granola check through your Claude Code MCP connection",
         }
 
-    def command(self, tool: GranolaTool, executable: str | None = None) -> list[str]:
-        """The restricted CLI contract: no built-in tools, exactly one MCP tool allowed, no persistence."""
+    def command(
+        self, tool: GranolaTool, executable: str | None = None, *, mcp_config_path: Path | str = MCP_CONFIG_FILE
+    ) -> list[str]:
+        """The restricted CLI contract, enforced before the model's first turn.
+
+        Only the generated MCP config is loaded, built-in tools are removed, every
+        other known Granola tool is denied by name, only the one tool is
+        pre-approved, nothing else can be approved (`dontAsk`), and the model
+        gets a single turn.
+        """
         if tool not in ALLOWED_TOOLS:
             raise GranolaRelayError("relay_wrong_tool", retryable=False)
         return [
             executable or shutil.which(self.executable) or self.executable,
             "-p",
             "--max-turns",
-            "2",
+            str(self.max_turns),
+            "--strict-mcp-config",
+            "--mcp-config",
+            str(mcp_config_path),
+            "--setting-sources",
+            "user",
             "--tools",
             "",
             "--allowedTools",
             f"mcp__{self.mcp_server}__{tool}",
+            "--disallowedTools",
+            *self.denied_tools(tool),
             "--permission-mode",
             "dontAsk",
             "--permission-prompts",
@@ -251,11 +367,15 @@ class ClaudeCodeMcpRelay:
                 pass
 
     async def call(self, tool: GranolaTool, arguments: Mapping[str, Any]) -> Any:
-        command = self.command(tool)
+        mcp_config = self.mcp_config()
         temp_dir = Path(tempfile.mkdtemp(prefix="se-granola-relay-"))
         proc: asyncio.subprocess.Process | None = None
         try:
             self._assert_isolated(temp_dir)
+            config_path = temp_dir / MCP_CONFIG_FILE
+            config_path.write_text(json.dumps(mcp_config, separators=(",", ":")), encoding="utf-8")
+            config_path.chmod(0o600)
+            command = self.command(tool, mcp_config_path=config_path)
             try:
                 proc = await asyncio.create_subprocess_exec(
                     *command,
@@ -283,7 +403,7 @@ class ClaudeCodeMcpRelay:
                 raise GranolaRelayError("relay_timeout", retryable=True) from exc
             if return_code != 0 and not stdout.strip():
                 raise GranolaRelayError("relay_exit_error", retryable=True)
-            return extract_tool_result(stdout, tool=tool)
+            return extract_tool_result(stdout, tool=tool, arguments=arguments, mcp_server=self.mcp_server)
         finally:
             if proc is not None:
                 await self._terminate(proc)
@@ -296,6 +416,7 @@ class FakeGranolaRetrievalTransport:
     def __init__(self, *, mcp_server: str = "granola") -> None:
         self.mcp_server = mcp_server
         self.account: Any = {"workspace": {"id": "ws-synthetic", "display_name": "Synthetic Workspace"}, "note_access_scope": ["personal"]}
+        self.account_sequence: list[Any] = []  # scripted per-call accounts, e.g. a mid-batch workspace switch
         self.listings: dict[str, Any] = {}
         self.meetings: dict[str, Any] = {}
         self.transcripts: dict[str, Any] = {}
@@ -332,6 +453,8 @@ class FakeGranolaRetrievalTransport:
         self.calls.append((tool, args))
         if tool == "get_account_info":
             self._maybe_fail(tool, "*")
+            if self.account_sequence:
+                self.account = self.account_sequence.pop(0)
             return self.account
         if tool == "list_meetings":
             key = args.get("time_range", "*")
