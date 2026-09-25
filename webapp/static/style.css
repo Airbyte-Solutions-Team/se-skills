@@ -2037,6 +2037,10 @@ a.live-btn { text-decoration: none; display: inline-flex; align-items: center; }
 .cc-body button:focus-visible, .cc-body a:focus-visible, .cc-body select:focus-visible, .cc-body input:focus-visible, .cc-body textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 @media (max-width: 720px) {
+  .bar { flex-wrap: wrap; gap: 8px 12px; padding: 10px 14px; }
+  .bar .crumbs { flex: 1 1 100%; order: 3; min-width: 0; }
+  .bar-right { margin-left: auto; flex-wrap: wrap; justify-content: flex-end; gap: 6px; min-width: 0; }
+  .help-link { font-size: 13px; padding: 5px 9px; }
   .cc-head { flex-direction: column; align-items: stretch; }
   .cc-pilot-note { white-space: normal; align-self: flex-start; }
   .cc-tabs { gap: 0; }
