@@ -353,9 +353,10 @@ async def api_command_center_changes(
 
 @router.get("/api/command-center/actions/{action_id}")
 async def api_command_center_action(action_id: str, request: Request) -> dict:
+    """Action detail: the PR C record plus the derived list-row fields (overdue, links, provenance, allowed transitions)."""
     try:
-        return _operations(request).get_action(action_id)
-    except CommandCenterOperationsError as exc:
+        return _reads(request).action(action_id)
+    except (CommandCenterReadError, CommandCenterOperationsError) as exc:
         _raise_domain(exc)
 
 

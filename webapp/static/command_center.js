@@ -143,15 +143,15 @@ function ccWireFilters(root, tab, fixed = {}) {
 
 // ── Today ────────────────────────────────────────────────────────────────
 
+// Kinds mirror `AttentionKind` in services/command_center_read_service.py.
 const CC_KIND_LABEL = {
-  overdue_action: "Overdue", due_action: "Due soon", proposal_review: "Proposal to review",
-  confirmed_blocker: "Confirmed blocker", association_review: "Association needed",
-  source_unavailable: "Source unavailable", processing_failed: "Processing failed",
-  reconciliation_failed: "Reconciliation failed", content_missing: "Content missing",
+  overdue_action: "Overdue", confirmed_blocker: "Confirmed blocker", due_action: "Due soon",
+  proposal_review: "Proposal to review", association_review: "Association needed",
+  source_failure: "Source problem", reconciliation_failure: "Analysis failed",
 };
 const ccKindTone = (k) => ({
-  overdue_action: "error", confirmed_blocker: "error", processing_failed: "error", reconciliation_failed: "error",
-  source_unavailable: "error", due_action: "warn", proposal_review: "warn", association_review: "warn", content_missing: "warn",
+  overdue_action: "error", confirmed_blocker: "error", source_failure: "error", reconciliation_failure: "error",
+  due_action: "warn", proposal_review: "warn", association_review: "warn",
 })[k] || "neutral";
 
 async function ccPageToday(params) {
@@ -170,7 +170,7 @@ async function ccPageToday(params) {
     <li class="cc-att cc-att--${ccKindTone(it.kind)}">
       <div class="cc-att-head">
         <span class="cc-badge cc-badge--${ccKindTone(it.kind)}">${esc(CC_KIND_LABEL[it.kind] || ccLabel(it.kind))}</span>
-        ${ccOppLink(it)}
+        ${it.account && it.opportunity_link ? ccOppLink(it) : `<span class="muted">No opportunity yet${it.source_id ? ` · source <code>${esc(it.source_id.slice(0, 12))}…</code>` : ""}</span>`}
         ${it.when ? `<span class="muted cc-att-when">${ccDay(it.when)}</span>` : ""}
       </div>
       <div class="cc-att-title">${esc(it.title)}</div>
@@ -396,10 +396,11 @@ async function ccPageActions(params, actionId) {
 async function ccPageActionDetail(actionId) {
   const body = ccShell("actions", "Action", "One durable action with its evidence and history.", ccLoading());
   let a;
-  try { a = await api(`/api/command-center/actions${ccQuery({ include_retracted: true, limit: 200 })}`).then((d) => d.actions.find((x) => x.action_id === actionId)); }
-  catch (e) { body.innerHTML = ccError(e, `${CC_BASE}/actions/${actionId}`); return; }
-  if (!a) {
-    body.innerHTML = emptyBox({ icon: "?", title: "Action not found", body: "It may belong to another workspace or have been removed.", actions: `<a class="ghost small" href="${CC_BASE}/actions">All actions</a>` });
+  try { a = await api(`/api/command-center/actions/${encodeURIComponent(actionId)}`); }
+  catch (e) {
+    body.innerHTML = /unknown action/i.test(e.message || "")
+      ? emptyBox({ icon: "?", title: "Action not found", body: "It may belong to another workspace or have been removed.", actions: `<a class="ghost small" href="${CC_BASE}/actions">All actions</a>` })
+      : ccError(e, `${CC_BASE}/actions/${actionId}`);
     return;
   }
   body.innerHTML = `<p><a class="cc-mini" href="${CC_BASE}/actions">‹ All actions</a></p><ul class="cc-actions">${ccActionRow(a, { detail: true })}</ul>`;
@@ -576,7 +577,7 @@ async function ccPageSourceReview(sourceId) {
     <p>${ccBadge(assoc.state)} ${assoc.state === "associated" ? `<a href="${esc(base?.opportunity_link || "#")}">${esc(assoc.account)} · ${esc(assoc.opportunity_slug)}</a> <span class="muted">(${esc(assoc.method || "")}, by ${esc(assoc.actor || "")})</span>` : `<span class="muted">${esc(assoc.reason || "")}</span>`}</p>
     ${assoc.candidates?.length ? `<p class="muted">Suggested: ${assoc.candidates.map((c) => `${esc(c.account)} · ${esc(c.opportunity_slug)}`).join(", ")} — suggestions are never auto-applied.</p>` : ""}
     <form id="cc-assoc" class="cc-inline-form">
-      <label>Opportunity <select name="target" ${candidates ? "" : "disabled"}>${candidates || '<option value="">No local opportunities yet</option>'}</select></label>
+      <label>Opportunity <select name="opportunity" ${candidates ? "" : "disabled"}>${candidates || '<option value="">No local opportunities yet</option>'}</select></label>
       <label>Reason <input name="reason" type="text" required maxlength="300" placeholder="Why this association is correct" /></label>
       <button class="primary small" type="submit" ${candidates ? "" : "disabled"}>${assoc.state === "associated" ? "Correct association" : "Confirm association"}</button>
       ${caps.clear_association ? `<button class="ghost small" type="button" id="cc-assoc-clear">Clear association</button>` : ""}
@@ -603,11 +604,11 @@ async function ccPageSourceReview(sourceId) {
   body.querySelector("#cc-assoc").addEventListener("submit", async (e) => {
     e.preventDefault();
     const form = e.target;
-    const [account, opportunity_slug] = (form.target.value || "").split("|");
-    if (!account) return;
+    const [account, opportunity_slug] = (form.elements.opportunity.value || "").split("|");
+    if (!account || !opportunity_slug) { showToast("Choose an opportunity first", "warn"); return; }
     const ok = await ccMutate(api(`/api/command-center/sources/${encodeURIComponent(sourceId)}/association`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ account, opportunity_slug, reason: form.reason.value.trim() }),
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ account, opportunity_slug, reason: form.elements.reason.value.trim() }),
     }), "Association confirmed");
     if (ok) rerender();
   });

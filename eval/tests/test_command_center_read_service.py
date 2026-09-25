@@ -308,3 +308,106 @@ async def test_scope_isolation_between_workspaces(tmp_path) -> None:
     assert other.get("/api/command-center/portfolio")["total"] == 0
     assert other.get("/api/command-center/actions")["total"] == 0
     assert other.client.get(f"/api/command-center/sources/{first}/review").status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_action_detail_is_reachable_by_id_beyond_the_list_page_bound(tmp_path) -> None:
+    """Today/Changes/Portfolio deep-link actions by stable ID; detail must not depend on a global list page."""
+    h, first, second = await _two_opportunities(tmp_path)
+    template = h.ops._load_action(h.get("/api/command-center/actions", overdue=True)["actions"][0]["action_id"])
+    for index in range(210):
+        clone = template.model_copy(update={
+            "action_id": f"act_{index:032x}",
+            "observation_key": f"{index:016x}",
+            "commitment": f"Synthetic filler action {index}",
+        })
+        h.ops._write_record(h.ops._action_path(clone.action_id, create=True), clone.model_dump(mode="json"))
+    listing = h.get("/api/command-center/actions", limit=200, include_retracted=True)
+    assert listing["total"] > 200 and listing["next_offset"] == 200
+    last_id = f"act_{209:032x}"
+    assert all(a["action_id"] != last_id for a in listing["actions"])  # not on the first page of 200
+    detail = h.get(f"/api/command-center/actions/{last_id}")
+    second_page = h.get("/api/command-center/actions", limit=200, offset=200, include_retracted=True)["actions"]
+    row = next(a for a in second_page if a["action_id"] == last_id)
+    for key in ("overdue", "due_soon", "opportunity_link", "provenance", "allowed_transitions", "status"):
+        assert detail[key] == row[key], key
+    assert detail["overdue"] is True and "completed" in detail["allowed_transitions"]
+    done = h.client.post(
+        f"/api/command-center/actions/{last_id}/transitions",
+        json={"to_status": "completed", "reason": "Synthetic completion"},
+    )
+    assert done.status_code == 200
+    after = h.get(f"/api/command-center/actions/{last_id}")
+    assert after["status"] == "completed" and after["overdue"] is False and after["allowed_transitions"] == ["open"]
+    assert h.client.get("/api/command-center/actions/act_" + "f" * 32).status_code == 404
+    assert h.client.get("/api/command-center/actions/nope").status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_ui_association_path_confirm_reconcile_correct_and_clear(tmp_path) -> None:
+    """The exact request sequence the source-review page issues: candidates -> PUT association -> reconcile -> correct -> DELETE."""
+    h = ReadHarness(tmp_path)
+    await h.bootstrap_overview()
+    await h.bootstrap_second()
+    source_id = h.import_variant("not_SYNTH000000009", extra_line=SANDBOX_LINE)
+
+    today = h.get("/api/command-center/today")
+    item = next(i for i in today["attention"] if i["kind"] == "association_review")
+    assert item["account"] is None and item["opportunity_link"] is None and item["source_id"] == source_id
+    assert today["counts_by_kind"] == {"association_review": 1}
+
+    candidates = h.get("/api/command-center/opportunities")["opportunities"]
+    assert {(c["account"], c["opportunity_slug"]) for c in candidates} == {(ACCOUNT, OPP), (ACCOUNT, OPP2)}
+    review = h.get(f"/api/command-center/sources/{source_id}/review")
+    assert review["capabilities"]["reconcile"] is False and review["overview_base"] is None
+    assert h.client.post(f"/api/command-center/sources/{source_id}/association", json={}).status_code == 405
+
+    confirmed = h.client.put(
+        f"/api/command-center/sources/{source_id}/association",
+        json={"account": ACCOUNT, "opportunity_slug": OPP, "reason": "Chosen in synthetic UI test"},
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    review = h.get(f"/api/command-center/sources/{source_id}/review")
+    base = review["overview_base"]
+    assert review["capabilities"]["reconcile"] is True and base["status"] == "current"
+    assert base["opportunity_link"] == f"#/opp/{ACCOUNT}/{OPP}/{OPP}"
+    assert h.get("/api/command-center/today")["counts_by_kind"] == {}
+
+    h.set_recs(source_id, 1, lambda eid: [
+        _recommendation(eid, key="sandbox", action="Confirm sandbox access", owner="Customer Synthetic Buyer", due="2026-10-15"),
+    ])
+    started = h.client.post(
+        f"/api/command-center/sources/{source_id}/reconcile",
+        json={"base_version_id": base["version_id"], "base_revision": base["revision"]},
+    )
+    assert started.status_code == 202, started.text
+    assert (await _wait(h.jobs, started.json()["job_id"]))["ok"] is True
+    job = h.get(f"/api/command-center/reconciliations/{started.json()['job_id']}")
+    assert job["ok"] is True
+    review = h.get(f"/api/command-center/sources/{source_id}/review")
+    assert review["source"]["processing"]["status"] == "processed"
+    assert [a["opportunity_slug"] for a in review["derived_actions"]] == [OPP]
+    assert h.get("/api/command-center/today")["counts_by_kind"] == {"due_action": 1}
+
+    corrected = h.client.put(
+        f"/api/command-center/sources/{source_id}/association",
+        json={"account": ACCOUNT, "opportunity_slug": OPP2, "reason": "Wrong opportunity"},
+    )
+    assert corrected.status_code == 200, corrected.text
+    review = h.get(f"/api/command-center/sources/{source_id}/review")
+    assert review["source"]["association"]["opportunity_slug"] == OPP2
+    assert review["overview_base"]["opportunity_link"] == f"#/opp/{ACCOUNT}/{OPP2}/{OPP2}"
+    assert all(a["retracted"] for a in review["derived_actions"])
+    assert h.get("/api/command-center/today")["counts_by_kind"] == {}
+    assert h.get("/api/command-center/changes", change_type="association_corrected")["total"] == 1
+
+    cleared = h.client.request(
+        "DELETE", f"/api/command-center/sources/{source_id}/association", json={"reason": "Not ours"}
+    )
+    assert cleared.status_code == 200, cleared.text
+    review = h.get(f"/api/command-center/sources/{source_id}/review")
+    assert review["source"]["association"]["state"] != "associated" and review["overview_base"] is None
+    assert review["capabilities"]["reconcile"] is False
+    assert h.get("/api/command-center/today")["counts_by_kind"] == {"association_review": 1}
+    states = [x["state"] for x in review["source"]["association_history"]]
+    assert states[-1] != "associated" and states.count("associated") == 2

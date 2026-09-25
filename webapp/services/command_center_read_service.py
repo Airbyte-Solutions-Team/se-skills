@@ -297,6 +297,10 @@ class CommandCenterReadService:
         )
         return payload
 
+    def action(self, action_id: str) -> dict[str, Any]:
+        """One action by stable ID with the same derived fields as the list rows."""
+        return self._present_action(self._ops._load_action(action_id))
+
     def actions(
         self,
         *,
