@@ -11,6 +11,11 @@ strict gate that exits 0 only when it passes:
                       presence flags, safe error codes); diagnostic only
   --connection-only   …→ the app's connection check (records a check marker in
                       the throwaway ledger; no workspace identity is read)
+  --list-shape --date YYYY-MM-DD
+                      …→ one restricted `list_meetings` call for that day, reported
+                      as the value-free SHAPE of the raw tool result (block count
+                      and types, length buckets, JSON/fence/XML/markdown class,
+                      allow-listed tag names); no titles, ids or text; diagnostic only
   --date YYYY-MM-DD   …→ connection check → metadata list for that day →
                       retrieve the ONE meeting whose title contains --marker →
                       retrieve again (expects `imported` then `already_known`)
@@ -36,16 +41,15 @@ directory or to the app's ledger.
     uv run scripts/granola_live_check.py --probe-only --claude-project C:\path\to\original\checkout
     uv run scripts/granola_live_check.py --account-shape --claude-project C:\path\to\original\checkout
     uv run scripts/granola_live_check.py --connection-only --claude-project C:\path\to\original\checkout
-    uv run scripts/granola_live_check.py --date 2026-09-24 --claude-project C:\path\to\original\checkout
+    uv run scripts/granola_live_check.py --list-shape --date 2026-09-24 --claude-project C:\path\to\original\checkout
+    uv run scripts/granola_live_check.py --date 2026-09-24 --marker <title word> --claude-project C:\path\to\original\checkout
 
 Prerequisites: `claude` on PATH and the `granola` MCP server configured in your
 own Claude Code (`claude mcp add` default local scope in the project you ran it
 from, or `--scope user`). The `--date` mode additionally needs a Granola note
 that YOU created in YOUR Granola account for this purpose (synthetic content,
-no customer material) whose title contains the marker. The default marker
-`SE-SKILLS-CAPCHECK` is only a string this repo's test fixtures use — no such
-Granola note exists unless you make one; pass `--marker` to match a note you
-already own instead.
+no customer material) or any meeting you own, whose title contains `--marker`
+(required; `SE-SKILLS-CAPCHECK` is only a string this repo's test fixtures use).
 """
 from __future__ import annotations
 
@@ -79,6 +83,7 @@ from services.granola_retrieval_service import (
     GranolaRetrievalError,
     GranolaRetrievalService,
     account_shape_report,
+    shape_of,
 )
 from services.job_service import JobService
 
@@ -115,6 +120,12 @@ def _args(argv: list[str] | None = None) -> argparse.Namespace:
         help="One restricted get_account_info call; print its value-free shape (key names, value classes) and exit",
     )
     mode.add_argument("--connection-only", action="store_true", help="Stop after the app's connection check")
+    mode.add_argument(
+        "--list-shape",
+        action="store_true",
+        help="One restricted list_meetings call for --date; print only the value-free SHAPE of its raw result "
+        "(block count/types, length buckets, JSON/fence/XML/markdown classification, allow-listed tag names) and exit",
+    )
     parser.add_argument(
         "--marker",
         help="Substring that the title of exactly one meeting you own on --date contains. No default: the repo's "
@@ -126,7 +137,10 @@ def _args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--timeout", type=float, default=180.0, help="Seconds per relay call")
     args = parser.parse_args(argv)
     preflight_only = args.probe_only or args.account_shape or args.connection_only
-    if not preflight_only and not (args.date and args.marker):
+    if args.list_shape:
+        if not args.date or args.marker:
+            parser.error("--list-shape needs --date and takes no --marker")
+    elif not preflight_only and not (args.date and args.marker):
         parser.error("--date and --marker are required unless --probe-only, --account-shape or --connection-only is given")
     if preflight_only and args.date:
         parser.error("--date cannot be combined with --probe-only, --account-shape or --connection-only")
@@ -269,6 +283,22 @@ async def run(
             report["steps"]["account_shape"] = {"ok": True, **shape}
             if shape["looks_like_error_envelope"]:
                 failures.append("get_account_info returned an error-shaped object without the error flag")
+            return report
+        if args.list_shape:
+            assert day is not None
+            arguments = {"time_range": "custom", "custom_start": day.isoformat(), "custom_end": day.isoformat()}
+            try:
+                raw = await relay.call("list_meetings", arguments)
+            except GranolaRelayError as exc:
+                report["steps"]["list_shape"] = {
+                    "parsed": False,
+                    "error_code": exc.code,
+                    "retryable": exc.retryable,
+                    "raw_result_shape": exc.shape,
+                }
+                failures.append(f"list_meetings failed: {exc.code!r}")
+                return report
+            report["steps"]["list_shape"] = {"parsed": True, "shape": shape_of(raw)}
             return report
         report["relay_contract"] = relay.describe()
         if isinstance(relay, ClaudeCodeMcpRelay):

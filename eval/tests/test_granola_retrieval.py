@@ -22,6 +22,7 @@ from integrations.granola_mcp_relay import (
     FakeGranolaRetrievalTransport,
     GranolaRelayError,
     extract_tool_result,
+    result_shape_report,
 )
 from routes.command_center import router
 from services.command_center_operations_service import CommandCenterOperationsService
@@ -375,6 +376,61 @@ def test_relay_rejects_wrong_tool_missing_result_and_tool_errors() -> None:
         extract_tool_result(errored, tool="get_meeting_transcript")
     assert exc.value.code == "tool_auth_required"
     assert "token" not in str(exc.value)
+
+
+def _result_stream(content) -> bytes:
+    return "\n".join([
+        _event("assistant", {"type": "tool_use", "id": "t1", "name": "mcp__granola__list_meetings", "input": {}}),
+        _event("user", {"type": "tool_result", "tool_use_id": "t1", "content": content}),
+    ]).encode()
+
+
+def test_relay_parses_only_single_block_json_or_single_json_fence() -> None:
+    payload = {"meetings": [{"id": _uuid(1), "title": "Solo " + SECRET}], "count": 1}
+    assert extract_tool_result(_result_stream(json.dumps(payload)), tool="list_meetings") == payload
+    assert extract_tool_result(_result_stream([{"type": "text", "text": json.dumps(payload)}]), tool="list_meetings") == payload
+    fenced = "```json\n" + json.dumps(payload, indent=2) + "\n```\n"
+    assert extract_tool_result(_result_stream([{"type": "text", "text": fenced}]), tool="list_meetings") == payload
+    for bad in (
+        [{"type": "text", "text": json.dumps(payload)}, {"type": "text", "text": json.dumps(payload)}],  # two blocks
+        [{"type": "text", "text": "Here are the meetings " + SECRET + ": " + json.dumps(payload)}],  # prose-wrapped
+        [{"type": "text", "text": "```json\n" + json.dumps(payload) + "\n```\nand a note " + SECRET}],  # fence + trailer
+        [{"type": "text", "text": f'<meetings count="1" from="2026-09-24" to="2026-09-24"><meeting id="{_uuid(1)}"><title>{SECRET}</title></meeting></meetings>'}],
+        [{"type": "text", "text": "# Meetings\n- " + SECRET + " (Sep 24)\n"}],
+        [{"type": "image", "data": SECRET}],
+        [],
+    ):
+        with pytest.raises(GranolaRelayError) as exc:
+            extract_tool_result(_result_stream(bad), tool="list_meetings")
+        assert exc.value.code == "relay_unparseable_result" and exc.value.retryable
+        printed = json.dumps(exc.value.shape)
+        assert SECRET not in printed and _uuid(1) not in printed and "2026-09-24" not in printed
+        assert "Solo" not in printed and "Sep 24" not in printed and "Here are" not in printed
+
+
+def test_relay_result_shape_report_is_value_free_and_classifies_shapes() -> None:
+    xml = f'<meetings count="65" from="2025-01-01" to="{SECRET}"><meeting id="{_uuid(3)}"><title>{SECRET}</title><secretTag>{SECRET}</secretTag></meeting></meetings>'
+    shape = result_shape_report([{"type": "text", "text": xml}, {"type": "resource", "uri": SECRET}])
+    assert shape["container"] == "list" and shape["block_count"] == 2 and shape["block_types"] == ["text", "resource"]
+    (block,) = shape["text_blocks"]
+    assert block["classification"] == "xml_like" and block["root_tag"] == "meetings"
+    assert block["root_attribute_names"] == ["count", "from", "to"]
+    assert block["inner_tag_counts"] == {"meeting": 1, "other": 1, "title": 1}
+    assert block["length_bucket"] == "101-1k"
+    printed = json.dumps(shape)
+    assert SECRET not in printed and _uuid(3) not in printed and "secretTag" not in printed and "65" not in printed
+
+    prose = result_shape_report("Found these " + SECRET + ' {"meetings": []} thanks')
+    assert prose["text_blocks"][0]["classification"] == "prose_wrapped_json_object"
+    assert prose["text_blocks"][0]["prefix_length_bucket"] == "1-100"
+    md = result_shape_report([{"type": "text", "text": "# Meetings\n- one " + SECRET + "\n- two\n| a | b |"}])
+    b = md["text_blocks"][0]
+    assert b["classification"] == "markdown_like" and b["bullet_line_count_bucket"] == "1-100"
+    assert result_shape_report(None) == {"container": "null", "block_count": 0, "block_types": [], "text_blocks": []}
+    assert result_shape_report([{"type": "text", "text": "```json\n{}\n```"}])["text_blocks"][0]["classification"] == "fenced_json_object"
+    assert result_shape_report([{"type": "text", "text": "   "}])["text_blocks"][0]["classification"] == "empty"
+    for report in (shape, prose, md):
+        assert SECRET not in json.dumps(report)
 
 
 @pytest.mark.asyncio
@@ -986,3 +1042,35 @@ def test_live_check_account_shape_and_connection_only_modes(capsys) -> None:
     assert report["verdict"] == {"ok": True, "failures": []}
     assert report["steps"]["connection_check"]["connected"] is True and "list" not in report["steps"]
     assert [call[0] for call in good.calls] == ["get_account_info"]
+
+
+def test_live_check_list_shape_mode_reports_value_free_shape_only(capsys) -> None:
+    module = _live_check_module()
+    with pytest.raises(SystemExit):
+        module._args(["--list-shape"])
+    with pytest.raises(SystemExit):
+        module._args(["--list-shape", "--date", "2026-09-24", "--marker", "x"])
+    args = module._args(["--list-shape", "--date", "2026-09-24"])
+    xml = f'<meetings count="2" from="2026-09-24" to="2026-09-24"><meeting id="{_uuid(7)}"><title>{SECRET}</title></meeting></meetings>'
+    transport = FakeGranolaRetrievalTransport()
+    transport.fail(
+        "list_meetings",
+        "custom",
+        GranolaRelayError("relay_unparseable_result", retryable=True, shape=result_shape_report([{"type": "text", "text": xml}])),
+    )
+    report = asyncio.run(module.run(args, transport_factory=lambda _a: transport, version_probe=lambda: "2.1.282 (Claude Code)"))
+    step = report["steps"]["list_shape"]
+    assert step["parsed"] is False and step["error_code"] == "relay_unparseable_result"
+    assert step["raw_result_shape"]["text_blocks"][0]["classification"] == "xml_like"
+    assert step["raw_result_shape"]["text_blocks"][0]["root_attribute_names"] == ["count", "from", "to"]
+    assert report["verdict"]["ok"] is False and report["marker_given"] is False
+    printed = json.dumps(report)
+    assert SECRET not in printed and _uuid(7) not in printed and '"2"' not in printed
+    assert "2026-09-24" in printed  # only the user-supplied --date itself
+    assert transport.calls == [("list_meetings", {"time_range": "custom", "custom_start": "2026-09-24", "custom_end": "2026-09-24"})]
+
+    parsed_transport = FakeGranolaRetrievalTransport()
+    parsed_transport.listings["custom"] = [_listed(_uuid(8), title="Solo " + SECRET)]
+    ok = asyncio.run(module.run(args, transport_factory=lambda _a: parsed_transport, version_probe=lambda: "2.1.282 (Claude Code)"))
+    assert ok["steps"]["list_shape"]["parsed"] is True and ok["verdict"]["ok"] is True
+    assert SECRET not in json.dumps(ok) and _uuid(8) not in json.dumps(ok)

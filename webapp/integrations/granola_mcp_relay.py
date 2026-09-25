@@ -56,6 +56,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -103,9 +104,10 @@ RelayErrorCode = Literal[
 class GranolaRelayError(Exception):
     """A retrieval step failed. `code` is safe to persist and display; nothing else is."""
 
-    def __init__(self, code: RelayErrorCode, *, retryable: bool) -> None:
+    def __init__(self, code: RelayErrorCode, *, retryable: bool, shape: dict[str, Any] | None = None) -> None:
         self.code = code
         self.retryable = retryable
+        self.shape = shape  # value-free `result_shape_report`, only for unparseable results
         super().__init__(code)
 
 
@@ -129,13 +131,154 @@ def classify_tool_error(text: str) -> RelayErrorCode:
     return "tool_error"
 
 
-def _result_text(content: Any) -> str:
+def _text_blocks(content: Any) -> list[str]:
     if isinstance(content, str):
-        return content
+        return [content]
     if isinstance(content, list):
-        parts = [block.get("text", "") for block in content if isinstance(block, dict) and block.get("type") == "text"]
-        return "".join(parts)
-    return ""
+        return [
+            str(block.get("text", ""))
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        ]
+    return []
+
+
+def _result_text(content: Any) -> str:
+    return "".join(_text_blocks(content))
+
+
+_FENCED_JSON = re.compile(r"\A\s*```(?:json|JSON)?[ \t]*\r?\n(.*?)\r?\n```\s*\Z", re.DOTALL)
+
+
+def parse_tool_json(content: Any) -> Any:
+    """Parse the single text block of a tool result as JSON.
+
+    Supported, unambiguous shapes only: exactly one text block whose whole text is
+    a JSON value, or exactly one text block that is a single ```json fence holding
+    a JSON value and nothing else. Multiple text blocks, prose around JSON, XML or
+    markdown are rejected (never scraped); the raised error carries a value-free
+    shape report so the real contract can be diagnosed without seeing any values.
+    """
+    blocks = _text_blocks(content)
+    if len(blocks) == 1:
+        text = blocks[0]
+        fenced = _FENCED_JSON.match(text)
+        try:
+            return json.loads(fenced.group(1) if fenced else text)
+        except ValueError:
+            pass
+    raise GranolaRelayError("relay_unparseable_result", retryable=True, shape=result_shape_report(content))
+
+
+_LENGTH_BUCKETS = ((0, "0"), (100, "1-100"), (1_000, "101-1k"), (10_000, "1k-10k"), (100_000, "10k-100k"))
+_KNOWN_BLOCK_TYPES = frozenset({"text", "image", "audio", "resource", "resource_link"})
+_KNOWN_TAGS = frozenset(
+    {
+        "meetings", "meeting", "result", "results", "response", "data", "items", "item", "list",
+        "id", "title", "date", "url", "known_participants", "participant", "participants",
+        "captured_by_me", "listed_as_participant", "is_workspace_visible", "count", "from", "to",
+        "total", "page", "cursor", "has_more", "next", "error", "message", "summary",
+    }
+)
+_XML_ROOT = re.compile(r"\A\s*<([A-Za-z_][\w.-]*)((?:\s+[A-Za-z_][\w.-]*\s*=\s*(?:\"[^\"]*\"|'[^']*'))*)\s*/?>", re.DOTALL)
+_XML_ATTR = re.compile(r"([A-Za-z_][\w.-]*)\s*=")
+_XML_TAG = re.compile(r"<([A-Za-z_][\w.-]*)[\s/>]")
+_JSON_START = re.compile(r"[\[{]")
+
+
+def _length_bucket(n: int) -> str:
+    for limit, label in _LENGTH_BUCKETS:
+        if n <= limit:
+            return label
+    return ">100k"
+
+
+def _allow(name: str) -> str:
+    return name if name.lower() in _KNOWN_TAGS else "other"
+
+
+def _json_kind(value: Any) -> str:
+    if isinstance(value, dict):
+        return "json_object"
+    if isinstance(value, list):
+        return "json_array"
+    return "json_scalar"
+
+
+def _classify_text(text: str) -> dict[str, Any]:
+    stripped = text.strip()
+    out: dict[str, Any] = {"length_bucket": _length_bucket(len(text)), "line_count_bucket": _length_bucket(text.count("\n") + 1 if text else 0)}
+    if not stripped:
+        out["classification"] = "empty"
+        return out
+    try:
+        out["classification"] = _json_kind(json.loads(stripped))
+        return out
+    except ValueError:
+        pass
+    fenced = _FENCED_JSON.match(text)
+    if fenced:
+        try:
+            out["classification"] = "fenced_" + _json_kind(json.loads(fenced.group(1)))
+            return out
+        except ValueError:
+            out["classification"] = "fenced_non_json"
+            return out
+    root = _XML_ROOT.match(text)
+    if root:
+        out["classification"] = "xml_like"
+        out["root_tag"] = _allow(root.group(1))
+        out["root_attribute_names"] = sorted({_allow(a) for a in _XML_ATTR.findall(root.group(2))})
+        inner = _XML_TAG.findall(text[root.end():])
+        counts: dict[str, int] = {}
+        for tag in inner:
+            key = _allow(tag)
+            counts[key] = counts.get(key, 0) + 1
+        out["inner_tag_counts"] = dict(sorted(counts.items()))
+        return out
+    start = _JSON_START.search(stripped)
+    if start:
+        for end in range(len(stripped), start.start(), -1):
+            if stripped[end - 1] in "]}":
+                try:
+                    kind = _json_kind(json.loads(stripped[start.start():end]))
+                except ValueError:
+                    continue
+                out["classification"] = "prose_wrapped_" + kind
+                out["prefix_length_bucket"] = _length_bucket(start.start())
+                out["suffix_length_bucket"] = _length_bucket(len(stripped) - end)
+                return out
+    first = stripped[0]
+    out["classification"] = "markdown_like" if first in "#-*|>" else "plain_text"
+    out["bullet_line_count_bucket"] = _length_bucket(sum(1 for ln in stripped.splitlines() if ln.lstrip()[:2] in ("- ", "* ")))
+    out["heading_line_count_bucket"] = _length_bucket(sum(1 for ln in stripped.splitlines() if ln.startswith("#")))
+    out["table_line_count_bucket"] = _length_bucket(sum(1 for ln in stripped.splitlines() if ln.lstrip().startswith("|")))
+    return out
+
+
+def result_shape_report(content: Any) -> dict[str, Any]:
+    """Value-free description of a raw tool_result `content`: block count and types,
+    per-text-block length buckets and a syntactic classification (JSON / fenced JSON /
+    prose-wrapped JSON / XML-like with allow-listed tag names only / markdown / text).
+    No snippets, values, keys outside the allow-list, ids, titles or note text."""
+    if isinstance(content, str):
+        blocks: list[Any] = [{"type": "text", "text": content}]
+        container = "string"
+    elif isinstance(content, list):
+        blocks = content
+        container = "list"
+    else:
+        blocks, container = [], type(content).__name__ if content is not None else "null"
+    types = []
+    for block in blocks:
+        kind = block.get("type") if isinstance(block, dict) else None
+        types.append(kind if isinstance(kind, str) and kind in _KNOWN_BLOCK_TYPES else "other")
+    return {
+        "container": container,
+        "block_count": len(blocks),
+        "block_types": types,
+        "text_blocks": [_classify_text(t) for t in _text_blocks(content)],
+    }
 
 
 def canonical_arguments(arguments: Mapping[str, Any]) -> str:
@@ -202,10 +345,7 @@ def extract_tool_result(
     text = _result_text(content)
     if is_error:
         raise GranolaRelayError(classify_tool_error(text), retryable=False)
-    try:
-        parsed = json.loads(text)
-    except ValueError as exc:
-        raise GranolaRelayError("relay_unparseable_result", retryable=True) from exc
+    parsed = parse_tool_json(content)
     if isinstance(parsed, dict) and parsed.get("error") and len(parsed) <= 3:
         raise GranolaRelayError(classify_tool_error(json.dumps(parsed)), retryable=False)
     return parsed
