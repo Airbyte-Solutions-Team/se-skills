@@ -64,6 +64,8 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
+from integrations.granola_tool_xml import GranolaXmlIssue, parse_tool_xml
+
 GranolaTool = Literal["get_account_info", "list_meetings", "get_meetings", "get_meeting_transcript"]
 ALLOWED_TOOLS: tuple[GranolaTool, ...] = (
     "get_account_info", "list_meetings", "get_meetings", "get_meeting_transcript"
@@ -151,15 +153,19 @@ _FENCED_JSON = re.compile(r"\A\s*```(?:json|JSON)?[ \t]*\r?\n(.*?)\r?\n```\s*\Z"
 
 
 def parse_tool_json(content: Any) -> Any:
-    """Parse the single text block of a tool result as JSON.
+    """Parse the single text block of a tool result.
 
     Supported, unambiguous shapes only: exactly one text block whose whole text is
-    a JSON value, or exactly one text block that is a single ```json fence holding
-    a JSON value and nothing else. Multiple text blocks, prose around JSON, XML or
-    markdown are rejected (never scraped); the raised error carries a value-free
-    shape report so the real contract can be diagnosed without seeing any values.
+    a JSON value, one text block that is a single ```json fence holding a JSON value
+    and nothing else, or one text block that is a single XML document read by the
+    bounded allow-listed mapper in ``granola_tool_xml`` (the shape Granola's
+    ``list_meetings`` was observed to return live). Multiple text blocks, prose
+    around JSON, markdown, declarations/entities and malformed XML are rejected
+    (never scraped); the raised error carries a value-free shape report, plus the
+    XML issue code when applicable, so the contract can be diagnosed without values.
     """
     blocks = _text_blocks(content)
+    issue: str | None = None
     if len(blocks) == 1:
         text = blocks[0]
         fenced = _FENCED_JSON.match(text)
@@ -167,7 +173,15 @@ def parse_tool_json(content: Any) -> Any:
             return json.loads(fenced.group(1) if fenced else text)
         except ValueError:
             pass
-    raise GranolaRelayError("relay_unparseable_result", retryable=True, shape=result_shape_report(content))
+        if text.lstrip().startswith("<"):
+            try:
+                return parse_tool_xml(text)
+            except GranolaXmlIssue as exc:
+                issue = exc.issue
+    shape = result_shape_report(content)
+    if issue is not None:
+        shape["xml_issue"] = issue
+    raise GranolaRelayError("relay_unparseable_result", retryable=True, shape=shape)
 
 
 _LENGTH_BUCKETS = ((0, "0"), (100, "1-100"), (1_000, "101-1k"), (10_000, "1k-10k"), (100_000, "10k-100k"))
@@ -183,6 +197,7 @@ _KNOWN_TAGS = frozenset(
 _XML_ROOT = re.compile(r"\A\s*<([A-Za-z_][\w.-]*)((?:\s+[A-Za-z_][\w.-]*\s*=\s*(?:\"[^\"]*\"|'[^']*'))*)\s*/?>", re.DOTALL)
 _XML_ATTR = re.compile(r"([A-Za-z_][\w.-]*)\s*=")
 _XML_TAG = re.compile(r"<([A-Za-z_][\w.-]*)[\s/>]")
+_XML_INNER_TAG = re.compile(r"<[A-Za-z_][\w.-]*((?:\s+[A-Za-z_][\w.-]*\s*=\s*(?:\"[^\"]*\"|'[^']*'))*)\s*/?>")
 _JSON_START = re.compile(r"[\[{]")
 
 
@@ -235,6 +250,8 @@ def _classify_text(text: str) -> dict[str, Any]:
             key = _allow(tag)
             counts[key] = counts.get(key, 0) + 1
         out["inner_tag_counts"] = dict(sorted(counts.items()))
+        inner_attrs = {_allow(a) for m in _XML_INNER_TAG.finditer(text[root.end():]) for a in _XML_ATTR.findall(m.group(1))}
+        out["inner_attribute_names"] = sorted(inner_attrs)
         return out
     start = _JSON_START.search(stripped)
     if start:

@@ -398,7 +398,7 @@ class GranolaRetrievalService:
         rows = _meeting_list(raw)
         known = self._known_by_object()
         meetings: list[dict[str, Any]] = []
-        rejected = 0
+        rejected = raw.get("rejected_rows", 0) if isinstance(raw, Mapping) and isinstance(raw.get("rejected_rows"), int) else 0
         for row in rows[:MAX_LISTED]:
             try:
                 item = _ListedMeeting.model_validate(row if isinstance(row, Mapping) else {})
@@ -498,6 +498,7 @@ class GranolaRetrievalService:
         unrequested = 0
         try:
             raw = await self._transport.call("get_meetings", {"meeting_ids": ids})
+            unrequested += raw.get("rejected_rows", 0) if isinstance(raw, Mapping) and isinstance(raw.get("rejected_rows"), int) else 0
             for row in _meeting_list(raw):
                 if not (isinstance(row, Mapping) and isinstance(row.get("id"), str)):
                     unrequested += 1

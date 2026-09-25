@@ -11,6 +11,7 @@ import json
 import os
 import sys
 import time
+from datetime import date as _date
 from pathlib import Path
 
 import pytest
@@ -395,7 +396,8 @@ def test_relay_parses_only_single_block_json_or_single_json_fence() -> None:
         [{"type": "text", "text": json.dumps(payload)}, {"type": "text", "text": json.dumps(payload)}],  # two blocks
         [{"type": "text", "text": "Here are the meetings " + SECRET + ": " + json.dumps(payload)}],  # prose-wrapped
         [{"type": "text", "text": "```json\n" + json.dumps(payload) + "\n```\nand a note " + SECRET}],  # fence + trailer
-        [{"type": "text", "text": f'<meetings count="1" from="2026-09-24" to="2026-09-24"><meeting id="{_uuid(1)}"><title>{SECRET}</title></meeting></meetings>'}],
+        [{"type": "text", "text": f'Here you go: <meetings count="1"><meeting id="{_uuid(1)}"><title>{SECRET}</title></meeting></meetings>'}],  # prose + XML
+        [{"type": "text", "text": f'<meetings><meeting id="{_uuid(1)}"><title>{SECRET}</title></meeting></meetings> trailing {SECRET}'}],  # XML + trailer
         [{"type": "text", "text": "# Meetings\n- " + SECRET + " (Sep 24)\n"}],
         [{"type": "image", "data": SECRET}],
         [],
@@ -1074,3 +1076,102 @@ def test_live_check_list_shape_mode_reports_value_free_shape_only(capsys) -> Non
     ok = asyncio.run(module.run(args, transport_factory=lambda _a: parsed_transport, version_probe=lambda: "2.1.282 (Claude Code)"))
     assert ok["steps"]["list_shape"]["parsed"] is True and ok["verdict"]["ok"] is True
     assert SECRET not in json.dumps(ok) and _uuid(8) not in json.dumps(ok)
+
+
+# ---------------------------------------------------------------- XML tool results (live-observed list shape)
+
+_UUID_A = "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b"
+_UUID_B = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+
+_LIST_XML = f"""<some_wrapper count="3" from="Sep 24, 2026" to="Sep 24, 2026">
+  <meeting id="{_UUID_A}" title="Synthetic &amp; friends" date="Sep 24, 2026 9:00 AM" url="https://notes.granola.ai/d/{_UUID_A}" captured_by_me="true" listed_as_participant="true" is_workspace_visible="false">
+    <known_participants>Alice Example, bob@example.test</known_participants>
+  </meeting>
+  <meeting id="{_UUID_B}" title="Second">
+    <known_participants><participant name="Carol" email="carol@example.test"/></known_participants>
+  </meeting>
+  <meeting title="no id at all"><known_participants/></meeting>
+  <query_echo>ignored sibling</query_echo>
+</some_wrapper>"""
+
+
+def test_relay_reads_observed_xml_list_shape_into_json_equivalent_rows() -> None:
+    parsed = extract_tool_result(_result_stream([{"type": "text", "text": _LIST_XML}]), tool="list_meetings")
+    assert parsed["count"] == 3 and parsed["from"] == "Sep 24, 2026" and parsed["to"] == "Sep 24, 2026"
+    assert parsed["rejected_rows"] == 1 and parsed["ignored_nodes"] == 1
+    assert [m["id"] for m in parsed["meetings"]] == [_UUID_A, _UUID_B]
+    first = parsed["meetings"][0]
+    assert first["title"] == "Synthetic & friends" and first["captured_by_me"] == "true"
+    assert first["known_participants"] == [{"name": "Alice Example"}, {"name": "bob@example.test"}]
+    assert parsed["meetings"][1]["known_participants"] == [{"name": "Carol", "email": "carol@example.test"}]
+    # the same shape report that diagnosed the live failure now also names the record attributes
+    shape = result_shape_report([{"type": "text", "text": _LIST_XML}])["text_blocks"][0]
+    assert shape["classification"] == "xml_like" and shape["root_tag"] == "other"
+    assert shape["inner_tag_counts"] == {"known_participants": 3, "meeting": 3, "other": 1, "participant": 1}
+    assert "id" in shape["inner_attribute_names"] and "title" in shape["inner_attribute_names"]
+    assert "Synthetic" not in json.dumps(shape) and _UUID_A not in json.dumps(shape)
+
+
+def test_relay_reads_xml_detail_and_transcript_records_with_child_elements() -> None:
+    detail = f"""<results><meeting><id>{_UUID_A}</id><title>Synthetic</title><date>Sep 24, 2026</date>
+      <url>https://notes.granola.ai/d/{_UUID_A}</url><summary>Two lines
+      of notes</summary><known_participants><participant><name>Alice</name></participant></known_participants>
+    </meeting></results>"""
+    rows = extract_tool_result(_result_stream([{"type": "text", "text": detail}]), tool="list_meetings")["meetings"]
+    assert rows == [{
+        "id": _UUID_A, "title": "Synthetic", "date": "Sep 24, 2026", "url": f"https://notes.granola.ai/d/{_UUID_A}",
+        "summary": "Two lines\n      of notes", "known_participants": [{"name": "Alice"}],
+    }]
+    transcript = f"""<transcript_result id="{_UUID_A}" title="Synthetic" created_at="2026-09-24T16:00:00Z">
+      <transcript>Hello &lt;world&gt;</transcript>
+      <recording_context><description>desk test</description><recorder><name>Granola</name></recorder>
+        <microphone_sharing>unknown</microphone_sharing></recording_context>
+    </transcript_result>"""
+    parsed = extract_tool_result(_result_stream([{"type": "text", "text": transcript}]), tool="list_meetings")
+    assert parsed["id"] == _UUID_A and parsed["transcript"] == "Hello <world>"
+    assert parsed["recording_context"] == {"description": "desk test", "recorder": {"name": "Granola"}, "microphone_sharing": "unknown"}
+    assert parsed["ignored_nodes"] == 0
+
+
+@pytest.mark.parametrize(
+    ("xml", "issue"),
+    [
+        ('<!DOCTYPE x [<!ENTITY e "boom">]><r><meeting id="x">&e;</meeting></r>', "dtd_rejected"),
+        ("<r><meeting id='x'></r>", "malformed_xml"),
+        ("<a><b><c><d><e><f><g/></f></e></d></c></b></a>", "too_deep"),
+        (f'<r><meeting id="{_UUID_A}"><id>{_UUID_A}</id></meeting></r>', "ambiguous_field"),
+        (f'<r><meeting id="{_UUID_A}">stray text<known_participants/></meeting></r>', "mixed_content"),
+    ],
+)
+def test_relay_rejects_unsafe_or_ambiguous_xml_with_value_free_issue(xml: str, issue: str) -> None:
+    with pytest.raises(GranolaRelayError) as info:
+        extract_tool_result(_result_stream([{"type": "text", "text": xml}]), tool="list_meetings")
+    assert info.value.code == "relay_unparseable_result" and info.value.shape["xml_issue"] == issue
+    assert "boom" not in json.dumps(info.value.shape) and "stray" not in json.dumps(info.value.shape)
+
+
+def test_service_lists_and_retrieves_from_xml_results_exactly_like_json(tmp_path: Path) -> None:
+    class XmlTransport(FakeGranolaRetrievalTransport):
+        async def call(self, tool, arguments):
+            self.calls.append((tool, dict(arguments)))
+            if tool == "get_account_info":
+                return self.account
+            if tool == "list_meetings":
+                return extract_tool_result(_result_stream([{"type": "text", "text": _LIST_XML}]), tool="list_meetings")
+            if tool == "get_meetings":
+                text = f'<r><meeting id="{_UUID_A}" title="Synthetic" date="Sep 24, 2026"><summary>notes</summary></meeting></r>'
+                return extract_tool_result(_result_stream([{"type": "text", "text": text}]), tool="list_meetings")
+            text = f'<t id="{_UUID_A}" created_at="2026-09-24T16:00:00Z"><transcript>hello</transcript></t>'
+            return extract_tool_result(_result_stream([{"type": "text", "text": text}]), tool="list_meetings")
+
+    service, fake, _ledger, _jobs = _service(tmp_path)
+    transport = XmlTransport()
+    transport.account = fake.account
+    service._transport = transport
+    asyncio.run(service.check_connection())
+    listing = asyncio.run(service.list_meetings(time_range="custom", custom_start=_date(2026, 9, 24), custom_end=_date(2026, 9, 24)))
+    assert listing["shown"] == 2 and listing["rejected"] == 1
+    assert listing["meetings"][0] == {**listing["meetings"][0], "participant_count": 2, "captured_by_me": True}
+    result = asyncio.run(service._run([_UUID_A]))
+    assert result["counts"] == {"imported": 1}
+    assert asyncio.run(service._run([_UUID_A]))["counts"] == {"already_known": 1}
