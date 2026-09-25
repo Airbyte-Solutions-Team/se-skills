@@ -4381,6 +4381,7 @@ async function route() {
       return;
     }
     if (h === "/help") return pageHelp();
+    if (h.startsWith("/command-center")) return pageCommandCenter();
     const parts = h.split("/");          // ["", kind, arg, ...]
     const kind = parts[1];
     if (kind === "member") return pageMember(decodeURIComponent(parts[2]));
@@ -5495,6 +5496,7 @@ async function pageHosted() {
       SKILLS_HELP = Object.fromEntries(help.map((h) => [h.id, h]));
     } catch { SKILLS_HELP = {}; }
     initSfdcHealth(); // fire-and-forget; never blocks first route render
+    document.getElementById("cc-link")?.classList.remove("hidden");
   }
   window.addEventListener("hashchange", route);
   route();

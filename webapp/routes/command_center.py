@@ -14,13 +14,19 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from command_center_evidence import AssociationCandidate
-from command_center_operations import DurableActionStatus
+from command_center_operations import Actor, ChangeType, DurableActionStatus, ResponsibleParty
 from integrations.granola import MAX_NOTES_PER_IMPORT, GranolaImportError, GranolaSourceAdapter
 from services.account_service import AccountError
 from services.command_center_operations_service import (
     RECONCILE_JOB_KIND,
     CommandCenterOperationsError,
     CommandCenterOperationsService,
+)
+from services.command_center_read_service import (
+    DEFAULT_LIMIT,
+    MAX_LIMIT,
+    CommandCenterReadError,
+    CommandCenterReadService,
 )
 from services.evidence_ledger_service import EvidenceLedgerError, EvidenceLedgerService
 
@@ -95,6 +101,14 @@ def _adapter(request: Request) -> GranolaSourceAdapter:
     return request.app.state.granola_adapter
 
 
+def _reads(request: Request) -> CommandCenterReadService:
+    return request.app.state.command_center_read_service
+
+
+def _safe_token_query() -> Any:
+    return Query(default=None, pattern=r"^[A-Za-z0-9._-]{1,120}$")
+
+
 def _raise_domain(exc: Exception) -> None:
     raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
@@ -102,6 +116,95 @@ def _raise_domain(exc: Exception) -> None:
 @router.get("/api/command-center/adapters")
 async def api_command_center_adapters(request: Request) -> dict:
     return {"adapters": [_adapter(request).describe().model_dump(mode="json")]}
+
+
+# ---------------------------------------------------------------------------
+# PR D aggregate reads: persisted local state only, bounded and paginated.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/command-center/today")
+async def api_command_center_today(
+    request: Request,
+    limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    offset: int = Query(default=0, ge=0),
+) -> dict:
+    try:
+        return _reads(request).today(limit=limit, offset=offset)
+    except (CommandCenterReadError, CommandCenterOperationsError, EvidenceLedgerError) as exc:
+        _raise_domain(exc)
+
+
+@router.get("/api/command-center/portfolio")
+async def api_command_center_portfolio(
+    request: Request,
+    account: str | None = _safe_token_query(),
+    attention_only: bool = False,
+    limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    offset: int = Query(default=0, ge=0),
+) -> dict:
+    try:
+        return _reads(request).portfolio(account=account, attention_only=attention_only, limit=limit, offset=offset)
+    except (CommandCenterReadError, CommandCenterOperationsError, EvidenceLedgerError) as exc:
+        _raise_domain(exc)
+
+
+@router.get("/api/command-center/opportunities")
+async def api_command_center_opportunities(request: Request) -> dict:
+    """Locally known opportunities (association targets); never consults Salesforce."""
+    try:
+        items = _reads(request).local_opportunities()
+    except (CommandCenterReadError, CommandCenterOperationsError, EvidenceLedgerError) as exc:
+        _raise_domain(exc)
+    return {"total": len(items), "opportunities": items}
+
+
+@router.get("/api/command-center/actions")
+async def api_command_center_all_actions(
+    request: Request,
+    account: str | None = _safe_token_query(),
+    opportunity_slug: str | None = _safe_token_query(),
+    status: DurableActionStatus | None = None,
+    party: ResponsibleParty | None = None,
+    overdue: bool | None = None,
+    include_retracted: bool = False,
+    limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    offset: int = Query(default=0, ge=0),
+) -> dict:
+    try:
+        return _reads(request).actions(
+            account=account, opportunity_slug=opportunity_slug, status=status, party=party, overdue=overdue,
+            include_retracted=include_retracted, limit=limit, offset=offset,
+        )
+    except (CommandCenterReadError, CommandCenterOperationsError, EvidenceLedgerError) as exc:
+        _raise_domain(exc)
+
+
+@router.get("/api/command-center/changes")
+async def api_command_center_all_changes(
+    request: Request,
+    account: str | None = _safe_token_query(),
+    opportunity_slug: str | None = _safe_token_query(),
+    change_type: ChangeType | None = None,
+    actor: Actor | None = None,
+    limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    offset: int = Query(default=0, ge=0),
+) -> dict:
+    try:
+        return _reads(request).changes(
+            account=account, opportunity_slug=opportunity_slug, change_type=change_type, actor=actor,
+            limit=limit, offset=offset,
+        )
+    except (CommandCenterReadError, CommandCenterOperationsError, EvidenceLedgerError) as exc:
+        _raise_domain(exc)
+
+
+@router.get("/api/command-center/sources/{source_id}/review")
+async def api_command_center_source_review(source_id: str, request: Request) -> dict:
+    try:
+        return _reads(request).source_review(source_id)
+    except (CommandCenterReadError, CommandCenterOperationsError, EvidenceLedgerError) as exc:
+        _raise_domain(exc)
 
 
 @router.get("/api/command-center/sources")
