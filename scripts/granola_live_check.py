@@ -84,7 +84,6 @@ from services.job_service import JobService
 
 import config
 
-DEFAULT_MARKER = "SE-SKILLS-CAPCHECK"
 MIN_CLAUDE_VERSION = (2, 1, 259)  # `--permission-prompts` (official CLI reference)
 SAFE_OUTCOMES = frozenset(
     {"imported", "already_known", "edited", "pending_content", "inaccessible", "failed_retryable", "rejected"}
@@ -97,7 +96,9 @@ TransportFactory = Callable[[argparse.Namespace], GranolaRetrievalTransport]
 
 def _args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Granola retrieval live check (same code path as the app)")
-    parser.add_argument("--date", help="Day of the synthetic meeting, YYYY-MM-DD (required unless --probe-only)")
+    parser.add_argument(
+        "--date", help="Day (YYYY-MM-DD) of a meeting YOU own and choose; requires --marker (not needed for probe modes)"
+    )
     parser.add_argument(
         "--claude-project",
         action="append",
@@ -116,9 +117,8 @@ def _args(argv: list[str] | None = None) -> argparse.Namespace:
     mode.add_argument("--connection-only", action="store_true", help="Stop after the app's connection check")
     parser.add_argument(
         "--marker",
-        default=DEFAULT_MARKER,
-        help="Substring the title of YOUR synthetic Granola note must contain (default is the repo fixture marker; "
-        "no such note exists in Granola unless you create one)",
+        help="Substring that the title of exactly one meeting you own on --date contains. No default: the repo's "
+        "fixture marker names no real Granola note; pick a meeting (or create a short synthetic note) yourself",
     )
     parser.add_argument(
         "--model", default=config._model_for("quick-ask"), help="Model for the restricted relay subprocess (app default)"
@@ -126,8 +126,8 @@ def _args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--timeout", type=float, default=180.0, help="Seconds per relay call")
     args = parser.parse_args(argv)
     preflight_only = args.probe_only or args.account_shape or args.connection_only
-    if not preflight_only and not args.date:
-        parser.error("--date is required unless --probe-only, --account-shape or --connection-only is given")
+    if not preflight_only and not (args.date and args.marker):
+        parser.error("--date and --marker are required unless --probe-only, --account-shape or --connection-only is given")
     if preflight_only and args.date:
         parser.error("--date cannot be combined with --probe-only, --account-shape or --connection-only")
     return args
@@ -290,7 +290,8 @@ async def run(
             "error_code": check.get("error_code"),
             "retryable": check.get("retryable"),
             "workspace_guarantee": check.get("workspace_guarantee"),
-            "note_access_scope": check.get("note_access_scope"),
+            "scope_labels_recognized": len(check.get("note_access_scope") or []),
+            "scope_labels_hidden": check.get("note_access_scope_hidden"),
         }
         if not check.get("connected"):
             failures.append(f"connection check failed: {check.get('error_code')!r}")
@@ -310,7 +311,7 @@ async def run(
         if len(marked) != 1:
             failures.append(
                 f"expected exactly 1 meeting titled with the marker on {day.isoformat()}, found {len(marked)}; "
-                "the marker must match a synthetic note you created in your own Granola account"
+                "the marker must match one meeting you own and chose (titles are never printed)"
             )
             return report
         target = marked[0]["meeting_id"]

@@ -655,7 +655,7 @@ async function ccGranolaPanel(root, onImported) {
         connEl.textContent = `Not connected · ${ccGranolaErr(r.error_code)}`;
         listBtn.disabled = true;
       } else {
-        connEl.textContent = `Connected at ${ccWhen(r.checked_at)} via the Granola account active in Claude Code${r.note_access_scope.length ? ` · scope: ${r.note_access_scope.join(", ")}` : ""} · workspace not verified by id`;
+        connEl.textContent = `Connected at ${ccWhen(r.checked_at)} via the Granola account active in Claude Code${r.note_access_scope.length ? ` · scope: ${r.note_access_scope.join(", ")}` : ""}${r.note_access_scope_hidden ? ` (+${r.note_access_scope_hidden} unrecognized scope label${r.note_access_scope_hidden === 1 ? "" : "s"} not shown)` : ""} · workspace not verified by id`;
         listBtn.disabled = false;
       }
     } catch (e) {

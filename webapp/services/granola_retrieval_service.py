@@ -60,6 +60,18 @@ MAX_LISTED = 100
 TimeRange = Literal["today", "yesterday", "this_week", "last_week", "last_30_days", "custom"]
 _CHECK_FILE = "granola-connection.json"
 ACCOUNT_SOURCE = "claude_code_active_granola_account"
+
+# Only these fixed labels are ever surfaced from the provider's scope list; anything else is
+# counted, never echoed (scope entries are arbitrary provider strings).
+SCOPE_LABELS = frozenset({"personal", "workspace", "shared", "team", "organization", "private", "public"})
+
+
+def _scope_labels(scope: list[str] | str | None) -> tuple[list[str], int]:
+    items = [scope] if isinstance(scope, str) else list(scope or [])
+    known = sorted({item.strip().lower() for item in items if isinstance(item, str)} & SCOPE_LABELS)
+    return known, len(items) - len(known)
+
+
 WORKSPACE_NOTE = (
     "Meetings come from the Granola account/workspace currently active in your Claude Code sign-in. "
     "This pilot cannot verify workspace switches by a stable provider id; inspect and select meetings before import."
@@ -311,13 +323,12 @@ class GranolaRetrievalService:
             raise GranolaRetrievalError(502, "Connection check returned an unexpected shape.", code="unexpected_shape")
         info = _AccountInfo.model_validate(raw)
         marker = self._record_check()
-        scope = info.note_access_scope
-        if isinstance(scope, str):
-            scope = [scope]
+        labels, hidden = _scope_labels(info.note_access_scope)
         return {
             "checked": True,
             "connected": True,
-            "note_access_scope": [str(item)[:60] for item in (scope or [])][:10],
+            "note_access_scope": labels,
+            "note_access_scope_hidden": hidden,
             "last_check": marker,
             "checked_at": marker["checked_at"],
             **self._account_terms(),

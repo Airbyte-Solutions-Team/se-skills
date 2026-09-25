@@ -411,6 +411,15 @@ async def test_connection_check_records_marker_only_and_claims_no_workspace_guar
     first = await service.check_connection()
     assert first["connected"] and first["workspace_guarantee"] is False
     assert first["account_source"] == "claude_code_active_granola_account"
+    assert first["note_access_scope"] == ["personal"] and first["note_access_scope_hidden"] == 0
+
+    # Scope entries are arbitrary provider strings: only fixed labels surface, the rest are counted.
+    transport.account = {"note_access_scope": ["Workspace", "token " + SECRET, "person@example.invalid"]}
+    scoped = await service.check_connection()
+    assert scoped["note_access_scope"] == ["workspace"] and scoped["note_access_scope_hidden"] == 2
+    assert SECRET not in json.dumps(scoped) and "example" not in json.dumps(scoped)
+    transport.account = {"email": "person@example.invalid", "name": "Person " + SECRET, "note_access_scope": ["personal"]}
+    first = await service.check_connection()
     assert "workspace" not in first and "email" not in json.dumps(first) and SECRET not in json.dumps(first)
     marker = tmp_path / "customers" / ".command-center" / "granola-connection.json"
     assert marker.exists() and set(json.loads(marker.read_text(encoding="utf-8"))) == {"checked_at"}
@@ -735,7 +744,7 @@ def _live_check_module():
 
 
 def _live_check_args(module, *extra: str):
-    return module._args(["--date", "2026-09-24", *extra])
+    return module._args(["--date", "2026-09-24", "--marker", "my-chosen-note", *extra])
 
 
 @pytest.fixture(autouse=True)
@@ -750,7 +759,7 @@ def _live_check_transport(marked: int = 1) -> FakeGranolaRetrievalTransport:
     transport = FakeGranolaRetrievalTransport()
     rows = [_listed(_uuid(1), title="Other synthetic " + SECRET)]
     for n in range(marked):
-        rows.append(_listed(_uuid(10 + n), title=f"SE-SKILLS-CAPCHECK {n} " + SECRET))
+        rows.append(_listed(_uuid(10 + n), title=f"Solo my-chosen-note {n} " + SECRET))
     transport.listings["custom"] = rows
     _prime(transport, *[_uuid(10 + n) for n in range(marked)])
     return transport
@@ -814,8 +823,31 @@ def test_live_check_script_fails_verdict_on_old_claude_no_marker_or_unexpected_o
         "error_code": "tool_auth_required",
         "retryable": False,
         "workspace_guarantee": None,
-        "note_access_scope": None,
+        "scope_labels_recognized": 0,
+        "scope_labels_hidden": None,
     }
+
+
+def test_live_check_script_requires_marker_with_date_and_prints_scope_counts_only() -> None:
+    module = _live_check_module()
+    with pytest.raises(SystemExit):
+        module._args(["--date", "2026-09-24"])
+    module._args(["--connection-only"])
+
+    transport = FakeGranolaRetrievalTransport()
+    transport.account = {
+        "email": "person@example.invalid",
+        "note_access_scope": ["personal", "Bearer " + SECRET, "person@example.invalid", "https://granola.example/" + SECRET],
+    }
+    report = asyncio.run(
+        module.run(module._args(["--connection-only"]), transport_factory=lambda _a: transport, version_probe=lambda: "2.1.300")
+    )
+    assert report["verdict"]["ok"] is True
+    assert report["steps"]["connection_check"]["scope_labels_recognized"] == 1
+    assert report["steps"]["connection_check"]["scope_labels_hidden"] == 3
+    printed = json.dumps(report)
+    for needle in (SECRET, "person", "example", "Bearer", "personal", "note_access_scope"):
+        assert needle not in printed
 
 
 def test_live_check_script_probes_scope_before_spawning_and_accepts_trusted_project(
