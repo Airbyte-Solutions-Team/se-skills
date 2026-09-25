@@ -32,7 +32,6 @@ from services.granola_retrieval_service import (
     MAX_SELECTION,
     GranolaRetrievalError,
     GranolaRetrievalService,
-    account_identity_source,
     account_shape_report,
 )
 from services.job_service import JobService
@@ -404,26 +403,33 @@ async def test_relay_fails_closed_without_user_scope_server(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_connection_check_pins_workspace_and_flags_mismatch(tmp_path) -> None:
+async def test_connection_check_records_marker_only_and_claims_no_workspace_guarantee(tmp_path) -> None:
     service, transport, _ledger, _jobs = _service(tmp_path)
-    assert service.connection()["pinned_workspace"] is None
+    assert service.connection()["last_check"] is None and service.connection()["workspace_guarantee"] is False
+    # The observed live shape: email present, no documented workspace id anywhere.
+    transport.account = {"email": "person@example.invalid", "name": "Person " + SECRET, "note_access_scope": ["personal"]}
     first = await service.check_connection()
-    assert first["connected"] and first["workspace"]["id"] == "ws-synthetic" and not first["workspace_mismatch"]
-    pin_file = tmp_path / "customers" / ".command-center" / "granola-connection.json"
-    assert pin_file.exists()
+    assert first["connected"] and first["workspace_guarantee"] is False
+    assert first["account_source"] == "claude_code_active_granola_account"
+    assert "workspace" not in first and "email" not in json.dumps(first) and SECRET not in json.dumps(first)
+    marker = tmp_path / "customers" / ".command-center" / "granola-connection.json"
+    assert marker.exists() and set(json.loads(marker.read_text(encoding="utf-8"))) == {"checked_at"}
     if os.name != "nt":
-        assert (pin_file.stat().st_mode & 0o077) == 0
-    assert "token" not in pin_file.read_text(encoding="utf-8").lower()
+        assert (marker.stat().st_mode & 0o077) == 0
+    assert service.connection()["last_check"] == first["last_check"]
 
-    transport.account = {"workspace": {"id": "ws-other", "display_name": "Other"}, "note_access_scope": ["personal"]}
+    # A different account/workspace between checks is neither detected nor claimed to be.
+    transport.account = {"workspace": {"id": "ws-other", "display_name": "Other"}}
     second = await service.check_connection()
-    assert second["connected"] and second["workspace_mismatch"]
+    assert second["connected"] and second["workspace_guarantee"] is False and "workspace" not in second
+    listing = await service.list_meetings(time_range="this_week")
+    assert listing["workspace_guarantee"] is False and listing["account_source"] == "claude_code_active_granola_account"
+
+    # Non-object success is still an unexpected shape.
+    transport.account = ["not", "an", "object"]
     with pytest.raises(GranolaRetrievalError) as exc:
-        await service.list_meetings(time_range="this_week")
-    assert exc.value.code == "wrong_workspace" and exc.value.status == 409
-    repinned = await service.check_connection(repin=True)
-    assert not repinned["workspace_mismatch"]
-    assert service.connection()["pinned_workspace"]["workspace_id"] == "ws-other"
+        await service.check_connection()
+    assert exc.value.code == "unexpected_shape"
 
 
 @pytest.mark.asyncio
@@ -568,32 +574,56 @@ async def test_retrieval_transient_failure_is_retryable_and_second_attempt_impor
 
 
 @pytest.mark.asyncio
-async def test_retrieval_wrong_workspace_fails_before_any_import_and_job_is_body_free(tmp_path) -> None:
+async def test_retrieval_auth_loss_before_batch_fails_closed_and_job_is_body_free(tmp_path) -> None:
     service, transport, ledger, jobs = _service(tmp_path)
     await service.check_connection()
     _prime(transport, MID)
-    transport.account = {"workspace": {"id": "ws-other", "display_name": "Other"}}
+    transport.fail("get_account_info", "*", GranolaRelayError("tool_auth_required", retryable=False))
     job = await _retrieve(service, jobs, [MID])
-    assert job["status"] == "error" and job["error_code"] == "wrong_workspace"
+    assert job["status"] == "error" and job["error_code"] == "tool_auth_required"
     assert ledger.list_sources()["total"] == 0
     assert SECRET not in json.dumps(job)
     assert set(job.keys()) >= {"kind", "status", "error_code"} and "raw" not in json.dumps(job).lower()
 
 
 @pytest.mark.asyncio
-async def test_workspace_switch_between_fetch_and_import_fails_closed(tmp_path) -> None:
-    service, transport, ledger, jobs = _service(tmp_path)
+async def test_account_change_between_list_and_retrieval_is_not_a_claimed_guarantee(tmp_path) -> None:
+    service, transport, _ledger, jobs = _service(tmp_path)
     await service.check_connection()
     _prime(transport, MID)
-    pinned = transport.account
-    # First re-check (before get_meetings) still sees the pinned workspace; the check that runs
-    # after the transcript fetch, right before the ledger write, sees another one.
-    transport.account_sequence = [pinned, {"workspace": {"id": "ws-switched", "display_name": "Switched"}}]
-    job = await _retrieve(service, jobs, [MID])
-    assert job["status"] == "error" and job["error_code"] == "wrong_workspace"
-    assert [tool for tool, _ in transport.calls[-4:]] == ["get_account_info", "get_meetings", "get_meeting_transcript", "get_account_info"]
-    assert ledger.list_sources()["total"] == 0
-    assert SECRET not in json.dumps(job)
+    listing = await service.list_meetings(time_range="this_week")
+    assert listing["workspace_guarantee"] is False
+    # Sign-in changes after listing: retrieval proceeds for the ids the user explicitly selected,
+    # and the result says so — no wrong_workspace error and no guarantee is asserted.
+    transport.account = {"email": "other@example.invalid"}
+    result = await _retrieve(service, jobs, [MID])
+    assert result["counts"] == {"imported": 1}
+    assert result["workspace_guarantee"] is False
+    assert result["account_source"] == "claude_code_active_granola_account"
+    assert [tool for tool, _ in transport.calls[-3:]] == ["get_account_info", "get_meetings", "get_meeting_transcript"]
+    assert "other@" not in json.dumps(result) and SECRET not in json.dumps(result)
+
+
+@pytest.mark.asyncio
+async def test_retrieval_imports_only_explicitly_selected_ids(tmp_path) -> None:
+    service, transport, ledger, jobs = _service(tmp_path)
+    await service.check_connection()
+    other = _uuid(42)
+    _prime(transport, MID, other)
+    # get_meetings returns the requested meeting plus an unrequested one and a duplicate row; the
+    # transcript for the requested meeting is stamped with the other meeting's id.
+    requested_row = transport.meetings[MID]
+    transport.batch_extra = [transport.meetings[other], dict(requested_row)]
+    transport.transcripts[MID] = {**transport.transcripts[MID], "id": other}
+    result = await _retrieve(service, jobs, [MID])
+    assert result["counts"] == {"imported": 1} and result["unrequested_dropped"] == 2
+    assert [row["meeting_id"] for row in result["results"]] == [MID]
+    sources = ledger.list_sources()["sources"]
+    assert [row["provider_object_id"] for row in sources] == [MID]
+    content = ledger.read_content(sources[0]["source_id"], revision=1)
+    assert transport.transcripts[MID]["transcript"] not in json.dumps(content)  # mismatched transcript discarded
+    assert transport.calls.count(("get_meeting_transcript", {"meeting_id": other})) == 0
+    assert SECRET not in json.dumps(result)
 
 
 @pytest.mark.asyncio
@@ -783,7 +813,7 @@ def test_live_check_script_fails_verdict_on_old_claude_no_marker_or_unexpected_o
         "connected": False,
         "error_code": "tool_auth_required",
         "retryable": False,
-        "workspace_digest": None,
+        "workspace_guarantee": None,
         "note_access_scope": None,
     }
 
@@ -848,7 +878,7 @@ def test_account_shape_report_is_value_free_and_bounded() -> None:
     for needle in (SECRET, email, "person", "granola.example", _uuid(7), _uuid(8), "Acme", "Bearer", "freeform"):
         assert needle not in printed
     assert report["top_kind"] == "object" and report["looks_like_error_envelope"] is False
-    assert report["identity_source"] is None  # `workspaces[]` is not a documented pin source
+    assert "identity_source" not in report
     assert report["candidate_id_paths"] == ["workspaces[0].id", "workspaces[1].id"]
     shape = report["shape"]
     assert shape["key_count"] == 7 and shape["other_keys"] == 1 and "nested" not in shape["keys"]
@@ -861,10 +891,7 @@ def test_account_shape_report_is_value_free_and_bounded() -> None:
     assert shape["keys"]["created_at"]["class"] == "datetime"
     assert shape["keys"]["count"] == {"kind": "number"} and shape["keys"]["active"] == {"kind": "bool"}
 
-    # Documented shapes resolve; error envelopes and non-objects are flagged, never echoed.
-    assert account_identity_source({"workspace": {"id": "ws-1", "display_name": SECRET}}) == "workspace.id"
-    assert account_identity_source({"workspace_id": "ws-1"}) == "workspace_id"
-    assert account_identity_source(["ws-1"]) is None
+    # Error envelopes and non-objects are flagged, never echoed.
     envelope = account_shape_report({"error": SECRET, "message": SECRET, "code": 7})
     assert envelope["looks_like_error_envelope"] is True and SECRET not in json.dumps(envelope)
     assert account_shape_report([{"id": _uuid(1)}])["top_kind"] == "array"
@@ -880,7 +907,7 @@ def test_live_check_account_shape_and_connection_only_modes(capsys) -> None:
     with pytest.raises(SystemExit):
         module._args(["--account-shape", "--probe-only"])
 
-    # Undocumented account shape: the app would fail `no_workspace`; the probe still reports the shape.
+    # The observed live shape (no documented workspace id): probe reports the shape without values.
     transport = _live_check_transport()
     transport.account = {"workspaces": [{"id": _uuid(7), "display_name": SECRET}], "user": {"email": "a@b.invalid"}}
     report = asyncio.run(
@@ -888,21 +915,25 @@ def test_live_check_account_shape_and_connection_only_modes(capsys) -> None:
     )
     assert report["verdict"] == {"ok": True, "failures": []}
     step = report["steps"]["account_shape"]
-    assert step["ok"] is True and step["identity_source"] is None and step["candidate_id_paths"] == ["workspaces[0].id"]
+    assert step["ok"] is True and step["candidate_id_paths"] == ["workspaces[0].id"]
     assert transport.calls == [("get_account_info", {})]
     printed = json.dumps(report)
     assert SECRET not in printed and _uuid(7) not in printed and "a@b" not in printed
     assert "connection_check" not in report["steps"]
 
-    # The same undocumented shape through the connection-only gate fails closed with the safe code.
+    # The same observed shape passes the connection-only gate: no identity is pinned or claimed.
     transport = _live_check_transport()
-    transport.account = {"workspaces": [{"id": _uuid(7)}]}
+    transport.account = {"email": "a@b.invalid", "name": SECRET}
     report = asyncio.run(
         module.run(module._args(["--connection-only"]), transport_factory=lambda _a: transport, version_probe=lambda: "2.1.282")
     )
-    assert report["verdict"]["ok"] is False and report["error"] == {"kind": "retrieval", "code": "no_workspace", "status": 502}
+    assert report["verdict"] == {"ok": True, "failures": []}
+    assert report["steps"]["connection_check"]["connected"] is True
+    assert report["steps"]["connection_check"]["workspace_guarantee"] is False
+    printed = json.dumps(report)
+    assert "a@b" not in printed and SECRET not in printed and "workspace_digest" not in printed
 
-    # Tool error → safe code, no shape; documented shape → connection-only passes without listing.
+    # Tool error → safe code, no shape; fixture shape → connection-only passes without listing.
     failing = _live_check_transport()
     failing.fail("get_account_info", "*", GranolaRelayError("tool_auth_required", retryable=False))
     report = asyncio.run(

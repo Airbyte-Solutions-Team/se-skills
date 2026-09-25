@@ -151,8 +151,6 @@ async def api_command_center_adapters(request: Request) -> dict:
 class GranolaConnectionCheckBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    repin_workspace: bool = False
-
 
 class GranolaListBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -177,7 +175,7 @@ async def api_granola_connection(request: Request) -> dict:
 @router.post("/api/command-center/granola/connection/check")
 async def api_granola_connection_check(body: GranolaConnectionCheckBody, request: Request) -> dict:
     try:
-        return await _retrieval(request).check_connection(repin=body.repin_workspace)
+        return await _retrieval(request).check_connection()
     except GranolaRetrievalError as exc:
         _raise_retrieval(exc)
 

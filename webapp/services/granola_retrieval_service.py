@@ -2,10 +2,13 @@
 
 Three explicit user steps, each one bounded and each one a fresh provider call:
 
-1. **Check connection** — `get_account_info` through the relay. The first
-   successful check pins the Granola workspace id for this ledger scope; a
-   later check that returns a different workspace refuses retrieval
-   (`wrong_workspace`) until the user re-pins on purpose.
+1. **Check connection** — `get_account_info` through the relay. Success means
+   the user's own Claude Code reached Granola with its current sign-in; the
+   check records only *that* it succeeded for this ledger scope. Meetings come
+   from whichever Granola account/workspace is active in Claude Code, and this
+   pilot does **not** verify workspace switches by a stable provider id: the
+   observed account response carries no documented stable workspace id, so
+   the user inspects and selects meetings before anything is imported.
 2. **List meetings** — one `list_meetings` call for a user-chosen range. The
    response is metadata only (id, title, date, participant count, access
    flags, URL) annotated with what the ledger already knows. Nothing from the
@@ -14,11 +17,12 @@ Three explicit user steps, each one bounded and each one a fresh provider call:
 3. **Retrieve selected** — for up to `MAX_SELECTION` ids, `get_meetings` in
    one batch plus one `get_meeting_transcript` per meeting, merged into the
    observed MCP payload shape and passed through the existing adapter and
-   ledger. The pinned workspace is verified before the first fetch and again
-   after the last one, immediately before the ledger write; a switch in between
-   fails the whole job closed with nothing imported. Runs as a managed job
-   whose metadata and result hold ids, counts and outcome codes only — never titles, summaries, transcript text, tokens
-   or raw tool output.
+   ledger. Only the ids the user requested are imported: returned rows whose
+   id was not requested are dropped and counted, and a transcript whose id
+   does not match its meeting is discarded. A connection failure before the
+   batch fails the whole job closed with nothing imported. Runs as a managed
+   job whose metadata and result hold ids, counts and outcome codes only —
+   never titles, summaries, transcript text, tokens or raw tool output.
 
 Per-meeting outcomes: `imported`, `already_known`, `edited`, `pending_content`,
 `inaccessible`, `failed_retryable`, `rejected`.
@@ -54,7 +58,12 @@ RETRIEVAL_CONNECTION_ID = "claude-code-mcp"
 MAX_SELECTION = MAX_MEETINGS_PER_GET
 MAX_LISTED = 100
 TimeRange = Literal["today", "yesterday", "this_week", "last_week", "last_30_days", "custom"]
-_PIN_FILE = "granola-connection.json"
+_CHECK_FILE = "granola-connection.json"
+ACCOUNT_SOURCE = "claude_code_active_granola_account"
+WORKSPACE_NOTE = (
+    "Meetings come from the Granola account/workspace currently active in your Claude Code sign-in. "
+    "This pilot cannot verify workspace switches by a stable provider id; inspect and select meetings before import."
+)
 _SAFE_ID = re.compile(r"^[A-Za-z0-9._:-]{1,120}$")
 
 Outcome = Literal[
@@ -74,36 +83,11 @@ class _Loose(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
-class _Workspace(_Loose):
-    id: str = Field(pattern=_SAFE_ID.pattern)
-    display_name: str | None = Field(default=None, max_length=200)
-
-
 class _AccountInfo(_Loose):
-    workspace: _Workspace | None = None
-    workspace_id: str | None = Field(default=None, pattern=_SAFE_ID.pattern)
-    workspace_name: str | None = Field(default=None, max_length=200)
+    """Only the documented, non-identifying field is read. No workspace/user identity is
+    extracted or persisted: none of the observed shapes carries a documented stable id."""
+
     note_access_scope: list[str] | str | None = None
-
-    def resolved(self) -> tuple[str, str | None]:
-        if self.workspace is not None:
-            return self.workspace.id, self.workspace.display_name
-        if self.workspace_id:
-            return self.workspace_id, self.workspace_name
-        raise GranolaRetrievalError(502, "Connection check returned no workspace identity.", code="no_workspace")
-
-
-def account_identity_source(raw: Any) -> str | None:
-    """Which documented field `check_connection` would pin from, or None (fails `no_workspace`)."""
-    try:
-        info = _AccountInfo.model_validate(raw if isinstance(raw, Mapping) else {})
-    except ValidationError:
-        return None
-    if info.workspace is not None:
-        return "workspace.id"
-    if info.workspace_id:
-        return "workspace_id"
-    return None
 
 
 # Shape probe: structure only. Key names outside this allow-list are counted, never echoed;
@@ -205,7 +189,6 @@ def account_shape_report(raw: Any) -> dict[str, Any]:
     return {
         "top_kind": shape_of(raw)["kind"],
         "looks_like_error_envelope": bool(top_keys) and top_keys <= _ERROR_ENVELOPE_KEYS,
-        "identity_source": account_identity_source(raw),
         "candidate_id_paths": _id_paths(raw, ""),
         "shape": shape_of(raw),
     }
@@ -269,80 +252,75 @@ class GranolaRetrievalService:
             "max_selection": MAX_SELECTION,
             "max_listed": MAX_LISTED,
             "connection_id": RETRIEVAL_CONNECTION_ID,
-            "pinned_workspace": self._read_pin(),
+            "last_check": self._last_check(),
+            **self._account_terms(),
         }
 
     # ---------------------------------------------------------- connection
 
-    def _pin_path(self) -> Path:
-        return self._ledger._ledger_dir(create=True) / _PIN_FILE
+    def _check_path(self) -> Path:
+        return self._ledger._ledger_dir(create=True) / _CHECK_FILE
 
-    def _read_pin(self) -> dict[str, Any] | None:
+    def _last_check(self) -> dict[str, Any] | None:
         try:
             path = self._ledger._ledger_dir()
         except EvidenceLedgerError:
             return None
-        path = path / _PIN_FILE
+        path = path / _CHECK_FILE
         if not path.exists():
             return None
         try:
             raw = json.loads(path.read_bytes()[:4096])
         except ValueError:
             return None
-        if not isinstance(raw, dict) or not isinstance(raw.get("workspace_id"), str):
+        if not isinstance(raw, dict) or not isinstance(raw.get("checked_at"), str):
             return None
-        return {
-            "workspace_id": raw["workspace_id"],
-            "display_name": raw.get("display_name") if isinstance(raw.get("display_name"), str) else None,
-            "pinned_at": raw.get("pinned_at"),
-        }
+        return {"checked_at": raw["checked_at"]}
 
-    def _write_pin(self, workspace_id: str, display_name: str | None) -> dict[str, Any]:
-        pin = {
-            "workspace_id": workspace_id,
-            "display_name": display_name,
-            "pinned_at": datetime.now(UTC).isoformat(),
-        }
-        path = self._pin_path()
+    def _record_check(self) -> dict[str, Any]:
+        marker = {"checked_at": datetime.now(UTC).isoformat()}
+        path = self._check_path()
         mkdir_private(path.parent)
-        atomic_write_private(path, json.dumps(pin, separators=(",", ":")).encode("utf-8"))
-        return pin
+        atomic_write_private(path, json.dumps(marker, separators=(",", ":")).encode("utf-8"))
+        return marker
+
+    @staticmethod
+    def _account_terms() -> dict[str, Any]:
+        return {
+            "account_source": ACCOUNT_SOURCE,
+            "workspace_guarantee": False,
+            "workspace_note": WORKSPACE_NOTE,
+        }
 
     def connection(self) -> dict[str, Any]:
-        """Persisted pin only; no provider call."""
+        """Persisted marker only; no provider call."""
         return {
             "transport": self._transport.describe(),
-            "pinned_workspace": self._read_pin(),
+            "last_check": self._last_check(),
             "checked": False,
             "note": "Manual check only. Nothing is polled; this reflects the last explicit check you ran.",
+            **self._account_terms(),
         }
 
-    async def check_connection(self, *, repin: bool = False) -> dict[str, Any]:
+    async def check_connection(self) -> dict[str, Any]:
         try:
             raw = await self._transport.call("get_account_info", {})
         except GranolaRelayError as exc:
             return self._relay_failure(exc)
-        try:
-            info = _AccountInfo.model_validate(raw if isinstance(raw, Mapping) else {})
-            workspace_id, display_name = info.resolved()
-        except ValidationError:
+        if not isinstance(raw, Mapping):
             raise GranolaRetrievalError(502, "Connection check returned an unexpected shape.", code="unexpected_shape")
-        pin = self._read_pin()
-        mismatch = pin is not None and pin["workspace_id"] != workspace_id
-        if pin is None or (mismatch and repin):
-            pin = self._write_pin(workspace_id, display_name)
-            mismatch = False
+        info = _AccountInfo.model_validate(raw)
+        marker = self._record_check()
         scope = info.note_access_scope
         if isinstance(scope, str):
             scope = [scope]
         return {
             "checked": True,
             "connected": True,
-            "workspace": {"id": workspace_id, "display_name": display_name},
             "note_access_scope": [str(item)[:60] for item in (scope or [])][:10],
-            "pinned_workspace": pin,
-            "workspace_mismatch": mismatch,
-            "checked_at": datetime.now(UTC).isoformat(),
+            "last_check": marker,
+            "checked_at": marker["checked_at"],
+            **self._account_terms(),
         }
 
     @staticmethod
@@ -355,22 +333,16 @@ class GranolaRetrievalService:
             "checked_at": datetime.now(UTC).isoformat(),
         }
 
-    def _assert_pinned(self, workspace_id: str) -> None:
-        pin = self._read_pin()
-        if pin is None:
+    def _assert_checked(self) -> None:
+        if self._last_check() is None:
             raise GranolaRetrievalError(409, "Run the connection check before listing meetings.", code="not_checked")
-        if pin["workspace_id"] != workspace_id:
-            raise GranolaRetrievalError(
-                409, "Granola is signed in to a different workspace than this ledger is pinned to.", code="wrong_workspace"
-            )
 
-    async def _current_workspace(self) -> str:
+    async def _assert_connected(self) -> None:
+        """Fresh `get_account_info`: auth/access failures fail closed. Proves reachability with the
+        sign-in active right now, not which workspace that is."""
         raw = await self._transport.call("get_account_info", {})
-        try:
-            info = _AccountInfo.model_validate(raw if isinstance(raw, Mapping) else {})
-        except ValidationError:
+        if not isinstance(raw, Mapping):
             raise GranolaRetrievalError(502, "Connection check returned an unexpected shape.", code="unexpected_shape")
-        return info.resolved()[0]
 
     # -------------------------------------------------------------- listing
 
@@ -398,8 +370,9 @@ class GranolaRetrievalService:
                 raise GranolaRetrievalError(400, "Custom range needs a start and end date.", code="invalid_range")
             if (custom_end - custom_start).days > 92:
                 raise GranolaRetrievalError(400, "Custom range is limited to 92 days.", code="invalid_range")
+        self._assert_checked()
         try:
-            self._assert_pinned(await self._current_workspace())
+            await self._assert_connected()
             arguments: dict[str, Any] = {"time_range": time_range}
             if time_range == "custom":
                 arguments["custom_start"] = custom_start.isoformat()
@@ -443,6 +416,7 @@ class GranolaRetrievalService:
         return {
             "trigger": "user_triggered_retrieval",
             "unattended_discovery": False,
+            **self._account_terms(),
             "listed_at": datetime.now(UTC).isoformat(),
             "time_range": time_range,
             "returned": len(rows),
@@ -469,7 +443,7 @@ class GranolaRetrievalService:
             raise GranolaRetrievalError(
                 400, f"Select at most {MAX_SELECTION} meetings per retrieval.", code="selection_too_large"
             )
-        if self._read_pin() is None:
+        if self._last_check() is None:
             raise GranolaRetrievalError(409, "Run the connection check before retrieving.", code="not_checked")
         for job in self._jobs.jobs.values():
             if job.get("kind") == RETRIEVAL_JOB_KIND and job.get("status") == "running":
@@ -502,7 +476,7 @@ class GranolaRetrievalService:
 
     async def _run(self, ids: list[str]) -> dict[str, Any]:
         try:
-            self._assert_pinned(await self._current_workspace())
+            await self._assert_connected()
         except GranolaRelayError as exc:
             raise ManagedJobError(exc.code, "Granola connection check failed before retrieval; nothing was imported.")
         except GranolaRetrievalError as exc:
@@ -510,16 +484,23 @@ class GranolaRetrievalService:
 
         outcomes: dict[str, dict[str, Any]] = {}
         details: dict[str, Mapping[str, Any]] = {}
+        unrequested = 0
         try:
             raw = await self._transport.call("get_meetings", {"meeting_ids": ids})
             for row in _meeting_list(raw):
-                if isinstance(row, Mapping) and isinstance(row.get("id"), str):
-                    details[row["id"].lower()] = row
+                if not (isinstance(row, Mapping) and isinstance(row.get("id"), str)):
+                    unrequested += 1
+                    continue
+                row_id = row["id"].lower()
+                if row_id not in ids or row_id in details:
+                    unrequested += 1  # not selected by the user (or a duplicate row): never imported
+                    continue
+                details[row_id] = row
         except GranolaRelayError as exc:
             if exc.retryable:
                 for meeting_id in ids:
                     outcomes[meeting_id] = {"outcome": "failed_retryable", "error_code": exc.code}
-                return self._summary(ids, outcomes, None)
+                return self._summary(ids, outcomes, None, unrequested)
             code = exc.code
         except GranolaRetrievalError as exc:
             code = exc.code
@@ -540,6 +521,8 @@ class GranolaRetrievalService:
                     transcript = _Transcript.model_validate(
                         transcript_raw if isinstance(transcript_raw, Mapping) else {}
                     )
+                    if transcript.id is not None and transcript.id.lower() != meeting_id:
+                        transcript = _Transcript()  # mismatched meeting: discard, leave transcript pending
                     if transcript.transcript:
                         payload["transcript"] = transcript.transcript
                     if transcript.created_at is not None:
@@ -564,14 +547,6 @@ class GranolaRetrievalService:
         results: list[dict[str, Any]] = []
         import_id: str | None = None
         if meetings:
-            # Each relay call is a separate subprocess, so the MCP sign-in could have changed
-            # mid-batch. Re-verify the workspace after the last fetch; on mismatch import nothing.
-            try:
-                self._assert_pinned(await self._current_workspace())
-            except GranolaRelayError as exc:
-                raise ManagedJobError(exc.code, "Workspace re-check failed after retrieval; nothing was imported.")
-            except GranolaRetrievalError as exc:
-                raise ManagedJobError(exc.code, f"{exc.detail} Nothing was imported.")
             try:
                 recorded = self._ledger.import_meetings(meetings, trigger="user_triggered_retrieval")
             except EvidenceLedgerError as exc:
@@ -580,10 +555,12 @@ class GranolaRetrievalService:
             import_id = recorded["import_id"]
             for meeting_id, result in zip(order, results):
                 outcomes[meeting_id] = _classify(result)
-        return self._summary(ids, outcomes, import_id)
+        return self._summary(ids, outcomes, import_id, unrequested)
 
-    @staticmethod
-    def _summary(ids: list[str], outcomes: dict[str, dict[str, Any]], import_id: str | None) -> dict[str, Any]:
+    @classmethod
+    def _summary(
+        cls, ids: list[str], outcomes: dict[str, dict[str, Any]], import_id: str | None, unrequested: int
+    ) -> dict[str, Any]:
         fallback = {"outcome": "failed_retryable", "error_code": "relay_no_tool_result"}
         rows = [{"meeting_id": meeting_id, **outcomes.get(meeting_id, fallback)} for meeting_id in ids]
         counts: dict[str, int] = {}
@@ -592,7 +569,9 @@ class GranolaRetrievalService:
         return {
             "trigger": "user_triggered_retrieval",
             "unattended_discovery": False,
+            **cls._account_terms(),
             "import_id": import_id,
+            "unrequested_dropped": unrequested,
             "counts": counts,
             "results": rows,
         }

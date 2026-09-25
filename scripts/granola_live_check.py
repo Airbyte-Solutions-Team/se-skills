@@ -8,9 +8,9 @@ strict gate that exits 0 only when it passes:
   --probe-only        claude version preflight → MCP scope probe (no subprocess)
   --account-shape     …→ one restricted `get_account_info` call, reported as a
                       value-free SHAPE (allow-listed key names, value classes,
-                      presence flags, safe error codes) so the workspace-identity
-                      mapping can be fixed against the real response
-  --connection-only   …→ the app's connection check (pins the throwaway ledger)
+                      presence flags, safe error codes); diagnostic only
+  --connection-only   …→ the app's connection check (records a check marker in
+                      the throwaway ledger; no workspace identity is read)
   --date YYYY-MM-DD   …→ connection check → metadata list for that day →
                       retrieve the ONE meeting whose title contains --marker →
                       retrieve again (expects `imported` then `already_known`)
@@ -20,8 +20,7 @@ Verdict (`verdict.ok`, also the exit code) requires, cumulatively per mode:
   * the `granola` server is found at local scope for a trusted project path
     (this checkout, or `--claude-project <original checkout>` when running from
     a sibling worktree) or at user scope,
-  * (--account-shape) the tool returned a successful, parseable result — its
-    shape is reported even when the app cannot resolve a workspace id from it,
+  * (--account-shape) the tool returned a successful, parseable result,
   * (--connection-only / --date) the connection check succeeds,
   * (--date) exactly one meeting on that day carries the marker, the first
     retrieval yields the single outcome `imported`, the second `already_known`.
@@ -29,7 +28,7 @@ Anything else is reported under `verdict.failures` and exits 1.
 
 Output is a single JSON object containing step statuses, safe error codes,
 counts, outcome codes from the fixed outcome allow-list, and a SHA-256 prefix
-of the workspace id and meeting id. It never prints titles, summaries,
+of the meeting id. It never prints titles, summaries,
 transcripts, tokens, emails, URLs, raw tool output or model output. The
 throwaway ledger is deleted on exit. Nothing is written to your customers
 directory or to the app's ledger.
@@ -290,7 +289,7 @@ async def run(
             "connected": check.get("connected"),
             "error_code": check.get("error_code"),
             "retryable": check.get("retryable"),
-            "workspace_digest": _digest((check.get("workspace") or {}).get("id")),
+            "workspace_guarantee": check.get("workspace_guarantee"),
             "note_access_scope": check.get("note_access_scope"),
         }
         if not check.get("connected"):

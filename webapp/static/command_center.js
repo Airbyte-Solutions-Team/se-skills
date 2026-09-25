@@ -596,7 +596,6 @@ const CC_GRANOLA_ERRORS = {
   relay_output_too_large: "The Granola response exceeded the size bound; nothing was imported.",
   relay_exit_error: "Claude Code exited with an error before returning a result.",
   not_checked: "Run the connection check first.",
-  wrong_workspace: "Granola is signed in to a different workspace than the one pinned for this ledger. Re-pin only if that is intended.",
   retrieval_in_progress: "A retrieval is already running.",
   selection_too_large: "Too many meetings selected.",
 };
@@ -607,14 +606,14 @@ async function ccGranolaPanel(root, onImported) {
   let conn;
   try { conn = await api("/api/command-center/granola/connection"); }
   catch (e) { root.innerHTML = `<p class="cc-err" role="alert">${esc(e.message || "Could not read connection state.")}</p>`; return; }
-  const pin = conn.pinned_workspace;
+  const last = conn.last_check;
   root.innerHTML = `
+    <p class="muted cc-granola-terms">${esc(conn.workspace_note || "Meetings come from the Granola account/workspace currently active in your Claude Code sign-in. This pilot cannot verify workspace switches by a stable provider id; inspect and select meetings before import.")}</p>
     <div class="cc-granola-step">
       <div class="row-actions">
         <button class="small" type="button" id="cc-g-check">1 · Check connection</button>
-        <span id="cc-g-conn" class="muted" role="status">${pin ? `Pinned workspace: ${esc(pin.display_name || pin.workspace_id)} · not checked this session` : "Not checked yet. The check runs one read-only account lookup through Claude Code."}</span>
+        <span id="cc-g-conn" class="muted" role="status">${last ? `Last checked ${ccWhen(last.checked_at)} · not checked this session` : "Not checked yet. The check runs one read-only account lookup through Claude Code."}</span>
       </div>
-      <p id="cc-g-mismatch" class="hidden"></p>
     </div>
     <div class="cc-granola-step">
       <div class="row-actions">
@@ -632,7 +631,7 @@ async function ccGranolaPanel(root, onImported) {
           <label for="cc-g-end" class="muted">to</label><input id="cc-g-end" type="date">
         </span>
         <label class="muted"><input id="cc-g-wsonly" type="checkbox"> workspace-visible only</label>
-        <button class="small" type="button" id="cc-g-list" ${pin ? "" : "disabled"}>2 · List meetings</button>
+        <button class="small" type="button" id="cc-g-list" ${last ? "" : "disabled"}>2 · List meetings</button>
         <span id="cc-g-list-status" class="muted" role="status"></span>
       </div>
     </div>
@@ -645,33 +644,25 @@ async function ccGranolaPanel(root, onImported) {
     root.querySelector("#cc-g-custom").classList.toggle("hidden", ev.target.value !== "custom");
   });
 
-  async function check(repin) {
+  async function check() {
     const btn = root.querySelector("#cc-g-check");
     btn.disabled = true; connEl.textContent = "Checking…";
-    const mm = root.querySelector("#cc-g-mismatch"); mm.classList.add("hidden"); mm.innerHTML = "";
     try {
       const r = await api("/api/command-center/granola/connection/check", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repin_workspace: !!repin }),
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}),
       });
       if (!r.connected) {
         connEl.textContent = `Not connected · ${ccGranolaErr(r.error_code)}`;
         listBtn.disabled = true;
       } else {
-        connEl.textContent = `Connected at ${ccWhen(r.checked_at)} · workspace ${r.workspace.display_name || r.workspace.id}${r.note_access_scope.length ? ` · scope: ${r.note_access_scope.join(", ")}` : ""}`;
-        if (r.workspace_mismatch) {
-          mm.classList.remove("hidden");
-          mm.innerHTML = `<span class="cc-err">${esc(ccGranolaErr("wrong_workspace"))}</span> <button class="small" type="button" id="cc-g-repin">Re-pin to this workspace</button>`;
-          mm.querySelector("#cc-g-repin").addEventListener("click", () => check(true));
-          listBtn.disabled = true;
-        } else {
-          listBtn.disabled = false;
-        }
+        connEl.textContent = `Connected at ${ccWhen(r.checked_at)} via the Granola account active in Claude Code${r.note_access_scope.length ? ` · scope: ${r.note_access_scope.join(", ")}` : ""} · workspace not verified by id`;
+        listBtn.disabled = false;
       }
     } catch (e) {
       connEl.textContent = ccGranolaErr(ccApiErrCode(e), e.message);
     } finally { btn.disabled = false; }
   }
-  root.querySelector("#cc-g-check").addEventListener("click", () => check(false));
+  root.querySelector("#cc-g-check").addEventListener("click", () => check());
 
   listBtn.addEventListener("click", async () => {
     const statusEl = root.querySelector("#cc-g-list-status");
@@ -717,6 +708,7 @@ function ccGranolaList(root, listing, onImported, outcomesEl) {
     </li>`;
   }).join("");
   root.innerHTML = `
+    <p class="muted">Snapshot from the Granola account active in Claude Code when you clicked. Review each meeting and tick only the ones to import; nothing is imported until you choose.</p>
     <ul class="cc-sources cc-gm-list" aria-label="Granola meetings (snapshot)">${rows}</ul>
     <div class="row-actions cc-gm-actions">
       <button class="primary small" type="button" id="cc-g-retrieve" disabled>3 · Retrieve selected</button>

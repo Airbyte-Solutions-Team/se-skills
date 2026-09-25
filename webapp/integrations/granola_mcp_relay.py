@@ -514,9 +514,10 @@ class FakeGranolaRetrievalTransport:
     def __init__(self, *, mcp_server: str = "granola") -> None:
         self.mcp_server = mcp_server
         self.account: Any = {"workspace": {"id": "ws-synthetic", "display_name": "Synthetic Workspace"}, "note_access_scope": ["personal"]}
-        self.account_sequence: list[Any] = []  # scripted per-call accounts, e.g. a mid-batch workspace switch
+        self.account_sequence: list[Any] = []  # scripted per-call accounts, e.g. a mid-batch sign-in switch
         self.listings: dict[str, Any] = {}
         self.meetings: dict[str, Any] = {}
+        self.batch_extra: list[Any] = []  # rows get_meetings returns beyond the requested ids
         self.transcripts: dict[str, Any] = {}
         self.failures: dict[tuple[str, str], GranolaRelayError | list[GranolaRelayError]] = {}
         self.calls: list[tuple[str, dict[str, Any]]] = []
@@ -564,7 +565,7 @@ class FakeGranolaRetrievalTransport:
                 self._maybe_fail(tool, meeting_id)
                 if meeting_id in self.meetings:
                     found.append(self.meetings[meeting_id])
-            return {"meetings": found}
+            return {"meetings": found + list(self.batch_extra)}
         if tool == "get_meeting_transcript":
             meeting_id = args.get("meeting_id", "")
             self._maybe_fail(tool, meeting_id)
