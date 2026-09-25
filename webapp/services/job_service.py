@@ -101,7 +101,7 @@ class JobService:
     def active_opportunity_state_job(self, *, account: str, opp_slug: str) -> tuple[str, dict] | None:
         for job_id, job in self.jobs.items():
             if (
-                job.get("kind") in {"opportunity_state_create", "opportunity_state_update"}
+                job.get("kind") in {"opportunity_state_create", "opportunity_state_update", "command_center_reconcile"}
                 and job.get("account") == account
                 and job.get("opp_slug") == opp_slug
                 and job.get("status") == "running"
@@ -224,7 +224,10 @@ class JobService:
             # Never log the exception message for evidence-processing jobs: an
             # unexpected dependency error could contain transcript content.
             logger.error("Managed job %s failed (%s)", job_id, type(exc).__name__)
-            action = "update" if job.get("kind") == "opportunity_state_update" else "creation"
+            action = {
+                "opportunity_state_update": "update",
+                "command_center_reconcile": "reconciliation",
+            }.get(job.get("kind"), "creation")
             job.update(
                 status="error",
                 ok=False,

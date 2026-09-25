@@ -92,6 +92,7 @@ def _build_local_services(app: FastAPI) -> None:
     from routes.transcription import router as transcription_router
     from services.account_service import AccountService
     from services.ask_service import AskService, anthropic_api_key
+    from services.command_center_operations_service import CommandCenterOperationsService
     from services.evidence_ledger_service import EvidenceLedgerService
     from services.feedback_service import FeedbackService
     from services.job_service import JobService
@@ -198,6 +199,14 @@ def _build_local_services(app: FastAPI) -> None:
     # Command Center pilot: local, single-user, manually triggered intake only.
     evidence_ledger_service = EvidenceLedgerService(customers_dir=config.CUSTOMERS_DIR)
     granola_adapter = ManualGranolaImportAdapter()
+    # Reconciliation reuses the same local overview runtime/provider as Opportunity Overview.
+    command_center_operations_service = CommandCenterOperationsService(
+        ledger=evidence_ledger_service,
+        workspace_service=opportunity_workspace_service,
+        state_service=opportunity_state_service,
+        job_service=job_service,
+        executor=opportunity_state_executor,
+    )
     skill_runtime_service = SkillRuntimeService(
         customers_dir=config.CUSTOMERS_DIR,
         workspace=config.WORKSPACE,
@@ -227,6 +236,7 @@ def _build_local_services(app: FastAPI) -> None:
     app.state.skill_runtime_service = skill_runtime_service
     app.state.evidence_ledger_service = evidence_ledger_service
     app.state.granola_adapter = granola_adapter
+    app.state.command_center_operations_service = command_center_operations_service
 
     # Public local routes — registered exactly once.
     app.include_router(skills_router)
