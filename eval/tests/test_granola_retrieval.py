@@ -547,3 +547,91 @@ def test_routes_check_list_retrieve_then_review_and_associate(tmp_path) -> None:
     )
     assert associated.status_code == 200, associated.text
     assert associated.json()["association"]["state"] == "associated"
+
+
+# ------------------------------------------------------------------ live-check script (fake-backed)
+
+
+def _live_check_module():
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[2] / "scripts" / "granola_live_check.py"
+    spec = importlib.util.spec_from_file_location("granola_live_check", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _live_check_args(module):
+    return module._args(["--date", "2026-09-24"])
+
+
+def _live_check_transport(marked: int = 1) -> FakeGranolaRetrievalTransport:
+    transport = FakeGranolaRetrievalTransport()
+    rows = [_listed(_uuid(1), title="Other synthetic " + SECRET)]
+    for n in range(marked):
+        rows.append(_listed(_uuid(10 + n), title=f"SE-SKILLS-CAPCHECK {n} " + SECRET))
+    transport.listings["custom"] = rows
+    _prime(transport, *[_uuid(10 + n) for n in range(marked)])
+    return transport
+
+
+def test_live_check_script_reads_top_level_job_fields_and_passes_on_imported_then_known(capsys) -> None:
+    module = _live_check_module()
+    transport = _live_check_transport()
+    report = asyncio.run(
+        module.run(_live_check_args(module), transport_factory=lambda _a: transport, version_probe=lambda: "2.1.259 (Claude Code)")
+    )
+    assert report["verdict"] == {"ok": True, "failures": []}
+    assert report["steps"]["claude_version"]["sufficient"] is True
+    assert report["steps"]["connection_check"]["connected"] is True
+    assert report["steps"]["list"]["marked_matches"] == 1
+    assert report["steps"]["first_retrieval"]["counts"] == {"imported": 1}
+    assert [row["outcome"] for row in report["steps"]["first_retrieval"]["outcomes"]] == ["imported"]
+    assert report["steps"]["second_retrieval"]["counts"] == {"already_known": 1}
+    assert [row["outcome"] for row in report["steps"]["second_retrieval"]["outcomes"]] == ["already_known"]
+    printed = json.dumps(report)
+    assert SECRET not in printed and "ws-synthetic" not in printed and _uuid(10) not in printed
+    assert "Other synthetic" not in printed and "transcript text" not in printed
+
+
+def test_live_check_script_fails_verdict_on_old_claude_no_marker_or_unexpected_outcome() -> None:
+    module = _live_check_module()
+    args = _live_check_args(module)
+
+    old = asyncio.run(module.run(args, transport_factory=lambda _a: _live_check_transport(), version_probe=lambda: "2.1.100"))
+    assert old["verdict"]["ok"] is False and "older than minimum" in old["verdict"]["failures"][0]
+    assert "connection_check" not in old["steps"]
+
+    missing = asyncio.run(module.run(args, transport_factory=lambda _a: _live_check_transport(), version_probe=lambda: None))
+    assert missing["verdict"]["ok"] is False and missing["steps"]["claude_version"]["found"] is False
+
+    none_marked = asyncio.run(
+        module.run(args, transport_factory=lambda _a: _live_check_transport(marked=0), version_probe=lambda: "2.1.300")
+    )
+    assert none_marked["verdict"]["ok"] is False and "found 0" in none_marked["verdict"]["failures"][0]
+
+    two_marked = asyncio.run(
+        module.run(args, transport_factory=lambda _a: _live_check_transport(marked=2), version_probe=lambda: "2.1.300")
+    )
+    assert two_marked["verdict"]["ok"] is False and "found 2" in two_marked["verdict"]["failures"][0]
+
+    pending = _live_check_transport()
+    pending.transcripts.clear()
+    pending.meetings[_uuid(10)] = _detail(_uuid(10), summary=None)
+    report = asyncio.run(module.run(args, transport_factory=lambda _a: pending, version_probe=lambda: "2.1.300"))
+    assert report["verdict"]["ok"] is False
+    assert report["steps"]["first_retrieval"]["outcomes"][0]["outcome"] == "pending_content"
+    assert "expected outcomes ['imported']" in report["verdict"]["failures"][0]
+
+    unauth = _live_check_transport()
+    unauth.fail("get_account_info", "*", GranolaRelayError("tool_auth_required", retryable=False))
+    report = asyncio.run(module.run(args, transport_factory=lambda _a: unauth, version_probe=lambda: "2.1.300"))
+    assert report["verdict"]["ok"] is False
+    assert report["steps"]["connection_check"] == {
+        "connected": False,
+        "error_code": "tool_auth_required",
+        "retryable": False,
+        "workspace_digest": None,
+        "note_access_scope": None,
+    }
