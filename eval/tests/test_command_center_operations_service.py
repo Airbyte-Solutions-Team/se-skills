@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from command_center_operations import ActionRecord, SourceRef, action_id_for
+from command_center_operations import ActionRecord, SourceRef, action_id_for, verify_attribution
 from integrations.granola import ManualGranolaImportAdapter
 from opportunity_state import ActionStatus, EvidenceReference, EvidenceSourceType, RecommendedAction
 from services.command_center_operations_service import (
@@ -472,13 +472,77 @@ async def test_association_correction_retracts_derived_actions_without_deleting(
         h.ops.transition_action(ids[0], to_status="open", reason="try")
     assert exc.value.code == "retracted"
     assert [c["change_type"] for c in h.changes()].count("association_corrected") == 2
-    # Overview for the original opportunity is untouched by the correction.
-    assert h.state.read_current(ACCOUNT, OPP).revision == 2
+    # The effective Overview no longer cites the meeting: a new revision equal to
+    # the last clean one is promoted; revision 2 stays in history unchanged.
+    current = h.state.read_current(ACCOUNT, OPP)
+    assert current.revision == 3 and current.provenance.runtime == "association_correction"
+    assert not any(e.source_id.startswith(source_id) for e in current.evidence_manifest)
+    assert current.state == h.state.read_history(ACCOUNT, OPP)[0].state
+    assert h.state.read_history(ACCOUNT, OPP)[1].revision == 2
+    assert summary["overview_reverted"] == {
+        "from_revision": 2, "to_revision": 3, "restored_revision": 1, "version_id": current.version_id,
+    }
+    assert [c["change_type"] for c in h.changes()].count("overview_reverted") == 1
 
     # Clearing is a no-op for retraction (already retracted), still allowed.
     cleared = h.ops.clear_association(source_id, reason="unsure")
     assert cleared["association"]["state"] == "unassociated"
     assert cleared["retracted_actions"] == []
+    assert cleared["overview_reverted"] is None
+    assert h.state.read_current(ACCOUNT, OPP).revision == 3
+
+
+@pytest.mark.asyncio
+async def test_association_correction_retracts_linked_evidence_and_completion_suggestions(tmp_path) -> None:
+    h, source_id = await _flow(tmp_path)
+    assert (await h.reconcile(source_id))["ok"] is True
+    first = next(a for a in h.actions() if a["commitment"] == "Send architecture diagram")
+
+    # A second meeting suggests the first action is done and is (synthetically)
+    # linked as supporting evidence on it.
+    second = h.import_note("mcp_meeting_synthetic.json")
+    await h.confirm(second)
+    second_eid = h.set_recs(second, 1, lambda eid: [
+        _recommendation(eid, key="send-arch", action="Send architecture diagram", owner="Airbyte SE",
+                        due="2026-10-02", status=ActionStatus.DONE),
+    ])
+    job = await h.reconcile(second)
+    assert job["ok"] is True and job["completion_suggestions"] == [first["action_id"]]
+    record = h.ops._load_action(first["action_id"])
+    h.ops._write_action(record.model_copy(update={
+        "evidence": [*record.evidence, SourceRef(source_id=second, revision=1, evidence_id=second_eid)],
+    }))
+    before = h.ops.get_action(first["action_id"])
+    assert len(before["effective_evidence"]) == 2 and len(before["active_completion_suggestions"]) == 1
+    (h.customers / "Other").mkdir()
+
+    async def resolve(account: str, opp_slug: str) -> dict:
+        return {"safe_account": account, "safe_opp": opp_slug, "opportunity": {"sfdc_id": None, "sfdc_account_id": None}}
+
+    summary = await h.ops.confirm_association(
+        second, account="Other", opportunity_slug="deal", reason="Wrong opportunity", resolve_identity=resolve,
+    )
+    assert summary["retracted_actions"] == []  # nothing originated from the second meeting
+    assert summary["retracted_evidence"] == [first["action_id"]]
+    assert summary["retracted_completion_suggestions"] == [first["action_id"]]
+    after = h.ops.get_action(first["action_id"])
+    assert after["retracted"] is False and after["status"] == "open"
+    assert [ref["source_id"] for ref in after["effective_evidence"]] == [source_id]
+    assert len(after["evidence"]) == 2  # history kept
+    assert after["active_completion_suggestions"] == []
+    assert after["completion_suggestions"][0]["retracted_at"] is not None
+    types = [c["change_type"] for c in h.changes()]
+    assert types.count("evidence_retracted") == 1 and types.count("completion_suggestion_retracted") == 1
+    # Overview: revision 3 cited the second meeting; the effective state is revision 2 again.
+    current = h.state.read_current(ACCOUNT, OPP)
+    assert current.revision == 4 and summary["overview_reverted"]["restored_revision"] == 2
+    assert not any(e.source_id.startswith(second) for e in current.evidence_manifest)
+    assert any(e.source_id.startswith(source_id) for e in current.evidence_manifest)
+    assert summary["sources_to_reprocess"] == []
+    # Repeating the correction path is a no-op.
+    again = h.ops.clear_association(second, reason="unsure")
+    assert again["retracted_evidence"] == [] and again["overview_reverted"] is None
+    h.assert_no_content()
 
 
 @pytest.mark.asyncio
@@ -581,3 +645,221 @@ def test_executor_result_type_is_the_existing_runtime_contract() -> None:
     # Guard: reconciliation consumes exactly the existing executor result shape.
     fields = set(CanonicalStateExecutionResult.__dataclass_fields__)
     assert {"candidate", "model", "cli_version", "runtime"} <= fields
+
+
+# ------------------------------------------------- review pass: barriers/recovery
+
+
+class PausingExecutor:
+    """Blocks inside `execute` so a test can mutate state while analysis is running."""
+
+    def __init__(self, inner) -> None:
+        import asyncio
+
+        self.inner = inner
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.calls = 0
+
+    async def execute(self, request):
+        self.calls += 1
+        self.started.set()
+        await self.release.wait()
+        return await self.inner.execute(request)
+
+
+async def _start_paused(h: Harness, source_id: str) -> tuple[PausingExecutor, str]:
+    pausing = PausingExecutor(h.ops._executor)
+    h.ops._executor = pausing
+    current = h.state.read_current(ACCOUNT, OPP)
+    started = await h.ops.start_reconciliation(
+        source_id, base_version_id=current.version_id, base_revision=current.revision
+    )
+    await pausing.started.wait()
+    return pausing, started["job_id"]
+
+
+async def _reassociate(h: Harness, source_id: str) -> None:
+    (h.customers / "Other").mkdir(exist_ok=True)
+
+    async def resolve(account: str, opp_slug: str) -> dict:
+        return {"safe_account": account, "safe_opp": opp_slug, "opportunity": {"sfdc_id": None, "sfdc_account_id": None}}
+
+    await h.ops.confirm_association(
+        source_id, account="Other", opportunity_slug="deal", reason="Moved during analysis", resolve_identity=resolve,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation, expected_code", [
+    ("edit", "revision_superseded"),
+    ("reassociate", "association_changed"),
+    ("clear", "association_changed"),
+    ("access_lost", "access_lost"),
+])
+async def test_source_mutated_during_analysis_is_not_promoted(tmp_path, mutation: str, expected_code: str) -> None:
+    h, source_id = await _flow(tmp_path)
+    pausing, job_id = await _start_paused(h, source_id)
+    if mutation == "edit":
+        h.import_note("note_synthetic_v2_edited.json")
+    elif mutation == "reassociate":
+        await _reassociate(h, source_id)
+    elif mutation == "clear":
+        h.ops.clear_association(source_id, reason="Not this deal")
+    else:
+        lost = fixture("note_synthetic_access_lost.json") | {"id": fixture("note_synthetic_v1.json")["id"]}
+        h.ledger.import_meetings([h.adapter.normalize(lost, connection_id="local-manual")])
+        assert h.ledger.get_source(source_id)["availability"] == "access_lost"
+    pausing.release.set()
+    job = await _wait(h.jobs, job_id)
+    assert job["ok"] is False and job["error_code"] == expected_code
+    assert pausing.calls == 1
+    assert h.state.read_current(ACCOUNT, OPP).revision == 1
+    assert h.actions() == [] and h.ops.list_actions("Other", "deal")["actions"] == []
+    assert h.changes() == [] or all(c["change_type"] == "association_corrected" for c in h.changes())
+    assert h.ops.list_runs(source_id)[-1]["status"] in {"failed", "superseded"}
+    assert not list((h.customers / ".command-center").rglob("pending.json"))
+    h.assert_no_content()
+
+
+@pytest.mark.asyncio
+async def test_crash_after_promotion_resumes_without_rerunning_the_model(tmp_path, monkeypatch) -> None:
+    h, source_id = await _flow(tmp_path)
+    fake = h.ops._executor
+    real_apply = h.ops._apply_observations
+    calls = {"n": 0}
+
+    def crashing(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError("synthetic storage failure after promotion")
+        return real_apply(*args, **kwargs)
+
+    monkeypatch.setattr(h.ops, "_apply_observations", crashing)
+    job = await h.reconcile(source_id)
+    assert job["ok"] is False and job["error_code"] == "apply_incomplete"
+    assert "no state was saved" not in job["error_message"]
+    assert h.state.read_current(ACCOUNT, OPP).revision == 2
+    assert h.actions() == []
+    assert h.ledger.get_source(source_id)["processing"]["status"] == "processing"
+    assert [r["status"] for r in h.ops.list_runs(source_id)] == ["apply_incomplete"]
+    assert list((h.customers / ".command-center").rglob("pending.json"))
+    assert len(fake.requests) == 1
+
+    # Restart: a fresh service over the same files, caller supplies the current base.
+    h.ops = CommandCenterOperationsService(
+        ledger=h.ledger, workspace_service=h.workspace, state_service=h.state, job_service=h.jobs, executor=fake,
+    )
+    resumed = await h.reconcile(source_id)
+    assert resumed["ok"] is True and resumed["resumed"] is True
+    assert len(fake.requests) == 1  # the model did not run again
+    assert h.state.read_current(ACCOUNT, OPP).revision == 2
+    assert len(resumed["actions_created"]) == 2 and len(h.actions()) == 2
+    assert h.ledger.get_source(source_id)["processing"]["processed_revision"] == 1
+    assert [r["status"] for r in h.ops.list_runs(source_id)] == ["apply_incomplete", "succeeded"]
+    assert not list((h.customers / ".command-center").rglob("pending.json"))
+    types = [c["change_type"] for c in h.changes()]
+    assert types.count("overview_revision") == 1 and types.count("action_created") == 2
+    with pytest.raises(CommandCenterOperationsError) as exc:
+        await h.reconcile(source_id)
+    assert exc.value.code == "already_processed"
+    h.assert_no_content()
+
+
+@pytest.mark.asyncio
+async def test_crash_between_action_and_change_writes_completes_without_duplicates(tmp_path, monkeypatch) -> None:
+    h, source_id = await _flow(tmp_path)
+    real_append = h.ops._append_change
+    calls = {"n": 0}
+
+    def flaky(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:  # overview_revision Change written, first action written, its Change fails
+            raise OSError("synthetic change-log failure")
+        return real_append(*args, **kwargs)
+
+    monkeypatch.setattr(h.ops, "_append_change", flaky)
+    job = await h.reconcile(source_id)
+    assert job["ok"] is False and job["error_code"] == "apply_incomplete"
+    assert len(h.actions()) == 1 and len(h.changes()) == 1
+    monkeypatch.setattr(h.ops, "_append_change", real_append)
+
+    # The old base is also accepted for the resume, since that is what the caller last read.
+    stale = await h.ops.start_reconciliation(source_id, base_version_id=job["base_version_id"], base_revision=1) \
+        if "base_version_id" in job else await h.ops.start_reconciliation(
+            source_id, base_version_id=h.state.read_history(ACCOUNT, OPP)[0].version_id, base_revision=1)
+    resumed = await _wait(h.jobs, stale["job_id"])
+    assert resumed["ok"] is True and resumed["resumed"] is True
+    assert len(h.actions()) == 2
+    types = [c["change_type"] for c in h.changes()]
+    assert types.count("overview_revision") == 1 and types.count("action_created") == 2
+    assert len({a["action_id"] for a in h.actions()}) == 2
+    # Running the resume logic once more is a no-op through the public path.
+    with pytest.raises(CommandCenterOperationsError) as exc:
+        await h.reconcile(source_id)
+    assert exc.value.code == "already_processed"
+
+
+@pytest.mark.asyncio
+async def test_human_transition_change_is_recovered_after_crash(tmp_path, monkeypatch) -> None:
+    h, source_id = await _flow(tmp_path)
+    assert (await h.reconcile(source_id))["ok"] is True
+    action = next(a for a in h.actions() if a["status"] == "proposed")
+
+    def crash(*args, **kwargs):
+        raise OSError("synthetic change-log failure")
+
+    monkeypatch.setattr(h.ops, "_append_transition_change", crash)
+    with pytest.raises(OSError):
+        h.ops.transition_action(action["action_id"], to_status="open", reason="Accepted", owner="Customer lead",
+                                due_date="2026-11-01")
+    monkeypatch.undo()
+    stored = h.ops.get_action(action["action_id"])
+    assert stored["status"] == "open" and len(stored["transitions"]) == 2
+    assert [c for c in h.ops._changes_for(ACCOUNT, OPP) if c["change_type"] == "action_transition"] == []
+
+    # Reading the change list repairs the missing Change exactly once.
+    transitions = [c for c in h.changes() if c["change_type"] == "action_transition"]
+    assert len(transitions) == 1
+    assert transitions[0]["after"] == {
+        "status": "open", "owner": "Customer lead", "due_date": "2026-11-01", "reason": "Accepted", "transition_sequence": 2,
+    }
+    assert transitions[0]["before"] == {"status": "proposed", "owner": None, "due_date": None}
+    h.ops.repair(ACCOUNT, OPP)
+    h.ops.transition_action(action["action_id"], to_status="blocked", reason="Waiting")
+    transitions = [c for c in h.changes() if c["change_type"] == "action_transition"]
+    assert [t["after"]["transition_sequence"] for t in transitions] == [3, 2]
+
+
+# ------------------------------------------------- review pass: attribution
+
+
+def test_attribution_requires_owner_and_date_in_source_text() -> None:
+    text = "Synthetic SE will send the architecture diagram by October 1, 2026."
+    assert verify_attribution(text, owner="Synthetic SE", due_date="2026-10-01") == "source_verified"
+    assert verify_attribution(text, owner="Synthetic SE", due_date="2026-10-02") == "model_only"
+    assert verify_attribution(text, owner="Customer CTO", due_date="2026-10-01") == "model_only"
+    assert verify_attribution(text, owner=None, due_date="2026-10-01") == "model_only"
+    assert verify_attribution("Due 10/01/2026, owner: synthetic se", owner="Synthetic SE", due_date="2026-10-01") \
+        == "source_verified"
+
+
+@pytest.mark.asyncio
+async def test_model_authored_owner_and_date_absent_from_source_stay_proposed(tmp_path) -> None:
+    h, source_id = await _flow(tmp_path)
+    h.set_recs(source_id, 1, lambda eid: [
+        _recommendation(eid, key="verified", action="Send architecture diagram", owner="Airbyte SE", due="2026-10-01"),
+        _recommendation(eid, key="plausible", action="Customer to sign the security addendum",
+                        owner="Customer CTO", due="2026-12-15"),
+    ])
+    job = await h.reconcile(source_id)
+    assert job["ok"] is True and len(job["actions_created"]) == 2
+    by_commitment = {a["commitment"]: a for a in h.actions()}
+    verified = by_commitment["Send architecture diagram"]
+    plausible = by_commitment["Customer to sign the security addendum"]
+    assert verified["status"] == "open"
+    assert plausible["status"] == "proposed"
+    assert plausible["party"] == "Customer" and plausible["owner"] == "Customer CTO"
+    assert plausible["transitions"][0]["reason"] == "Owner or due date not found in the source text; review required"
+    assert plausible["transitions"][0]["actor"] == "analysis"
+    h.assert_no_content()

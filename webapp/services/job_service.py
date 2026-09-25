@@ -224,15 +224,20 @@ class JobService:
             # Never log the exception message for evidence-processing jobs: an
             # unexpected dependency error could contain transcript content.
             logger.error("Managed job %s failed (%s)", job_id, type(exc).__name__)
-            action = {
-                "opportunity_state_update": "update",
-                "command_center_reconcile": "reconciliation",
-            }.get(job.get("kind"), "creation")
+            if job.get("kind") == "command_center_reconcile":
+                message = (
+                    "Reconciliation failed unexpectedly. The accepted overview was either left unchanged "
+                    "or promoted with its application incomplete; check the source's run history and "
+                    "reconcile again to resume safely."
+                )
+            else:
+                action = {"opportunity_state_update": "update"}.get(job.get("kind"), "creation")
+                message = f"Overview {action} failed safely; no state was saved."
             job.update(
                 status="error",
                 ok=False,
                 error_code="internal_error",
-                error_message=f"Overview {action} failed safely; no state was saved.",
+                error_message=message,
                 finished_at=datetime.now(timezone.utc).timestamp(),
             )
         try:

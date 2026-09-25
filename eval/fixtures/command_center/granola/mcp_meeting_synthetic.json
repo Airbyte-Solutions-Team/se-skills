@@ -4,13 +4,23 @@
   "date": "Sep 24, 2026 12:30 PM EDT",
   "created_at": "2026-09-24T16:30:00Z",
   "url": "https://notes.granola.ai/d/0f9c4b2e-7d31-4c8a-9e5b-1a2b3c4d5e6f",
-  "known_participants": [{"name": "Synthetic SE", "email": "se@example.invalid"}],
+  "known_participants": [
+    {
+      "name": "Synthetic SE",
+      "email": "se@example.invalid"
+    }
+  ],
   "summary": "Synthetic MCP summary. Fixture only; no customer content.",
-  "transcript": "Synthetic MCP transcript block, single audio source, fixture only.",
+  "transcript": "Synthetic MCP transcript block, single audio source, fixture only. Airbyte SE will send the architecture diagram by October 2, 2026.",
   "recording_context": {
     "description": "Synthetic desktop test recording",
-    "audio_sources": {"Microphone": true, "System audio": false},
-    "recorder": {"name": "Synthetic SE"},
+    "audio_sources": {
+      "Microphone": true,
+      "System audio": false
+    },
+    "recorder": {
+      "name": "Synthetic SE"
+    },
     "microphone_sharing": "unknown"
   }
 }

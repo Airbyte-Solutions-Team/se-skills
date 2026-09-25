@@ -103,7 +103,7 @@ def test_summaries_and_listings_never_expose_content(tmp_path) -> None:
     assert "SE-SKILLS-CAPCHECK" not in serialized
     assert "example.invalid" not in serialized
     metrics = service.list_sources()["sources"][0]["latest"]["metrics"]
-    assert metrics["transcript_segments"] == 2
+    assert metrics["transcript_segments"] == 3
     assert metrics["attendee_count"] == 2
 
 

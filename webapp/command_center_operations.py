@@ -38,8 +38,17 @@ ChangeType = Literal[
     "completion_suggested",
     "possible_duplicate_flagged",
     "association_corrected",
+    "evidence_retracted",
+    "completion_suggestion_retracted",
+    "overview_reverted",
 ]
-RunStatus = Literal["succeeded", "failed", "stale_base", "superseded", "interrupted"]
+RunStatus = Literal["succeeded", "failed", "stale_base", "superseded", "interrupted", "apply_incomplete"]
+Attribution = Literal["source_verified", "model_only"]
+
+_MONTHS = (
+    "january", "february", "march", "april", "may", "june", "july", "august",
+    "september", "october", "november", "december",
+)
 
 PARTY_KEYWORDS: dict[str, ResponsibleParty] = {
     "airbyte": "Airbyte",
@@ -89,6 +98,37 @@ def derive_party(owner: str | None) -> ResponsibleParty:
     return "Unknown"
 
 
+def date_renderings(iso_date: str) -> set[str]:
+    """Normalized spellings a note could plausibly use for an ISO date."""
+    year, month, day = (int(part) for part in iso_date.split("-"))
+    if not 1 <= month <= 12:
+        return {normalize_text(iso_date)}
+    name = _MONTHS[month - 1]
+    short = name[:3]
+    forms = {
+        iso_date, f"{month}/{day}/{year}", f"{month:02d}/{day:02d}/{year}", f"{day}/{month}/{year}",
+        f"{name} {day}", f"{name} {day} {year}", f"{day} {name}", f"{day} {name} {year}",
+        f"{short} {day}", f"{short} {day} {year}", f"{day} {short}", f"{day} {short} {year}",
+    }
+    return {normalize_text(form) for form in forms}
+
+
+def verify_attribution(source_text: str, *, owner: str | None, due_date: str | None) -> Attribution:
+    """`source_verified` only when the owner text and the due date are literally present in the source.
+
+    The model's owner/due fields are never taken as a customer commitment on their
+    own; anything the trusted layer cannot find in the revision stays model-only.
+    """
+    if not owner or not due_date:
+        return "model_only"
+    haystack = f" {normalize_text(source_text)} "
+    if f" {normalize_text(owner)} " not in haystack:
+        return "model_only"
+    if not any(f" {form} " in haystack for form in date_renderings(due_date)):
+        return "model_only"
+    return "source_verified"
+
+
 class SourceRef(_Strict):
     source_id: str = Field(pattern=SOURCE_ID.pattern)
     revision: int = Field(ge=1, le=1_000_000)
@@ -107,6 +147,7 @@ class Observation(_Strict):
     owner: str | None = Field(default=None, max_length=200)
     due_date: str | None = Field(default=None, pattern=DATE.pattern)
     explicit: bool
+    attribution: Attribution = "model_only"
     source: SourceRef
 
     @staticmethod
@@ -137,6 +178,15 @@ class ActionTransition(_Strict):
 class CompletionSuggestion(_Strict):
     source: SourceRef
     observation_key: str = Field(pattern=HEX16.pattern)
+    recorded_at: datetime
+    retracted_at: datetime | None = None
+
+
+class EvidenceRetraction(_Strict):
+    """Evidence from a source that is no longer authorized for this opportunity; the ref stays in history."""
+
+    source_id: str = Field(pattern=SOURCE_ID.pattern)
+    reason: str = ShortText
     recorded_at: datetime
 
 
@@ -170,12 +220,22 @@ class ActionRecord(_Strict):
     completion_suggestions: list[CompletionSuggestion] = Field(default_factory=list, max_length=200)
     possible_duplicate_of: str | None = Field(default=None, pattern=ACTION_ID.pattern)
     retraction: Retraction | None = None
+    evidence_retractions: list[EvidenceRetraction] = Field(default_factory=list, max_length=200)
     created_at: datetime
     updated_at: datetime
 
     @property
     def human_touched(self) -> bool:
         return any(item.actor == "user" for item in self.transitions)
+
+    @property
+    def retracted_source_ids(self) -> frozenset[str]:
+        return frozenset(item.source_id for item in self.evidence_retractions)
+
+    @property
+    def effective_evidence(self) -> list[SourceRef]:
+        retracted = self.retracted_source_ids
+        return [ref for ref in self.evidence if ref.source_id not in retracted]
 
     @model_validator(mode="after")
     def validate_chain(self) -> "ActionRecord":
@@ -237,6 +297,27 @@ class ReconciliationRun(_Strict):
     runtime: str | None = Field(default=None, max_length=200)
     started_at: datetime
     finished_at: datetime
+
+
+class PendingApplication(_Strict):
+    """Written before an Overview promotion so a crash after it can be completed deterministically.
+
+    Everything needed to finish (actions, changes, processed mark, receipt) is
+    re-derived from the promoted version; the model is never rerun on resume.
+    """
+
+    schema_version: Literal[1] = SCHEMA_VERSION
+    workspace_id: str = Field(pattern=HEX16.pattern)
+    source_id: str = Field(pattern=SOURCE_ID.pattern)
+    revision: int = Field(ge=1, le=1_000_000)
+    account: str = Field(pattern=SAFE_TOKEN.pattern)
+    opportunity_slug: str = Field(pattern=SAFE_TOKEN.pattern)
+    base_version_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    base_revision: int = Field(ge=1, le=1_000_000)
+    evidence_id: str = Field(min_length=8, max_length=160)
+    evidence_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    observed_at: datetime
+    started_at: datetime
 
 
 def action_id_for(*, workspace_id: str, account: str, opportunity_slug: str, source_id: str, observation_key: str) -> str:

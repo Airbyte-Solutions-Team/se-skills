@@ -567,6 +567,26 @@ class EvidenceLedgerService:
                 self._write_source(source)
             return self.summarize(source)
 
+    def request_reprocessing(self, source_id: str, *, reason_code: str) -> dict[str, Any]:
+        """A processed source becomes queueable again (e.g. its evidence left the effective overview)."""
+        if not re.fullmatch(r"[a-z0-9_]{1,80}", reason_code):
+            raise EvidenceLedgerError(400, "Invalid reason code.", code="invalid_error_code")
+        with self._exclusive():
+            source = self._read_source(source_id)
+            if source.processing.status == "processing":
+                raise EvidenceLedgerError(409, "Source is being processed.", code="processing")
+            now = self._now()
+            source = source.model_copy(update={
+                "updated_at": now,
+                "processing": source.processing.model_copy(update={
+                    "status": "discovered", "processed_revision": None, "retry_eligible": False,
+                    "last_error_code": reason_code, "updated_at": now,
+                }),
+            })
+            source = self._derive_processing(source, now)
+            self._write_source(source)
+            return self.summarize(source)
+
     # ------------------------------------------------------------------ reads
 
     def get_source(self, source_id: str) -> dict[str, Any]:

@@ -42,7 +42,10 @@ class ResolvedWorkspace:
 
 
 class RejectingStateService:
-    """Association routes never touch Overview state; anything else is a test bug."""
+    """Association routes only read the current Overview (to repair it on correction); nothing else."""
+
+    def read_current(self, account: str, opp_slug: str):
+        return None
 
     def __getattr__(self, name: str):
         raise AssertionError(f"unexpected Overview state access: {name}")

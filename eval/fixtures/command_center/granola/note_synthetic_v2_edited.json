@@ -53,6 +53,16 @@
       "text": "Synthetic line two.",
       "start_time": "2026-09-22T15:00:10Z",
       "end_time": "2026-09-22T15:00:14Z"
+    },
+    {
+      "speaker": {
+        "source": "microphone",
+        "attribution": "me",
+        "name": "Synthetic SE"
+      },
+      "text": "Synthetic line three: Airbyte SE will send the architecture diagram by October 1, 2026.",
+      "start_time": "2026-09-22T15:00:15Z",
+      "end_time": "2026-09-22T15:00:19Z"
     }
   ]
 }
