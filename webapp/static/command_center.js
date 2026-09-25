@@ -1004,7 +1004,7 @@ function ccGmailOutcomes(root, job, subjects) {
   const rows = (job.results || []).map((r) => {
     const [label, tone] = CC_GMAIL_OUTCOME[r.outcome] || [r.outcome, "muted"];
     const err = r.error_code ? ` · ${esc(ccGmailErr(r.error_code))}` : "";
-    const assoc = r.association_state === "proposed" ? ` · ${r.proposed_candidates} candidate opportunit${r.proposed_candidates === 1 ? "y" : "ies"} — confirm before reconciling` : r.association_state === "unassociated" ? " · no match — associate manually" : "";
+    const assoc = r.association_state === "proposed" ? ` · ${typeof r.proposed_candidates === "number" ? `${r.proposed_candidates} candidate opportunit${r.proposed_candidates === 1 ? "y" : "ies"}` : "proposed match"} — confirm before reconciling` : r.association_state === "unassociated" ? " · no match — associate manually" : "";
     const link = r.source_id ? ` · <a href="${CC_BASE}/sources/${esc(r.source_id)}">review association / reconcile</a>` : "";
     return `<li class="cc-source cc-gm cc-gm--${tone}"><span class="cc-source-head"><strong>${esc(subjects[r.message_id] || r.message_id)}</strong> <span class="cc-count cc-count--${tone}">${esc(label)}</span></span><span class="muted cc-source-meta">${r.revision ? `rev ${r.revision}` : ""}${r.availability ? ` · ${esc(ccLabel(r.availability))}` : ""}${assoc}${err}${link}</span></li>`;
   }).join("");
