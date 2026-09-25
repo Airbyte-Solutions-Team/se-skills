@@ -127,6 +127,9 @@ def render_snapshot_text(snapshot: dict[str, Any]) -> bytes:
     ]
     if names:
         lines.append("Attendees: " + ", ".join(str(name) for name in names))
+    body = content.get("body_text")
+    if isinstance(body, str) and body:
+        lines.extend(["", "## Message", body])
     for label, field in (("Summary", "summary_markdown"), ("Summary", "summary_text"),
                          ("Private notes", "private_notes_markdown"), ("Private notes", "private_notes_text")):
         value = content.get(field)

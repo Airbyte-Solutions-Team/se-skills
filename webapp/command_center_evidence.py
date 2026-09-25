@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 SCHEMA_VERSION = 1
 
 ScopeKind = Literal["local_workspace"]
-Provider = Literal["granola", "manual"]
+Provider = Literal["granola", "manual", "gmail"]
 SourceKind = Literal["meeting", "manual_transcript", "crm_snapshot", "email_message"]
 ContentAvailability = Literal[
     "metadata_only", "content_available", "pending_unknown", "access_lost", "deleted", "failed"
@@ -102,6 +102,9 @@ class RevisionMetrics(_Strict):
     private_notes_chars: int = Field(ge=0)
     transcript_segments: int = Field(ge=0)
     transcript_chars: int = Field(ge=0)
+    # Email-only counters; meetings leave them at zero.
+    body_chars: int = Field(default=0, ge=0)
+    attachment_count: int = Field(default=0, ge=0)
 
 
 class SourceRevision(_Strict):
@@ -289,6 +292,9 @@ class NormalizedMeeting(_Strict):
             raise ValueError("provider_web_url must be https")
         return value
 
+    def revision_metrics(self) -> RevisionMetrics:
+        return self.content.metrics(title_present=self.title is not None, attendee_count=len(self.attendees))
+
     def private_metadata(self) -> dict[str, Any]:
         """Body-free but still private metadata, versioned alongside content."""
         return {
@@ -318,3 +324,122 @@ class NormalizedMeeting(_Strict):
         if self.availability != "content_available" and has_content:
             raise ValueError(f"availability {self.availability!r} cannot carry content")
         return self
+
+
+EmailRole = Literal["from", "to", "cc"]
+
+
+class NormalizedEmailParticipant(_Strict):
+    role: EmailRole
+    name: str | None = Field(default=None, max_length=200)
+    email: str = Field(min_length=3, max_length=320)
+
+
+class NormalizedEmailContent(_Strict):
+    """Private message body. Never included in list/detail API responses.
+
+    Attachments are never fetched or stored; only their count travels in metadata.
+    """
+
+    body_text: str | None = Field(default=None, max_length=200_000)
+    quoted_text_removed: bool = False
+
+    def is_empty(self) -> bool:
+        return not self.body_text
+
+    def content_hash(self) -> str:
+        return sha256_hex(canonical_bytes(self.model_dump(mode="json")))
+
+    def metrics(self, *, title_present: bool, attendee_count: int, attachment_count: int = 0) -> RevisionMetrics:
+        return RevisionMetrics(
+            title_present=title_present,
+            attendee_count=attendee_count,
+            summary_chars=0,
+            private_notes_chars=0,
+            transcript_segments=0,
+            transcript_chars=0,
+            body_chars=len(self.body_text or ""),
+            attachment_count=attachment_count,
+        )
+
+
+class NormalizedEmailMessage(_Strict):
+    """Adapter output for one Gmail message: identity + body-free metadata + private body.
+
+    Thread identity travels as metadata so reply chains can be grouped and mapped,
+    but each message is its own source object; the ledger never mirrors a thread.
+    """
+
+    identity: SourceIdentity
+    thread_id: str = Field(min_length=1, max_length=120)
+    title: str | None = Field(default=None, max_length=500)
+    occurred_at: datetime | None = None
+    provider_updated_at: datetime | None = None
+    attendees: list[NormalizedEmailParticipant] = Field(default_factory=list, max_length=1000)
+    message_id_header: str | None = Field(default=None, max_length=998)
+    in_reply_to: str | None = Field(default=None, max_length=998)
+    reply_depth: int = Field(default=0, ge=0, le=10_000)
+    attachment_count: int = Field(default=0, ge=0, le=10_000)
+    availability: ContentAvailability
+    unavailable_reason: str | None = Field(default=None, max_length=300)
+    content: NormalizedEmailContent = Field(default_factory=NormalizedEmailContent)
+    provider_web_url: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("identity")
+    @classmethod
+    def _email_identity(cls, value: SourceIdentity) -> SourceIdentity:
+        if value.kind != "email_message":
+            raise ValueError("an email message must use kind email_message")
+        return value
+
+    @field_validator("provider_web_url")
+    @classmethod
+    def _https_only(cls, value: str | None) -> str | None:
+        if value is not None and not value.startswith("https://"):
+            raise ValueError("provider_web_url must be https")
+        return value
+
+    def revision_metrics(self) -> RevisionMetrics:
+        return self.content.metrics(
+            title_present=self.title is not None,
+            attendee_count=len(self.attendees),
+            attachment_count=self.attachment_count,
+        )
+
+    def private_metadata(self) -> dict[str, Any]:
+        return {
+            "title": self.title,
+            "occurred_at": self.occurred_at.isoformat() if self.occurred_at else None,
+            "provider_updated_at": (
+                self.provider_updated_at.isoformat() if self.provider_updated_at else None
+            ),
+            "attendees": [person.model_dump(mode="json") for person in self.attendees],
+            "provider_web_url": self.provider_web_url,
+            "thread_id": self.thread_id,
+            "message_id_header": self.message_id_header,
+            "in_reply_to": self.in_reply_to,
+            "reply_depth": self.reply_depth,
+            "attachment_count": self.attachment_count,
+        }
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "availability": self.availability,
+            "unavailable_reason": self.unavailable_reason,
+            "metadata": self.private_metadata(),
+            "content": self.content.model_dump(mode="json"),
+        }
+
+    @model_validator(mode="after")
+    def _availability_matches_content(self) -> "NormalizedEmailMessage":
+        has_content = not self.content.is_empty()
+        if self.availability == "content_available" and not has_content:
+            raise ValueError("content_available requires a body")
+        if self.availability != "content_available" and has_content:
+            raise ValueError(f"availability {self.availability!r} cannot carry a body")
+        return self
+
+
+# Anything the ledger can record. Both shapes expose the same identity/metadata/
+# snapshot surface, so `EvidenceLedgerService.import_meetings` stays provider-neutral.
+NormalizedSource = NormalizedMeeting | NormalizedEmailMessage

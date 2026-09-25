@@ -2064,6 +2064,13 @@ a.live-btn { text-decoration: none; display: inline-flex; align-items: center; }
 .cc-gm-list { margin-top: 10px; max-height: 50vh; overflow: auto; }
 .cc-gm-actions { margin-top: 10px; }
 .cc-gm-h { margin: 12px 0 6px; font-size: 14px; }
+.cc-gm-thread { display: flex; flex-direction: column; gap: 4px; }
+.cc-gm-msgs { list-style: none; margin: 6px 0 0; padding: 0 0 0 12px; border-left: 2px solid var(--line); display: flex; flex-direction: column; gap: 6px; }
+.cc-gm-msg { min-width: 0; }
+.cc-m-terms { flex: 1 1 220px; min-width: 0; }
+.cc-m-help { margin: 4px 0 0; font-size: 12px; }
+.cc-m-revoke { border-bottom: 0; }
+.cc-source-meta { overflow-wrap: anywhere; }
 .cc-gm--ok { border-left-color: var(--accent2); }
 .cc-gm--warn { border-left-color: var(--warn, #d9a441); }
 .cc-gm--error { border-left-color: var(--danger, #d05353); }
