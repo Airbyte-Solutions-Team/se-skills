@@ -36,26 +36,16 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import stat
 import threading
 import uuid
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterable, Iterator
 
 from pydantic import ValidationError
-
-try:  # POSIX
-    import fcntl
-except ImportError:  # pragma: no cover - Windows
-    fcntl = None  # type: ignore[assignment]
-try:  # Windows
-    import msvcrt
-except ImportError:  # pragma: no cover - POSIX
-    msvcrt = None  # type: ignore[assignment]
 
 from command_center_evidence import (
     AUTO_ASSOCIATION_METHODS,
@@ -77,6 +67,7 @@ from command_center_evidence import (
     source_id_for,
 )
 from services.path_utils import resolve_within
+from services.private_store import atomic_write_private, exclusive_file_lock, mkdir_private
 
 
 _MAX_RECORD_BYTES = 2_000_000
@@ -86,14 +77,8 @@ _UNPROCESSED: frozenset[str] = frozenset({
 })
 _LIST_LIMIT = 200
 _MAX_LIST_LIMIT = 500
-_DIR_MODE = 0o700
-_FILE_MODE = 0o600
 
-
-def _mkdir_private(path: Path) -> None:
-    path.mkdir(parents=True, exist_ok=True, mode=_DIR_MODE)
-    if os.name == "posix":
-        os.chmod(path, _DIR_MODE)
+_mkdir_private = mkdir_private
 
 
 IdentityResolver = Callable[[str, str], Awaitable[dict[str, Any]]]
@@ -122,7 +107,8 @@ class EvidenceLedgerService:
         self.customers_dir = Path(customers_dir)
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._actor = actor
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._lock_depth = 0
         self._scope: ScopeIdentity | None = None
 
     # ----------------------------------------------------------------- scope
@@ -158,24 +144,25 @@ class EvidenceLedgerService:
 
     @contextmanager
     def _exclusive(self) -> Iterator[None]:
-        """In-process lock plus advisory cross-process lock on `<ledger>/.lock`."""
+        """In-process lock plus advisory cross-process lock on `<ledger>/.lock`; re-entrant."""
         with self._lock:
-            lock_path = self._ledger_dir(create=True) / ".lock"
-            fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, _FILE_MODE)
-            try:
-                if fcntl is not None:
-                    fcntl.flock(fd, fcntl.LOCK_EX)
-                elif msvcrt is not None:  # pragma: no cover - Windows
-                    msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
-                yield
-            finally:
+            if self._lock_depth > 0:
+                self._lock_depth += 1
                 try:
-                    if fcntl is not None:
-                        fcntl.flock(fd, fcntl.LOCK_UN)
-                    elif msvcrt is not None:  # pragma: no cover - Windows
-                        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                    yield
                 finally:
-                    os.close(fd)
+                    self._lock_depth -= 1
+                return
+            with exclusive_file_lock(self._ledger_dir(create=True) / ".lock"):
+                self._lock_depth = 1
+                try:
+                    yield
+                finally:
+                    self._lock_depth = 0
+
+    def guard(self) -> AbstractContextManager[None]:
+        """Hold the ledger's write lock across a multi-step operation (e.g. check-then-promote)."""
+        return self._exclusive()
 
     def _scope_path(self) -> Path:
         return self._ledger_dir() / "scope.json"
@@ -195,23 +182,7 @@ class EvidenceLedgerService:
 
     # -------------------------------------------------------------------- io
 
-    @staticmethod
-    def _atomic_write(path: Path, payload: bytes) -> None:
-        temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-        try:
-            fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, _FILE_MODE)
-            with os.fdopen(fd, "wb") as handle:
-                handle.write(payload)
-                handle.flush()
-                os.fsync(handle.fileno())
-            if os.name == "posix":
-                os.chmod(temp, _FILE_MODE)
-            os.replace(temp, path)
-        finally:
-            try:
-                temp.unlink(missing_ok=True)
-            except OSError:
-                pass
+    _atomic_write = staticmethod(atomic_write_private)
 
     @staticmethod
     def _read_json(path: Path, *, limit: int) -> Any:
@@ -611,6 +582,26 @@ class EvidenceLedgerService:
                 })
                 source = self._derive_processing(source, now)
                 self._write_source(source)
+            return self.summarize(source)
+
+    def request_reprocessing(self, source_id: str, *, reason_code: str) -> dict[str, Any]:
+        """A processed source becomes queueable again (e.g. its evidence left the effective overview)."""
+        if not re.fullmatch(r"[a-z0-9_]{1,80}", reason_code):
+            raise EvidenceLedgerError(400, "Invalid reason code.", code="invalid_error_code")
+        with self._exclusive():
+            source = self._read_source(source_id)
+            if source.processing.status == "processing":
+                raise EvidenceLedgerError(409, "Source is being processed.", code="processing")
+            now = self._now()
+            source = source.model_copy(update={
+                "updated_at": now,
+                "processing": source.processing.model_copy(update={
+                    "status": "discovered", "processed_revision": None, "retry_eligible": False,
+                    "last_error_code": reason_code, "updated_at": now,
+                }),
+            })
+            source = self._derive_processing(source, now)
+            self._write_source(source)
             return self.summarize(source)
 
     # ------------------------------------------------------------------ reads

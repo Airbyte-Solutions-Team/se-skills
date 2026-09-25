@@ -1,8 +1,10 @@
-"""Local-only Command Center evidence routes (PR B: intake + unprocessed sources).
+"""Local-only Command Center routes (PR B intake + PR C reconciliation/actions).
 
-Every import here is user-triggered. Nothing on this router contacts Granola,
-Salesforce, or any other provider during a request; association confirmation
-resolves opportunity identity through the existing workspace service only.
+Every import and every reconciliation here is user-triggered. Nothing on this
+router contacts Granola, Salesforce, or any other provider during a request;
+association confirmation resolves opportunity identity through the existing
+workspace service only, and reconciliation runs the existing local overview
+runtime as a background job whose status is polled.
 """
 from __future__ import annotations
 
@@ -12,8 +14,14 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from command_center_evidence import AssociationCandidate
+from command_center_operations import DurableActionStatus
 from integrations.granola import MAX_NOTES_PER_IMPORT, GranolaImportError, GranolaSourceAdapter
 from services.account_service import AccountError
+from services.command_center_operations_service import (
+    RECONCILE_JOB_KIND,
+    CommandCenterOperationsError,
+    CommandCenterOperationsService,
+)
 from services.evidence_ledger_service import EvidenceLedgerError, EvidenceLedgerService
 
 
@@ -52,8 +60,35 @@ class ClearAssociationBody(BaseModel):
     reason: str = Field(min_length=1, max_length=300)
 
 
+class ReconcileBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    base_version_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    base_revision: int = Field(ge=1, le=1_000_000)
+
+
+class ActionTransitionBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    to_status: DurableActionStatus
+    reason: str = Field(min_length=1, max_length=300)
+    owner: str | None = Field(default=None, min_length=1, max_length=200)
+    due_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    clear_due_date: bool = False
+
+
+class ActionUndoBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=1, max_length=300)
+
+
 def _ledger(request: Request) -> EvidenceLedgerService:
     return request.app.state.evidence_ledger_service
+
+
+def _operations(request: Request) -> CommandCenterOperationsService:
+    return request.app.state.command_center_operations_service
 
 
 def _adapter(request: Request) -> GranolaSourceAdapter:
@@ -140,22 +175,107 @@ async def api_command_center_propose(source_id: str, body: ProposeAssociationBod
 async def api_command_center_confirm(source_id: str, body: ConfirmAssociationBody, request: Request) -> dict:
     workspace = request.app.state.opportunity_workspace_service
     try:
-        return await _ledger(request).confirm_association(
+        return await _operations(request).confirm_association(
             source_id,
             account=body.account,
             opportunity_slug=body.opportunity_slug,
             reason=body.reason,
             resolve_identity=workspace.resolve_identity,
         )
-    except (AccountError, EvidenceLedgerError) as exc:
+    except (AccountError, EvidenceLedgerError, CommandCenterOperationsError) as exc:
         _raise_domain(exc)
 
 
 @router.delete("/api/command-center/sources/{source_id}/association")
 async def api_command_center_clear(source_id: str, body: ClearAssociationBody, request: Request) -> dict:
     try:
-        return _ledger(request).clear_association(source_id, reason=body.reason)
-    except EvidenceLedgerError as exc:
+        return _operations(request).clear_association(source_id, reason=body.reason)
+    except (EvidenceLedgerError, CommandCenterOperationsError) as exc:
+        _raise_domain(exc)
+
+
+@router.post("/api/command-center/sources/{source_id}/reconcile", status_code=202)
+async def api_command_center_reconcile(source_id: str, body: ReconcileBody, request: Request) -> dict:
+    try:
+        return await _operations(request).start_reconciliation(
+            source_id, base_version_id=body.base_version_id, base_revision=body.base_revision
+        )
+    except CommandCenterOperationsError as exc:
+        _raise_domain(exc)
+
+
+@router.get("/api/command-center/reconciliations/{job_id}")
+async def api_command_center_reconciliation(job_id: str, request: Request) -> dict:
+    job = request.app.state.job_service.get_job(job_id)
+    if job is None or job.get("kind") != RECONCILE_JOB_KIND:
+        raise HTTPException(status_code=404, detail="Unknown reconciliation job")
+    return {"job_id": job_id, **{key: value for key, value in job.items() if key != "sig"}}
+
+
+@router.get("/api/command-center/sources/{source_id}/runs")
+async def api_command_center_runs(source_id: str, request: Request) -> dict:
+    try:
+        return {"source_id": source_id, "runs": _operations(request).list_runs(source_id)}
+    except CommandCenterOperationsError as exc:
+        _raise_domain(exc)
+
+
+@router.get("/api/command-center/opportunities/{account}/{opp_slug}/actions")
+async def api_command_center_actions(
+    account: str,
+    opp_slug: str,
+    request: Request,
+    status: DurableActionStatus | None = None,
+    include_retracted: bool = False,
+) -> dict:
+    try:
+        return _operations(request).list_actions(account, opp_slug, status=status, include_retracted=include_retracted)
+    except CommandCenterOperationsError as exc:
+        _raise_domain(exc)
+
+
+@router.get("/api/command-center/opportunities/{account}/{opp_slug}/changes")
+async def api_command_center_changes(
+    account: str,
+    opp_slug: str,
+    request: Request,
+    limit: int = Query(default=200, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> dict:
+    try:
+        return _operations(request).list_changes(account, opp_slug, limit=limit, offset=offset)
+    except CommandCenterOperationsError as exc:
+        _raise_domain(exc)
+
+
+@router.get("/api/command-center/actions/{action_id}")
+async def api_command_center_action(action_id: str, request: Request) -> dict:
+    try:
+        return _operations(request).get_action(action_id)
+    except CommandCenterOperationsError as exc:
+        _raise_domain(exc)
+
+
+@router.post("/api/command-center/actions/{action_id}/transitions")
+async def api_command_center_action_transition(action_id: str, body: ActionTransitionBody, request: Request) -> dict:
+    try:
+        return _operations(request).transition_action(
+            action_id,
+            to_status=body.to_status,
+            reason=body.reason,
+            owner=body.owner,
+            due_date=body.due_date,
+            clear_due_date=body.clear_due_date,
+        )
+    except CommandCenterOperationsError as exc:
+        _raise_domain(exc)
+
+
+@router.post("/api/command-center/actions/{action_id}/undo")
+async def api_command_center_action_undo(action_id: str, body: ActionUndoBody, request: Request) -> dict:
+    try:
+        return _operations(request).undo_last_transition(action_id, reason=body.reason)
+    except CommandCenterOperationsError as exc:
         _raise_domain(exc)
 
 
