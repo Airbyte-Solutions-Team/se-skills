@@ -62,7 +62,7 @@ function ccShell(tab, title, sub, body) {
   view.innerHTML = `
     <div class="row cc-head">
       <div><h1>Command Center</h1><p class="sub">${esc(sub)}</p></div>
-      <span class="cc-pilot-note" title="Local single-user pilot: pages read persisted local records only.">Local pilot · manual Granola import · no live sync</span>
+      <span class="cc-pilot-note" title="Local single-user pilot: pages read persisted local records only.">Local pilot · manual Granola / Gmail intake · no live sync</span>
     </div>
     <nav class="tabs cc-tabs" role="tablist" aria-label="Command Center views">
       ${CC_TABS.map(([id, label]) => `<a class="tab${id === tab ? " active" : ""}" role="tab" aria-selected="${id === tab}" href="${CC_BASE}/${id}">${label}</a>`).join("")}
@@ -472,7 +472,7 @@ function ccSourceRow(s) {
       <a class="cc-source-id" href="${CC_BASE}/sources/${esc(s.source_id)}">${esc(s.source_id)}</a>
     </div>
     <div class="muted cc-source-meta">
-      ${esc(s.provider)} ${esc(s.kind)} · rev ${s.latest_revision} · meeting ${ccDay(s.latest.occurred_at)} · imported ${ccWhen(s.latest.observed_at)} (${esc(ccLabel(s.latest.trigger))})
+      ${esc(s.provider)} ${esc(s.kind)} · rev ${s.latest_revision} · ${s.kind === "email_message" ? "sent" : "meeting"} ${ccDay(s.latest.occurred_at)} · imported ${ccWhen(s.latest.observed_at)} (${esc(ccLabel(s.latest.trigger))})
       ${s.processing.last_error_code ? ` · <span class="cc-danger">error ${esc(s.processing.last_error_code)}</span>` : ""}
     </div>
     <div class="cc-source-assoc">Association: ${target}</div>
@@ -514,9 +514,15 @@ async function ccPageSources(params, sourceId) {
       </div>
       <div class="row-actions">
         <button class="primary small" type="button" id="cc-granola-toggle" aria-expanded="false" aria-controls="cc-granola">Check Granola (manual)</button>
+        <button class="small" type="button" id="cc-gmail-toggle" aria-expanded="false" aria-controls="cc-gmail">Check Gmail (manual)</button>
         <button class="small" type="button" id="cc-import-toggle" aria-expanded="false" aria-controls="cc-import">Paste note JSON</button>
       </div>
     </div>
+    <section id="cc-gmail" class="cc-import cc-granola hidden" aria-labelledby="cc-gmail-title">
+      <h3 id="cc-gmail-title">Check Gmail for customer threads — read-only, on request only</h3>
+      <p class="muted">Each step runs only when you click it. The listing is bounded to the contacts and domains you name plus contacts already confirmed on your opportunities; unrelated and internal-only mail is left out, and nothing is scanned in the background. Only subjects, dates, participants and counts are shown here — message bodies go straight into the local ledger and never appear in lists, aggregates, job status or logs. Attachments are never fetched.</p>
+      <div id="cc-gmail-body">${ccLoading()}</div>
+    </section>
     <section id="cc-granola" class="cc-import cc-granola hidden" aria-labelledby="cc-granola-title">
       <h3 id="cc-granola-title">Check Granola for meetings — manual, on request only</h3>
       <p class="muted">Each step below runs only when you click it, through the Granola MCP connection you already authorized in Claude Code. Nothing runs in the background, nothing is polled, and the list is a snapshot from the moment you clicked — it is not a freshness or sync status. Only meeting titles, dates and counts are shown here; note and transcript text goes straight into the local ledger.</p>
@@ -551,6 +557,16 @@ async function ccPageSources(params, sourceId) {
     if (open) gPanel.querySelector("h3").focus?.();
   });
   if (params.get("granola") === "1") gToggle.click();
+  const mToggle = body.querySelector("#cc-gmail-toggle");
+  const mPanel = body.querySelector("#cc-gmail");
+  let gmailLoaded = false;
+  mToggle.addEventListener("click", () => {
+    const open = mPanel.classList.toggle("hidden") === false;
+    mToggle.setAttribute("aria-expanded", String(open));
+    if (open && !gmailLoaded) { gmailLoaded = true; ccGmailPanel(mPanel.querySelector("#cc-gmail-body"), refreshList); }
+    if (open) mPanel.querySelector("h3").focus?.();
+  });
+  if (params.get("gmail") === "1") mToggle.click();
   body.querySelector("#cc-import-run").addEventListener("click", async () => {
     const statusEl = body.querySelector("#cc-import-status");
     let notes;
@@ -771,6 +787,235 @@ function ccGranolaOutcomes(root, job, meetings) {
     ${job.ok ? "" : `<p class="cc-err" role="alert">${esc(ccGranolaErr(job.error_code, job.error_message))}</p>`}
     ${rows ? `<ul class="cc-sources" aria-label="Retrieval outcomes">${rows}</ul>` : ""}
     <p class="muted">Imported and edited meetings now sit in the Unprocessed queue below: confirm the association there, then reconcile against the current Overview.</p>`;
+}
+
+const CC_GMAIL_OUTCOME = {
+  ...CC_GRANOLA_OUTCOME,
+  no_body: ["No body · metadata only", "warn"],
+  not_found: ["Not found in mailbox · kept as pending", "warn"],
+};
+const CC_GMAIL_ERRORS = {
+  transport_unavailable: "No authorized read-only Gmail route is wired on this machine. Live retrieval is unavailable; nothing was read.",
+  access_revoked: "Gmail authorization was revoked or has expired. Nothing was read; imported messages can be marked access-lost below.",
+  scope_not_readonly: "The Gmail authorization is broader than read-only, so this pilot refuses to use it.",
+  rate_limited: "Gmail rate-limited the request. Try again in a moment.",
+  unbounded_discovery: "Name at least one contact or domain, or confirm a Gmail source first — the pilot never lists an unbounded inbox.",
+  invalid_term: "Terms must be email addresses or domains.",
+  too_many_terms: "Too many contacts/domains in one listing.",
+  invalid_message_id: "One of the selected message ids is malformed.",
+  not_checked: "Run the access check first.",
+  mailbox_changed: "The authorized mailbox changed since the access check. Nothing was read; run the check again to switch mailboxes.",
+  scope_changed: "Gmail scopes changed since the access check. Nothing was read; run the check again.",
+  retrieval_in_progress: "A Gmail retrieval is already running.",
+  selection_too_large: "Too many messages selected.",
+  gmail_not_configured: "Gmail intake is not configured in this app instance.",
+};
+function ccGmailErr(code, fallback) { return CC_GMAIL_ERRORS[code] || fallback || `Failed (${code || "unknown"}).`; }
+
+async function ccGmailPanel(root, onImported) {
+  let conn;
+  try { conn = await api("/api/command-center/gmail/connection"); }
+  catch (e) { root.innerHTML = `<p class="cc-err" role="alert">${esc(ccGmailErr(ccApiErrCode(e), e.message || "Could not read connection state."))}</p>`; return; }
+  const t = conn.transport || {};
+  const last = conn.last_check;
+  const live = t.live_retrieval_available === true;
+  root.innerHTML = `
+    <p class="muted cc-granola-terms">${live
+      ? esc(`Transport: ${t.label || t.mode}. Read-only scope only; the check below verifies the scope before anything is listed.`)
+      : `<strong>Live Gmail retrieval is unavailable on this machine.</strong> ${esc(t.label || "No authorized read-only Gmail route is wired.")} ${t.mode === "synthetic_fixture" ? "The steps below run against a synthetic fixture mailbox so the flow can be reviewed; no real mail is read." : "The steps below will report that state; nothing is read."}`}</p>
+    <div class="cc-granola-step">
+      <div class="row-actions">
+        <button class="small" type="button" id="cc-m-check">1 · Check access</button>
+        <span id="cc-m-conn" class="muted" role="status">${last ? `Last checked ${ccWhen(last.checked_at)} (mailbox domain ${esc(last.mailbox_domain)}) · not checked this session` : "Not checked yet. The check confirms a read-only scope and nothing else."}</span>
+      </div>
+    </div>
+    <div class="cc-granola-step">
+      <div class="row-actions">
+        <label for="cc-m-range" class="muted">Range</label>
+        <select id="cc-m-range">
+          <option value="today">Today</option>
+          <option value="yesterday">Yesterday</option>
+          <option value="this_week">This week</option>
+          <option value="last_week">Last week</option>
+          <option value="last_30_days" selected>Last 30 days</option>
+          <option value="custom">Custom dates</option>
+        </select>
+        <span id="cc-m-custom" class="row-actions hidden">
+          <label for="cc-m-start" class="muted">from</label><input id="cc-m-start" type="date">
+          <label for="cc-m-end" class="muted">to</label><input id="cc-m-end" type="date">
+        </span>
+      </div>
+      <div class="row-actions">
+        <label for="cc-m-terms" class="muted">Contacts / domains</label>
+        <input id="cc-m-terms" type="text" class="cc-m-terms" placeholder="cto@acme.example, acme.example" aria-describedby="cc-m-terms-help">
+        <button class="small" type="button" id="cc-m-list" ${last ? "" : "disabled"}>2 · List threads</button>
+        <span id="cc-m-list-status" class="muted" role="status"></span>
+      </div>
+      <p id="cc-m-terms-help" class="muted cc-m-help">Comma-separated. Contacts already confirmed on your opportunities are included automatically.</p>
+    </div>
+    <div id="cc-m-results"></div>
+    <div id="cc-m-outcomes"></div>
+    <div class="cc-granola-step cc-m-revoke">
+      <div class="row-actions">
+        <button class="small" type="button" id="cc-m-revoke">Mark Gmail access revoked</button>
+        <span id="cc-m-revoke-status" class="muted" role="status">Use after revoking the authorization in Google: imported message bodies are withheld and their sources marked access-lost. Nothing is deleted.</span>
+      </div>
+    </div>`;
+
+  const connEl = root.querySelector("#cc-m-conn");
+  const listBtn = root.querySelector("#cc-m-list");
+  root.querySelector("#cc-m-range").addEventListener("change", (ev) => {
+    root.querySelector("#cc-m-custom").classList.toggle("hidden", ev.target.value !== "custom");
+  });
+
+  root.querySelector("#cc-m-check").addEventListener("click", async () => {
+    const btn = root.querySelector("#cc-m-check");
+    btn.disabled = true; connEl.textContent = "Checking…";
+    try {
+      const r = await api("/api/command-center/gmail/connection/check", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}),
+      });
+      if (!r.connected) {
+        connEl.textContent = `Not connected · ${ccGmailErr(r.error_code)}`;
+        listBtn.disabled = true;
+      } else {
+        connEl.textContent = `Connected at ${ccWhen(r.checked_at)} · mailbox domain ${r.mailbox_domain} · scope: read-only${r.mailbox_switched ? " · switched mailbox: earlier imports stay with the previous mailbox" : ""}`;
+        listBtn.disabled = false;
+      }
+    } catch (e) {
+      connEl.textContent = ccGmailErr(ccApiErrCode(e), e.message);
+    } finally { btn.disabled = false; }
+  });
+
+  listBtn.addEventListener("click", async () => {
+    const statusEl = root.querySelector("#cc-m-list-status");
+    const results = root.querySelector("#cc-m-results");
+    const range = root.querySelector("#cc-m-range").value;
+    const participants = root.querySelector("#cc-m-terms").value.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+    const payload = { time_range: range, participants };
+    if (range === "custom") {
+      payload.custom_start = root.querySelector("#cc-m-start").value || null;
+      payload.custom_end = root.querySelector("#cc-m-end").value || null;
+      if (!payload.custom_start || !payload.custom_end) { statusEl.textContent = "Pick both dates."; return; }
+    }
+    listBtn.disabled = true; statusEl.textContent = "Listing…"; results.innerHTML = "";
+    try {
+      const r = await api("/api/command-center/gmail/threads/list", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+      });
+      const dropped = [r.excluded_unrelated ? `${r.excluded_unrelated} unrelated` : null, r.excluded_internal ? `${r.excluded_internal} internal-only` : null, r.rejected ? `${r.rejected} unexpected shape` : null].filter(Boolean);
+      statusEl.textContent = `${r.shown} thread(s) listed at ${ccWhen(r.listed_at)}${dropped.length ? ` · left out: ${dropped.join(", ")}` : ""}${r.truncated ? " · more exist — narrow the range" : ""}. Snapshot only; not kept.`;
+      ccGmailList(results, r, onImported, root.querySelector("#cc-m-outcomes"));
+    } catch (e) {
+      statusEl.textContent = ccGmailErr(ccApiErrCode(e), e.message);
+    } finally { listBtn.disabled = false; }
+  });
+
+  root.querySelector("#cc-m-revoke").addEventListener("click", async () => {
+    const btn = root.querySelector("#cc-m-revoke");
+    const statusEl = root.querySelector("#cc-m-revoke-status");
+    if (!window.confirm("Mark every imported Gmail message as access-lost and withhold its body? Nothing is deleted.")) return;
+    btn.disabled = true; statusEl.textContent = "Marking…";
+    try {
+      const r = await api("/api/command-center/gmail/connection/revoke", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}),
+      });
+      statusEl.textContent = `${r.sources_marked} source(s) marked access-lost. Run the access check again after re-authorizing.`;
+      listBtn.disabled = true;
+      onImported?.();
+    } catch (e) {
+      statusEl.textContent = ccGmailErr(ccApiErrCode(e), e.message);
+    } finally { btn.disabled = false; }
+  });
+}
+
+function ccGmailList(root, listing, onImported, outcomesEl) {
+  const max = listing.max_selection;
+  if (!listing.threads.length) {
+    root.innerHTML = emptyBox({ icon: "⊘", title: "No matching threads", body: "Nothing in this range involves the contacts or domains you named or already confirmed. Unrelated and internal-only mail is never listed." });
+    return;
+  }
+  const subjects = {};
+  const rows = listing.threads.map((t) => {
+    const msgs = t.messages.map((m, i) => {
+      subjects[m.message_id] = `${t.subject || "(no subject)"} · message ${i + 1}`;
+      const led = m.ledger;
+      const known = led ? `<span class="cc-count cc-count--${ccTone(led.processing_status)}">known · rev ${led.latest_revision} · ${esc(ccLabel(led.processing_status))}${led.association_state === "associated" ? " · associated" : led.association_state === "proposed" ? " · needs confirmation" : ""}</span>` : `<span class="cc-count">new to ledger</span>`;
+      return `<li class="cc-gm-msg"><label class="cc-gm-label">
+        <input type="checkbox" class="cc-gm-pick" value="${esc(m.message_id)}" aria-label="Select message ${i + 1} of ${esc(t.subject || "thread")}">
+        <span class="cc-gm-main"><span class="cc-source-head">Message ${i + 1}${i ? " (reply)" : ""} ${known}</span>${led ? `<span class="muted cc-source-meta"><a href="${CC_BASE}/sources/${esc(led.source_id)}">open source</a></span>` : ""}</span>
+      </label></li>`;
+    }).join("");
+    return `<li class="cc-source cc-gm cc-gm-thread">
+      <span class="cc-source-head"><strong>${esc(t.subject || "(no subject)")}</strong> <span class="cc-count">${t.message_count} message(s)</span> <span class="cc-count cc-count--muted">matched on ${esc(t.matched_on.join(", "))}</span></span>
+      <span class="muted cc-source-meta">last ${ccWhen(t.last_message_at)} · with ${t.external_participants.map(esc).join(", ")}</span>
+      <ul class="cc-gm-msgs" aria-label="Messages in ${esc(t.subject || "thread")}">${msgs}</ul>
+    </li>`;
+  }).join("");
+  root.innerHTML = `
+    <p class="muted">Snapshot from the moment you clicked. Tick only the messages that are relevant evidence; nothing is imported until you choose, and only the ticked messages are ever fetched.</p>
+    <ul class="cc-sources cc-gm-list" aria-label="Gmail threads (snapshot)">${rows}</ul>
+    <div class="row-actions cc-gm-actions">
+      <button class="primary small" type="button" id="cc-m-retrieve" disabled>3 · Retrieve selected</button>
+      <span id="cc-m-sel" class="muted" role="status">0 of ${max} selected</span>
+    </div>`;
+  const picks = [...root.querySelectorAll(".cc-gm-pick")];
+  const btn = root.querySelector("#cc-m-retrieve");
+  const sel = root.querySelector("#cc-m-sel");
+  function refresh() {
+    const chosen = picks.filter((p) => p.checked);
+    const over = chosen.length > max;
+    sel.textContent = `${chosen.length} of ${max} selected${over ? " — too many; deselect some" : ""}`;
+    sel.classList.toggle("cc-err", over);
+    btn.disabled = chosen.length === 0 || over;
+  }
+  picks.forEach((p) => p.addEventListener("change", refresh));
+  btn.addEventListener("click", async () => {
+    const ids = picks.filter((p) => p.checked).map((p) => p.value);
+    btn.disabled = true; sel.textContent = `Retrieving ${ids.length} message(s)…`;
+    try {
+      const start = await api("/api/command-center/gmail/retrievals", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message_ids: ids }),
+      });
+      const job = await ccGmailPoll(start.job_id, (j) => { sel.textContent = `Retrieving ${ids.length} message(s)… (${j.status})`; });
+      ccGmailOutcomes(outcomesEl, job, subjects);
+      if (job.ok) {
+        sel.textContent = `Done at ${ccWhen(new Date(job.finished_at * 1000).toISOString())}.`;
+        showToast("Gmail retrieval finished", "ok");
+        onImported?.();
+      } else {
+        sel.textContent = ccGmailErr(job.error_code, job.error_message);
+      }
+    } catch (e) {
+      sel.textContent = ccGmailErr(ccApiErrCode(e), e.message);
+    } finally { refresh(); }
+  });
+}
+
+async function ccGmailPoll(jobId, onTick) {
+  for (let i = 0; i < 600; i++) {
+    const j = await api(`/api/command-center/gmail/retrievals/${encodeURIComponent(jobId)}`);
+    if (j.status !== "running") return j;
+    onTick?.(j);
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  throw new Error("Retrieval is still running; check back on the Sources queue.");
+}
+
+function ccGmailOutcomes(root, job, subjects) {
+  const rows = (job.results || []).map((r) => {
+    const [label, tone] = CC_GMAIL_OUTCOME[r.outcome] || [r.outcome, "muted"];
+    const err = r.error_code ? ` · ${esc(ccGmailErr(r.error_code))}` : "";
+    const assoc = r.association_state === "proposed" ? ` · ${typeof r.proposed_candidates === "number" ? `${r.proposed_candidates} candidate opportunit${r.proposed_candidates === 1 ? "y" : "ies"}` : "proposed match"} — confirm before reconciling` : r.association_state === "unassociated" ? " · no match — associate manually" : "";
+    const link = r.source_id ? ` · <a href="${CC_BASE}/sources/${esc(r.source_id)}">review association / reconcile</a>` : "";
+    return `<li class="cc-source cc-gm cc-gm--${tone}"><span class="cc-source-head"><strong>${esc(subjects[r.message_id] || r.message_id)}</strong> <span class="cc-count cc-count--${tone}">${esc(label)}</span></span><span class="muted cc-source-meta">${r.revision ? `rev ${r.revision}` : ""}${r.availability ? ` · ${esc(ccLabel(r.availability))}` : ""}${assoc}${err}${link}</span></li>`;
+  }).join("");
+  const counts = Object.entries(job.counts || {}).map(([k, n]) => `${n} ${(CC_GMAIL_OUTCOME[k] || [k])[0].split(" ·")[0].toLowerCase()}`).join(", ");
+  root.innerHTML = `
+    <h4 class="cc-gm-h">Retrieval result${counts ? ` — ${esc(counts)}` : ""}</h4>
+    ${job.ok ? "" : `<p class="cc-err" role="alert">${esc(ccGmailErr(job.error_code, job.error_message))}</p>`}
+    ${rows ? `<ul class="cc-sources" aria-label="Retrieval outcomes">${rows}</ul>` : ""}
+    <p class="muted">Imported messages sit in the Unprocessed queue below. Proposed matches are suggestions only: confirm the right account/opportunity on the source page, then reconcile. Completion of an Action is never automatic — it is suggested on the Action and you confirm it.</p>`;
 }
 
 async function ccPageSourceReview(sourceId) {

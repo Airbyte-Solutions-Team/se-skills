@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -75,6 +76,7 @@ def _build_local_services(app: FastAPI) -> None:
     Imports are deferred so the hosted mode surface can start without optional
     local dependencies such as faster-whisper or anthropic.
     """
+    from integrations.gmail import GmailSourceAdapter, SyntheticGmailTransport, UnavailableGmailTransport
     from integrations.granola import ManualGranolaImportAdapter
     from integrations.granola_mcp_relay import (
         ClaudeCodeMcpRelay,
@@ -100,6 +102,7 @@ def _build_local_services(app: FastAPI) -> None:
     from services.command_center_read_service import CommandCenterReadService
     from services.evidence_ledger_service import EvidenceLedgerService
     from services.feedback_service import FeedbackService
+    from services.gmail_intake_service import GmailIntakeService
     from services.granola_retrieval_service import GranolaRetrievalService
     from services.job_service import JobService
     from services.opportunity_workspace_service import OpportunityWorkspaceService
@@ -234,6 +237,20 @@ def _build_local_services(app: FastAPI) -> None:
         state_service=opportunity_state_service,
         tech_eval_summary=tech_eval_service.peek_summary,
     )
+    # PR E Gmail intake. No authorized read-only Gmail route exists yet, so the default
+    # transport fails closed and the UI says so. `SE_GMAIL_SYNTHETIC_FIXTURE=<path>` swaps
+    # in the in-memory synthetic mailbox for local review; it never reads real mail.
+    gmail_fixture = os.environ.get("SE_GMAIL_SYNTHETIC_FIXTURE")
+    gmail_transport = (
+        SyntheticGmailTransport.from_fixture(Path(gmail_fixture)) if gmail_fixture else UnavailableGmailTransport()
+    )
+    gmail_intake_service = GmailIntakeService(
+        transport=gmail_transport,
+        adapter=GmailSourceAdapter(),
+        ledger=evidence_ledger_service,
+        job_service=job_service,
+        local_opportunities=command_center_read_service.local_opportunities,
+    )
     skill_runtime_service = SkillRuntimeService(
         customers_dir=config.CUSTOMERS_DIR,
         workspace=config.WORKSPACE,
@@ -264,6 +281,7 @@ def _build_local_services(app: FastAPI) -> None:
     app.state.evidence_ledger_service = evidence_ledger_service
     app.state.granola_adapter = granola_adapter
     app.state.granola_retrieval_service = granola_retrieval_service
+    app.state.gmail_intake_service = gmail_intake_service
     app.state.command_center_operations_service = command_center_operations_service
     app.state.command_center_read_service = command_center_read_service
 

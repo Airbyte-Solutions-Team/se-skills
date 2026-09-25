@@ -58,7 +58,7 @@ from command_center_evidence import (
     AssociationMethod,
     EvidenceSource,
     ImportTrigger,
-    NormalizedMeeting,
+    NormalizedSource,
     ProcessingState,
     ProcessingStatus,
     ScopeIdentity,
@@ -243,12 +243,12 @@ class EvidenceLedgerService:
 
     def import_meetings(
         self,
-        meetings: Iterable[NormalizedMeeting],
+        meetings: Iterable[NormalizedSource],
         *,
         import_id: str | None = None,
         trigger: ImportTrigger = "manual_import",
     ) -> dict[str, Any]:
-        """Record user-selected meetings; idempotent on (scope, object, snapshot hash).
+        """Record user-selected sources (meetings or email messages); idempotent on (scope, object, snapshot hash).
 
         Both triggers are explicit user actions; neither is unattended discovery.
         """
@@ -267,7 +267,7 @@ class EvidenceLedgerService:
             "results": results,
         }
 
-    def _record_meeting(self, meeting: NormalizedMeeting, import_id: str, trigger: ImportTrigger) -> dict[str, Any]:
+    def _record_meeting(self, meeting: NormalizedSource, import_id: str, trigger: ImportTrigger) -> dict[str, Any]:
         scope = self.scope()
         source_id = source_id_for(scope, meeting.identity)
         now = self._now()
@@ -277,9 +277,7 @@ class EvidenceLedgerService:
             raise EvidenceLedgerError(413, "Content exceeds the ledger bound.", code="content_too_large")
         content_hash = sha256_hex(snapshot_bytes)
         body_hash = meeting.content.content_hash()
-        metrics = meeting.content.metrics(
-            title_present=meeting.title is not None, attendee_count=len(meeting.attendees)
-        )
+        metrics = meeting.revision_metrics()
 
         path = self._source_path(source_id, create=True)
         existing = self._read_source(source_id) if path.exists() else None

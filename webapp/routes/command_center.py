@@ -30,6 +30,12 @@ from services.command_center_read_service import (
     CommandCenterReadService,
 )
 from services.evidence_ledger_service import EvidenceLedgerError, EvidenceLedgerService
+from services.gmail_intake_service import (
+    MAX_QUERY_TERMS,
+    GmailIntakeError,
+    GmailIntakeService,
+)
+from services.gmail_intake_service import MAX_SELECTION as GMAIL_MAX_SELECTION
 from services.granola_retrieval_service import (
     MAX_SELECTION,
     GranolaRetrievalError,
@@ -130,14 +136,31 @@ def _raise_retrieval(exc: GranolaRetrievalError) -> None:
     ) from exc
 
 
+def _gmail(request: Request) -> GmailIntakeService:
+    service = getattr(request.app.state, "gmail_intake_service", None)
+    if service is None:
+        raise HTTPException(
+            status_code=503, detail={"code": "gmail_not_configured", "message": "Gmail intake is not configured."}
+        )
+    return service
+
+
+def _raise_gmail(exc: GmailIntakeError) -> None:
+    raise HTTPException(
+        status_code=exc.status, detail={"code": exc.code, "message": f"{exc.detail} [{exc.code}]"}
+    ) from exc
+
+
 @router.get("/api/command-center/adapters")
 async def api_command_center_adapters(request: Request) -> dict:
-    return {
-        "adapters": [
-            _adapter(request).describe().model_dump(mode="json"),
-            _retrieval(request).describe(),
-        ]
-    }
+    adapters = [
+        _adapter(request).describe().model_dump(mode="json"),
+        _retrieval(request).describe(),
+    ]
+    gmail = getattr(request.app.state, "gmail_intake_service", None)
+    if gmail is not None:
+        adapters.append(gmail.describe())
+    return {"adapters": adapters}
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +227,88 @@ async def api_granola_start_retrieval(body: GranolaRetrievalBody, request: Reque
 @router.get("/api/command-center/granola/retrievals/{job_id}")
 async def api_granola_retrieval(job_id: str, request: Request) -> dict:
     job = _retrieval(request).job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown retrieval job")
+    return job
+
+
+# ---------------------------------------------------------------------------
+# PR E: user-triggered, read-only Gmail intake. Same shape as Granola: an
+# explicit access check, a bounded metadata-only thread listing, and a
+# retrieval of exactly the message ids the user selected. No route returns,
+# stores in job metadata, or logs a message body. Whether a live transport is
+# wired is reported by `connection` (`transport.live_retrieval_available`).
+# ---------------------------------------------------------------------------
+
+
+class GmailAccessCheckBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class GmailListBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    time_range: TimeRange = "last_30_days"
+    custom_start: date | None = None
+    custom_end: date | None = None
+    participants: list[str] = Field(default_factory=list, max_length=MAX_QUERY_TERMS)
+
+
+class GmailRetrievalBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message_ids: list[str] = Field(min_length=1, max_length=GMAIL_MAX_SELECTION)
+
+
+@router.get("/api/command-center/gmail/connection")
+async def api_gmail_connection(request: Request) -> dict:
+    return _gmail(request).connection()
+
+
+@router.post("/api/command-center/gmail/connection/check")
+async def api_gmail_connection_check(body: GmailAccessCheckBody, request: Request) -> dict:
+    try:
+        return await _gmail(request).check_access()
+    except GmailIntakeError as exc:
+        _raise_gmail(exc)
+
+
+@router.post("/api/command-center/gmail/connection/revoke")
+async def api_gmail_connection_revoke(body: GmailAccessCheckBody, request: Request) -> dict:
+    try:
+        return _gmail(request).revoke_access()
+    except (GmailIntakeError,) as exc:
+        _raise_gmail(exc)
+    except EvidenceLedgerError as exc:
+        _raise_domain(exc)
+
+
+@router.post("/api/command-center/gmail/threads/list")
+async def api_gmail_list_threads(body: GmailListBody, request: Request) -> dict:
+    try:
+        return await _gmail(request).list_threads(
+            time_range=body.time_range,
+            custom_start=body.custom_start,
+            custom_end=body.custom_end,
+            participants=body.participants,
+        )
+    except GmailIntakeError as exc:
+        _raise_gmail(exc)
+    except EvidenceLedgerError as exc:
+        _raise_domain(exc)
+
+
+@router.post("/api/command-center/gmail/retrievals", status_code=202)
+async def api_gmail_start_retrieval(body: GmailRetrievalBody, request: Request) -> dict:
+    try:
+        return await _gmail(request).start_retrieval(body.message_ids)
+    except GmailIntakeError as exc:
+        _raise_gmail(exc)
+
+
+@router.get("/api/command-center/gmail/retrievals/{job_id}")
+async def api_gmail_retrieval(job_id: str, request: Request) -> dict:
+    job = _gmail(request).job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Unknown retrieval job")
     return job

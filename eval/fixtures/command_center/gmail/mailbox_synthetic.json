@@ -1,0 +1,138 @@
+{
+  "contract": "gmail-message-v1",
+  "note": "Entirely synthetic. No real mailbox, person, or customer. Bodies carry SYNTHETIC- sentinels so tests can prove they never leak into list/aggregate/job/log projections.",
+  "mailbox": "se@example.invalid",
+  "messages": [
+    {
+      "id": "18a1000000000001",
+      "thread_id": "18a1000000000001",
+      "subject": "Acme expansion \u2014 security review items",
+      "from": {
+        "name": "Synthetic CTO",
+        "email": "cto@acme.example"
+      },
+      "to": [
+        {
+          "name": "Synthetic SE",
+          "email": "se@example.invalid"
+        }
+      ],
+      "cc": [
+        {
+          "name": "Synthetic AE",
+          "email": "ae@example.invalid"
+        }
+      ],
+      "date": "2026-09-21T14:05:00Z",
+      "message_id_header": "<synthetic-acme-1@acme.example>",
+      "body_text": "Hi,\n\nSYNTHETIC-BODY-ACME-ASK Before we can sign the expansion order we need your SOC 2 Type II report and the data residency addendum. Sam Rivera (Airbyte), can you send the SOC 2 report and the addendum by Sep 26?\n\nThanks,\nSynthetic CTO",
+      "attachment_count": 0
+    },
+    {
+      "id": "18a1000000000002",
+      "thread_id": "18a1000000000001",
+      "subject": "Re: Acme expansion \u2014 security review items",
+      "from": {
+        "name": "Synthetic SE",
+        "email": "se@example.invalid"
+      },
+      "to": [
+        {
+          "name": "Synthetic CTO",
+          "email": "cto@acme.example"
+        }
+      ],
+      "cc": [
+        {
+          "name": "Synthetic AE",
+          "email": "ae@example.invalid"
+        }
+      ],
+      "date": "2026-09-22T09:30:00Z",
+      "message_id_header": "<synthetic-acme-2@example.invalid>",
+      "in_reply_to": "<synthetic-acme-1@acme.example>",
+      "references": [
+        "<synthetic-acme-1@acme.example>"
+      ],
+      "body_text": "SYNTHETIC-BODY-ACME-REPLY Sam Rivera (Airbyte) sent the SOC 2 report and the addendum through the trust portal on Sep 25; the data residency addendum is with legal and I will follow up Thursday.\n\nOn Mon, Sep 21, 2026 at 10:05 AM Synthetic CTO <cto@acme.example> wrote:\n> SYNTHETIC-QUOTED Before we can sign the expansion order we need your SOC 2 Type II report\n> and the data residency addendum. Can you send both by Friday?",
+      "attachment_count": 1
+    },
+    {
+      "id": "18a1000000000003",
+      "thread_id": "18a1000000000001",
+      "subject": "Re: Acme expansion \u2014 security review items",
+      "from": {
+        "name": "Synthetic CTO",
+        "email": "cto@acme.example"
+      },
+      "to": [
+        {
+          "name": "Synthetic SE",
+          "email": "se@example.invalid"
+        }
+      ],
+      "date": "2026-09-22T11:00:00Z",
+      "message_id_header": "<synthetic-acme-3@acme.example>",
+      "in_reply_to": "<synthetic-acme-2@example.invalid>",
+      "references": [
+        "<synthetic-acme-1@acme.example>",
+        "<synthetic-acme-2@example.invalid>"
+      ],
+      "body_text": null,
+      "attachment_count": 1
+    },
+    {
+      "id": "18a1000000000004",
+      "thread_id": "18a1000000000004",
+      "subject": "Globex pilot \u2014 connector question",
+      "from": {
+        "name": "Synthetic Ops Lead",
+        "email": "ops@globex.example"
+      },
+      "to": [
+        {
+          "name": "Synthetic SE",
+          "email": "se@example.invalid"
+        }
+      ],
+      "date": "2026-09-23T16:45:00Z",
+      "message_id_header": "<synthetic-globex-1@globex.example>",
+      "body_text": "SYNTHETIC-BODY-GLOBEX Quick one: does the Postgres connector support CDC on partitioned tables? We would like a written answer before the steering meeting next week.",
+      "attachment_count": 0
+    },
+    {
+      "id": "18a1000000000005",
+      "thread_id": "18a1000000000005",
+      "subject": "Your weekly data newsletter",
+      "from": {
+        "name": "Synthetic Newsletter",
+        "email": "news@unrelated.example"
+      },
+      "to": [
+        {
+          "email": "se@example.invalid"
+        }
+      ],
+      "date": "2026-09-23T08:00:00Z",
+      "body_text": "SYNTHETIC-BODY-NEWSLETTER Top ten pipelines of the week...",
+      "attachment_count": 0
+    },
+    {
+      "id": "18a1000000000006",
+      "thread_id": "18a1000000000006",
+      "subject": "Lunch Thursday?",
+      "from": {
+        "name": "Synthetic Colleague",
+        "email": "colleague@example.invalid"
+      },
+      "to": [
+        {
+          "email": "se@example.invalid"
+        }
+      ],
+      "date": "2026-09-24T12:00:00Z",
+      "body_text": "SYNTHETIC-BODY-INTERNAL Tacos?",
+      "attachment_count": 0
+    }
+  ]
+}
