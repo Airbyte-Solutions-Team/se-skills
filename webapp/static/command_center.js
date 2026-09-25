@@ -804,6 +804,8 @@ const CC_GMAIL_ERRORS = {
   too_many_terms: "Too many contacts/domains in one listing.",
   invalid_message_id: "One of the selected message ids is malformed.",
   not_checked: "Run the access check first.",
+  mailbox_changed: "The authorized mailbox changed since the access check. Nothing was read; run the check again to switch mailboxes.",
+  scope_changed: "Gmail scopes changed since the access check. Nothing was read; run the check again.",
   retrieval_in_progress: "A Gmail retrieval is already running.",
   selection_too_large: "Too many messages selected.",
   gmail_not_configured: "Gmail intake is not configured in this app instance.",
@@ -877,7 +879,7 @@ async function ccGmailPanel(root, onImported) {
         connEl.textContent = `Not connected · ${ccGmailErr(r.error_code)}`;
         listBtn.disabled = true;
       } else {
-        connEl.textContent = `Connected at ${ccWhen(r.checked_at)} · mailbox domain ${r.mailbox_domain} · scope: read-only`;
+        connEl.textContent = `Connected at ${ccWhen(r.checked_at)} · mailbox domain ${r.mailbox_domain} · scope: read-only${r.mailbox_switched ? " · switched mailbox: earlier imports stay with the previous mailbox" : ""}`;
         listBtn.disabled = false;
       }
     } catch (e) {

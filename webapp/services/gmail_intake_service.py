@@ -6,9 +6,17 @@ and recorded in the private evidence ledger. Nothing polls, nothing scans in the
 background, and no attachment is ever fetched.
 
 Discovery is bounded (spec §8): a listing needs at least one contact or domain the
-user names, or contacts learned from already-associated Gmail evidence. Threads whose
+user names, or contacts learned from already-associated Gmail evidence; the transport
+filters on participants only, so it is never called with an empty filter. Threads whose
 participants are all inside the signed-in mailbox's own domain are dropped as internal;
 threads matching nothing are dropped as unrelated. Both are returned as counts only.
+
+The access check binds the connection to one mailbox: the private marker stores an
+opaque digest of the checked address plus the exact scope list, and every listing or
+retrieval re-checks both against the live authorization before calling the transport
+or importing. Ledger identity is scoped per mailbox (`connection_id` carries the digest),
+so a later switch to another address—even at the same domain—cannot reuse earlier
+message ids, associations, or learned contacts.
 
 Association is never decided here. After import the service records *proposals*
 (thread mapping, known contact, account-domain match) that stay reviewable until the
@@ -20,6 +28,7 @@ index it keeps (`gmail-index.json`: source_id → thread id + participant addres
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Callable, Mapping, Sequence
@@ -61,6 +70,7 @@ TimeRange = Literal["today", "yesterday", "this_week", "last_week", "last_30_day
 _CHECK_FILE = "gmail-connection.json"
 _INDEX_FILE = "gmail-index.json"
 _MAX_INDEX_BYTES = 8_000_000
+_MAILBOX_KEY_CHARS = 16
 _TERM = re.compile(r"^(?:[A-Za-z0-9._%+\-']+@)?[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
 _GENERIC_DOMAINS = frozenset({"gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "yahoo.com", "icloud.com", "proton.me", "protonmail.com"})
 
@@ -99,6 +109,15 @@ def _account_token(account: str) -> str:
     return re.sub(r"[^a-z0-9]", "", account.casefold())
 
 
+def mailbox_key(mailbox: str) -> str:
+    """Opaque, stable identity for a checked mailbox; never reversible to the address."""
+    return hashlib.sha256(mailbox.strip().lower().encode("utf-8")).hexdigest()[:_MAILBOX_KEY_CHARS]
+
+
+def connection_id_for(key: str) -> str:
+    return f"{CONNECTION_ID}-{key}"
+
+
 class GmailIntakeService:
     def __init__(
         self,
@@ -135,7 +154,9 @@ class GmailIntakeService:
     def _private_path(self, name: str, *, create: bool = False) -> Path:
         return self._ledger._ledger_dir(create=create) / name
 
-    def _last_check(self) -> dict[str, Any] | None:
+    def _marker(self) -> dict[str, Any] | None:
+        """Private marker: `checked_at` (None once access is lost), `mailbox_domain`,
+        `mailbox_key`, `scopes`. `mailbox_key` never leaves this module."""
         try:
             path = self._private_path(_CHECK_FILE)
         except EvidenceLedgerError:
@@ -146,27 +167,43 @@ class GmailIntakeService:
             raw = json.loads(path.read_bytes()[:4096])
         except ValueError:
             return None
-        if not isinstance(raw, dict) or not isinstance(raw.get("checked_at"), str):
+        if not isinstance(raw, dict) or not isinstance(raw.get("mailbox_key"), str):
             return None
+        scopes = raw.get("scopes")
         return {
-            "checked_at": raw["checked_at"],
+            "checked_at": raw["checked_at"] if isinstance(raw.get("checked_at"), str) else None,
             "mailbox_domain": raw.get("mailbox_domain") if isinstance(raw.get("mailbox_domain"), str) else None,
+            "mailbox_key": raw["mailbox_key"],
+            "scopes": [s for s in scopes if isinstance(s, str)] if isinstance(scopes, list) else [],
         }
 
-    def _record_check(self, mailbox: str) -> dict[str, Any]:
-        marker = {"checked_at": datetime.now(UTC).isoformat(), "mailbox_domain": domain_of(mailbox)}
+    def _last_check(self) -> dict[str, Any] | None:
+        marker = self._marker()
+        if marker is None or marker["checked_at"] is None:
+            return None
+        return {"checked_at": marker["checked_at"], "mailbox_domain": marker["mailbox_domain"]}
+
+    def _write_marker(self, marker: dict[str, Any]) -> None:
         path = self._private_path(_CHECK_FILE, create=True)
         mkdir_private(path.parent)
         atomic_write_private(path, json.dumps(marker, separators=(",", ":")).encode("utf-8"))
+
+    def _record_check(self, mailbox: str, scopes: list[str]) -> dict[str, Any]:
+        marker = {
+            "checked_at": datetime.now(UTC).isoformat(),
+            "mailbox_domain": domain_of(mailbox),
+            "mailbox_key": mailbox_key(mailbox),
+            "scopes": sorted(scopes),
+        }
+        self._write_marker(marker)
         return marker
 
     def _clear_check(self) -> None:
-        try:
-            path = self._private_path(_CHECK_FILE)
-        except EvidenceLedgerError:
-            return
-        if path.exists():
-            path.unlink()
+        """Fail closed: nothing lists or retrieves until a fresh check succeeds. The mailbox
+        digest is kept so `revoke_access` can still mark that mailbox's sources."""
+        marker = self._marker()
+        if marker is not None and marker["checked_at"] is not None:
+            self._write_marker({**marker, "checked_at": None})
 
     def connection(self) -> dict[str, Any]:
         """Persisted marker only; no provider call."""
@@ -186,21 +223,28 @@ class GmailIntakeService:
         scopes = raw.get("scopes") if isinstance(raw, Mapping) else None
         if not isinstance(mailbox, str) or "@" not in mailbox or not isinstance(scopes, list):
             raise GmailIntakeError(502, "Access check returned an unexpected shape.", code="unexpected_shape")
-        if any(not isinstance(s, str) or s != READONLY_SCOPE for s in scopes) or not scopes:
+        if not self._scopes_readonly(scopes):
             self._clear_check()
             return {
                 "checked": True, "connected": False, "error_code": "scope_not_readonly", "retryable": False,
                 "checked_at": datetime.now(UTC).isoformat(),
             }
-        marker = self._record_check(mailbox)
+        previous = self._marker()
+        switched = previous is not None and previous["mailbox_key"] != mailbox_key(mailbox)
+        marker = self._record_check(mailbox, scopes)
         return {
             "checked": True,
             "connected": True,
             "mailbox_domain": marker["mailbox_domain"],
             "scopes": [READONLY_SCOPE],
-            "last_check": marker,
+            "mailbox_switched": switched,
+            "last_check": self._last_check(),
             "checked_at": marker["checked_at"],
         }
+
+    @staticmethod
+    def _scopes_readonly(scopes: object) -> bool:
+        return isinstance(scopes, list) and scopes == [READONLY_SCOPE]
 
     @staticmethod
     def _transport_failure(exc: GmailTransportError) -> dict[str, Any]:
@@ -213,17 +257,32 @@ class GmailIntakeService:
         }
 
     def _assert_checked(self) -> dict[str, Any]:
-        check = self._last_check()
-        if check is None:
+        marker = self._marker()
+        if marker is None or marker["checked_at"] is None:
             raise GmailIntakeError(409, "Run the access check before listing or retrieving.", code="not_checked")
-        return check
+        return marker
 
-    async def _assert_access(self) -> str:
+    async def _assert_access(self, marker: Mapping[str, Any]) -> tuple[str, str]:
+        """Re-check the live authorization against the bound marker. Returns
+        `(mailbox, connection_id)`; any drift clears the check and fails closed before
+        the transport lists, fetches, or the ledger imports anything."""
         raw = await self._transport.check_access()
         mailbox = raw.get("email_address") if isinstance(raw, Mapping) else None
+        scopes = raw.get("scopes") if isinstance(raw, Mapping) else None
         if not isinstance(mailbox, str) or "@" not in mailbox:
             raise GmailIntakeError(502, "Access check returned an unexpected shape.", code="unexpected_shape")
-        return mailbox.lower()
+        if not self._scopes_readonly(scopes) or sorted(scopes) != marker["scopes"]:
+            self._clear_check()
+            raise GmailIntakeError(
+                409, "Gmail scopes changed since the access check; run the check again.", code="scope_changed"
+            )
+        key = mailbox_key(mailbox)
+        if key != marker["mailbox_key"]:
+            self._clear_check()
+            raise GmailIntakeError(
+                409, "The authorized mailbox changed since the access check; run the check again.", code="mailbox_changed"
+            )
+        return mailbox.lower(), connection_id_for(key)
 
     # --------------------------------------------------------------- index
 
@@ -256,20 +315,21 @@ class GmailIntakeService:
         path = self._private_path(_INDEX_FILE, create=True)
         atomic_write_private(path, json.dumps(index, sort_keys=True, separators=(",", ":")).encode("utf-8"))
 
-    def _gmail_sources(self) -> dict[str, dict[str, Any]]:
+    def _gmail_sources(self, connection_id: str) -> dict[str, dict[str, Any]]:
+        """Sources of one mailbox-bound connection only; other mailboxes stay invisible."""
         known: dict[str, dict[str, Any]] = {}
         offset: int | None = 0
         while offset is not None:
             page = self._ledger.list_sources(limit=200, offset=offset)
             for item in page["sources"]:
-                if item["provider"] == "gmail" and item["connection_id"] == CONNECTION_ID:
+                if item["provider"] == "gmail" and item["connection_id"] == connection_id:
                     known[item["source_id"]] = item
             offset = page["next_offset"]
         return known
 
-    def _known_context(self, mailbox_domain: str | None) -> dict[str, Any]:
+    def _known_context(self, mailbox_domain: str | None, connection_id: str) -> dict[str, Any]:
         """Contacts, domains, and thread ids learned from *associated* Gmail evidence."""
-        sources = self._gmail_sources()
+        sources = self._gmail_sources(connection_id)
         index = self._read_index()
         contacts: dict[str, list[tuple[str, str]]] = {}
         domains: dict[str, list[tuple[str, str]]] = {}
@@ -319,18 +379,20 @@ class GmailIntakeService:
         participants: Sequence[str] = (),
     ) -> dict[str, Any]:
         after, before = _range_dates(time_range, custom_start, custom_end)
-        check = self._assert_checked()
+        marker = self._assert_checked()
         terms = self._normalize_terms(participants)
-        context = self._known_context(check.get("mailbox_domain"))
+        context = self._known_context(marker["mailbox_domain"], connection_id_for(marker["mailbox_key"]))
         bound = set(terms) | set(context["contacts"]) | set(context["domains"])
-        if not bound and not context["threads"]:
+        if not bound:
+            # Known thread ids alone are not a transport filter; without a participant
+            # bound the transport is never called.
             raise GmailIntakeError(
                 400,
                 "Name at least one contact or domain; the mailbox is never scanned unbounded.",
                 code="unbounded_discovery",
             )
         try:
-            mailbox = await self._assert_access()
+            mailbox, _connection_id = await self._assert_access(marker)
             rows = await self._transport.list_threads(
                 after=after, before=before, participants=sorted(bound), max_results=MAX_LISTED * 2
             )
@@ -415,13 +477,13 @@ class GmailIntakeService:
             raise GmailIntakeError(400, "Select at least one message.", code="empty_selection")
         if len(ids) > MAX_SELECTION:
             raise GmailIntakeError(400, f"Select at most {MAX_SELECTION} messages per retrieval.", code="selection_too_large")
-        self._assert_checked()
+        marker = self._assert_checked()
         for job in self._jobs.jobs.values():
             if job.get("kind") == INTAKE_JOB_KIND and job.get("status") == "running":
                 raise GmailIntakeError(409, "A retrieval is already running.", code="retrieval_in_progress")
 
         async def runner(job_id: str) -> dict[str, Any]:
-            return await self._run(ids)
+            return await self._run(ids, marker)
 
         job_id, persist_warn = await self._jobs.launch_managed(
             kind=INTAKE_JOB_KIND,
@@ -445,9 +507,9 @@ class GmailIntakeService:
             return None
         return {"job_id": job_id, **{key: value for key, value in job.items() if key != "sig"}}
 
-    async def _run(self, ids: list[str]) -> dict[str, Any]:
+    async def _run(self, ids: list[str], marker: Mapping[str, Any]) -> dict[str, Any]:
         try:
-            mailbox = await self._assert_access()
+            mailbox, connection_id = await self._assert_access(marker)
         except GmailTransportError as exc:
             if exc.code == "access_revoked":
                 self._clear_check()
@@ -486,7 +548,7 @@ class GmailIntakeService:
             else:
                 payload = details[message_id]
             try:
-                messages.append(self._adapter.normalize(payload, connection_id=CONNECTION_ID))
+                messages.append(self._adapter.normalize(payload, connection_id=connection_id))
                 order.append(message_id)
             except GmailImportError as exc:
                 outcomes[message_id] = {"outcome": "rejected", "error_code": exc.code}
@@ -507,7 +569,7 @@ class GmailIntakeService:
                         "participants": sorted({p.email for p in message.attendees}),
                     }
             self._write_index(index)
-            context = self._known_context(domain_of(mailbox))
+            context = self._known_context(domain_of(mailbox), connection_id)
             for message, result in zip(messages, recorded["results"]):
                 outcome = _classify(result)
                 if result["created_revision"] and result["association_state"] == "unassociated" and message.availability in {"content_available", "metadata_only"}:
@@ -583,7 +645,8 @@ class GmailIntakeService:
         """Explicit user step after revoking Gmail authorization: every Gmail source on this
         connection gets an `access_lost` revision (cached bodies are withheld) and the access
         marker is removed so nothing lists or retrieves until a fresh check succeeds."""
-        sources = self._gmail_sources()
+        marker = self._marker()
+        sources = self._gmail_sources(connection_id_for(marker["mailbox_key"])) if marker else {}
         messages: list[NormalizedEmailMessage] = []
         index = self._read_index()
         for source_id, item in sources.items():
@@ -596,7 +659,7 @@ class GmailIntakeService:
                     "thread_id": entry["thread_id"] if entry else item["provider_object_id"],
                     "error_code": "UNAUTHORIZED",
                 },
-                connection_id=CONNECTION_ID,
+                connection_id=item["connection_id"],
             ))
         results: list[dict[str, Any]] = []
         if messages:

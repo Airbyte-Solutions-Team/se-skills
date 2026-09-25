@@ -357,6 +357,110 @@ async def test_deleted_message_is_not_found_and_only_one_retrieval_runs_at_a_tim
     assert (await _wait(jobs, started["job_id"]))["counts"] == {"imported": 1}
 
 
+# ------------------------------------------------------------- mailbox + scope binding
+
+
+async def test_same_domain_mailbox_switch_fails_closed_then_isolates_ledger_context(tmp_path: Path) -> None:
+    service, transport, ledger, jobs = _service(tmp_path)
+    await service.check_access()
+    first = _by_id(await _retrieve(service, jobs, [ACME_ASK]))[ACME_ASK]
+    await ledger.confirm_association(
+        first["source_id"], account="Acme", opportunity_slug="expansion", reason="Confirmed by SE",
+        resolve_identity=EchoWorkspace().resolve_identity,
+    )
+    first_connection = ledger.get_source(first["source_id"])["connection_id"]
+    assert first_connection.startswith(CONNECTION_ID) and first_connection != CONNECTION_ID
+    assert "se@example.invalid" not in first_connection
+
+    # Same domain, different address: nothing lists or imports until the user re-checks.
+    transport.mailbox = "other-se@example.invalid"
+    with pytest.raises(GmailIntakeError) as exc:
+        await service.list_threads(participants=["acme.example"], **WINDOW)
+    assert exc.value.code == "mailbox_changed"
+    assert transport.calls.count("list_threads") == 0
+    assert service.connection()["last_check"] is None
+    with pytest.raises(GmailIntakeError) as exc:
+        await service.start_retrieval([ACME_REPLY])
+    assert exc.value.code == "not_checked"
+
+    # Retrieval that was already running when the mailbox flipped: no import either.
+    transport.mailbox = "se@example.invalid"
+    checked = await service.check_access()
+    assert checked["connected"] is True and checked["mailbox_switched"] is False
+    original = transport.check_access
+
+    async def flip():
+        transport.mailbox = "other-se@example.invalid"
+        return await original()
+
+    transport.check_access = flip  # type: ignore[method-assign]
+    job = await _retrieve(service, jobs, [ACME_REPLY])
+    assert job["ok"] is False and job["error_code"] == "mailbox_changed"
+    assert transport.calls.count("get_messages") == 1  # the first, legitimate retrieval only
+    assert ledger.list_sources()["total"] == 1
+    transport.check_access = original  # type: ignore[method-assign]
+
+    # An explicit re-check on the new address is an intentional switch.
+    checked = await service.check_access()
+    assert checked["connected"] is True and checked["mailbox_switched"] is True
+    assert checked["mailbox_domain"] == "example.invalid"
+    assert not any(k for k in checked if "key" in k)
+    listed = await service.list_threads(participants=["acme.example"], **WINDOW)
+    assert SENTINEL not in json.dumps(listed)
+    assert listed["bound"]["known_contacts"] == 0 and listed["bound"]["known_threads"] == 0
+    acme = next(t for t in listed["threads"] if t["thread_id"] == ACME_ASK)
+    assert all(m["ledger"] is None for m in acme["messages"])  # first mailbox's import is not "already known"
+
+    reply = _by_id(await _retrieve(service, jobs, [ACME_ASK, ACME_REPLY]))
+    assert reply[ACME_ASK]["outcome"] == "imported" and reply[ACME_ASK]["source_id"] != first["source_id"]
+    # The same thread is associated under the first mailbox; the second mailbox must not inherit it.
+    reply_source = ledger.get_source(reply[ACME_REPLY]["source_id"])
+    assert reply_source["connection_id"] != first_connection
+    assert all(c["method"] != "thread_mapping" for c in reply_source["association"]["candidates"])
+    assert ledger.get_source(first["source_id"])["association"]["state"] == "associated"
+    for blob in (json.dumps(job), json.dumps(listed), json.dumps(checked), json.dumps(service.describe())):
+        assert "mailbox_key" not in blob and first_connection not in blob
+        assert "se@example.invalid" not in blob and "other-se@" not in blob
+
+
+async def test_scope_broadening_after_check_fails_closed_before_transport_or_import(tmp_path: Path) -> None:
+    service, transport, ledger, jobs = _service(tmp_path)
+    await service.check_access()
+    transport.scopes.append("https://www.googleapis.com/auth/gmail.modify")
+    with pytest.raises(GmailIntakeError) as exc:
+        await service.list_threads(participants=["acme.example"], **WINDOW)
+    assert exc.value.code == "scope_changed"
+    assert transport.calls.count("list_threads") == 0
+    assert service.connection()["last_check"] is None
+
+    transport.scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
+    await service.check_access()
+    transport.scopes = ["https://www.googleapis.com/auth/gmail.modify"]
+    job = await _retrieve(service, jobs, [ACME_ASK])
+    assert job["ok"] is False and job["error_code"] == "scope_changed"
+    assert transport.calls.count("get_messages") == 0 and ledger.list_sources()["total"] == 0
+    with pytest.raises(GmailIntakeError) as exc:
+        await service.start_retrieval([ACME_ASK])
+    assert exc.value.code == "not_checked"
+
+
+async def test_associated_thread_without_usable_contacts_never_calls_list_threads(tmp_path: Path) -> None:
+    service, transport, ledger, jobs = _service(tmp_path)
+    await service.check_access()
+    row = _by_id(await _retrieve(service, jobs, [INTERNAL]))[INTERNAL]
+    await ledger.confirm_association(
+        row["source_id"], account="Acme", opportunity_slug="expansion", reason="Confirmed by SE",
+        resolve_identity=EchoWorkspace().resolve_identity,
+    )
+    before = transport.calls.count("list_threads")
+    with pytest.raises(GmailIntakeError) as exc:
+        await service.list_threads(participants=[], **WINDOW)
+    assert exc.value.code == "unbounded_discovery"
+    assert transport.calls.count("list_threads") == before
+    listed = await service.list_threads(participants=["acme.example"], **WINDOW)
+    assert listed["bound"] == {"named": ["acme.example"], "known_contacts": 0, "known_threads": 1}
+
+
 # ------------------------------------------------------------- routes
 
 
