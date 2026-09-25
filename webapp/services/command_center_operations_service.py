@@ -189,7 +189,10 @@ class CommandCenterOperationsService:
     @contextmanager
     def _exclusive(self) -> Iterator[None]:
         """Process-wide and cross-process lock; re-entrant so a commit can span several steps."""
-        with self._lock:
+        # Ledger guard first (ledger -> operations ordering everywhere): an import,
+        # access update or association change cannot land between the final
+        # source check and the promotion.
+        with self._ledger.guard(), self._lock:
             if self._lock_depth > 0:
                 self._lock_depth += 1
                 try:
@@ -1218,7 +1221,9 @@ class CommandCenterOperationsService:
             if key in seen:
                 continue
             seen.add(key)
-            attribution = verify_attribution(text, owner=recommendation.owner, due_date=recommendation.due_date)
+            attribution = verify_attribution(
+                text, owner=recommendation.owner, due_date=recommendation.due_date, commitment=recommendation.action,
+            )
             observations.append(Observation(
                 observation_key=key,
                 kind=kind,

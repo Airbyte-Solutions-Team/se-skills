@@ -113,20 +113,64 @@ def date_renderings(iso_date: str) -> set[str]:
     return {normalize_text(form) for form in forms}
 
 
-def verify_attribution(source_text: str, *, owner: str | None, due_date: str | None) -> Attribution:
-    """`source_verified` only when the owner text and the due date are literally present in the source.
+_COMMITMENT_STOPWORDS = frozenset({
+    "the", "and", "for", "with", "will", "our", "their", "them", "this", "that", "from", "into",
+    "about", "over", "before", "after", "should", "would", "could", "must", "need", "needs",
+    "customer", "airbyte", "team", "please",
+})
 
-    The model's owner/due fields are never taken as a customer commitment on their
-    own; anything the trusted layer cannot find in the revision stays model-only.
+
+def commitment_terms(commitment: str) -> set[str]:
+    """Content words of a commitment that a source passage must contain to attribute it."""
+    return {
+        token for token in normalize_text(commitment).split()
+        if len(token) >= 3 and token not in _COMMITMENT_STOPWORDS and not token.isdigit()
+    }
+
+
+def source_passages(source_text: str) -> list[str]:
+    """Attributable passages of a rendered note: one per non-heading line, split at sentence ends.
+
+    Heading/metadata lines (`# title`, `Occurred:`, `Attendees:`) are excluded so an
+    attendee list can never supply the owner of a commitment.
+    """
+    passages: list[str] = []
+    for raw in source_text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or line.startswith(("Occurred:", "Attendees:")):
+            continue
+        line = re.sub(r"^\[[^\]]{1,80}\]\s*", "", line)  # speaker label is not part of the passage
+        for sentence in re.split(r"(?<=[.!?;])\s+", line):
+            normalized = normalize_text(sentence)
+            if normalized:
+                passages.append(normalized)
+    return passages
+
+
+def verify_attribution(
+    source_text: str, *, owner: str | None, due_date: str | None, commitment: str | None = None
+) -> Attribution:
+    """`source_verified` only when one passage of the source carries the owner, the due date and the commitment.
+
+    The model's owner/due/action fields are never taken as a customer commitment on
+    their own: an attendee name somewhere plus a date mentioned for another matter
+    does not attribute a promise the note never made.
     """
     if not owner or not due_date:
         return "model_only"
-    haystack = f" {normalize_text(source_text)} "
-    if f" {normalize_text(owner)} " not in haystack:
+    owner_norm = f" {normalize_text(owner)} "
+    dates = {f" {form} " for form in date_renderings(due_date)}
+    terms = commitment_terms(commitment) if commitment is not None else set()
+    if commitment is not None and not terms:
         return "model_only"
-    if not any(f" {form} " in haystack for form in date_renderings(due_date)):
-        return "model_only"
-    return "source_verified"
+    for passage in source_passages(source_text):
+        haystack = f" {passage} "
+        if owner_norm not in haystack or not any(form in haystack for form in dates):
+            continue
+        words = set(passage.split())
+        if terms <= words:
+            return "source_verified"
+    return "model_only"
 
 
 class SourceRef(_Strict):

@@ -18,7 +18,7 @@ from services.command_center_operations_service import (
     CommandCenterOperationsService,
     evidence_id_for,
 )
-from services.evidence_ledger_service import EvidenceLedgerService
+from services.evidence_ledger_service import EvidenceLedgerError, EvidenceLedgerService
 from services.opportunity_state_executor import (
     CanonicalStateExecutionError,
     CanonicalStateExecutionResult,
@@ -862,4 +862,130 @@ async def test_model_authored_owner_and_date_absent_from_source_stay_proposed(tm
     assert plausible["party"] == "Customer" and plausible["owner"] == "Customer CTO"
     assert plausible["transitions"][0]["reason"] == "Owner or due date not found in the source text; review required"
     assert plausible["transitions"][0]["actor"] == "analysis"
+    h.assert_no_content()
+
+
+# ------------------------------------------------- review pass 2: commit atomicity, passage attribution
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", ["edit", "access_lost"])
+async def test_import_cannot_land_between_final_check_and_promotion(tmp_path, monkeypatch, mutation: str) -> None:
+    """An import that races the commit is serialized behind it: the checked revision is the promoted one."""
+    import threading
+
+    h, source_id = await _flow(tmp_path)
+    if mutation == "edit":
+        payload = fixture("note_synthetic_v2_edited.json")
+    else:
+        payload = fixture("note_synthetic_access_lost.json") | {"id": fixture("note_synthetic_v1.json")["id"]}
+    meeting = h.adapter.normalize(payload, connection_id="local-manual")
+    order: list[str] = []
+    importer = threading.Thread(target=lambda: (h.ledger.import_meetings([meeting]), order.append("import")))
+    real_write_pending = h.ops._write_pending
+    real_complete = h.ops._complete
+
+    def write_pending_then_race(pending):
+        real_write_pending(pending)  # final source check has passed; promotion has not happened yet
+        importer.start()
+        importer.join(timeout=0.3)
+        assert importer.is_alive(), "import must block until the commit finishes"
+
+    def complete(*args, **kwargs):
+        order.append("promoted")
+        return real_complete(*args, **kwargs)
+
+    monkeypatch.setattr(h.ops, "_write_pending", write_pending_then_race)
+    monkeypatch.setattr(h.ops, "_complete", complete)
+    job = await h.reconcile(source_id)
+    importer.join(timeout=5)
+    assert not importer.is_alive()
+    assert job["ok"] is True
+    assert order == ["promoted", "import"]
+    current = h.state.read_current(ACCOUNT, OPP)
+    assert current.revision == 2
+    assert [e.source_id for e in current.evidence_manifest if e.source_id.startswith(source_id)] == [f"{source_id}_r1"]
+    source = h.ledger.get_source(source_id)
+    assert source["latest_revision"] == 2
+    assert source["processing"]["processed_revision"] == 1
+    if mutation == "edit":
+        assert source["processing"]["status"] == "queued"  # the edit is queued, not silently absorbed
+    else:
+        assert source["availability"] == "access_lost"
+        with pytest.raises(EvidenceLedgerError):
+            h.ledger.read_content(source_id, revision=1)
+    assert len(h.actions()) == 2
+    assert not list((h.customers / ".command-center").rglob("pending.json"))
+    h.assert_no_content()
+
+
+def test_ledger_guard_serializes_imports_with_operations(tmp_path) -> None:
+    import threading
+
+    h = Harness(tmp_path)
+    started = threading.Event()
+    done: list[str] = []
+
+    def import_in_thread() -> None:
+        started.set()
+        h.import_note("note_synthetic_v1.json")
+        done.append("import")
+
+    with h.ops._exclusive():
+        worker = threading.Thread(target=import_in_thread)
+        worker.start()
+        started.wait(1)
+        worker.join(timeout=0.3)
+        assert worker.is_alive() and done == []
+        # Ledger reads/writes from the lock holder itself still work (re-entrant).
+        assert h.ledger.list_sources()["sources"] == []
+    worker.join(timeout=5)
+    assert done == ["import"]
+
+
+def test_attribution_requires_owner_date_and_commitment_in_one_passage() -> None:
+    note = "\n".join([
+        "# Synthetic call",
+        "Attendees: Customer CTO, Synthetic SE",
+        "",
+        "## Transcript",
+        "[Customer CTO] We are travelling October 1, 2026, so no meetings that week.",
+        "[Synthetic SE] Synthetic SE will send the architecture diagram by October 1, 2026.",
+    ])
+    # Owner (attendee list) and date (another matter) both appear in the note, but never
+    # with the commitment: this must not become a customer commitment.
+    assert verify_attribution(
+        note, owner="Customer CTO", due_date="2026-10-01", commitment="Customer CTO will sign the contract by October 1"
+    ) == "model_only"
+    assert verify_attribution(
+        note, owner="Synthetic SE", due_date="2026-10-01", commitment="Send architecture diagram"
+    ) == "source_verified"
+    # Same passage but the commitment's content words are not all there.
+    assert verify_attribution(
+        note, owner="Synthetic SE", due_date="2026-10-01", commitment="Send signed contract"
+    ) == "model_only"
+    # Owner in the passage, date only elsewhere in the note.
+    assert verify_attribution(
+        "[Synthetic SE] Synthetic SE will send the diagram.\n[x] Due October 1, 2026 for the other thing.",
+        owner="Synthetic SE", due_date="2026-10-01", commitment="Send diagram",
+    ) == "model_only"
+    # A commitment with no content words cannot be verified.
+    assert verify_attribution(note, owner="Synthetic SE", due_date="2026-10-01", commitment="the and") == "model_only"
+
+
+@pytest.mark.asyncio
+async def test_attendee_owner_and_unrelated_date_do_not_open_an_action(tmp_path) -> None:
+    h, source_id = await _flow(tmp_path)
+    h.set_recs(source_id, 1, lambda eid: [
+        # "Synthetic Buyer" is an attendee; "October 1, 2026" is in the note for the diagram, not a signature.
+        _recommendation(eid, key="sign", action="Customer to sign the contract", owner="Synthetic Buyer",
+                        due="2026-10-01"),
+        _recommendation(eid, key="send-arch", action="Send architecture diagram", owner="Airbyte SE",
+                        due="2026-10-01"),
+    ])
+    job = await h.reconcile(source_id)
+    assert job["ok"] is True
+    by_commitment = {a["commitment"]: a for a in h.actions()}
+    assert by_commitment["Customer to sign the contract"]["status"] == "proposed"
+    assert by_commitment["Send architecture diagram"]["status"] == "open"
     h.assert_no_content()

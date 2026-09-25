@@ -40,7 +40,7 @@ import re
 import stat
 import threading
 import uuid
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterable, Iterator
@@ -107,7 +107,8 @@ class EvidenceLedgerService:
         self.customers_dir = Path(customers_dir)
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._actor = actor
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._lock_depth = 0
         self._scope: ScopeIdentity | None = None
 
     # ----------------------------------------------------------------- scope
@@ -143,9 +144,25 @@ class EvidenceLedgerService:
 
     @contextmanager
     def _exclusive(self) -> Iterator[None]:
-        """In-process lock plus advisory cross-process lock on `<ledger>/.lock`."""
-        with self._lock, exclusive_file_lock(self._ledger_dir(create=True) / ".lock"):
-            yield
+        """In-process lock plus advisory cross-process lock on `<ledger>/.lock`; re-entrant."""
+        with self._lock:
+            if self._lock_depth > 0:
+                self._lock_depth += 1
+                try:
+                    yield
+                finally:
+                    self._lock_depth -= 1
+                return
+            with exclusive_file_lock(self._ledger_dir(create=True) / ".lock"):
+                self._lock_depth = 1
+                try:
+                    yield
+                finally:
+                    self._lock_depth = 0
+
+    def guard(self) -> AbstractContextManager[None]:
+        """Hold the ledger's write lock across a multi-step operation (e.g. check-then-promote)."""
+        return self._exclusive()
 
     def _scope_path(self) -> Path:
         return self._ledger_dir() / "scope.json"
