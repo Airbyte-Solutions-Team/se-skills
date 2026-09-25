@@ -2071,6 +2071,7 @@ a.live-btn { text-decoration: none; display: inline-flex; align-items: center; }
 .cc-m-help { margin: 4px 0 0; font-size: 12px; }
 .cc-m-revoke { border-bottom: 0; }
 .cc-source-meta { overflow-wrap: anywhere; }
+.cc-gm .cc-source-meta a, .cc-gm-main a { color: var(--accent); text-decoration: underline; }
 .cc-gm--ok { border-left-color: var(--accent2); }
 .cc-gm--warn { border-left-color: var(--warn, #d9a441); }
 .cc-gm--error { border-left-color: var(--danger, #d05353); }
