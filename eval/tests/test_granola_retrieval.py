@@ -744,7 +744,7 @@ def _live_check_module():
 
 
 def _live_check_args(module, *extra: str):
-    return module._args(["--date", "2026-09-24", "--marker", "my-chosen-note", *extra])
+    return module._args(["--date", "2026-09-24", "--marker", MARKER, *extra])
 
 
 @pytest.fixture(autouse=True)
@@ -755,11 +755,14 @@ def _fake_claude_json(tmp_path_factory, monkeypatch):
     return path
 
 
+MARKER = "Title-Word-" + SECRET  # a real title fragment: must never be printed
+
+
 def _live_check_transport(marked: int = 1) -> FakeGranolaRetrievalTransport:
     transport = FakeGranolaRetrievalTransport()
     rows = [_listed(_uuid(1), title="Other synthetic " + SECRET)]
     for n in range(marked):
-        rows.append(_listed(_uuid(10 + n), title=f"Solo my-chosen-note {n} " + SECRET))
+        rows.append(_listed(_uuid(10 + n), title=f"Solo {MARKER} {n}"))
     transport.listings["custom"] = rows
     _prime(transport, *[_uuid(10 + n) for n in range(marked)])
     return transport
@@ -783,6 +786,8 @@ def test_live_check_script_reads_top_level_job_fields_and_passes_on_imported_the
     printed = json.dumps(report)
     assert SECRET not in printed and "ws-synthetic" not in printed and _uuid(10) not in printed
     assert "Other synthetic" not in printed and "transcript text" not in printed
+    assert "Title-Word" not in printed and "marker" not in [k for k in report if k != "marker_given"]
+    assert report["marker_given"] is True
 
 
 def test_live_check_script_fails_verdict_on_old_claude_no_marker_or_unexpected_outcome() -> None:

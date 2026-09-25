@@ -224,7 +224,7 @@ async def run(
     day = date.fromisoformat(args.date) if args.date else None
     scratch = Path(tempfile.mkdtemp(prefix="se-granola-live-check-"))
     report: dict[str, Any] = {
-        "marker": args.marker,
+        "marker_given": bool(args.marker),
         "date": day.isoformat() if day else None,
         "trusted_project_count": len(trusted_projects(args)),
         "steps": {},
