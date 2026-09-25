@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -107,6 +110,80 @@ def _event(kind: str, block: dict) -> str:
 
 def _definition(_name: str) -> dict[str, str]:
     return {"type": "http", "url": "https://mcp.granola.ai/mcp"}
+
+
+_FAKE_CLAUDE = r'''
+import json, os, sys, time
+args = sys.argv[1:]
+sys.stdin.read()
+if "--sleep" in os.environ.get("FAKE_CLAUDE_MODE", ""):
+    time.sleep(8)
+mcp_config = args[args.index("--mcp-config") + 1]
+allowed = args[args.index("--allowedTools") + 1]
+def ev(kind, block):
+    return json.dumps({"type": kind, "message": {"role": kind, "content": [block]}})
+payload = {"workspace": {"id": "ws-fake-exec", "display_name": "Fake"}, "seen": {
+    "mcp_config": mcp_config, "cwd": os.getcwd(), "config_exists": os.path.exists(mcp_config),
+    "config": json.load(open(mcp_config, encoding="utf-8")), "tools_flag": args[args.index("--tools") + 1],
+    "strict": "--strict-mcp-config" in args, "permission_prompts": args[args.index("--permission-prompts") + 1]}}
+print(ev("assistant", {"type": "text", "text": "calling"}))
+print(ev("assistant", {"type": "tool_use", "id": "t1", "name": allowed, "input": {}}))
+print(ev("user", {"type": "tool_result", "tool_use_id": "t1", "content": json.dumps(payload)}))
+print(ev("assistant", {"type": "text", "text": "done"}))
+'''
+
+
+def _fake_claude(tmp_path: Path) -> Path:
+    """A stand-in `claude` on PATH-style: `claude.cmd` (npm-shim shape) on Windows, a sh script elsewhere."""
+    script = tmp_path / "fake_claude.py"
+    script.write_text(_FAKE_CLAUDE, encoding="utf-8")
+    if os.name == "nt":
+        shim = tmp_path / "claude.cmd"
+        shim.write_text(f'@echo off\r\n"{sys.executable}" "{script}" %*\r\n', encoding="utf-8")
+    else:
+        shim = tmp_path / "claude"
+        shim.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n', encoding="utf-8")
+        shim.chmod(0o700)
+    return shim
+
+
+def test_relay_launches_real_subprocess_and_cleans_up(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("FAKE_CLAUDE_MODE", raising=False)
+    shim = _fake_claude(tmp_path)
+    relay = ClaudeCodeMcpRelay(
+        model="synthetic-model", forbidden_roots=[Path.cwd()], executable=str(shim), server_definition=_definition
+    )
+    result = asyncio.run(relay.call("get_account_info", {}))
+    seen = result["seen"]
+    assert result["workspace"]["id"] == "ws-fake-exec"
+    assert seen["config_exists"] is True and seen["strict"] is True
+    assert seen["config"] == {"mcpServers": {"granola": {"type": "http", "url": "https://mcp.granola.ai/mcp"}}}
+    assert seen["tools_flag"] == "" and seen["permission_prompts"] == "none"
+    config_path = Path(seen["mcp_config"])
+    assert config_path.name == "mcp.json" and not config_path.exists() and not config_path.parent.exists()
+    assert Path(seen["cwd"]).resolve() == config_path.parent.resolve()
+
+
+def test_relay_times_out_and_terminates_subprocess_portably(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", "--sleep")
+    shim = _fake_claude(tmp_path)
+    relay = ClaudeCodeMcpRelay(
+        model="synthetic-model", forbidden_roots=[], executable=str(shim), server_definition=_definition, timeout_seconds=1.0
+    )
+    started = time.monotonic()
+    with pytest.raises(GranolaRelayError) as exc:
+        asyncio.run(relay.call("get_account_info", {}))
+    assert exc.value.code == "relay_timeout" and exc.value.retryable
+    assert time.monotonic() - started < 15
+
+
+def test_relay_reports_runtime_unavailable_when_executable_is_missing(tmp_path: Path) -> None:
+    relay = ClaudeCodeMcpRelay(
+        model="synthetic-model", forbidden_roots=[], executable=str(tmp_path / "missing-claude"), server_definition=_definition
+    )
+    with pytest.raises(GranolaRelayError) as exc:
+        asyncio.run(relay.call("get_account_info", {}))
+    assert exc.value.code == "runtime_unavailable"
 
 
 def test_relay_command_restricts_tools_before_execution() -> None:

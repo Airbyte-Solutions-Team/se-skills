@@ -55,6 +55,7 @@ import asyncio
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -350,16 +351,30 @@ class ClaudeCodeMcpRelay:
             chunks.append(chunk)
 
     @staticmethod
+    def spawn_kwargs() -> dict[str, Any]:
+        """Detach the CLI from the app's terminal/session on each platform.
+
+        `start_new_session` is POSIX-only; Windows gets its own process group so
+        console signals aimed at the app never reach the relay and vice versa.
+        """
+        if os.name == "nt":
+            return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW}
+        return {"start_new_session": True}
+
+    @staticmethod
     async def _terminate(proc: asyncio.subprocess.Process) -> None:
+        # terminate() is SIGTERM on POSIX and TerminateProcess on Windows;
+        # kill() is the hard fallback on both. Every step tolerates an
+        # already-exited child.
         if proc.returncode is not None:
             return
         try:
             proc.terminate()
             await asyncio.wait_for(proc.wait(), timeout=2.0)
-        except (ProcessLookupError, TimeoutError):
+        except (ProcessLookupError, OSError, TimeoutError):
             try:
                 proc.kill()
-            except ProcessLookupError:
+            except (ProcessLookupError, OSError):
                 pass
             try:
                 await asyncio.wait_for(proc.wait(), timeout=2.0)
@@ -383,9 +398,9 @@ class ClaudeCodeMcpRelay:
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                    start_new_session=True,
+                    **self.spawn_kwargs(),
                 )
-            except (FileNotFoundError, PermissionError) as exc:
+            except (FileNotFoundError, PermissionError, NotADirectoryError) as exc:
                 raise GranolaRelayError("runtime_unavailable", retryable=False) from exc
             assert proc.stdin is not None and proc.stdout is not None and proc.stderr is not None
             proc.stdin.write(self.prompt(tool, arguments).encode("utf-8"))
