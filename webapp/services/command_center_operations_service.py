@@ -932,18 +932,26 @@ class CommandCenterOperationsService:
             entry.source_type == EvidenceSourceType.TRANSCRIPT and entry.source_id.startswith(prefix)
             for entry in version.evidence_manifest
         ) for version in history):
-            if len(history) == 1 and current.revision == 1 and all(
+            source_only = all(
                 entry.source_type == EvidenceSourceType.OPPORTUNITY_METADATA
                 or (entry.source_type == EvidenceSourceType.TRANSCRIPT and entry.source_id.startswith(prefix))
                 for entry in current.evidence_manifest
-            ) and not any(
+            )
+            human_touched = any(
                 action.human_touched for action in self._opportunity_actions(account, opp_slug)
                 if action.origin.source_id == source_id
-            ):
+            )
+            if len(history) == 1 and current.revision == 1 and source_only and not human_touched:
                 return current
+            detail = (
+                "This Overview has later revisions; correct its history manually before changing the meeting association."
+                if len(history) > 1 else
+                "An Action from this meeting has human edits; its association cannot be changed automatically."
+                if human_touched else
+                "This Overview includes evidence from another source; its association cannot be changed automatically."
+            )
             raise CommandCenterOperationsError(
-                409, "This meeting created the first Overview; its association cannot be changed while every "
-                "Overview revision cites it. The association and derived Actions were left unchanged.",
+                409, f"{detail} The association and derived Actions were left unchanged.",
                 code="overview_unrecoverable",
             )
         return None

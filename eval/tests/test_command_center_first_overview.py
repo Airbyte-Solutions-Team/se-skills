@@ -339,6 +339,7 @@ async def test_later_mixed_revision_and_human_action_edit_block_first_overview_c
         with pytest.raises(CommandCenterOperationsError) as error:
             await h.confirm(source_id, ACCOUNT, OPP2)
         assert error.value.code == "overview_unrecoverable"
+        assert ("human edits" if mutate == "action" else "later revisions") in error.value.detail
         assert h.ledger.get_source(source_id)["association"] == before
         assert h.state.inspect_current(ACCOUNT, OPP)["status"] == "current"
         assert h.state.retirement_info(ACCOUNT, OPP) is None
