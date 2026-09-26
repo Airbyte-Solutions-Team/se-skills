@@ -597,9 +597,22 @@ class CommandCenterReadService:
             if a.origin.source_id == source_id or any(ref.source_id == source_id for ref in a.evidence)
         ]
         processing = source["processing"]
+        active = self._ops._running_job_for_source(source_id)
+        pending = self._ops._read_pending(source_id)
+        can_start_processing = (
+            processing["status"] in ("queued", "failed")
+            or (processing["status"] == "processing" and active is None)
+            or (pending is not None and active is None)
+        )
         can_reconcile = (
             assoc["state"] == "associated" and overview_base is not None and overview_base["status"] == "current"
-            and processing["status"] in ("queued", "failed", "processed")
+            and can_start_processing
+            and source["availability"] == "content_available"
+        )
+        can_create_first = (
+            assoc["state"] == "associated" and overview_base is not None
+            and overview_base["status"] == "not_created"
+            and can_start_processing
             and source["availability"] == "content_available"
         )
         return {
@@ -607,12 +620,15 @@ class CommandCenterReadService:
             "overview_base": overview_base,
             "runs": runs,
             "derived_actions": derived,
+            "active_reconciliation_job_id": active[0] if active else None,
+            "pending_action_application": pending is not None,
             "candidates": self.local_opportunities(),
             "capabilities": {
                 "confirm_association": True,
                 "clear_association": assoc["state"] == "associated",
                 "retry": processing["status"] == "failed" and bool(processing.get("retry_eligible")),
                 "reconcile": can_reconcile,
+                "create_first_overview": can_create_first,
                 "reconcile_blocked_reason": None if can_reconcile else self._reconcile_blocker(source, overview_base),
             },
         }
@@ -624,7 +640,7 @@ class CommandCenterReadService:
         if source["availability"] != "content_available":
             return f"Source content is {source['availability']}; nothing can be analysed."
         if base is None or base["status"] != "current":
-            return "This opportunity has no current Overview yet; create one from the Opportunity page first."
+            return "This opportunity has no current Overview. Create its first Overview from this meeting."
         if source["processing"]["status"] == "processing":
             return "A reconciliation is already running for this source."
         return "The source is not in a state that can be reconciled."

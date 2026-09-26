@@ -596,6 +596,11 @@ class CommandCenterOperationsService:
         # lock the reconcile commit takes, so a correction cannot race a promotion.
         with self._exclusive():
             before = self._ledger.get_source(source_id)["association"]
+            if before["state"] == "associated" and (
+                before["account"] != identity["safe_account"]
+                or before["opportunity_slug"] != identity["safe_opp"]
+            ):
+                self._assert_revert_possible(source_id, before["account"], before["opportunity_slug"])
             summary = await self._ledger.confirm_association(
                 source_id,
                 account=account,
@@ -621,6 +626,8 @@ class CommandCenterOperationsService:
     def clear_association(self, source_id: str, *, reason: str) -> dict[str, Any]:
         with self._exclusive():
             before = self._ledger.get_source(source_id)["association"]
+            if before["state"] == "associated":
+                self._assert_revert_possible(source_id, before["account"], before["opportunity_slug"])
             summary = self._ledger.clear_association(source_id, reason=reason)
             summary.update(self._empty_correction())
             if before["state"] == "associated":
@@ -809,6 +816,29 @@ class CommandCenterOperationsService:
             "sources_to_reprocess": reprocess,
         }
 
+    def _assert_revert_possible(self, source_id: str, account: str, opp_slug: str) -> None:
+        """Reject a correction before ledger writes when no clean immutable base exists."""
+        prefix = f"{source_id}_r"
+        try:
+            current = self._state_service.read_current(account, opp_slug)
+            if current is None or not any(
+                entry.source_type == EvidenceSourceType.TRANSCRIPT and entry.source_id.startswith(prefix)
+                for entry in current.evidence_manifest
+            ):
+                return
+            history = self._state_service.read_history(account, opp_slug)
+        except OpportunityStateError as exc:
+            raise CommandCenterOperationsError(exc.status_code, exc.detail, code=exc.code) from exc
+        if all(any(
+            entry.source_type == EvidenceSourceType.TRANSCRIPT and entry.source_id.startswith(prefix)
+            for entry in version.evidence_manifest
+        ) for version in history):
+            raise CommandCenterOperationsError(
+                409, "This meeting created the first Overview; its association cannot be changed while every "
+                "Overview revision cites it. The association and derived Actions were left unchanged.",
+                code="overview_unrecoverable",
+            )
+
     # ------------------------------------------------------- reconciliation
 
     async def _identity(self, account: str, opportunity_slug: str) -> dict[str, Any]:
@@ -862,7 +892,7 @@ class CommandCenterOperationsService:
         current: OpportunityStateVersion, pending: PendingApplication
     ) -> bool:
         """True when `current` is the revision a previous attempt promoted for `pending` but never applied."""
-        if current.parent_version_id != pending.base_version_id:
+        if current.parent_version_id != pending.base_version_id or current.parent_revision != pending.base_revision:
             return False
         return any(
             entry.source_type == EvidenceSourceType.TRANSCRIPT
@@ -932,6 +962,60 @@ class CommandCenterOperationsService:
                 source_id, account, opp_slug, identity, source["latest_revision"], base_version_id, base_revision, None,
             )
 
+    async def start_first_overview(
+        self, source_id: str, *, account: str, opp_slug: str,
+        revision: int, association_sequence: int,
+    ) -> dict[str, Any]:
+        """Create revision one from the confirmed ledger snapshot, then apply its Actions."""
+        async with self._start_lock:
+            try:
+                source = self._ledger.get_source(source_id)
+            except EvidenceLedgerError as exc:
+                raise CommandCenterOperationsError(exc.status_code, exc.detail, code=exc.code) from exc
+            association = source["association"]
+            if (association["state"] != "associated" or association["account"] != account
+                    or association["opportunity_slug"] != opp_slug
+                    or association["sequence"] != association_sequence):
+                raise CommandCenterOperationsError(409, "The meeting association changed; reload Source review.", code="association_changed")
+            if source["latest_revision"] != revision:
+                raise CommandCenterOperationsError(409, "The meeting was edited; reload Source review.", code="revision_superseded")
+            identity = await self._identity(account, opp_slug)
+            if identity["safe_account"] != account or identity["safe_opp"] != opp_slug:
+                raise CommandCenterOperationsError(409, "Association does not match this workspace.", code="scope_mismatch")
+            running = self._running_job_for_source(source_id)
+            if running is not None:
+                return {"job_id": running[0], "reused": True, "source_id": source_id}
+            try:
+                current = self._state_service.read_current(account, opp_slug)
+            except OpportunityStateError as exc:
+                raise CommandCenterOperationsError(exc.status_code, exc.detail, code=exc.code) from exc
+            pending = self._read_pending(source_id)
+            if current is not None and pending is not None and pending.base_version_id is None \
+                    and pending.account == account and pending.opportunity_slug == opp_slug \
+                    and pending.revision == revision and pending.association_sequence == association_sequence \
+                    and self._promoted_version_for(current, pending):
+                return await self._launch(source_id, account, opp_slug, identity, revision, None, None, pending)
+            if current is not None:
+                raise CommandCenterOperationsError(409, "An Overview now exists; reload and reconcile this meeting.", code="overview_exists")
+            if self._job_service.active_opportunity_state_job(account=account, opp_slug=opp_slug) is not None:
+                raise CommandCenterOperationsError(409, "Overview work is already running for this opportunity.", code="create_in_progress")
+            if pending is not None:
+                self._remove_pending(source_id)
+            processing = source["processing"]
+            if processing["status"] == "processed" and processing["processed_revision"] == revision:
+                raise CommandCenterOperationsError(409, "This meeting was already processed.", code="already_processed")
+            if processing["status"] == "processing":
+                self._ledger.mark_failed(source_id, error_code="interrupted", retry_eligible=True)
+                self._record_terminal_run(source, account, opp_slug, None, None,
+                                          status="interrupted", error_code="interrupted", started_at=self._now())
+            try:
+                self._ledger.retry(source_id)
+                self._ledger.mark_processing(source_id)
+            except EvidenceLedgerError as exc:
+                raise CommandCenterOperationsError(exc.status_code, exc.detail, code=exc.code) from exc
+            return await self._launch(source_id, account, opp_slug, identity, revision, None, None, None,
+                                      association_sequence=association_sequence)
+
     def _resume_plan(
         self,
         pending: PendingApplication,
@@ -943,7 +1027,10 @@ class CommandCenterOperationsService:
         base_revision: int,
     ) -> PendingApplication | None:
         """Decide whether a pending marker resumes (promoted, unapplied) or is discarded (never promoted)."""
-        if pending.account != account or pending.opportunity_slug != opp_slug or pending.revision != source["latest_revision"]:
+        if (pending.account != account or pending.opportunity_slug != opp_slug
+                or pending.revision != source["latest_revision"]
+                or (pending.association_sequence is not None
+                    and pending.association_sequence != source["association"]["sequence"])):
             # The source moved or was edited after the marker was written; the
             # promotion, if any, is handled by the association correction path.
             self._remove_pending(pending.source_id)
@@ -963,7 +1050,10 @@ class CommandCenterOperationsService:
             raise CommandCenterOperationsError(
                 409, "The overview changed since this base was read; reload and retry.", code="stale_base"
             )
-        if source["processing"]["status"] != "processing":
+        if source["processing"]["status"] != "processing" and not (
+            source["processing"]["status"] == "processed"
+            and source["processing"]["processed_revision"] == pending.revision
+        ):
             try:
                 self._ledger.retry(pending.source_id)
                 self._ledger.mark_processing(pending.source_id)
@@ -978,9 +1068,10 @@ class CommandCenterOperationsService:
         opp_slug: str,
         identity: dict[str, Any],
         revision: int,
-        base_version_id: str,
-        base_revision: int,
+        base_version_id: str | None,
+        base_revision: int | None,
         resume: PendingApplication | None,
+        association_sequence: int | None = None,
     ) -> dict[str, Any]:
         async def runner(_job_id: str) -> dict[str, Any]:
             if resume is not None:
@@ -988,6 +1079,7 @@ class CommandCenterOperationsService:
             return await self._reconcile(
                 source_id, revision=revision, account=account, opp_slug=opp_slug,
                 identity=identity, base_version_id=base_version_id, base_revision=base_revision,
+                association_sequence=association_sequence,
             )
 
         job_id, persist_warn = await self._job_service.launch_managed(
@@ -1012,8 +1104,8 @@ class CommandCenterOperationsService:
         source: dict[str, Any],
         account: str,
         opp_slug: str,
-        base_version_id: str,
-        base_revision: int,
+        base_version_id: str | None,
+        base_revision: int | None,
         *,
         status: str,
         error_code: str | None,
@@ -1045,6 +1137,12 @@ class CommandCenterOperationsService:
             snapshot = self._ledger.read_content(source_id, revision=revision)
         except EvidenceLedgerError as exc:
             raise ManagedJobError(exc.code, exc.detail) from exc
+        fields = snapshot.get("content") or {}
+        if not any(isinstance(fields.get(key), str) and fields[key].strip() for key in (
+            "body_text", "summary_markdown", "summary_text", "private_notes_markdown", "private_notes_text"
+        )) and not any(isinstance(segment, dict) and str(segment.get("text", "")).strip()
+                       for segment in fields.get("transcript") or []):
+            raise ManagedJobError("content_unusable", "This meeting has no summary, notes, or transcript to analyse.")
         content = render_snapshot_text(snapshot)
         if len(content) > _MAX_EVIDENCE_BYTES or len(content.strip()) == 0:
             raise ManagedJobError("content_unusable", "Revision content is empty or exceeds the analysis bound.")
@@ -1059,7 +1157,8 @@ class CommandCenterOperationsService:
 
     @staticmethod
     def _check_source_unchanged(
-        source: dict[str, Any], *, revision: int, account: str, opp_slug: str, when: str
+        source: dict[str, Any], *, revision: int, account: str, opp_slug: str, when: str,
+        association_sequence: int | None = None,
     ) -> None:
         """Revision, association, and access must all be exactly as they were when the run was authorized."""
         if source["availability"] in WITHHOLD_CONTENT_AVAILABILITY or source["latest"]["availability"] != "content_available":
@@ -1068,7 +1167,8 @@ class CommandCenterOperationsService:
             raise ManagedJobError("revision_superseded", f"The note was edited {when}; process the new revision.")
         association = source["association"]
         if association["state"] != "associated" or association["account"] != account \
-                or association["opportunity_slug"] != opp_slug:
+                or association["opportunity_slug"] != opp_slug \
+                or (association_sequence is not None and association["sequence"] != association_sequence):
             raise ManagedJobError("association_changed", f"The association changed {when}; no state was saved.")
 
     async def _reconcile(
@@ -1079,21 +1179,32 @@ class CommandCenterOperationsService:
         account: str,
         opp_slug: str,
         identity: dict[str, Any],
-        base_version_id: str,
-        base_revision: int,
+        base_version_id: str | None,
+        base_revision: int | None,
+        association_sequence: int | None = None,
     ) -> dict[str, Any]:
         started = self._now()
         source = self._ledger.get_source(source_id)
         try:
-            self._check_source_unchanged(source, revision=revision, account=account, opp_slug=opp_slug, when="before analysis")
+            self._check_source_unchanged(source, revision=revision, account=account, opp_slug=opp_slug,
+                                         when="before analysis", association_sequence=association_sequence)
             observed_at = datetime.fromisoformat(source["latest"]["observed_at"])
             evidence = self._evidence(source_id, revision, observed_at)
 
-            current = self._current_or_error(account, opp_slug)
-            if current.version_id != base_version_id or current.revision != base_revision:
-                raise ManagedJobError("stale_base", "The overview changed since this base was read; reload and retry.")
-            metadata = OpportunityStateUpdateService._metadata_entry(identity["opportunity"])
-            manifest = OpportunityStateUpdateService._cumulative_manifest(current, metadata, [evidence])
+            if base_version_id is None:
+                try:
+                    current = self._state_service.read_current(account, opp_slug)
+                except OpportunityStateError as exc:
+                    raise ManagedJobError(exc.code, exc.detail) from exc
+                if current is not None:
+                    raise ManagedJobError("overview_exists", "An Overview now exists; reload and reconcile this meeting.")
+                manifest = OpportunityStateCreateService._manifest(identity["opportunity"], [evidence])
+            else:
+                current = self._current_or_error(account, opp_slug)
+                if current.version_id != base_version_id or current.revision != base_revision:
+                    raise ManagedJobError("stale_base", "The overview changed since this base was read; reload and retry.")
+                metadata = OpportunityStateUpdateService._metadata_entry(identity["opportunity"])
+                manifest = OpportunityStateUpdateService._cumulative_manifest(current, metadata, [evidence])
             manifest_hash = evidence_manifest_hash(manifest)
             try:
                 result = await self._executor.execute(CanonicalStateExecutionRequest(
@@ -1103,9 +1214,9 @@ class CommandCenterOperationsService:
                     opportunity_metadata=OpportunityStateCreateService._metadata_payload(identity["opportunity"]),
                     metadata_source_id=METADATA_SOURCE_ID,
                     transcripts=[evidence],
-                    base_state=current.state,
-                    base_version_id=current.version_id,
-                    base_revision=current.revision,
+                    base_state=current.state if current is not None else None,
+                    base_version_id=current.version_id if current is not None else None,
+                    base_revision=current.revision if current is not None else None,
                 ))
             except CanonicalStateExecutionError as exc:
                 raise ManagedJobError(exc.code, "Analysis failed; the accepted overview is unchanged.") from exc
@@ -1115,28 +1226,33 @@ class CommandCenterOperationsService:
                 validate_candidate_evidence(result.candidate, manifest)
             except (ValidationError, ValueError) as exc:
                 raise ManagedJobError("invalid_candidate", "Analysis output failed validation; no state was saved.") from exc
+            if base_version_id is None:
+                refreshed = await self._identity(account, opp_slug)
+                if OpportunityStateCreateService._metadata_bytes(refreshed["opportunity"]) != \
+                        OpportunityStateCreateService._metadata_bytes(identity["opportunity"]):
+                    raise ManagedJobError("evidence_changed", "Opportunity metadata changed during analysis; retry.")
 
             # Commit barrier: the source is re-validated and the overview promoted
             # under the same lock association corrections take, so nothing that
             # changed during analysis can be promoted and no correction can race.
             with self._exclusive():
                 source = self._ledger.get_source(source_id)
-                self._check_source_unchanged(source, revision=revision, account=account, opp_slug=opp_slug, when="during analysis")
+                self._check_source_unchanged(source, revision=revision, account=account, opp_slug=opp_slug,
+                                             when="during analysis", association_sequence=association_sequence)
                 pending = PendingApplication(
                     workspace_id=self._workspace_id(), source_id=source_id, revision=revision,
                     account=account, opportunity_slug=opp_slug,
                     base_version_id=base_version_id, base_revision=base_revision,
                     evidence_id=evidence.evidence_id, evidence_sha256=evidence.sha256,
                     observed_at=observed_at, started_at=started,
+                    association_sequence=association_sequence,
                 )
                 self._write_pending(pending)
                 try:
-                    version = self._state_service.promote_update(
+                    promotion = dict(
                         identity=OpportunityIdentity(
                             account=account, opportunity_slug=opp_slug, opportunity_name=identity["opportunity"]["name"],
                         ),
-                        expected_parent_version_id=base_version_id,
-                        expected_parent_revision=base_revision,
                         evidence_manifest=manifest,
                         expected_manifest_hash=manifest_hash,
                         provenance=GenerationProvenance(
@@ -1145,6 +1261,14 @@ class CommandCenterOperationsService:
                         ),
                         candidate=result.candidate,
                     )
+                    if base_version_id is None:
+                        version = self._state_service.promote_create(**promotion)
+                    else:
+                        version = self._state_service.promote_update(
+                            expected_parent_version_id=base_version_id,
+                            expected_parent_revision=base_revision,
+                            **promotion,
+                        )
                 except OpportunityStateError as exc:
                     self._remove_pending(source_id)
                     raise ManagedJobError(exc.code, exc.detail) from exc
@@ -1177,7 +1301,12 @@ class CommandCenterOperationsService:
                 observations, account=pending.account, opp_slug=pending.opportunity_slug,
                 version=version, source_ref=source_ref, occurred_at=pending.observed_at,
             )
-            processed = self._ledger.mark_processed(pending.source_id, revision=pending.revision)
+            latest = self._ledger.get_source(pending.source_id)
+            if latest["processing"]["status"] == "processed" and \
+                    latest["processing"]["processed_revision"] == pending.revision:
+                processed = {"outcome": "processed"}
+            else:
+                processed = self._ledger.mark_processed(pending.source_id, revision=pending.revision)
             run = self._record_terminal_run(
                 source, pending.account, pending.opportunity_slug, pending.base_version_id, pending.base_revision,
                 status="succeeded", error_code=None, started_at=pending.started_at,
@@ -1215,6 +1344,11 @@ class CommandCenterOperationsService:
         """Finish a promoted-but-unapplied run from the promoted version alone; the model is not rerun."""
         with self._exclusive():
             source = self._ledger.get_source(pending.source_id)
+            self._check_source_unchanged(
+                source, revision=pending.revision, account=pending.account,
+                opp_slug=pending.opportunity_slug, when="before resuming",
+                association_sequence=pending.association_sequence,
+            )
             current = self._current_or_error(pending.account, pending.opportunity_slug)
             if not self._promoted_version_for(current, pending):
                 self._remove_pending(pending.source_id)
@@ -1227,8 +1361,8 @@ class CommandCenterOperationsService:
             return self._complete(pending, current, source, source_text, resumed=True)
 
     def _fail(
-        self, source: dict[str, Any], account: str, opp_slug: str, base_version_id: str,
-        base_revision: int, code: str, started: datetime,
+        self, source: dict[str, Any], account: str, opp_slug: str, base_version_id: str | None,
+        base_revision: int | None, code: str, started: datetime,
     ) -> None:
         try:
             self._ledger.mark_failed(source["source_id"], error_code=code[:80], retry_eligible=True)
