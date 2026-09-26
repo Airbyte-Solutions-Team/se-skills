@@ -6,10 +6,11 @@ inline handlers, and dangerous URL schemes are stripped while ordinary skill
 output still renders correctly.
 """
 
+import re
+
 import pytest
 
 from webapp.md_render import markdown_to_body_html
-
 
 NORMAL_MARKDOWN = """# Executive summary
 
@@ -73,9 +74,19 @@ def _render(md: str) -> str:
             id="object",
         ),
         pytest.param(
-            '<img src="data:image/svg+xml,<script>alert(1)</script>">',
-            {"data:image", "<script", "alert(1)"},
+            '<img src="data:image/svg+xml;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==" alt="x">',
+            {"data:", "base64", "PHNjcmlwdD"},
             id="data_uri_image",
+        ),
+        pytest.param(
+            "![x](data:image/svg+xml;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==)",
+            {"data:", "base64", "PHNjcmlwdD"},
+            id="data_uri_markdown_image",
+        ),
+        pytest.param(
+            '<img src="data:image/svg+xml,<script>alert(1)</script>">',
+            {"<script", "alert(1)"},
+            id="malformed_data_uri_image_with_nested_script",
         ),
         pytest.param(
             '<a href="#" style="background:url(javascript:alert(1))">x</a>',
@@ -94,6 +105,23 @@ def test_unsafe_markup_is_sanitized(md: str, forbidden: set[str]) -> None:
     html = _render(md)
     for fragment in forbidden:
         assert fragment not in html, f"forbidden fragment {fragment!r} found in {html!r}"
+
+
+def test_malformed_raw_html_never_yields_an_element() -> None:
+    """Raw HTML the Markdown parser refuses is inert text, not a tag or attribute.
+
+    python-markdown 3.11 stopped treating a tag whose attribute contains `<` as raw
+    HTML and escapes it as text instead; older versions fed it to the sanitizer,
+    which stripped the `src`. Both outcomes are safe, and neither may leave an
+    element, attribute, or handler behind.
+    """
+    html = _render('<img src="data:image/svg+xml,<script>alert(1)</script>">')
+    tags = re.findall(r"<([a-zA-Z][^\s>/]*)([^>]*)>", html)
+    assert {name.lower() for name, _ in tags} <= {"p", "img"}, html
+    for name, attrs in tags:
+        if name.lower() == "img":
+            assert "src" not in attrs.lower() and "on" not in attrs.lower(), html
+    assert "<script" not in html and "alert(1)" not in html
 
 
 def test_normal_markdown_renders() -> None:

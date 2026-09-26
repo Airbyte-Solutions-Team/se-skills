@@ -12,7 +12,7 @@ dev = [
     "pydantic>=2.0",
     "fastapi>=0.100",
     "markdown>=3.5",
-    "nh3>=0.2.18",
+    "nh3>=0.2.22",
     "keyring>=25.0",
     "httpx>=0.28.1",
     "reportlab>=4.0",
@@ -47,7 +47,7 @@ hosted = [
     # `md_render` (markdown + nh3 sanitizer); hosted PDF export renders in-process
     # with reportlab instead of the local headless-Chrome pipeline.
     "markdown>=3.5",
-    "nh3>=0.2.18",
+    "nh3>=0.2.22",
     "reportlab>=4.0",
 ]
 

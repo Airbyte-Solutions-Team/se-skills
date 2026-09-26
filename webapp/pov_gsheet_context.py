@@ -596,6 +596,11 @@ def _find_connectors(text: str) -> list[tuple[str, str | None]]:
     return deduped
 
 
+def _newest_first_key(path: Path) -> tuple[int, str]:
+    """Newest mtime first; equal timestamps fall back to path order so results are stable."""
+    return (-path.stat().st_mtime_ns, str(path))
+
+
 # ---------------------------------------------------------------------------
 # Prior output extraction
 # ---------------------------------------------------------------------------
@@ -612,7 +617,7 @@ def _prior_output_paths(customers_dir: Path, account: str, opp: str | None) -> l
                 continue
             for md in sorted(skill_dir.glob("*.md")):
                 paths.append(md)
-    return sorted(paths, key=lambda p: p.stat().st_mtime, reverse=True)
+    return sorted(paths, key=_newest_first_key)
 
 
 def _parse_md_file(path: Path) -> output_schema.OutputMetadata | None:
@@ -883,7 +888,7 @@ def _read_transcripts(transcripts_dir: Path, account: str) -> tuple[list[str], l
     # Files like Acme-07.01.26.txt
     prefix = re.sub(r"[^A-Za-z0-9]+", "-", account).strip("-")
     files = [f for f in transcripts_dir.iterdir() if f.is_file() and f.name.lower().startswith(prefix.lower())]
-    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    files.sort(key=_newest_first_key)
 
     if not files:
         return [], [SourceCoverageEntry(source="workspace transcripts", available=False, note=f"no {prefix}-* files in {transcripts_dir}")]
