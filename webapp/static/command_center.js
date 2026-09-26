@@ -1022,7 +1022,20 @@ async function ccPageSourceReview(sourceId) {
   const body = ccShell("sources", "Source review", "Association, processing state, runs, and derived actions for one source.", ccLoading());
   let r;
   try { r = await api(`/api/command-center/sources/${encodeURIComponent(sourceId)}/review`); }
-  catch (e) { body.innerHTML = ccError(e, `${CC_BASE}/sources/${sourceId}`); return; }
+  catch (e) {
+    try {
+      const receipt = await api(`/api/command-center/sources/${encodeURIComponent(sourceId)}/forget`);
+      body.innerHTML = `<p><a href="${CC_BASE}/sources">‹ Sources</a></p>
+        <h2>Gmail message forgotten</h2><p>Receipt ${esc(receipt.source_id)} · ${ccBadge(receipt.status)}.</p>
+        ${receipt.overview_status === "withheld" ? '<p class="cc-danger" role="status">Overview remains withheld pending manual review. Later edits are preserved on disk.</p>' : ''}
+        ${receipt.status === "pending" ? '<p>Cleanup was interrupted. Retry it to remove the remaining local copies.</p><button class="primary small" id="cc-forget-retry" type="button">Resume cleanup</button>' : ''}`;
+      body.querySelector("#cc-forget-retry")?.addEventListener("click", async () => {
+        await ccMutate(api(`/api/command-center/sources/${encodeURIComponent(sourceId)}/forget`, { method: "POST" }), "Message cleanup finished; check Overview status");
+        ccPageSourceReview(sourceId);
+      });
+    } catch (_) { body.innerHTML = ccError(e, `${CC_BASE}/sources/${sourceId}`); }
+    return;
+  }
   const s = r.source;
   const assoc = s.association;
   const caps = r.capabilities;
@@ -1070,7 +1083,10 @@ async function ccPageSourceReview(sourceId) {
     ${r.derived_actions.length ? `<ul class="cc-actions">${r.derived_actions.map((a) => ccActionRow(a)).join("")}</ul>` : `<p class="muted">None.</p>`}
 
     <h2 class="cc-h2">Association history</h2>
-    <ol class="cc-transitions">${s.association_history.map((h) => `<li><span class="muted">${ccWhen(h.recorded_at)}</span> ${ccBadge(h.state)} ${h.account ? `${esc(h.account)} · ${esc(h.opportunity_slug)}` : ""} <span class="muted">by ${esc(h.actor)}</span>${h.reason ? `<div class="cc-reason">${esc(h.reason)}</div>` : ""}</li>`).join("")}</ol>`;
+    <ol class="cc-transitions">${s.association_history.map((h) => `<li><span class="muted">${ccWhen(h.recorded_at)}</span> ${ccBadge(h.state)} ${h.account ? `${esc(h.account)} · ${esc(h.opportunity_slug)}` : ""} <span class="muted">by ${esc(h.actor)}</span>${h.reason ? `<div class="cc-reason">${esc(h.reason)}</div>` : ""}</li>`).join("")}</ol>
+    ${s.provider === "gmail" ? `<h2 class="cc-h2">Forget this message</h2>
+      <p class="muted">Removes local imported message snapshots and saved Gmail matching signals. Derived Actions, Changes and Overview revisions are removed or withheld. Gmail's original message and other copies are outside this action.</p>
+      <button class="ghost small" type="button" id="cc-forget">Forget this message</button>` : ""}`;
 
   body.querySelector("#cc-assoc").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -1090,6 +1106,11 @@ async function ccPageSourceReview(sourceId) {
       method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }),
     }), "Association cleared");
     if (ok) rerender();
+  });
+  body.querySelector("#cc-forget")?.addEventListener("click", async () => {
+    if (!window.confirm("Forget this imported Gmail message from this local workspace?")) return;
+    await ccMutate(api(`/api/command-center/sources/${encodeURIComponent(sourceId)}/forget`, { method: "POST" }), "Message cleanup finished; check Overview status");
+    ccPageSourceReview(sourceId);
   });
   body.querySelector("#cc-retry").addEventListener("click", async () => {
     const ok = await ccMutate(api(`/api/command-center/sources/${encodeURIComponent(sourceId)}/retry`, { method: "POST" }), "Source queued for retry");

@@ -47,6 +47,39 @@ class OpportunityStateService:
         self._safe_name = safe_name
         self._lock = threading.Lock()
 
+    def _forgotten_ids(self) -> set[str]:
+        directory = resolve_within(self.customers_dir, Path(".command-center") / "forgotten")
+        return {path.stem for path in directory.glob("src_*.json")} if directory.is_dir() else set()
+
+    def _is_withheld(self, version: OpportunityStateVersion, forgotten: set[str] | None = None) -> bool:
+        forgotten = self._forgotten_ids() if forgotten is None else forgotten
+        return any(
+            entry.source_type.value == "transcript"
+            and any(entry.source_id.startswith(f"{source_id}_r") for source_id in forgotten)
+            for entry in version.evidence_manifest
+        )
+
+    def _visible_history(self, versions: list[OpportunityStateVersion]) -> list[OpportunityStateVersion]:
+        forgotten = self._forgotten_ids()
+        if not forgotten:
+            return versions
+        visible: list[OpportunityStateVersion] = []
+        tainted: set[str] = set()
+        for version in versions:
+            cited = {
+                source_id for source_id in forgotten
+                if any(entry.source_type.value == "transcript" and entry.source_id.startswith(f"{source_id}_r")
+                       for entry in version.evidence_manifest)
+            }
+            tainted.update(cited)
+            if version.provenance.runtime == "gmail_forget":
+                for source_id in forgotten - cited:
+                    if version.provenance.updater_version == f"gmail-forget-v1-{source_id}":
+                        tainted.discard(source_id)
+            if not tainted:
+                visible.append(version)
+        return visible
+
     def _opportunity_dir(self, account: str, opp_slug: str, *, create: bool = False) -> Path:
         account = self._safe_name(account)
         opp_slug = self._safe_name(opp_slug)
@@ -169,12 +202,19 @@ class OpportunityStateService:
         return version
 
     def read_current(self, account: str, opp_slug: str) -> OpportunityStateVersion | None:
-        return self._read_current(account, opp_slug)
+        version = self._read_current(account, opp_slug)
+        if version is None or not self._forgotten_ids():
+            return version
+        if version is not None and version not in self._visible_history(self._read_history_unfiltered(account, opp_slug)):
+            raise OpportunityStateError(410, "Overview is withheld while forgotten Gmail evidence is removed.", code="source_forgotten")
+        return version
 
     def inspect_current(self, account: str, opp_slug: str) -> dict[str, Any]:
         try:
-            current = self._read_current(account, opp_slug)
+            current = self.read_current(account, opp_slug)
         except OpportunityStateError as exc:
+            if exc.code == "source_forgotten":
+                return {"available": False, "status": "withheld"}
             if exc.code != "malformed_storage":
                 raise
             return {"available": False, "status": "malformed"}
@@ -195,7 +235,7 @@ class OpportunityStateService:
             "current": current.model_dump(mode="json"),
         }
 
-    def read_history(self, account: str, opp_slug: str) -> list[OpportunityStateVersion]:
+    def _read_history_unfiltered(self, account: str, opp_slug: str) -> list[OpportunityStateVersion]:
         """Load and validate the complete immutable chain oldest first."""
         _state_dir, versions_dir, _pointer = self._paths(account, opp_slug)
         current = self._read_current(account, opp_slug)
@@ -220,6 +260,10 @@ class OpportunityStateService:
             if version.parent_revision != parent.revision or version.parent_version_id != parent.version_id:
                 raise OpportunityStateError(409, "Opportunity state history relationship is invalid.", code="malformed_storage")
         return versions
+
+    def read_history(self, account: str, opp_slug: str) -> list[OpportunityStateVersion]:
+        """Return only revisions that do not cite forgotten evidence."""
+        return self._visible_history(self._read_history_unfiltered(account, opp_slug))
 
     def list_history(self, account: str, opp_slug: str) -> list[dict[str, Any]]:
         summaries: list[dict[str, Any]] = []

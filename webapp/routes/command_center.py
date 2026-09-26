@@ -36,6 +36,7 @@ from services.gmail_intake_service import (
     GmailIntakeService,
 )
 from services.gmail_intake_service import MAX_SELECTION as GMAIL_MAX_SELECTION
+from services.gmail_forget_service import GmailForgetService
 from services.granola_retrieval_service import (
     MAX_SELECTION,
     GranolaRetrievalError,
@@ -143,6 +144,10 @@ def _gmail(request: Request) -> GmailIntakeService:
             status_code=503, detail={"code": "gmail_not_configured", "message": "Gmail intake is not configured."}
         )
     return service
+
+
+def _forget(request: Request) -> GmailForgetService:
+    return request.app.state.gmail_forget_service
 
 
 def _raise_gmail(exc: GmailIntakeError) -> None:
@@ -400,6 +405,25 @@ async def api_command_center_source_review(source_id: str, request: Request) -> 
     try:
         return _reads(request).source_review(source_id)
     except (CommandCenterReadError, CommandCenterOperationsError, EvidenceLedgerError) as exc:
+        _raise_domain(exc)
+
+
+@router.get("/api/command-center/sources/{source_id}/forget")
+async def api_command_center_forget_receipt(source_id: str, request: Request) -> dict:
+    try:
+        receipt = _ledger(request).forget_receipt(source_id)
+    except EvidenceLedgerError as exc:
+        _raise_domain(exc)
+    if receipt is None:
+        raise HTTPException(status_code=404, detail="No deletion receipt for this source.")
+    return receipt
+
+
+@router.post("/api/command-center/sources/{source_id}/forget")
+async def api_command_center_forget(source_id: str, request: Request) -> dict:
+    try:
+        return _forget(request).forget(source_id)
+    except (EvidenceLedgerError, CommandCenterOperationsError) as exc:
         _raise_domain(exc)
 
 

@@ -40,6 +40,8 @@ from command_center_evidence import (
     SAFE_TOKEN,
     AssociationCandidate,
     NormalizedEmailMessage,
+    SourceIdentity,
+    source_id_for,
 )
 from integrations.gmail import (
     GMAIL_ID,
@@ -315,6 +317,30 @@ class GmailIntakeService:
         path = self._private_path(_INDEX_FILE, create=True)
         atomic_write_private(path, json.dumps(index, sort_keys=True, separators=(",", ":")).encode("utf-8"))
 
+    def forget_index(self, source_id: str) -> None:
+        """Remove saved thread/contact signals; repeat safely after interruption."""
+        with self._ledger.guard():
+            path = self._private_path(_INDEX_FILE)
+            if not path.exists():
+                return
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > _MAX_INDEX_BYTES:
+                raise EvidenceLedgerError(409, "Gmail index is unsafe.", code="unsafe_storage")
+            try:
+                index = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, ValueError) as exc:
+                raise EvidenceLedgerError(409, "Gmail index is malformed.", code="malformed_storage") from exc
+            if not isinstance(index, dict):
+                raise EvidenceLedgerError(409, "Gmail index is malformed.", code="malformed_storage")
+            if source_id in index:
+                del index[source_id]
+                self._write_index(index)
+
+    def _source_id(self, connection_id: str, message_id: str) -> str:
+        return source_id_for(self._ledger.scope(), SourceIdentity(
+            provider="gmail", connection_id=connection_id,
+            provider_object_id=message_id, kind="email_message",
+        ))
+
     def _gmail_sources(self, connection_id: str) -> dict[str, dict[str, Any]]:
         """Sources of one mailbox-bound connection only; other mailboxes stay invisible."""
         known: dict[str, dict[str, Any]] = {}
@@ -424,6 +450,8 @@ class GmailIntakeService:
                 continue
             messages = []
             for message_id in row.message_ids:
+                if self._ledger.is_forgotten(self._source_id(_connection_id, message_id.lower())):
+                    continue
                 source = context["by_object"].get(message_id.lower())
                 messages.append({
                     "message_id": message_id.lower(),
@@ -435,6 +463,8 @@ class GmailIntakeService:
                         "association_state": source["association"]["state"],
                     },
                 })
+            if not messages:
+                continue
             threads.append({
                 "thread_id": row.id.lower(),
                 "subject": row.subject,
@@ -478,6 +508,9 @@ class GmailIntakeService:
         if len(ids) > MAX_SELECTION:
             raise GmailIntakeError(400, f"Select at most {MAX_SELECTION} messages per retrieval.", code="selection_too_large")
         marker = self._assert_checked()
+        connection_id = connection_id_for(marker["mailbox_key"])
+        if any(self._ledger.is_forgotten(self._source_id(connection_id, message_id)) for message_id in ids):
+            raise GmailIntakeError(410, "A selected message was forgotten and cannot be imported again.", code="source_forgotten")
         for job in self._jobs.jobs.values():
             if job.get("kind") == INTAKE_JOB_KIND and job.get("status") == "running":
                 raise GmailIntakeError(409, "A retrieval is already running.", code="retrieval_in_progress")
@@ -570,18 +603,19 @@ class GmailIntakeService:
                 self._clear_check()
                 raise ManagedJobError("mailbox_changed", "The authorized mailbox changed during retrieval; nothing was imported.")
             try:
-                recorded = self._ledger.import_meetings(messages, trigger="user_triggered_retrieval")
+                with self._ledger.guard():
+                    recorded = self._ledger.import_meetings(messages, trigger="user_triggered_retrieval")
+                    index = self._read_index()
+                    for message, result in zip(messages, recorded["results"]):
+                        if message.availability in {"content_available", "metadata_only"}:
+                            index[result["source_id"]] = {
+                                "thread_id": message.thread_id,
+                                "participants": sorted({p.email for p in message.attendees}),
+                            }
+                    self._write_index(index)
             except EvidenceLedgerError as exc:
                 raise ManagedJobError(exc.code, "The ledger rejected the retrieval; nothing was imported.")
             import_id = recorded["import_id"]
-            index = self._read_index()
-            for message, result in zip(messages, recorded["results"]):
-                if message.availability == "content_available" or message.availability == "metadata_only":
-                    index[result["source_id"]] = {
-                        "thread_id": message.thread_id,
-                        "participants": sorted({p.email for p in message.attendees}),
-                    }
-            self._write_index(index)
             context = self._known_context(domain_of(mailbox), connection_id)
             for message, result in zip(messages, recorded["results"]):
                 outcome = _classify(result)

@@ -335,6 +335,8 @@ class CommandCenterOperationsService:
         self._write_record(self._runs_dir(run.source_id, create=True) / f"{run.run_id}.json", run.model_dump(mode="json"))
 
     def list_runs(self, source_id: str) -> list[dict[str, Any]]:
+        if self._ledger.is_forgotten(source_id):
+            return []
         directory = self._runs_dir(source_id)
         if not directory.exists():
             return []
@@ -345,23 +347,40 @@ class CommandCenterOperationsService:
     # ------------------------------------------------------------- reading
 
     def get_action(self, action_id: str) -> dict[str, Any]:
-        return self._present(self._load_action(action_id))
+        action = self._load_action(action_id)
+        if self._ledger.is_forgotten(action.origin.source_id):
+            raise CommandCenterOperationsError(410, "Action was derived from a forgotten message.", code="source_forgotten")
+        return self._present(action)
 
-    @staticmethod
-    def _present(action: ActionRecord) -> dict[str, Any]:
+    def _present(self, action: ActionRecord) -> dict[str, Any]:
         payload = action.model_dump(mode="json")
+        visible = lambda ref: not self._ledger.is_forgotten(ref.source_id)
+        payload["evidence"] = [ref.model_dump(mode="json") for ref in action.evidence if visible(ref)]
+        payload["evidence_retractions"] = [item.model_dump(mode="json") for item in action.evidence_retractions
+                                           if not self._ledger.is_forgotten(item.source_id)]
+        payload["completion_suggestions"] = [item.model_dump(mode="json") for item in action.completion_suggestions
+                                             if visible(item.source)]
         payload["human_touched"] = action.human_touched
         payload["retracted"] = action.retraction is not None
-        payload["effective_evidence"] = [ref.model_dump(mode="json") for ref in action.effective_evidence]
+        payload["effective_evidence"] = [ref.model_dump(mode="json") for ref in action.effective_evidence if visible(ref)]
         payload["active_completion_suggestions"] = [
-            item.model_dump(mode="json") for item in action.completion_suggestions if item.retracted_at is None
+            item.model_dump(mode="json") for item in action.completion_suggestions
+            if item.retracted_at is None and visible(item.source)
         ]
+        if action.possible_duplicate_of:
+            try:
+                duplicate = self._load_action(action.possible_duplicate_of)
+                if self._ledger.is_forgotten(duplicate.origin.source_id):
+                    payload["possible_duplicate_of"] = None
+            except CommandCenterOperationsError:
+                pass
         return payload
 
     def list_actions(
         self, account: str, opportunity_slug: str, *, status: str | None = None, include_retracted: bool = False
     ) -> dict[str, Any]:
-        actions = self._opportunity_actions(account, opportunity_slug)
+        actions = [a for a in self._opportunity_actions(account, opportunity_slug)
+                   if not self._ledger.is_forgotten(a.origin.source_id)]
         if not include_retracted:
             actions = [item for item in actions if item.retraction is None]
         if status is not None:
@@ -384,16 +403,35 @@ class CommandCenterOperationsService:
         self.repair(account, opportunity_slug)
         directory = self._changes_dir(account, opportunity_slug)
         paths = sorted(directory.glob("*.json"), reverse=True) if directory.exists() else []
-        page = paths[offset:offset + limit]
-        entries = [ChangeEntry.model_validate(self._read_record(path)).model_dump(mode="json") for path in page]
-        next_offset = offset + limit if offset + limit < len(paths) else None
+        visible = [entry for path in paths
+                   if not self._change_forgotten(entry := ChangeEntry.model_validate(self._read_record(path)))]
+        entries = [entry.model_dump(mode="json") for entry in visible[offset:offset + limit]]
+        next_offset = offset + limit if offset + limit < len(visible) else None
         return {
             "account": account,
             "opportunity_slug": opportunity_slug,
-            "total": len(paths),
+            "total": len(visible),
             "changes": entries,
             "next_offset": next_offset,
         }
+
+    def _change_forgotten(self, entry: ChangeEntry) -> bool:
+        forgotten = self._ledger.forgotten_ids()
+        if not forgotten:
+            return False
+        if entry.source is not None and entry.source.source_id in forgotten:
+            return True
+        encoded = json.dumps({"before": entry.before, "after": entry.after})
+        if any(source_id in encoded for source_id in forgotten):
+            return True
+        if entry.subject_id.startswith("act_"):
+            try:
+                return self._load_action(entry.subject_id).origin.source_id in forgotten
+            except CommandCenterOperationsError:
+                return False
+        if entry.subject_id.startswith("src_"):
+            return entry.subject_id in forgotten
+        return False
 
     # -------------------------------------------------- human transitions
 
@@ -409,6 +447,8 @@ class CommandCenterOperationsService:
     ) -> dict[str, Any]:
         with self._exclusive():
             action = self._load_action(action_id)
+            if self._ledger.is_forgotten(action.origin.source_id):
+                raise CommandCenterOperationsError(410, "Action was derived from a forgotten message.", code="source_forgotten")
             self._repair_transition_changes([action])
             if action.retraction is not None:
                 raise CommandCenterOperationsError(409, "Action was retracted by an association correction.", code="retracted")
@@ -505,6 +545,8 @@ class CommandCenterOperationsService:
         """Revert the most recent user transition with a new, attributable transition."""
         with self._exclusive():
             action = self._load_action(action_id)
+            if self._ledger.is_forgotten(action.origin.source_id):
+                raise CommandCenterOperationsError(410, "Action was derived from a forgotten message.", code="source_forgotten")
             self._repair_transition_changes([action])
             last = action.transitions[-1]
             if last.actor != "user" or last.undoes_sequence is not None or last.from_status is None:
@@ -611,6 +653,7 @@ class CommandCenterOperationsService:
         to_account: str | None,
         to_opportunity_slug: str | None,
         reason: str,
+        revert_overview: bool = True,
     ) -> dict[str, Any]:
         """Stop every derived view of the old opportunity from treating the source as authorized.
 
@@ -682,7 +725,7 @@ class CommandCenterOperationsService:
                         before={"status": action.status}, after={"status": action.status, "source_id": source_id},
                         source=None, actor="user", occurred_at=now, link=link,
                     )
-            reverted = self._revert_overview(source_id, from_account, from_opportunity_slug, reason=reason, now=now)
+            reverted = self._revert_overview(source_id, from_account, from_opportunity_slug, reason=reason, now=now) if revert_overview else None
             if reverted is not None:
                 result["overview_reverted"] = reverted["overview_reverted"]
                 result["sources_to_reprocess"] = reverted["sources_to_reprocess"]
