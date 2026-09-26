@@ -77,6 +77,8 @@ def _build_local_services(app: FastAPI) -> None:
     local dependencies such as faster-whisper or anthropic.
     """
     from integrations.gmail import GmailSourceAdapter, SyntheticGmailTransport, UnavailableGmailTransport
+    from integrations.gmail_live import TRANSPORT_ENV as GMAIL_TRANSPORT_ENV
+    from integrations.gmail_live import LiveGmailReadOnlyTransport, credentials_path
     from integrations.granola import ManualGranolaImportAdapter
     from integrations.granola_mcp_relay import (
         ClaudeCodeMcpRelay,
@@ -237,13 +239,24 @@ def _build_local_services(app: FastAPI) -> None:
         state_service=opportunity_state_service,
         tech_eval_summary=tech_eval_service.peek_summary,
     )
-    # PR E Gmail intake. No authorized read-only Gmail route exists yet, so the default
-    # transport fails closed and the UI says so. `SE_GMAIL_SYNTHETIC_FIXTURE=<path>` swaps
-    # in the in-memory synthetic mailbox for local review; it never reads real mail.
+    # PR E Gmail intake. The default transport fails closed and the UI says so.
+    # `SE_GMAIL_TRANSPORT=live_readonly` is the only way to select the local HTTP
+    # transport, and it still fails closed until the user has run
+    # scripts/gmail_local_authorize.py (refresh token in their own 0600 file).
+    # `SE_GMAIL_SYNTHETIC_FIXTURE=<path>` swaps in the in-memory synthetic mailbox for
+    # local review; it never reads real mail. Neither is ever chosen implicitly.
+    gmail_mode = (os.environ.get(GMAIL_TRANSPORT_ENV) or "").strip().lower()
     gmail_fixture = os.environ.get("SE_GMAIL_SYNTHETIC_FIXTURE")
-    gmail_transport = (
-        SyntheticGmailTransport.from_fixture(Path(gmail_fixture)) if gmail_fixture else UnavailableGmailTransport()
-    )
+    if gmail_mode == "live_readonly":
+        gmail_transport = LiveGmailReadOnlyTransport(credentials_file=credentials_path())
+    elif gmail_mode == "synthetic_fixture" or (not gmail_mode and gmail_fixture):
+        if not gmail_fixture:
+            raise RuntimeError("SE_GMAIL_TRANSPORT=synthetic_fixture needs SE_GMAIL_SYNTHETIC_FIXTURE=<path>.")
+        gmail_transport = SyntheticGmailTransport.from_fixture(Path(gmail_fixture))
+    elif gmail_mode in ("", "unavailable"):
+        gmail_transport = UnavailableGmailTransport()
+    else:
+        raise RuntimeError(f"Unknown {GMAIL_TRANSPORT_ENV}={gmail_mode!r}; use unavailable, synthetic_fixture or live_readonly.")
     gmail_intake_service = GmailIntakeService(
         transport=gmail_transport,
         adapter=GmailSourceAdapter(),

@@ -556,6 +556,19 @@ class GmailIntakeService:
         import_id: str | None = None
         proposals = 0
         if messages:
+            # The transport may reload local credentials while fetching; confirm the
+            # same mailbox and scopes still hold before anything is written.
+            try:
+                mailbox_after, connection_after = await self._assert_access(marker)
+            except GmailTransportError as exc:
+                if exc.code == "access_revoked":
+                    self._clear_check()
+                raise ManagedJobError(exc.code, "Gmail access check failed after retrieval; nothing was imported.")
+            except GmailIntakeError as exc:
+                raise ManagedJobError(exc.code, "Gmail authorization drifted during retrieval; nothing was imported.")
+            if mailbox_after != mailbox or connection_after != connection_id:
+                self._clear_check()
+                raise ManagedJobError("mailbox_changed", "The authorized mailbox changed during retrieval; nothing was imported.")
             try:
                 recorded = self._ledger.import_meetings(messages, trigger="user_triggered_retrieval")
             except EvidenceLedgerError as exc:
