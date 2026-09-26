@@ -1,9 +1,10 @@
 """Gmail transport boundary for the Command Center pilot (PR E).
 
-Status: **no authorized live Gmail route exists in this repository.** Nothing here
-holds an OAuth client, refresh token, or hosted credential, and nothing scans a
-mailbox in the background. The module defines the read-only boundary every
-future transport must satisfy and ships two implementations:
+Status: nothing here holds an OAuth client, refresh token, or hosted credential, and
+nothing scans a mailbox in the background. The module defines the read-only boundary
+every transport must satisfy and ships two implementations; the explicitly enabled
+local HTTP transport lives in `integrations/gmail_live.py` and is selected only by
+`SE_GMAIL_TRANSPORT=live_readonly` (see `webapp/app.py`):
 
 * `UnavailableGmailTransport` — the production default. It describes itself as
   unauthorized and fails every call closed, so the UI can say plainly that live
@@ -20,10 +21,9 @@ would build from `users.messages.get(format=full)` — headers already extracted
 are never fetched; a transport that passed attachment content would be rejected
 by the strict model (`extra="forbid"`).
 
-Wiring a live transport later means: implement `GmailReadOnlyTransport` against
-the Gmail REST API with the `gmail.readonly` scope only, keep the token in the
-user's local keychain, and inject it in `webapp/app.py`. No other file should
-change.
+A transport may also return `{"id", "thread_id", "error_code": "MALFORMED"}` for a
+message whose MIME it could not decode; the adapter rejects it (`malformed_mime`)
+rather than importing a guessed body.
 """
 from __future__ import annotations
 
@@ -219,6 +219,8 @@ class GmailSourceAdapter:
         if not _payload_size_ok(payload):
             raise GmailImportError(413, "Message payload exceeds the import bound.", code="payload_too_large")
         try:
+            if payload.get("error_code") == "MALFORMED":
+                raise GmailImportError(422, "Message MIME could not be decoded.", code="malformed_mime")
             if "error_code" in payload:
                 return self._normalize_unavailable(payload, connection_id=connection_id)
             return self._normalize_message(payload, connection_id=connection_id)
