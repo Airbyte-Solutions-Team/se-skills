@@ -5,8 +5,13 @@ REST API with exactly one scope, `gmail.readonly`. It is **never** selected by
 default: `webapp/app.py` builds it only when `SE_GMAIL_TRANSPORT=live_readonly` is
 set, and even then every call fails closed until the user has run
 `scripts/gmail_local_authorize.py` in their own browser session, which writes an
-OAuth refresh token to a 0600 file in the local user context
+OAuth refresh token to a private file in the local user context
 (`~/.config/se-skills/gmail-oauth.json` unless `SE_GMAIL_OAUTH_FILE` says otherwise).
+File protection is platform-specific (`credential_protection()`): POSIX gets a 0700
+directory and a 0600 file and the loader refuses a group/world-readable file; Windows
+relies on the inherited user-profile ACL, so the file must live under the user's own
+profile. Either way `SE_GMAIL_OAUTH_FILE` must be an absolute, non-symlinked path
+under the user's home directory or every call fails closed with `credentials_insecure`.
 
 Boundary, enforced here before any provider request:
 
@@ -180,7 +185,47 @@ def credentials_path(env: Mapping[str, str] | None = None) -> Path:
     return Path(override).expanduser() if override else DEFAULT_CREDENTIALS_PATH
 
 
+def credential_protection(platform: str = os.name) -> str:
+    """How the credential file is kept private on this platform. `posix_mode_0600`:
+    0700 directory + 0600 file, enforced with chmod and re-checked on read.
+    `windows_profile_acl`: `os.chmod` cannot express owner-only access, so the file
+    inherits the ACL of the user's profile directory and must live under it."""
+    return "posix_mode_0600" if platform == "posix" else "windows_profile_acl"
+
+
+def _insecure(reason: str) -> GmailTransportError:
+    return GmailTransportError("credentials_insecure", f"Refusing the local Gmail credential path: {reason}", retryable=False)
+
+
+def validate_credentials_path(path: Path, *, home: Path | None = None, platform: str = os.name) -> Path:
+    """Fail closed unless `path` is an absolute, non-symlinked location inside the
+    user's own home/profile directory. On POSIX an existing file or parent directory
+    that is readable by group/others is also refused. Returns the resolved path."""
+    home = (Path.home() if home is None else home).resolve()
+    if not path.is_absolute():
+        raise _insecure("it must be an absolute path.")
+    if path.is_symlink():
+        raise _insecure("the credential file must not be a symlink.")
+    resolved = path.parent.resolve() / path.name
+    try:
+        resolved.relative_to(home)
+    except ValueError:
+        raise _insecure("it must live under the user's own home directory.") from None
+    if resolved == home:
+        raise _insecure("it must be a file inside the home directory.")
+    if platform == "posix":
+        for candidate in (resolved.parent, resolved):
+            try:
+                mode = candidate.stat().st_mode
+            except FileNotFoundError:
+                continue
+            if mode & 0o077:
+                raise _insecure("the file or its directory is readable by other users.")
+    return resolved
+
+
 def load_local_credentials(path: Path) -> LocalOAuthCredentials:
+    path = validate_credentials_path(path)
     try:
         raw = json.loads(path.read_bytes()[:65_536])
     except FileNotFoundError:

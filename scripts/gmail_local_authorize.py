@@ -7,8 +7,12 @@
 
 Runs Google's installed-app (loopback) OAuth flow with exactly one scope,
 `https://www.googleapis.com/auth/gmail.readonly`, PKCE and a random state, and
-writes the resulting refresh token to a 0600 file in the user's context
-(`~/.config/se-skills/gmail-oauth.json`, or `SE_GMAIL_OAUTH_FILE`). Nothing is sent
+writes the resulting refresh token to a private file in the user's context
+(`~/.config/se-skills/gmail-oauth.json`, or `SE_GMAIL_OAUTH_FILE`). On POSIX the
+directory is 0700 and the file 0600; on Windows `os.chmod` cannot express owner-only
+access, so the file relies on the inherited user-profile ACL. In both cases the path
+must be absolute, not a symlink, and inside the user's home/profile directory, or the
+script refuses before any consent request (`credentials_insecure`). Nothing is sent
 anywhere but Google, nothing is written to the repo, and no token is ever printed.
 
 Prerequisite the user owns: a Google Cloud project with the Gmail API enabled and an
@@ -53,8 +57,10 @@ from integrations.gmail_live import (
     HttpClient,
     HttpxClient,
     authorization_url,
+    credential_protection,
     credentials_path,
     load_local_credentials,
+    validate_credentials_path,
 )
 from services.private_store import atomic_write_private, mkdir_private
 
@@ -126,7 +132,9 @@ async def exchange_code(
 
 
 def write_credentials(path: Path, payload: dict[str, Any]) -> None:
+    path = validate_credentials_path(path)
     mkdir_private(path.parent)
+    validate_credentials_path(path)
     atomic_write_private(path, json.dumps(payload, indent=2).encode("utf-8"))
 
 
@@ -152,6 +160,7 @@ class _Callback(BaseHTTPRequestHandler):
 
 
 def run_consent_flow(client_file: Path, target: Path, *, timeout: float = 300.0) -> int:
+    target = validate_credentials_path(target)
     client_id, client_secret = load_client_file(client_file)
     verifier, challenge = pkce_pair()
     state = secrets.token_urlsafe(24)
@@ -188,7 +197,7 @@ def run_consent_flow(client_file: Path, target: Path, *, timeout: float = 300.0)
         )
     )
     write_credentials(target, payload)
-    print(f"status: authorized scopes={payload['scopes']} file={target} mode=0600")
+    print(f"status: authorized scopes={payload['scopes']} file={target} protection={credential_protection()}")
     print("Next: start the app with SE_GMAIL_TRANSPORT=live_readonly and run 'Check access' on the Sources page.")
     return 0
 
@@ -199,8 +208,11 @@ def report_status(target: Path) -> int:
     except GmailTransportError as exc:
         print(f"status: not_authorized code={exc.code} file={target}")
         return 1
-    mode = oct(target.stat().st_mode & 0o777) if os.name == "posix" else "n/a"
-    print(f"status: authorized scopes={list(credentials.scopes)} authorized_at={credentials.authorized_at} file={target} mode={mode}")
+    detail = f"mode={oct(target.stat().st_mode & 0o777)}" if os.name == "posix" else "mode=inherited-profile-acl"
+    print(
+        f"status: authorized scopes={list(credentials.scopes)} authorized_at={credentials.authorized_at} "
+        f"file={target} protection={credential_protection()} {detail}"
+    )
     return 0
 
 

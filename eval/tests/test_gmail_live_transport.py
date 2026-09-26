@@ -27,6 +27,7 @@ from integrations.gmail import (
 )
 from integrations.gmail_live import (
     CREDENTIALS_CONTRACT,
+    DEFAULT_CREDENTIALS_PATH,
     GMAIL_API,
     MAX_LIST_PAGES,
     MAX_LIST_TERMS,
@@ -35,8 +36,10 @@ from integrations.gmail_live import (
     HttpResponse,
     LiveGmailReadOnlyTransport,
     authorization_url,
+    credential_protection,
     credentials_path,
     load_local_credentials,
+    validate_credentials_path,
 )
 from services.evidence_ledger_service import EvidenceLedgerError, EvidenceLedgerService
 from services.gmail_intake_service import (
@@ -57,6 +60,13 @@ T_ACME, T_GLOBEX, T_UNRELATED = "19a0000000000a01", "19a0000000000a02", "19a0000
 M_ASK, M_REPLY, M_GLOBEX, M_UNRELATED = "19a0000000000b01", "19a0000000000b02", "19a0000000000b03", "19a0000000000b04"
 M_BAD_B64, M_NO_FROM, M_HTML_ONLY, M_ATTACH = "19a0000000000b05", "19a0000000000b06", "19a0000000000b07", "19a0000000000b08"
 BODY_SENTINEL = "FAKE-HTTP-BODY"
+
+
+@pytest.fixture(autouse=True)
+def _home_is_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Credential files are only accepted inside the user's home; make that `tmp_path`."""
+    tmp_path.chmod(0o700)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
 
 
 def _b64(text: str) -> str:
@@ -145,11 +155,18 @@ class FakeHttp:
         self.token_responses: list[HttpResponse] = []
         self.list_pages: list[dict[str, Any]] | None = None
         self.tokens_issued = 0
+        self.after_response: Any = None
 
     def override(self, url: str, *responses: HttpResponse) -> None:
         self.overrides.setdefault(url, []).extend(responses)
 
     async def request(self, method: str, url: str, *, headers=None, params=None, data=None) -> HttpResponse:
+        response = await self._request(method, url, headers=headers, params=params, data=data)
+        if self.after_response is not None:
+            self.after_response(url)
+        return response
+
+    async def _request(self, method: str, url: str, *, headers=None, params=None, data=None) -> HttpResponse:
         self.requests.append({"method": method, "url": url, "headers": dict(headers or {}), "params": dict(params or {}), "data": dict(data or {})})
         if self.overrides.get(url):
             return self.overrides[url].pop(0)
@@ -205,6 +222,8 @@ def _write_credentials(tmp_path: Path, **overrides: Any) -> Path:
         "refresh_token": REFRESH_TOKEN, "scopes": [READONLY_SCOPE], "authorized_at": "2026-09-25T00:00:00+00:00", **overrides,
     }
     path.write_text(json.dumps(payload), encoding="utf-8")
+    if os.name == "posix":
+        path.chmod(0o600)
     return path
 
 
@@ -240,7 +259,7 @@ def test_transport_is_not_selected_implicitly_and_fails_closed_without_credentia
         import asyncio
         asyncio.run(transport.check_access())
     assert exc.value.code == "credentials_missing" and not exc.value.retryable
-    assert credentials_path({}) == Path.home() / ".config" / "se-skills" / "gmail-oauth.json"
+    assert credentials_path({}) == DEFAULT_CREDENTIALS_PATH
     assert credentials_path({"SE_GMAIL_OAUTH_FILE": str(tmp_path / "x.json")}) == tmp_path / "x.json"
 
 
@@ -399,6 +418,122 @@ async def test_reauthorizing_as_another_mailbox_fails_closed_then_isolates_ledge
     listing = await service.list_threads(participants=["acme.example"], **WINDOW)
     acme_rows = [t for t in listing["threads"] if t["thread_id"] == T_ACME]
     assert acme_rows and acme_rows[0]["messages"][0]["ledger"]["source_id"] == second_source
+
+
+@pytest.mark.asyncio
+async def test_account_switch_while_selected_messages_are_fetched_imports_nothing(tmp_path: Path) -> None:
+    """The transport re-reads the local credential file while fetching, so a
+    re-authorization as another account mid-batch must fail the whole batch closed."""
+    service, http, ledger, jobs = _service(tmp_path)
+    await service.check_access()
+
+    def switch_after_message_fetch(url: str) -> None:
+        if "/messages/" in url:
+            http.mailbox = "someone-else@vendor.example"
+
+    http.after_response = switch_after_message_fetch
+    job = await _retrieve(service, jobs, [M_ASK, M_REPLY])
+    assert job["status"] == "error" and job["error_code"] == "mailbox_changed", job
+    assert ledger.list_sources()["total"] == 0, "nothing may be written under the first mailbox's connection id"
+    assert len(http.urls("/messages/")) == 2 and len(http.urls("/profile")) == 3, "pre-check, fetches, post-check"
+    _no_secret_leak(json.dumps(job))
+    with pytest.raises(GmailIntakeError) as exc:
+        await service.start_retrieval([M_ASK])
+    assert exc.value.code == "not_checked"
+
+
+@pytest.mark.asyncio
+async def test_scope_broadening_while_selected_messages_are_fetched_imports_nothing(tmp_path: Path) -> None:
+    service, http, ledger, jobs = _service(tmp_path)
+    await service.check_access()
+
+    def broaden_after_message_fetch(url: str) -> None:
+        if "/messages/" in url:
+            http.scopes = f"{READONLY_SCOPE} https://www.googleapis.com/auth/gmail.modify"
+
+    http.after_response = broaden_after_message_fetch
+    job = await _retrieve(service, jobs, [M_ASK])
+    assert job["status"] == "error" and job["error_code"] == "scope_changed", job
+    assert ledger.list_sources()["total"] == 0
+
+
+# ------------------------------------------------------------ credential path
+
+
+def test_credential_path_must_be_private_absolute_non_symlink_inside_home(tmp_path: Path) -> None:
+    good = _write_credentials(tmp_path)
+    assert validate_credentials_path(good) == good.resolve()
+    assert load_local_credentials(good).scopes == (READONLY_SCOPE,)
+
+    def refused(path: Path, **kw: Any) -> str:
+        with pytest.raises(GmailTransportError) as exc:
+            validate_credentials_path(path, **kw)
+        assert exc.value.code == "credentials_insecure" and not exc.value.retryable
+        return exc.value.detail
+
+    assert "absolute" in refused(Path("relative/gmail-oauth.json"))
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir()
+    assert "home" in refused(outside / "gmail-oauth.json")
+    link = tmp_path / "link.json"
+    link.symlink_to(good)
+    assert "symlink" in refused(link)
+    escape_dir = tmp_path / "escape"
+    escape_dir.symlink_to(outside, target_is_directory=True)
+    assert "home" in refused(escape_dir / "gmail-oauth.json")
+    assert "inside" in refused(tmp_path)
+    transport = LiveGmailReadOnlyTransport(credentials_file=outside / "gmail-oauth.json", http=FakeHttp())
+    assert transport.describe().live_retrieval_available is False
+    with pytest.raises(GmailTransportError) as exc:
+        load_local_credentials(outside / "gmail-oauth.json")
+    assert exc.value.code == "credentials_insecure"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX mode bits")
+def test_posix_group_or_world_readable_credential_file_is_refused(tmp_path: Path) -> None:
+    path = _write_credentials(tmp_path)
+    path.chmod(0o644)
+    with pytest.raises(GmailTransportError) as exc:
+        load_local_credentials(path)
+    assert exc.value.code == "credentials_insecure" and "other users" in exc.value.detail
+    path.chmod(0o600)
+    (tmp_path / "shared").mkdir(mode=0o755)
+    shared = _write_credentials(tmp_path / "shared")
+    with pytest.raises(GmailTransportError):
+        load_local_credentials(shared)
+    assert credential_protection("posix") == "posix_mode_0600"
+
+
+def test_windows_credential_path_relies_on_profile_acl_and_stays_inside_profile(tmp_path: Path) -> None:
+    """On Windows there is no chmod story: the file is protected only by the profile
+    ACL, so the loader must insist the path is inside the profile and must not claim 0600."""
+    assert credential_protection("nt") == "windows_profile_acl"
+    profile = tmp_path / "Users" / "gary"
+    profile.mkdir(parents=True)
+    inside = _write_credentials(profile)
+    if os.name == "posix":
+        inside.chmod(0o644)  # mode bits are irrelevant on Windows; the profile check alone decides
+    assert validate_credentials_path(inside, home=profile, platform="nt") == inside.resolve()
+    outside = tmp_path / "Public" / "gmail-oauth.json"
+    outside.parent.mkdir()
+    with pytest.raises(GmailTransportError) as exc:
+        validate_credentials_path(outside, home=profile, platform="nt")
+    assert exc.value.code == "credentials_insecure"
+
+
+def test_authorize_script_status_never_prints_0600_on_windows(tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    path = Path(__file__).resolve().parents[2] / "scripts" / "gmail_local_authorize.py"
+    spec = importlib.util.spec_from_file_location("gmail_local_authorize_status", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    target = _write_credentials(tmp_path)
+    monkeypatch.setattr(module.os, "name", "nt")
+    monkeypatch.setattr(module, "credential_protection", lambda platform="nt": "windows_profile_acl")
+    assert module.report_status(target) == 0
+    out = capsys.readouterr().out
+    assert "protection=windows_profile_acl" in out and "0600" not in out and "0o600" not in out
+    _no_secret_leak(out)
 
 
 # ------------------------------------------------------------ rate limits
