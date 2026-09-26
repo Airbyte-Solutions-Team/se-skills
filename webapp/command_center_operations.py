@@ -41,6 +41,7 @@ ChangeType = Literal[
     "evidence_retracted",
     "completion_suggestion_retracted",
     "overview_reverted",
+    "overview_retired",
 ]
 RunStatus = Literal["succeeded", "failed", "stale_base", "superseded", "interrupted", "apply_incomplete"]
 Attribution = Literal["source_verified", "model_only"]

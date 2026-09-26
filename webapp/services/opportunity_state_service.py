@@ -14,6 +14,7 @@ from typing import Any, Callable
 
 from opportunity_state import (
     EvidenceManifestEntry,
+    EvidenceSourceType,
     GenerationProvenance,
     OpportunityIdentity,
     OpportunityStateCandidate,
@@ -203,6 +204,11 @@ class OpportunityStateService:
 
     def read_current(self, account: str, opp_slug: str) -> OpportunityStateVersion | None:
         version = self._read_current(account, opp_slug)
+        retirement = self.retirement_info(account, opp_slug)
+        if retirement is not None:
+            if version is None or retirement["version_id"] != version.version_id:
+                raise OpportunityStateError(409, "Opportunity state retirement is malformed.", code="malformed_storage")
+            raise OpportunityStateError(410, "This Overview was retired after its meeting association was corrected.", code="overview_retired")
         if version is None or not self._forgotten_ids():
             return version
         if version is not None and version not in self._visible_history(self._read_history_unfiltered(account, opp_slug)):
@@ -213,6 +219,8 @@ class OpportunityStateService:
         try:
             current = self.read_current(account, opp_slug)
         except OpportunityStateError as exc:
+            if exc.code == "overview_retired":
+                return {"available": False, "status": "retired"}
             if exc.code == "source_forgotten":
                 return {"available": False, "status": "withheld"}
             if exc.code != "malformed_storage":
@@ -234,6 +242,68 @@ class OpportunityStateService:
             },
             "current": current.model_dump(mode="json"),
         }
+
+    def retirement_info(self, account: str, opp_slug: str) -> dict[str, Any] | None:
+        """A checked tombstone for the effective head; immutable versions remain auditable."""
+        state_dir, _versions_dir, _pointer = self._paths(account, opp_slug)
+        path = resolve_within(state_dir, "retired.json")
+        if not path.exists() and not path.is_symlink():
+            return None
+        envelope = self._read_json_file(path)
+        if not isinstance(envelope, dict) or set(envelope) != {"retirement", "checksum"}:
+            raise OpportunityStateError(409, "Opportunity state retirement is malformed.", code="malformed_storage")
+        record = envelope["retirement"]
+        if (not isinstance(record, dict) or set(record) != {
+            "schema_version", "source_id", "version_id", "revision", "retired_at", "actor", "reason"
+        } or record.get("schema_version") != 1 or record.get("revision") != 1
+            or not isinstance(record.get("source_id"), str)
+            or not re.fullmatch(r"src_[a-f0-9]{32}", record["source_id"])
+            or not isinstance(record.get("version_id"), str)
+            or not re.fullmatch(r"[a-f0-9]{32}", record["version_id"])
+            or record.get("actor") != "user"
+            or not isinstance(record.get("reason"), str) or not 1 <= len(record["reason"]) <= 500
+            or not isinstance(record.get("retired_at"), str)):
+            raise OpportunityStateError(409, "Opportunity state retirement is malformed.", code="malformed_storage")
+        try:
+            if datetime.fromisoformat(record["retired_at"]).tzinfo is None:
+                raise ValueError("naive timestamp")
+        except ValueError as exc:
+            raise OpportunityStateError(409, "Opportunity state retirement is malformed.", code="malformed_storage") from exc
+        if envelope["checksum"] != hashlib.sha256(self._canonical_bytes(record)).hexdigest():
+            raise OpportunityStateError(409, "Opportunity state retirement checksum mismatch.", code="malformed_storage")
+        return record
+
+    def retire_first_overview(
+        self, account: str, opp_slug: str, *, source_id: str, expected_version_id: str, reason: str
+    ) -> dict[str, Any]:
+        """Withhold an attributable revision-one head without rewriting its audit chain."""
+        with self._lock:
+            existing = self.retirement_info(account, opp_slug)
+            if existing is not None:
+                if existing["source_id"] == source_id and existing["version_id"] == expected_version_id:
+                    return existing
+                raise OpportunityStateError(409, "Overview already retired for another source.", code="overview_retired")
+            history = self._read_history_unfiltered(account, opp_slug)
+            if len(history) != 1 or history[0].version_id != expected_version_id:
+                raise OpportunityStateError(409, "Overview changed before retirement.", code="stale_base")
+            first = history[0]
+            if first.revision != 1 or first.parent_version_id is not None or not any(
+                entry.source_type == EvidenceSourceType.TRANSCRIPT and entry.source_id.startswith(f"{source_id}_r")
+                for entry in first.evidence_manifest
+            ) or any(
+                entry.source_type == EvidenceSourceType.TRANSCRIPT and not entry.source_id.startswith(f"{source_id}_r")
+                for entry in first.evidence_manifest
+            ):
+                raise OpportunityStateError(409, "Overview has mixed evidence.", code="overview_unrecoverable")
+            state_dir, _versions_dir, _pointer = self._paths(account, opp_slug)
+            record = {
+                "schema_version": 1, "source_id": source_id, "version_id": first.version_id,
+                "revision": 1, "retired_at": datetime.now(timezone.utc).isoformat(),
+                "actor": "user", "reason": reason[:500],
+            }
+            payload = {"retirement": record, "checksum": hashlib.sha256(self._canonical_bytes(record)).hexdigest()}
+            self._atomic_write(resolve_within(state_dir, "retired.json"), self._canonical_bytes(payload))
+            return record
 
     def _read_history_unfiltered(self, account: str, opp_slug: str) -> list[OpportunityStateVersion]:
         """Load and validate the complete immutable chain oldest first."""
@@ -317,6 +387,8 @@ class OpportunityStateService:
             raise OpportunityStateError(409, "Authorized evidence changed.", code="evidence_changed")
 
         with self._lock:
+            if self.retirement_info(identity.account, identity.opportunity_slug) is not None:
+                raise OpportunityStateError(410, "This Overview was retired after association correction.", code="overview_retired")
             current = self._read_current(identity.account, identity.opportunity_slug)
             if current is not None:
                 raise OpportunityStateError(
@@ -373,6 +445,8 @@ class OpportunityStateService:
             raise OpportunityStateError(409, "Authorized evidence changed.", code="evidence_changed")
 
         with self._lock:
+            if self.retirement_info(identity.account, identity.opportunity_slug) is not None:
+                raise OpportunityStateError(410, "This Overview was retired after association correction.", code="overview_retired")
             parent = self._read_current(identity.account, identity.opportunity_slug)
             if (
                 parent is None

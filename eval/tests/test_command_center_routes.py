@@ -45,9 +45,12 @@ class ResolvedWorkspace:
 
 
 class RejectingStateService:
-    """Association routes only read the current Overview (to repair it on correction); nothing else."""
+    """Association routes inspect effective and retired Overview state, never run analysis."""
 
     def read_current(self, account: str, opp_slug: str):
+        return None
+
+    def retirement_info(self, account: str, opp_slug: str):
         return None
 
     def __getattr__(self, name: str):

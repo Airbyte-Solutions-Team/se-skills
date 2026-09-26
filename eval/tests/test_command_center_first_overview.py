@@ -8,6 +8,7 @@ from opportunity_state import EvidenceSourceType
 from services.command_center_operations_service import CommandCenterOperationsError, evidence_id_for
 from services.command_center_operations_service import CommandCenterOperationsService
 from services.opportunity_state_executor import FakeCanonicalStateExecutor
+from routes.opportunity_state import router as overview_router
 from eval.tests.test_command_center_operations_service import (
     ACCOUNT, OPP, DEFAULT_RECS, FailingExecutor, fixture,
 )
@@ -223,21 +224,124 @@ async def test_retry_after_processed_mark_finishes_without_duplicate_actions(tmp
 
 
 @pytest.mark.asyncio
-async def test_unrecoverable_first_overview_correction_is_atomic(tmp_path) -> None:
+async def test_first_overview_correction_retires_wrong_head_and_reprocesses_on_right_opportunity(tmp_path) -> None:
+    h = ReadHarness(tmp_path)
+    h.app.state.opportunity_state_create_service = h.create
+    h.app.state.opportunity_state_service = h.state
+    h.app.include_router(overview_router)
+    source_id = h.import_note("note_synthetic_v1.json")
+    await h.confirm(source_id)
+    _, first_executor = _ready(h, source_id)
+    assert (await _wait(h.jobs, (await _start(h, source_id))["job_id"]))["ok"] is True
+    wrong_version = h.state.read_current(ACCOUNT, OPP)
+    action_ids = {a["action_id"] for a in h.actions()}
+    corrected = await h.confirm(source_id, ACCOUNT, OPP2)
+    assert corrected["overview_reverted"]["status"] == "retired"
+    assert set(corrected["retracted_actions"]) == action_ids
+    assert h.state.inspect_current(ACCOUNT, OPP)["status"] == "retired"
+    assert h.state.read_version(ACCOUNT, OPP, 1).version_id == wrong_version.version_id
+    assert h.client.get(f"/api/accounts/{ACCOUNT}/opportunities/{OPP}/overview/state").status_code == 410
+    assert h.ops.list_actions(ACCOUNT, OPP)["actions"] == []
+    assert all(a["retracted"] for a in h.ops.list_actions(ACCOUNT, OPP, include_retracted=True)["actions"])
+    assert h.ops.list_changes(ACCOUNT, OPP)["changes"][0]["change_type"] == "overview_retired"
+    assert not any(c["actor"] == "analysis" for c in h.ops.list_changes(ACCOUNT, OPP)["changes"])
+    assert next(row for row in h.reads.portfolio()["opportunities"]
+                if row["opportunity_slug"] == OPP)["overview"]["status"] == "retired"
+    assert h.reads.actions()["actions"] == []
+    assert len(first_executor.requests) == 1
+
+    _, second_executor = _ready(h, source_id)
+    assert h.reads.source_review(source_id)["capabilities"]["create_first_overview"] is True
+    completed = await _wait(h.jobs, (await _start(h, source_id, OPP2))["job_id"])
+    assert completed["ok"] is True and completed["result_revision"] == 1
+    assert len(second_executor.requests) == 1
+    correct_ids = {a["action_id"] for a in h.ops.list_actions(ACCOUNT, OPP2)["actions"]}
+    assert len(correct_ids) == 2 and correct_ids.isdisjoint(action_ids)
+    assert {a["action_id"] for a in h.reads.actions()["actions"]} == correct_ids
+    assert any(item.get("action_id") in correct_ids for item in h.reads.today()["attention"])
+    rows = {row["opportunity_slug"]: row for row in h.reads.portfolio()["opportunities"]}
+    assert rows[OPP]["overview"]["status"] == "retired"
+    assert rows[OPP]["action_counts"]["open"] == 0
+    assert rows[OPP2]["overview"]["status"] == "current"
+    assert rows[OPP2]["action_counts"]["open"] == 1
+    repeated = await h.confirm(source_id, ACCOUNT, OPP2)
+    assert repeated["retracted_actions"] == []
+    assert len(h.ops.list_actions(ACCOUNT, OPP2)["actions"]) == 2
+    assert len([c for c in h.ops.list_changes(ACCOUNT, OPP)["changes"] if c["change_type"] == "overview_retired"]) == 1
+    assert len(second_executor.requests) == 1
+    h.assert_no_content()
+
+
+@pytest.mark.asyncio
+async def test_first_overview_correction_resumes_after_ledger_write(tmp_path, monkeypatch) -> None:
     h = ReadHarness(tmp_path)
     source_id = h.import_note("note_synthetic_v1.json")
     await h.confirm(source_id)
     _ready(h, source_id)
     assert (await _wait(h.jobs, (await _start(h, source_id))["job_id"]))["ok"] is True
-    before = h.ledger.get_source(source_id)
-    action_ids = {a["action_id"] for a in h.actions()}
-    with pytest.raises(CommandCenterOperationsError) as error:
+    original = h.ops._retract_source
+    calls = 0
+
+    def interrupt(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("synthetic interruption after ledger write")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(h.ops, "_retract_source", interrupt)
+    with pytest.raises(OSError):
         await h.confirm(source_id, ACCOUNT, OPP2)
-    assert error.value.code == "overview_unrecoverable"
-    assert h.ledger.get_source(source_id)["association"] == before["association"]
-    assert {a["action_id"] for a in h.actions()} == action_ids
-    assert all(a["retracted"] is False for a in h.actions())
-    assert h.state.read_current(ACCOUNT, OPP).revision == 1
+    assert h.state.inspect_current(ACCOUNT, OPP)["status"] == "retired"
+    assert h.reads.actions()["actions"] == []
+    old_action = h.ops.list_actions(ACCOUNT, OPP, include_retracted=True)["actions"][0]
+    assert h.reads.action(old_action["action_id"])["allowed_transitions"] == []
+    with pytest.raises(CommandCenterOperationsError) as error:
+        h.ops.transition_action(old_action["action_id"], to_status="completed", reason="too late")
+    assert error.value.code == "retracted"
+    resumed = await h.confirm(source_id, ACCOUNT, OPP2)
+    assert len(resumed["retracted_actions"]) == 2
+    assert h.ops.list_actions(ACCOUNT, OPP)["actions"] == []
+    assert len([c for c in h.ops.list_changes(ACCOUNT, OPP)["changes"] if c["change_type"] == "overview_retired"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_later_mixed_revision_and_human_action_edit_block_first_overview_correction(tmp_path) -> None:
+    for mutate in ("revision", "mixed", "action"):
+        h = ReadHarness(tmp_path / mutate)
+        source_id = h.import_note("note_synthetic_v1.json")
+        await h.confirm(source_id)
+        _ready(h, source_id)
+        assert (await _wait(h.jobs, (await _start(h, source_id))["job_id"]))["ok"] is True
+        before = h.ledger.get_source(source_id)["association"]
+        if mutate == "action":
+            action = next(a for a in h.actions() if a["status"] == "open")
+            h.ops.transition_action(action["action_id"], to_status="completed", reason="Synthetic manual edit")
+        elif mutate == "mixed":
+            second = h.import_variant("not_SYNTH000000002")
+            await h.confirm(second)
+            _ready(h, second)
+            current = h.state.read_current(ACCOUNT, OPP)
+            job = await h.ops.start_reconciliation(
+                second, base_version_id=current.version_id, base_revision=current.revision,
+            )
+            assert (await _wait(h.jobs, job["job_id"]))["ok"] is True
+        else:
+            current = h.state.read_current(ACCOUNT, OPP)
+            from opportunity_state import GenerationProvenance
+            h.state.promote_update(
+                identity=current.identity, expected_parent_version_id=current.version_id,
+                expected_parent_revision=current.revision, evidence_manifest=list(current.evidence_manifest),
+                expected_manifest_hash=current.evidence_manifest_hash,
+                provenance=GenerationProvenance(updater_version="test", model="none", runtime="test", cli_version="test"),
+                candidate=current.state,
+            )
+        with pytest.raises(CommandCenterOperationsError) as error:
+            await h.confirm(source_id, ACCOUNT, OPP2)
+        assert error.value.code == "overview_unrecoverable"
+        assert h.ledger.get_source(source_id)["association"] == before
+        assert h.state.inspect_current(ACCOUNT, OPP)["status"] == "current"
+        assert h.state.retirement_info(ACCOUNT, OPP) is None
 
 
 @pytest.mark.asyncio

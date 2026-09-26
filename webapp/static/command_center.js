@@ -411,7 +411,7 @@ async function ccPageActionDetail(actionId) {
 
 const CC_CHANGE_TYPES = [
   "overview_revision", "action_created", "action_linked", "action_transition", "completion_suggested",
-  "possible_duplicate_flagged", "association_corrected", "evidence_retracted", "completion_suggestion_retracted", "overview_reverted",
+  "possible_duplicate_flagged", "association_corrected", "evidence_retracted", "completion_suggestion_retracted", "overview_reverted", "overview_retired",
 ];
 
 function ccDiff(before, after) {
