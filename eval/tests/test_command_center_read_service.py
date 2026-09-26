@@ -11,8 +11,11 @@ from datetime import datetime, timezone
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from opportunity_state import EvidenceReference, EvidenceSourceType, OpportunityRisk, RiskClassification, RiskSeverity
 from routes.command_center import router
 from services.command_center_read_service import CommandCenterReadService
+from services.command_center_operations_service import evidence_id_for
+from services.opportunity_state_executor import FakeCanonicalStateExecutor
 
 from eval.tests.test_command_center_operations_service import (
     ACCOUNT,
@@ -21,9 +24,10 @@ from eval.tests.test_command_center_operations_service import (
     FailingExecutor,
     Harness,
     _recommendation,
+    _candidate_with,
     fixture,
 )
-from eval.tests.test_opportunity_state_create_service import _wait
+from eval.tests.test_opportunity_state_create_service import _candidate_for, _wait
 
 OPP2 = "second-opportunity"
 # Fixture note commits "Airbyte SE ... by October 1, 2026"; the read clock sits after that so it is overdue.
@@ -112,6 +116,154 @@ async def _two_opportunities(tmp_path) -> tuple[ReadHarness, str, str]:
     ])
     assert (await h.reconcile_for(second, OPP2))["ok"] is True
     return h, first, second
+
+
+def _risk(evidence_id: str, *, key: str, severity: RiskSeverity, refs: str = "transcript") -> OpportunityRisk:
+    citations = (
+        [EvidenceReference(source_type=EvidenceSourceType.TRANSCRIPT, source_id=evidence_id, locator="00:00:05")]
+        if refs == "transcript" else
+        [EvidenceReference(source_type=EvidenceSourceType.OPPORTUNITY_METADATA,
+                           source_id="opportunity-metadata-v1")] if refs == "metadata" else []
+    )
+    return OpportunityRisk(
+        key=key, title=f"Synthetic {key}", description=f"Synthetic reason for {key}.",
+        severity=severity, classification=RiskClassification.IMPLEMENTATION_RISK,
+        evidence_refs=citations,
+    )
+
+
+async def _reconcile_risks(h: ReadHarness, source_id: str, opp: str, risks: list[OpportunityRisk]) -> FakeCanonicalStateExecutor:
+    revision = h.ledger.get_source(source_id)["latest_revision"]
+    candidate = _candidate_with(h.first_id, evidence_id_for(source_id, revision), [])
+    executor = FakeCanonicalStateExecutor(candidate.model_copy(update={"risks": risks}), cli_version="2.1.272")
+    h.ops._executor = executor
+    assert (await h.reconcile_for(source_id, opp))["ok"] is True
+    return executor
+
+
+@pytest.mark.asyncio
+async def test_portfolio_and_today_show_scoped_potential_risks_with_detail_and_freshness(tmp_path) -> None:
+    h = ReadHarness(tmp_path)
+    await h.bootstrap_overview()
+    await h.bootstrap_second()
+    first = h.import_note("note_synthetic_v1.json")
+    second = h.import_variant("not_SYNTH000000002", extra_line=SANDBOX_LINE)
+    await h.confirm(first, ACCOUNT, OPP)
+    await h.confirm(second, ACCOUNT, OPP2)
+    executor = await _reconcile_risks(h, first, OPP, [
+        _risk(evidence_id_for(first, 1), key="security-review", severity=RiskSeverity.HIGH),
+    ])
+    await _reconcile_risks(h, second, OPP2, [
+        _risk(evidence_id_for(second, 1), key="pilot-scope", severity=RiskSeverity.MEDIUM),
+    ])
+    calls = len(executor.requests)
+    rows = {row["opportunity_slug"]: row for row in h.get("/api/command-center/portfolio")["opportunities"]}
+    assert [r["key"] for r in rows[OPP]["risks"]] == ["security-review"]
+    assert [r["key"] for r in rows[OPP2]["risks"]] == ["pilot-scope"]
+    risk = rows[OPP]["risks"][0]
+    assert risk["severity"] == "high" and risk["status"] == "potential"
+    assert risk["reason"] == "Synthetic reason for security-review."
+    assert risk["link"] == f"#/opp/{ACCOUNT}/{OPP}/{OPP}/risk/security-review"
+    assert risk["evidence_label"] == "1 transcript citation(s) · 00:00:05"
+    assert risk["evidence_refs"][0]["locator"] == "00:00:05"
+    assert rows[OPP]["attention"] == ["1 potential high/critical risk(s) to review"]
+    today = h.get("/api/command-center/today")
+    reviews = [item for item in today["attention"] if item["kind"] == "risk_review"]
+    assert len(reviews) == 1 and reviews[0]["opportunity_slug"] == OPP
+    assert reviews[0]["link"] == risk["link"] and reviews[0]["risk"] == risk
+    assert reviews[0]["freshness"]["overview_revision"] == 2
+    assert reviews[0]["freshness"]["state"] == "processed_latest_import"
+    assert len(executor.requests) == calls  # list reads do not analyse again
+
+
+@pytest.mark.asyncio
+async def test_risk_revision_replaces_old_conclusion_and_weak_evidence_stays_potential(tmp_path) -> None:
+    h = ReadHarness(tmp_path)
+    await h.bootstrap_overview()
+    source_id = h.import_note("note_synthetic_v1.json")
+    await h.confirm(source_id)
+    await _reconcile_risks(h, source_id, OPP, [
+        _risk(evidence_id_for(source_id, 1), key="model-hypothesis", severity=RiskSeverity.CRITICAL,
+              refs="none").model_copy(update={"classification": RiskClassification.CRITICAL_BLOCKER}),
+        _risk(evidence_id_for(source_id, 1), key="metadata-hypothesis", severity=RiskSeverity.HIGH, refs="metadata"),
+    ])
+    reviews = [item for item in h.reads.today()["attention"] if item["kind"] == "risk_review"]
+    assert len(reviews) == 2
+    assert all(item["risk"]["status"] == "potential" for item in reviews)
+    assert any("No cited evidence" in item["risk"]["evidence_label"] for item in reviews)
+    assert any("metadata only" in item["risk"]["evidence_label"].lower() for item in reviews)
+    assert h.reads.today()["counts_by_kind"].get("confirmed_blocker") is None
+
+    edited = h.adapter.normalize(fixture("note_synthetic_v2_edited.json"), connection_id="local-manual")
+    assert h.ledger.import_meetings([edited])["results"][0]["source_id"] == source_id
+    await _reconcile_risks(h, source_id, OPP, [
+        _risk(evidence_id_for(source_id, 2), key="new-constraint", severity=RiskSeverity.HIGH),
+    ])
+    row = h.reads.portfolio()["opportunities"][0]
+    assert row["overview"]["revision"] == 3
+    assert [risk["key"] for risk in row["risks"]] == ["new-constraint"]
+    assert [item["risk"]["key"] for item in h.reads.today()["attention"] if item["kind"] == "risk_review"] == ["new-constraint"]
+    followup = h.import_variant("not_SYNTH000000010", extra_line="Synthetic follow-up resolves the constraint.")
+    await h.confirm(followup)
+    await _reconcile_risks(h, followup, OPP, [])
+    assert h.reads.portfolio()["opportunities"][0]["risks"] == []
+    assert not any(item["kind"] == "risk_review" for item in h.reads.today()["attention"])
+
+
+@pytest.mark.asyncio
+async def test_unavailable_source_and_withheld_overview_hide_risk_conclusions(tmp_path, monkeypatch) -> None:
+    h = ReadHarness(tmp_path)
+    await h.bootstrap_overview()
+    source_id = h.import_note("note_synthetic_v1.json")
+    await h.confirm(source_id)
+    await _reconcile_risks(h, source_id, OPP, [
+        _risk(evidence_id_for(source_id, 1), key="availability-risk", severity=RiskSeverity.HIGH),
+    ])
+    assert h.reads.portfolio()["opportunities"][0]["risks"]
+    unavailable = h.adapter.normalize({"id": "not_SYNTH000000001", "error_code": "UNAUTHORIZED"},
+                                      connection_id="local-manual")
+    h.ledger.import_meetings([unavailable])
+    row = h.reads.portfolio()["opportunities"][0]
+    assert row["freshness"]["state"] == "unavailable" and row["risks"] == []
+    assert row["confirmed_blockers"] == []
+    assert not any(item["kind"] == "risk_review" for item in h.reads.today()["attention"])
+    monkeypatch.setattr(h.state, "_forgotten_ids", lambda: {source_id})
+    row = h.reads.portfolio()["opportunities"][0]
+    assert row["overview"]["status"] == "withheld" and row["risks"] == []
+
+
+@pytest.mark.asyncio
+async def test_corrected_first_overview_removes_wrong_opportunity_risk(tmp_path) -> None:
+    h = ReadHarness(tmp_path)
+    source_id = h.import_note("note_synthetic_v1.json")
+    await h.confirm(source_id)
+    eid = evidence_id_for(source_id, 1)
+
+    async def create_for(opp: str, key: str) -> None:
+        candidate = _candidate_for(eid).model_copy(update={
+            "risks": [_risk(eid, key=key, severity=RiskSeverity.HIGH)],
+        })
+        h.ops._executor = FakeCanonicalStateExecutor(candidate, cli_version="2.1.272")
+        source = h.ledger.get_source(source_id)
+        started = await h.ops.start_first_overview(
+            source_id, account=ACCOUNT, opp_slug=opp, revision=source["latest_revision"],
+            association_sequence=source["association"]["sequence"],
+        )
+        assert (await _wait(h.jobs, started["job_id"]))["ok"] is True
+
+    await create_for(OPP, "wrong-association")
+    assert h.reads.portfolio()["opportunities"][0]["risks"][0]["key"] == "wrong-association"
+    corrected = await h.confirm(source_id, ACCOUNT, OPP2)
+    assert corrected["overview_reverted"]["status"] == "retired"
+    old = next(row for row in h.reads.portfolio()["opportunities"] if row["opportunity_slug"] == OPP)
+    assert old["overview"]["status"] == "retired" and old["risks"] == []
+    assert not any(item["kind"] == "risk_review" for item in h.reads.today()["attention"])
+    await create_for(OPP2, "correct-association")
+    rows = {row["opportunity_slug"]: row for row in h.reads.portfolio()["opportunities"]}
+    assert rows[OPP]["risks"] == []
+    assert [risk["key"] for risk in rows[OPP2]["risks"]] == ["correct-association"]
+    reviews = [item for item in h.reads.today()["attention"] if item["kind"] == "risk_review"]
+    assert len(reviews) == 1 and reviews[0]["opportunity_slug"] == OPP2
 
 
 @pytest.mark.asyncio

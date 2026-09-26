@@ -2206,7 +2206,7 @@ function renderOverviewHealth(current) {
 function renderOverviewRisksActions(current) {
   const risks = current?.state?.risks || [];
   const actions = current?.state?.recommended_actions || [];
-  const riskHtml = risks.length ? risks.map((risk) => `<article class="overview-list-item overview-risk--${esc(risk.severity)}">
+  const riskHtml = risks.length ? risks.map((risk) => `<article id="overview-risk-${esc(risk.key)}" class="overview-list-item overview-risk--${esc(risk.severity)}">
     <div><span class="workspace-status workspace-status--${risk.severity === "critical" || risk.severity === "high" ? "error" : "warn"}">${esc(overviewLabel(risk.severity))}</span> <strong>${esc(risk.title)}</strong></div>
     <p>${esc(risk.description)}</p>
     <small>${esc(overviewLabel(risk.classification))}${risk.owner ? ` · Owner ${esc(risk.owner)}` : " · Owner TBD"}</small>
@@ -2799,6 +2799,11 @@ async function pageOpportunity(account, slug, routeOppName) {
     workspaceOutputItems(workspace).map((o) => [o.path, normalizeOutputMeta(o)])
   );
   view.innerHTML = renderOpportunityWorkspace(workspace);
+  const riskKey = (location.hash.match(/\/risk\/([a-z][a-z0-9_-]{0,79})$/) || [])[1];
+  if (riskKey) {
+    const riskDetail = document.getElementById(`overview-risk-${riskKey}`);
+    if (riskDetail) riskDetail.scrollIntoView({ block: "start" });
+  }
 
   const wireTechEval = () => {
     const trackerRoot = document.getElementById("tech-eval-tracker");
