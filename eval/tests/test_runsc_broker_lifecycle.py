@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 
-
 ROOT = Path(__file__).parents[2]
 BROKER = ROOT / "scripts/runsc_broker.py"
 EXPECTED_LIFECYCLE_CASES = 30
@@ -233,6 +232,7 @@ sentinel.write_text("sentinel", encoding="utf-8")
 os.chmod(sentinel, 0o640)
 sentinel_before = sentinel.stat()
 attack_stop = root / "attack.stop"
+attack_published = root / "attack.published"
 """
         special_async = """
 async def watch_output_phase():
@@ -242,21 +242,42 @@ async def watch_output_phase():
         if journal_paths:
             record = json.loads(journal_paths[0].read_text())
             if record.get("phase") == "output-sealed":
+                # The attacker runs as root, so anything it does to `output`
+                # after the broker publishes is post-custody noise, not a
+                # broker defect. It therefore never deletes by path: it moves
+                # whatever occupies `output` aside atomically, and if that is
+                # the broker's publication (a real, root-owned 0o770 directory
+                # it never created) it puts it back untouched and stops.
                 attacker_code = (
-                    "import pathlib, shutil, sys, time\\n"
+                    "import os, pathlib, shutil, stat, sys, time\\n"
                     "workspace = pathlib.Path(sys.argv[1])\\n"
                     "sentinel = pathlib.Path(sys.argv[2])\\n"
                     "stop = pathlib.Path(sys.argv[3])\\n"
                     "journal = pathlib.Path(sys.argv[4])\\n"
+                    "published_marker = pathlib.Path(sys.argv[5])\\n"
                     "output = workspace / 'se-runtime-output-attempt'\\n"
+                    "quarantine = workspace / 'se-attacker-quarantine'\\n"
+                    "def is_publication(path):\\n"
+                    "    facts = path.lstat()\\n"
+                    "    return (stat.S_ISDIR(facts.st_mode) and (facts.st_uid, facts.st_gid) == (0, 0)\\n"
+                    "            and stat.S_IMODE(facts.st_mode) == 0o770)\\n"
                     "while not stop.exists():\\n"
                     "    if not list(journal.glob('*.json')):\\n"
                     "        break\\n"
                     "    try:\\n"
-                    "        if output.is_symlink():\\n"
-                    "            output.unlink()\\n"
-                    "        elif output.exists():\\n"
-                    "            shutil.rmtree(output)\\n"
+                    "        try:\\n"
+                    "            os.rename(output, quarantine)\\n"
+                    "        except FileNotFoundError:\\n"
+                    "            pass\\n"
+                    "        else:\\n"
+                    "            if is_publication(quarantine):\\n"
+                    "                os.rename(quarantine, output)\\n"
+                    "                published_marker.write_text('observed')\\n"
+                    "                break\\n"
+                    "            if quarantine.is_symlink():\\n"
+                    "                quarantine.unlink()\\n"
+                    "            else:\\n"
+                    "                shutil.rmtree(quarantine)\\n"
                     "        if time.time_ns() % 2:\\n"
                     "            output.mkdir()\\n"
                     "            (output / 'nested').symlink_to(sentinel)\\n"
@@ -274,6 +295,7 @@ async def watch_output_phase():
                         str(sentinel),
                         str(attack_stop),
                         str(journal),
+                        str(attack_published),
                     ]
                 )
         await asyncio.sleep(0.01)
@@ -304,8 +326,10 @@ assert (
     sentinel_after.st_gid,
     sentinel_after.st_mode,
 )
+assert not (workspace / "se-attacker-quarantine").exists()
 if publication_failed_closed:
     assert list(journal.glob("se-*.json"))
+    assert not attack_published.exists()
 else:
     assert output.is_dir()
     assert not output.is_symlink()

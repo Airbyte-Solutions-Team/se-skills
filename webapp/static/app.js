@@ -2318,7 +2318,7 @@ function renderCreateOverviewState(workspace) {
       icon: "⚠",
       title: "Overview creation failed",
       body: esc(job.error_message || "No state was saved. You can retry with an explicit evidence selection."),
-      actions: '<button class="primary" id="create-overview-btn">Create Overview</button>',
+      actions: '<button class="primary" id="create-overview-btn">Retry Create overview</button>',
     })}</div>`;
   }
   const evidenceCount = workspace.eligible_evidence?.count || 0;

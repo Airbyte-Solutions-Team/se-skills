@@ -388,7 +388,7 @@ function esc(v) {{ return String(v || "").replace(/[&<>\"]/g, ""); }}
 function prettySkill(v) {{ return v; }}
 function conciseOutputName(v) {{ return v; }}
 function downloadMenuHtml() {{ return ""; }}
-function emptyBox({{title, body}}) {{ return title + body; }}
+function emptyBox({{title, body, actions}}) {{ return title + body + (actions || ""); }}
 eval(src.slice(start, end));
 const ref = {{source_type: "transcript", source_id: "tr_synthetic", locator: "00:01:00"}};
 const claim = (value) => ({{knowledge_state: "known", value, confidence: "high", evidence_refs: [ref]}});
