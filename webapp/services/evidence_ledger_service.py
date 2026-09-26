@@ -203,10 +203,12 @@ class EvidenceLedgerService:
         receipt = self._read_json(path, limit=10_000)
         if (
             not isinstance(receipt, dict)
-            or set(receipt) != {"source_id", "workspace_id", "requested_at", "status"}
+            or not {"source_id", "workspace_id", "requested_at", "status"} <= set(receipt)
+            or set(receipt) - {"source_id", "workspace_id", "requested_at", "status", "overview_status"}
             or receipt["source_id"] != source_id
             or receipt["workspace_id"] != self.scope().workspace_id
             or receipt["status"] not in {"pending", "complete"}
+            or receipt.get("overview_status") not in {None, "not_present", "repaired", "withheld"}
             or not isinstance(receipt["requested_at"], str)
         ):
             raise EvidenceLedgerError(409, "Deletion receipt is malformed.", code="malformed_storage")
@@ -230,12 +232,14 @@ class EvidenceLedgerService:
             self._atomic_write(self._forget_path(source_id, create=True), canonical_bytes(receipt))
             return receipt
 
-    def finish_forget(self, source_id: str) -> dict[str, Any]:
+    def finish_forget(self, source_id: str, *, overview_status: str = "not_present") -> dict[str, Any]:
         with self._exclusive():
             receipt = self.forget_receipt(source_id)
             if receipt is None:
                 raise EvidenceLedgerError(404, "Unknown deletion receipt.", code="unknown_source")
-            receipt = {**receipt, "status": "complete"}
+            if overview_status not in {"not_present", "repaired", "withheld"}:
+                raise ValueError("Invalid Overview cleanup status")
+            receipt = {**receipt, "status": "complete", "overview_status": overview_status}
             self._atomic_write(self._forget_path(source_id, create=True), canonical_bytes(receipt))
             return receipt
 

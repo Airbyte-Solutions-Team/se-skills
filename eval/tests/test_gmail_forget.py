@@ -35,7 +35,7 @@ async def test_forget_removes_all_revisions_and_index_blocks_reimport_and_keeps_
 
     receipt = _forget(h, gmail).forget(source_id)
     assert receipt["status"] == "complete"
-    assert set(h.ledger.forget_receipt(source_id)) == {"source_id", "workspace_id", "requested_at", "status"}
+    assert set(h.ledger.forget_receipt(source_id)) == {"source_id", "workspace_id", "requested_at", "status", "overview_status"}
     assert not content_dir.exists()
     assert not h.ledger._source_path(source_id).exists()
     assert source_id not in gmail._read_index()
@@ -186,16 +186,69 @@ async def test_forget_keeps_another_messages_overview_action_and_changes(tmp_pat
     h.ops._executor = FakeCanonicalStateExecutor(candidate, cli_version="2.1.272")
     assert (await h.reconcile(second))["ok"]
     assert h.ops.list_actions(ACCOUNT, OPP)["total"] == 2
-    assert _forget(h, gmail).forget(first)["overview_status"] == "repaired"
-    current = h.state.read_current(ACCOUNT, OPP)
+    assert _forget(h, gmail).forget(first)["overview_status"] == "withheld"
+    # The later model saw the first message in its base. Keep its unrelated
+    # work on disk, but do not assume that its output is independent.
+    with pytest.raises(Exception) as exc:
+        h.state.read_current(ACCOUNT, OPP)
+    assert exc.value.code == "source_forgotten"
+    current = h.state._read_history_unfiltered(ACCOUNT, OPP)[-1]
     assert {item.key for item in current.state.recommended_actions} >= {"ask-two"}
-    assert "ask-one" not in {item.key for item in current.state.recommended_actions}
+    assert "ask-one" in {item.key for item in current.state.recommended_actions}
     assert any(entry.source_id.startswith(second) for entry in current.evidence_manifest)
-    assert not any(entry.source_id.startswith(first) for entry in current.evidence_manifest)
+    assert any(entry.source_id.startswith(first) for entry in current.evidence_manifest)
     assert h.ops.list_actions(ACCOUNT, OPP)["total"] == 1
     assert h.ops.list_actions(ACCOUNT, OPP)["actions"][0]["origin"]["source_id"] == second
     assert any(item["source"] and item["source"]["source_id"] == second for item in h.ops.list_changes(ACCOUNT, OPP)["changes"])
     assert h.ledger.read_content(second, revision=1)
+
+
+@pytest.mark.asyncio
+async def test_later_model_copy_into_disjoint_overview_field_stays_withheld(tmp_path) -> None:
+    h = Harness(tmp_path)
+    await h.bootstrap_overview()
+    gmail, _ = _gmail_for(h)
+    await gmail.check_access()
+    source_id = _by_id(await _retrieve(gmail, h.jobs, [ACME_ASK]))[ACME_ASK]["source_id"]
+    await h.confirm(source_id)
+    marker = "SYNTHETIC-FORGOTTEN-GMAIL-MARKER-92741"
+    h.set_recs(source_id, 1, lambda eid: [
+        _recommendation(eid, key="gmail-ask", action=marker, owner="Airbyte SE", due="2026-09-30"),
+    ])
+    assert (await h.reconcile(source_id))["ok"]
+    previous = h.state.read_current(ACCOUNT, OPP)
+    payload = previous.state.model_dump(mode="json")
+    payload["brief"]["immediate_priority"]["value"] = f"Later model repeated {marker}"
+    copied = h.state.promote_update(
+        identity=previous.identity,
+        expected_parent_version_id=previous.version_id, expected_parent_revision=previous.revision,
+        evidence_manifest=list(previous.evidence_manifest),
+        expected_manifest_hash=evidence_manifest_hash(list(previous.evidence_manifest)),
+        provenance=GenerationProvenance(updater_version="model-v2", model="synthetic", runtime="model", cli_version="n/a"),
+        candidate=OpportunityStateCandidate.model_validate(payload),
+    )
+    human_payload = copied.state.model_dump(mode="json")
+    human_payload["brief"]["customer_objective"]["value"] = "Human edit from independent evidence"
+    edited = h.state.promote_update(
+        identity=copied.identity,
+        expected_parent_version_id=copied.version_id, expected_parent_revision=copied.revision,
+        evidence_manifest=list(copied.evidence_manifest),
+        expected_manifest_hash=evidence_manifest_hash(list(copied.evidence_manifest)),
+        provenance=GenerationProvenance(updater_version="human-v1", model="none", runtime="human_edit", cli_version="n/a"),
+        candidate=OpportunityStateCandidate.model_validate(human_payload),
+    )
+    receipt = _forget(h, gmail).forget(source_id)
+    assert receipt["status"] == "complete"
+    assert receipt["overview_status"] == "withheld"
+    assert h.ledger.forget_receipt(source_id)["overview_status"] == "withheld"
+    assert _forget(h, gmail).forget(source_id) == receipt
+    with pytest.raises(Exception) as exc:
+        h.state.read_current(ACCOUNT, OPP)
+    assert exc.value.code == "source_forgotten"
+    assert [version.revision for version in h.state.read_history(ACCOUNT, OPP)] == [1]
+    assert h.state._read_history_unfiltered(ACCOUNT, OPP)[-1].version_id == edited.version_id
+    assert marker in h.state._read_history_unfiltered(ACCOUNT, OPP)[-1].state.brief.immediate_priority.value
+    assert h.state._read_history_unfiltered(ACCOUNT, OPP)[-1].state.brief.customer_objective.value == "Human edit from independent evidence"
 
 
 @pytest.mark.asyncio

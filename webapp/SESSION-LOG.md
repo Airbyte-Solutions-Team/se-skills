@@ -2,10 +2,12 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: September 26, 2026 — branch `codex/forget-gmail-evidence-20260926` @ HEAD (off `main` `7c377cf`).
+_Last updated: September 26, 2026 — branch `codex/forget-gmail-evidence-20260926` @ HEAD (off `main` `7c377cf`; PR #73 review follow-up).
 
 
 ## Built this session (newest first — see `git log`)
+
+- **Forget PR #73 review follow-up (September 26; synthetic fixtures only).** A later model revision can copy forgotten Gmail text into a different Overview field while retaining the original field. The repair now withholds the entire Overview when a later, unattributed model revision used the tainted state as its base. Its other-message changes and subsequent human edits remain on disk for manual review. The text-free receipt persists `overview_status`, so Source review reports "Overview remains withheld pending manual review" after cleanup and on reload; the success toast no longer implies Overview repair. A unique-marker regression covers the copy and a later human edit. Seven Forget tests and 98 related tests pass. Cache-bust `2026092612`. No live mailbox run.
 
 - **User-initiated Forget for imported Gmail evidence (September 26; synthetic fixtures only).** Source review now offers a Forget action and a pending-cleanup retry surface. A text-free, workspace-scoped receipt blocks reads, reconciliation, and re-import before cleanup; cleanup removes every app-managed source snapshot and the Gmail index entry, retracts or withholds derived Actions/Changes, and withholds historical Overview revisions. A safe field-level inverse promotes a clean current Overview while preserving disjoint later human edits and other messages; conflicting edits remain on disk with the Overview withheld. The same request resumes after interruption. Six synthetic tests cover multiple revisions, partial cleanup, idempotency, API behavior, history, derived views, human edits, and message isolation; 86 relevant tests, Python compilation, JavaScript syntax, and diff checks pass. Gmail's original, OAuth grant, exports, backups, recoverable disk blocks, and physically retained withheld history are outside this deletion; no live mailbox was exercised.
 

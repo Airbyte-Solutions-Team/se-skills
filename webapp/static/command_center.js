@@ -1027,9 +1027,10 @@ async function ccPageSourceReview(sourceId) {
       const receipt = await api(`/api/command-center/sources/${encodeURIComponent(sourceId)}/forget`);
       body.innerHTML = `<p><a href="${CC_BASE}/sources">‹ Sources</a></p>
         <h2>Gmail message forgotten</h2><p>Receipt ${esc(receipt.source_id)} · ${ccBadge(receipt.status)}.</p>
+        ${receipt.overview_status === "withheld" ? '<p class="cc-danger" role="status">Overview remains withheld pending manual review. Later edits are preserved on disk.</p>' : ''}
         ${receipt.status === "pending" ? '<p>Cleanup was interrupted. Retry it to remove the remaining local copies.</p><button class="primary small" id="cc-forget-retry" type="button">Resume cleanup</button>' : ''}`;
       body.querySelector("#cc-forget-retry")?.addEventListener("click", async () => {
-        await ccMutate(api(`/api/command-center/sources/${encodeURIComponent(sourceId)}/forget`, { method: "POST" }), "Cleanup complete");
+        await ccMutate(api(`/api/command-center/sources/${encodeURIComponent(sourceId)}/forget`, { method: "POST" }), "Message cleanup finished; check Overview status");
         ccPageSourceReview(sourceId);
       });
     } catch (_) { body.innerHTML = ccError(e, `${CC_BASE}/sources/${sourceId}`); }
@@ -1108,7 +1109,7 @@ async function ccPageSourceReview(sourceId) {
   });
   body.querySelector("#cc-forget")?.addEventListener("click", async () => {
     if (!window.confirm("Forget this imported Gmail message from this local workspace?")) return;
-    await ccMutate(api(`/api/command-center/sources/${encodeURIComponent(sourceId)}/forget`, { method: "POST" }), "Gmail message forgotten");
+    await ccMutate(api(`/api/command-center/sources/${encodeURIComponent(sourceId)}/forget`, { method: "POST" }), "Message cleanup finished; check Overview status");
     ccPageSourceReview(sourceId);
   });
   body.querySelector("#cc-retry").addEventListener("click", async () => {

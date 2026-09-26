@@ -125,6 +125,18 @@ class GmailForgetService:
         ]
         if not transitions:
             return "withheld"
+        # A later model run sees the tainted Overview as its base. Even when it
+        # changes only a different field, it may have copied or paraphrased the
+        # forgotten message there. A structural inverse cannot prove otherwise.
+        attributed = {child.version_id for _parent, child in transitions}
+        first_revision = transitions[0][1].revision
+        if any(
+            version.revision > first_revision
+            and version.version_id not in attributed
+            and version.provenance.runtime not in {"human_edit", "gmail_forget"}
+            for version in history
+        ):
+            return "withheld"
         candidate: Any = current.state.model_dump(mode="json")
         try:
             for parent, child in reversed(transitions):
@@ -182,5 +194,4 @@ class GmailForgetService:
                 elif overview_status != "withheld":
                     overview_status = "repaired"
             self._ledger.purge_forgotten_source(source_id)
-            receipt = self._ledger.finish_forget(source_id)
-            return {**receipt, "overview_status": overview_status}
+            return self._ledger.finish_forget(source_id, overview_status=overview_status)
