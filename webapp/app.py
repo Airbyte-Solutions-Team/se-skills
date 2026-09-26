@@ -105,6 +105,7 @@ def _build_local_services(app: FastAPI) -> None:
     from services.evidence_ledger_service import EvidenceLedgerService
     from services.feedback_service import FeedbackService
     from services.gmail_intake_service import GmailIntakeService
+    from services.gmail_forget_service import GmailForgetService
     from services.granola_retrieval_service import GranolaRetrievalService
     from services.job_service import JobService
     from services.opportunity_workspace_service import OpportunityWorkspaceService
@@ -264,6 +265,10 @@ def _build_local_services(app: FastAPI) -> None:
         job_service=job_service,
         local_opportunities=command_center_read_service.local_opportunities,
     )
+    gmail_forget_service = GmailForgetService(
+        ledger=evidence_ledger_service, gmail=gmail_intake_service,
+        operations=command_center_operations_service, state=opportunity_state_service,
+    )
     skill_runtime_service = SkillRuntimeService(
         customers_dir=config.CUSTOMERS_DIR,
         workspace=config.WORKSPACE,
@@ -295,6 +300,7 @@ def _build_local_services(app: FastAPI) -> None:
     app.state.granola_adapter = granola_adapter
     app.state.granola_retrieval_service = granola_retrieval_service
     app.state.gmail_intake_service = gmail_intake_service
+    app.state.gmail_forget_service = gmail_forget_service
     app.state.command_center_operations_service = command_center_operations_service
     app.state.command_center_read_service = command_center_read_service
 

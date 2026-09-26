@@ -117,7 +117,8 @@ class CommandCenterReadService:
             offset = page["next_offset"]
 
     def _actions(self) -> list[ActionRecord]:
-        return self._ops._all_actions()
+        return [action for action in self._ops._all_actions()
+                if not self._ledger.is_forgotten(action.origin.source_id)]
 
     def _current(self, account: str, slug: str) -> tuple[OpportunityStateVersion | None, str]:
         """(version, status) where status ∈ current | not_created | malformed | unknown_account."""
@@ -287,8 +288,8 @@ class CommandCenterReadService:
             "origin_source_id": action.origin.source_id,
             "origin_revision": action.origin.revision,
             "origin_locator": action.origin.locator,
-            "evidence_count": len(action.effective_evidence),
-            "retracted_evidence_count": len(action.evidence_retractions),
+            "evidence_count": len(payload["effective_evidence"]),
+            "retracted_evidence_count": len(payload["evidence_retractions"]),
             "source_link": f"#/command-center/sources/{action.origin.source_id}",
         }
         payload["allowed_transitions"] = (
@@ -299,7 +300,10 @@ class CommandCenterReadService:
 
     def action(self, action_id: str) -> dict[str, Any]:
         """One action by stable ID with the same derived fields as the list rows."""
-        return self._present_action(self._ops._load_action(action_id))
+        action = self._ops._load_action(action_id)
+        if self._ledger.is_forgotten(action.origin.source_id):
+            raise CommandCenterReadError(410, "Action was derived from a forgotten message.", code="source_forgotten")
+        return self._present_action(action)
 
     def actions(
         self,
@@ -361,7 +365,9 @@ class CommandCenterReadService:
                 continue
             for path in directory.glob("*.json"):
                 try:
-                    entries.append(ChangeEntry.model_validate(self._ops._read_record(path)))
+                    entry = ChangeEntry.model_validate(self._ops._read_record(path))
+                    if not self._ops._change_forgotten(entry):
+                        entries.append(entry)
                 except (CommandCenterOperationsError, ValueError):
                     continue
         return entries

@@ -181,6 +181,80 @@ class EvidenceLedgerService:
             _mkdir_private(directory)
         return resolve_within(directory, f"{content_hash}.json")
 
+    def _forget_path(self, source_id: str, *, create: bool = False) -> Path:
+        if not SOURCE_ID.fullmatch(source_id):
+            raise EvidenceLedgerError(404, "Unknown source.", code="unknown_source")
+        directory = resolve_within(self._ledger_dir(create=create), "forgotten")
+        if create:
+            _mkdir_private(directory)
+        return resolve_within(directory, f"{source_id}.json")
+
+    def is_forgotten(self, source_id: str) -> bool:
+        return self._forget_path(source_id).exists()
+
+    def forgotten_ids(self) -> set[str]:
+        directory = resolve_within(self._ledger_dir(), "forgotten")
+        return {path.stem for path in directory.glob("src_*.json")} if directory.is_dir() else set()
+
+    def forget_receipt(self, source_id: str) -> dict[str, Any] | None:
+        path = self._forget_path(source_id)
+        if not path.exists():
+            return None
+        receipt = self._read_json(path, limit=10_000)
+        if (
+            not isinstance(receipt, dict)
+            or set(receipt) != {"source_id", "workspace_id", "requested_at", "status"}
+            or receipt["source_id"] != source_id
+            or receipt["workspace_id"] != self.scope().workspace_id
+            or receipt["status"] not in {"pending", "complete"}
+            or not isinstance(receipt["requested_at"], str)
+        ):
+            raise EvidenceLedgerError(409, "Deletion receipt is malformed.", code="malformed_storage")
+        return receipt
+
+    def begin_forget(self, source_id: str) -> dict[str, Any]:
+        """Commit the read/import barrier before any fallible cleanup step."""
+        with self._exclusive():
+            receipt = self.forget_receipt(source_id)
+            if receipt is not None:
+                return receipt
+            source = self._read_source(source_id)
+            if source.identity.provider != "gmail":
+                raise EvidenceLedgerError(400, "Only imported Gmail messages can be forgotten.", code="not_gmail")
+            receipt = {
+                "source_id": source_id,
+                "workspace_id": self.scope().workspace_id,
+                "requested_at": self._now().isoformat(),
+                "status": "pending",
+            }
+            self._atomic_write(self._forget_path(source_id, create=True), canonical_bytes(receipt))
+            return receipt
+
+    def finish_forget(self, source_id: str) -> dict[str, Any]:
+        with self._exclusive():
+            receipt = self.forget_receipt(source_id)
+            if receipt is None:
+                raise EvidenceLedgerError(404, "Unknown deletion receipt.", code="unknown_source")
+            receipt = {**receipt, "status": "complete"}
+            self._atomic_write(self._forget_path(source_id, create=True), canonical_bytes(receipt))
+            return receipt
+
+    def purge_forgotten_source(self, source_id: str) -> None:
+        """Retryable removal of every app-managed snapshot, including orphan files."""
+        with self._exclusive():
+            if not self.is_forgotten(source_id):
+                raise EvidenceLedgerError(409, "Deletion barrier is missing.", code="forget_not_started")
+            directory = resolve_within(self._ledger_dir() / "content", source_id)
+            if directory.exists():
+                if directory.is_symlink() or not directory.is_dir():
+                    raise EvidenceLedgerError(409, "Content storage is unsafe.", code="unsafe_storage")
+                for path in directory.iterdir():
+                    if path.is_symlink() or not path.is_file():
+                        raise EvidenceLedgerError(409, "Content storage is unsafe.", code="unsafe_storage")
+                    path.unlink()
+                directory.rmdir()
+            self._source_path(source_id).unlink(missing_ok=True)
+
     # -------------------------------------------------------------------- io
 
     _atomic_write = staticmethod(atomic_write_private)
@@ -221,6 +295,8 @@ class EvidenceLedgerService:
         self._atomic_write(self._source_path(source.source_id, create=True), canonical_bytes(envelope))
 
     def _read_source(self, source_id: str) -> EvidenceSource:
+        if self.is_forgotten(source_id):
+            raise EvidenceLedgerError(410, "This Gmail message was forgotten.", code="source_forgotten")
         path = self._source_path(source_id)
         if not path.exists():
             raise EvidenceLedgerError(404, "Unknown source.", code="unknown_source")
@@ -257,6 +333,9 @@ class EvidenceLedgerService:
             raise EvidenceLedgerError(400, "Invalid import id.", code="invalid_import_id")
         results: list[dict[str, Any]] = []
         with self._exclusive():
+            meetings = list(meetings)
+            if any(self.is_forgotten(source_id_for(self.scope(), item.identity)) for item in meetings):
+                raise EvidenceLedgerError(410, "A selected Gmail message was forgotten.", code="source_forgotten")
             self._ensure_scope_file()
             for meeting in meetings:
                 results.append(self._record_meeting(meeting, import_token, trigger))
@@ -270,6 +349,8 @@ class EvidenceLedgerService:
     def _record_meeting(self, meeting: NormalizedSource, import_id: str, trigger: ImportTrigger) -> dict[str, Any]:
         scope = self.scope()
         source_id = source_id_for(scope, meeting.identity)
+        if self.is_forgotten(source_id):
+            raise EvidenceLedgerError(410, "This Gmail message was forgotten.", code="source_forgotten")
         now = self._now()
         snapshot = meeting.snapshot()
         snapshot_bytes = canonical_bytes(snapshot)
@@ -659,6 +740,8 @@ class EvidenceLedgerService:
                 try:
                     source = self._read_source(path.name[:-5])
                 except EvidenceLedgerError as exc:
+                    if exc.code == "source_forgotten":
+                        continue
                     if exc.code in {"malformed_storage", "scope_mismatch", "unknown_source"}:
                         malformed += 1
                         continue
