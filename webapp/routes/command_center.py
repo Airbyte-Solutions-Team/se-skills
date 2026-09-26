@@ -87,6 +87,15 @@ class ReconcileBody(BaseModel):
     base_revision: int = Field(ge=1, le=1_000_000)
 
 
+class FirstOverviewBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    account: str = Field(pattern=r"^[A-Za-z0-9._-]{1,120}$")
+    opportunity_slug: str = Field(pattern=r"^[A-Za-z0-9._-]{1,120}$")
+    revision: int = Field(ge=1, le=1_000_000)
+    association_sequence: int = Field(ge=1)
+
+
 class ActionTransitionBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -522,6 +531,17 @@ async def api_command_center_reconcile(source_id: str, body: ReconcileBody, requ
     try:
         return await _operations(request).start_reconciliation(
             source_id, base_version_id=body.base_version_id, base_revision=body.base_revision
+        )
+    except CommandCenterOperationsError as exc:
+        _raise_domain(exc)
+
+
+@router.post("/api/command-center/sources/{source_id}/create-first-overview", status_code=202)
+async def api_command_center_create_first_overview(source_id: str, body: FirstOverviewBody, request: Request) -> dict:
+    try:
+        return await _operations(request).start_first_overview(
+            source_id, account=body.account, opp_slug=body.opportunity_slug,
+            revision=body.revision, association_sequence=body.association_sequence,
         )
     except CommandCenterOperationsError as exc:
         _raise_domain(exc)

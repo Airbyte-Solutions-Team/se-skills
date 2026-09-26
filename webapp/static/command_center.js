@@ -411,7 +411,7 @@ async function ccPageActionDetail(actionId) {
 
 const CC_CHANGE_TYPES = [
   "overview_revision", "action_created", "action_linked", "action_transition", "completion_suggested",
-  "possible_duplicate_flagged", "association_corrected", "evidence_retracted", "completion_suggestion_retracted", "overview_reverted",
+  "possible_duplicate_flagged", "association_corrected", "evidence_retracted", "completion_suggestion_retracted", "overview_reverted", "overview_retired",
 ];
 
 function ccDiff(before, after) {
@@ -1068,16 +1068,19 @@ async function ccPageSourceReview(sourceId) {
     </form>
     <p class="muted">Correcting or clearing an association retracts evidence and actions derived from this source; the change history records it.</p>
 
-    <h2 class="cc-h2">Reconcile into Overview</h2>
+    <h2 class="cc-h2">${base?.status === "not_created" ? "Create first Overview" : "Reconcile into Overview"}</h2>
     ${base ? `<p>Base: ${ccBadge(base.status)} ${base.revision ? `revision ${base.revision} <code>${esc((base.version_id || "").slice(0, 12))}</code>` : ""} <a class="cc-mini" href="${esc(base.opportunity_link)}">open overview</a></p>` : `<p class="muted">No associated opportunity, so there is no Overview base.</p>`}
+    ${base?.status === "not_created" ? '<p class="muted">Use this confirmed meeting to create the first Overview and its source-linked Actions. The imported content is reused; no upload or transcript selection is needed.</p>' : ""}
+    ${r.pending_action_application ? '<p class="cc-warn">The Overview was saved, but Action application was interrupted. Finish saving Actions without analysing the meeting again.</p>' : ""}
     <div class="row-actions">
-      <button class="primary small" type="button" id="cc-reconcile" ${caps.reconcile ? "" : "disabled"}>Reconcile against revision ${base?.revision ?? "—"}</button>
+      ${base?.status === "not_created" ? `<button class="primary small" type="button" id="cc-create-first" ${caps.create_first_overview ? "" : "disabled"}>Create first Overview from this meeting</button>` : ""}
+      ${base?.status !== "not_created" ? `<button class="primary small" type="button" id="cc-reconcile" ${caps.reconcile ? "" : "disabled"}>${r.pending_action_application ? "Finish saving Actions" : `Reconcile against revision ${base?.revision ?? "—"}`}</button>` : ""}
       <button class="ghost small" type="button" id="cc-retry" ${caps.retry ? "" : "disabled"}>Retry processing</button>
-      <span id="cc-run-status" class="muted" role="status">${caps.reconcile ? "" : esc(caps.reconcile_blocked_reason || "")}</span>
+      <span id="cc-run-status" class="muted" role="status" aria-live="polite">${r.active_reconciliation_job_id ? "Analysis is running…" : (r.pending_action_application ? "Ready to finish saving Actions." : (caps.reconcile || caps.create_first_overview ? "" : esc(caps.reconcile_blocked_reason || "")))}</span>
     </div>
 
     <h2 class="cc-h2">Runs</h2>
-    ${r.runs.length ? `<ol class="cc-runs">${r.runs.map((run) => `<li>${ccBadge(run.status)} <span class="muted">${ccWhen(run.started_at || run.created_at)}</span> base r${run.base_revision ?? "?"}${run.error_code ? ` · <span class="cc-danger">${esc(run.error_code)}</span>` : ""}${run.error ? ` · ${esc(run.error)}` : ""}</li>`).join("")}</ol>` : `<p class="muted">No reconciliation runs yet.</p>`}
+    ${r.runs.length ? `<ol class="cc-runs">${r.runs.map((run) => `<li>${ccBadge(run.status)} <span class="muted">${ccWhen(run.started_at || run.created_at)}</span> ${run.base_revision ? `base r${run.base_revision}` : "first Overview"}${run.error_code ? ` · <span class="cc-danger">${esc(run.error_code)}</span>` : ""}${run.error ? ` · ${esc(run.error)}` : ""}</li>`).join("")}</ol>` : `<p class="muted">No analysis runs yet.</p>`}
 
     <h2 class="cc-h2">Actions derived from this source</h2>
     ${r.derived_actions.length ? `<ul class="cc-actions">${r.derived_actions.map((a) => ccActionRow(a)).join("")}</ul>` : `<p class="muted">None.</p>`}
@@ -1116,27 +1119,54 @@ async function ccPageSourceReview(sourceId) {
     const ok = await ccMutate(api(`/api/command-center/sources/${encodeURIComponent(sourceId)}/retry`, { method: "POST" }), "Source queued for retry");
     if (ok) rerender();
   });
-  body.querySelector("#cc-reconcile").addEventListener("click", async () => {
+  const startAnalysis = async (first) => {
     const statusEl = body.querySelector("#cc-run-status");
-    statusEl.textContent = "Starting…";
+    statusEl.textContent = r.pending_action_application ? "Finishing saved Overview and Actions…" :
+      (first ? "Starting first Overview analysis…" : "Starting reconciliation…");
+    body.querySelector("#cc-create-first")?.setAttribute("disabled", "");
+    body.querySelector("#cc-reconcile")?.setAttribute("disabled", "");
     let job;
     try {
-      job = await api(`/api/command-center/sources/${encodeURIComponent(sourceId)}/reconcile`, {
+      job = await api(`/api/command-center/sources/${encodeURIComponent(sourceId)}/${first ? "create-first-overview" : "reconcile"}`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ base_version_id: base.version_id, base_revision: base.revision }),
+        body: JSON.stringify(first ? {
+          account: assoc.account, opportunity_slug: assoc.opportunity_slug,
+          revision: s.latest_revision, association_sequence: assoc.sequence,
+        } : { base_version_id: base.version_id, base_revision: base.revision }),
       });
-    } catch (err) { statusEl.textContent = err.message || String(err); return; }
-    const jobId = job.job_id;
+    } catch (err) {
+      statusEl.textContent = `Could not start: ${err.message || String(err)} Reload Source review and retry.`;
+      body.querySelector("#cc-create-first")?.removeAttribute("disabled");
+      body.querySelector("#cc-reconcile")?.removeAttribute("disabled");
+      return;
+    }
+    await watchAnalysis(job.job_id);
+  };
+  const watchAnalysis = async (jobId) => {
+    const statusEl = body.querySelector("#cc-run-status");
     for (let i = 0; i < 600; i++) {
       await new Promise((res) => setTimeout(res, 1000));
       let st;
       try { st = await api(`/api/command-center/reconciliations/${encodeURIComponent(jobId)}`); }
-      catch (err) { statusEl.textContent = err.message || String(err); return; }
-      statusEl.textContent = `Reconciliation ${st.status}…`;
-      if (st.status !== "running" && st.status !== "queued") break;
+      catch (err) { statusEl.textContent = `Status unavailable: ${err.message || String(err)} Reload Source review to retry.`; return; }
+      if (st.status === "running" || st.status === "queued") {
+        statusEl.textContent = r.pending_action_application ? "Finishing Action application…" :
+          "Analysing meeting and saving Overview and Actions…";
+        continue;
+      }
+      if (st.ok) { await rerender(); return; }
+      const detail = (st.error_message || st.error_code || "unknown error").replace(/[.\s]+$/, "");
+      statusEl.textContent = st.error_code === "content_unusable"
+        ? `Analysis failed: ${detail}. Import a meeting revision with content, then retry.`
+        : `Analysis failed: ${detail}. Retry processing below, then try again.`;
+      body.querySelector("#cc-retry")?.removeAttribute("disabled");
+      return;
     }
-    rerender();
-  });
+    statusEl.textContent = "Analysis is taking longer than expected. Reload Source review to check progress.";
+  };
+  body.querySelector("#cc-create-first")?.addEventListener("click", () => startAnalysis(true));
+  body.querySelector("#cc-reconcile")?.addEventListener("click", () => startAnalysis(false));
+  if (r.active_reconciliation_job_id) watchAnalysis(r.active_reconciliation_job_id);
 }
 
 // ── Router entry ─────────────────────────────────────────────────────────

@@ -94,6 +94,8 @@ async def api_current_opportunity_state(account: str, opp_slug: str, request: Re
             raise HTTPException(404, "No canonical overview exists for this opportunity.")
         if inspected["status"] == "malformed":
             raise HTTPException(409, "Canonical overview storage is malformed.")
+        if inspected["status"] == "retired":
+            raise HTTPException(410, "This Overview was retired after its meeting association was corrected.")
         return inspected["current"]
     except (AccountError, OpportunityStateError) as exc:
         _raise_domain(exc)

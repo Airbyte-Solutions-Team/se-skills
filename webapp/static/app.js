@@ -2310,6 +2310,13 @@ function renderCreateOverviewState(workspace) {
       body: "Stored canonical state could not be validated. No replacement was attempted.",
     });
   }
+  if (canonical.status === "retired") {
+    return emptyBox({
+      icon: "↩",
+      title: "Overview retired",
+      body: "The meeting association was corrected. This Overview is preserved in history and is no longer current.",
+    });
+  }
   if (job?.status === "running") {
     return `<div class="overview-create-status overview-create-status--centered" id="overview-create-status"><span class="spinner"></span><p>Creating overview from ${Number(job.evidence_count || 0) - 1} selected transcript${job.evidence_count === 2 ? "" : "s"}…<br><small>This continues safely if you leave this page.</small></p></div>`;
   }
@@ -2473,7 +2480,7 @@ function renderOpportunityWorkspace(workspace) {
       <div class="row-actions workspace-primary-actions workspace-toolbar">
         <a class="ghost live-btn" href="#/live/${encodeURIComponent(account.name)}/${encodeURIComponent(opportunity.slug)}/${encodeURIComponent(opportunity.name)}">🎙 Live Transcribe</a>
         <button class="ghost" id="handoff-btn" title="Generate a PTO coverage handoff for a covering SE">🤝 Coverage Handoff</button>
-        ${!canonicalCreated && workspace.canonical_state?.status !== "malformed" && workspace.canonical_state?.create_job?.status !== "running" ? '<button class="primary" id="create-overview-header">Create overview</button>' : ""}
+        ${!canonicalCreated && workspace.canonical_state?.status === "not_created" && workspace.canonical_state?.create_job?.status !== "running" ? '<button class="primary" id="create-overview-header">Create overview</button>' : ""}
         ${canonicalCreated ? `<button class="ghost" id="update-overview-btn"${workspace.canonical_state?.freshness?.update_active ? " disabled" : ""}>Update Overview</button>` : ""}
         <button class="${canonicalCreated ? "primary" : "ghost"}" id="invoke-btn">Generate</button>
       </div>
@@ -2502,11 +2509,11 @@ function renderOpportunityWorkspace(workspace) {
             <div class="workspace-eyebrow">Current understanding</div>
             <h2>Opportunity Brief</h2>
           </div>
-          <span class="workspace-state">${canonicalCreated ? `Revision ${current.revision}` : "Not created"}</span>
+          <span class="workspace-state">${canonicalCreated ? `Revision ${current.revision}` : workspace.canonical_state?.status === "retired" ? "Retired" : "Not created"}</span>
         </div>
         ${canonicalCreated ? renderOverviewBrief(current) : renderCreateOverviewState(workspace)}
         ${canonicalCreated ? renderUpdateJobState(workspace) : ""}
-        ${canonicalCreated ? '<p class="muted overview-version-note">Update Overview reconciles explicitly authorized evidence into a new immutable revision. Generate remains a separate artifact workflow.</p>' : '<p class="muted">Create Overview persists one validated canonical version. Generate continues to create separate task-specific artifacts.</p>'}
+        ${canonicalCreated ? '<p class="muted overview-version-note">Update Overview reconciles explicitly authorized evidence into a new immutable revision. Generate remains a separate artifact workflow.</p>' : workspace.canonical_state?.status === "retired" ? '<p class="muted">The retired revision remains in Overview history for audit.</p>' : '<p class="muted">Create Overview persists one validated canonical version. Generate continues to create separate task-specific artifacts.</p>'}
       </section>
 
       ${canonicalCreated ? renderWhatChanged(current) : ""}

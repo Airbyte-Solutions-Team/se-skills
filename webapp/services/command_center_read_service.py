@@ -118,13 +118,16 @@ class CommandCenterReadService:
 
     def _actions(self) -> list[ActionRecord]:
         return [action for action in self._ops._all_actions()
-                if not self._ledger.is_forgotten(action.origin.source_id)]
+                if not self._ledger.is_forgotten(action.origin.source_id)
+                and not self._ops._action_retired(action)]
 
     def _current(self, account: str, slug: str) -> tuple[OpportunityStateVersion | None, str]:
-        """(version, status) where status ∈ current | not_created | malformed | unknown_account."""
+        """Return the effective head and its availability status."""
         try:
             version = self._state.read_current(account, slug)
         except OpportunityStateError as exc:
+            if exc.code == "overview_retired":
+                return None, "retired"
             return None, "malformed" if exc.code == "malformed_storage" else "unknown_account"
         return version, "current" if version is not None else "not_created"
 
@@ -279,9 +282,10 @@ class CommandCenterReadService:
         payload = self._ops._present(action)
         today = self._today()
         due = date.fromisoformat(action.due_date) if action.due_date else None
-        payload["overdue"] = bool(due and due < today and action.status in _OPEN and action.retraction is None)
+        payload["overdue"] = bool(due and due < today and action.status in _OPEN and not payload["retracted"])
         payload["due_soon"] = bool(
             due and today <= due <= today + timedelta(days=DUE_SOON_DAYS) and action.status in _OPEN
+            and not payload["retracted"]
         )
         payload["opportunity_link"] = opportunity_link(action.account, action.opportunity_slug)
         payload["provenance"] = {
@@ -294,7 +298,7 @@ class CommandCenterReadService:
         }
         payload["allowed_transitions"] = (
             sorted(to for (frm, to) in HUMAN_TRANSITIONS if frm == action.status)
-            if action.retraction is None else []
+            if not payload["retracted"] else []
         )
         return payload
 
@@ -366,7 +370,7 @@ class CommandCenterReadService:
             for path in directory.glob("*.json"):
                 try:
                     entry = ChangeEntry.model_validate(self._ops._read_record(path))
-                    if not self._ops._change_forgotten(entry):
+                    if not self._ops._change_forgotten(entry) and not self._ops._change_retired(entry):
                         entries.append(entry)
                 except (CommandCenterOperationsError, ValueError):
                     continue
@@ -597,9 +601,22 @@ class CommandCenterReadService:
             if a.origin.source_id == source_id or any(ref.source_id == source_id for ref in a.evidence)
         ]
         processing = source["processing"]
+        active = self._ops._running_job_for_source(source_id)
+        pending = self._ops._read_pending(source_id)
+        can_start_processing = (
+            processing["status"] in ("queued", "failed")
+            or (processing["status"] == "processing" and active is None)
+            or (pending is not None and active is None)
+        )
         can_reconcile = (
             assoc["state"] == "associated" and overview_base is not None and overview_base["status"] == "current"
-            and processing["status"] in ("queued", "failed", "processed")
+            and can_start_processing
+            and source["availability"] == "content_available"
+        )
+        can_create_first = (
+            assoc["state"] == "associated" and overview_base is not None
+            and overview_base["status"] == "not_created"
+            and can_start_processing
             and source["availability"] == "content_available"
         )
         return {
@@ -607,12 +624,15 @@ class CommandCenterReadService:
             "overview_base": overview_base,
             "runs": runs,
             "derived_actions": derived,
+            "active_reconciliation_job_id": active[0] if active else None,
+            "pending_action_application": pending is not None,
             "candidates": self.local_opportunities(),
             "capabilities": {
                 "confirm_association": True,
                 "clear_association": assoc["state"] == "associated",
                 "retry": processing["status"] == "failed" and bool(processing.get("retry_eligible")),
                 "reconcile": can_reconcile,
+                "create_first_overview": can_create_first,
                 "reconcile_blocked_reason": None if can_reconcile else self._reconcile_blocker(source, overview_base),
             },
         }
@@ -624,7 +644,7 @@ class CommandCenterReadService:
         if source["availability"] != "content_available":
             return f"Source content is {source['availability']}; nothing can be analysed."
         if base is None or base["status"] != "current":
-            return "This opportunity has no current Overview yet; create one from the Opportunity page first."
+            return "This opportunity has no current Overview. Create its first Overview from this meeting."
         if source["processing"]["status"] == "processing":
             return "A reconciliation is already running for this source."
         return "The source is not in a state that can be reconciled."
