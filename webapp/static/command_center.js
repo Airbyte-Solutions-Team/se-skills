@@ -62,13 +62,61 @@ function ccShell(tab, title, sub, body) {
   view.innerHTML = `
     <div class="row cc-head">
       <div><h1>Command Center</h1><p class="sub">${esc(sub)}</p></div>
-      <span class="cc-pilot-note" title="Local single-user pilot: pages read persisted local records only.">Local pilot · manual Salesforce refresh and source intake · no live sync</span>
+      <div class="cc-update">
+        <button class="primary small" type="button" id="cc-update">Update Command Center</button>
+        <span class="muted" id="cc-update-status" role="status">Checking saved source status…</span>
+      </div>
     </div>
     <nav class="tabs cc-tabs" role="tablist" aria-label="Command Center views">
       ${CC_TABS.map(([id, label]) => `<a class="tab${id === tab ? " active" : ""}" role="tab" aria-selected="${id === tab}" href="${CC_BASE}/${id}">${label}</a>`).join("")}
     </nav>
     <section id="cc-body" class="cc-body" aria-live="polite">${body}</section>`;
+  ccWireUpdate();
   return document.getElementById("cc-body");
+}
+
+async function ccWireUpdate() {
+  const button = document.getElementById("cc-update");
+  const status = document.getElementById("cc-update-status");
+  if (!button || !status || typeof button.addEventListener !== "function") return;
+  const render = (s) => {
+    if (!status.isConnected) return;
+    const sf = s.salesforce;
+    const cal = s.calendar;
+    status.innerHTML = `Salesforce: ${esc(sf.refreshed_at ? `checked ${ccWhen(sf.refreshed_at)}` : "choose an SE in Today or Portfolio")}${sf.state !== "ok" && sf.refreshed_at ? ` · ${esc(ccLabel(sf.state))}` : ""}<br/>
+      Calendar: ${esc(cal.refreshed_at ? `checked ${ccWhen(cal.refreshed_at)}` : ccLabel(cal.state))}${cal.state === "stale" ? " · last check failed" : ""}<br/>
+      <a href="${CC_BASE}/sources">Granola and Gmail: select items in Sources</a>`;
+  };
+  try { render(await api("/api/command-center/update")); }
+  catch (_e) { if (status.isConnected) status.textContent = "Saved source status unavailable."; }
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    status.textContent = "Checking saved Salesforce scope and the next 7 days of Calendar…";
+    try {
+      const result = await api("/api/command-center/update", { method: "POST" });
+      render({ ...result, salesforce: { ...result.salesforce, refreshed_at: result.salesforce.state === "ok" ? new Date().toISOString() : null } });
+      showToast(`Salesforce: ${ccLabel(result.salesforce.state)} · Calendar: ${ccLabel(result.calendar.state)}. Granola and Gmail remain in Sources.`);
+      await pageCommandCenter();
+    } catch (e) {
+      status.textContent = `Update failed: ${e.message}`;
+    } finally { button.disabled = false; }
+  });
+}
+
+function ccCalendarPanel(calendar) {
+  if (!calendar) return `<section class="cc-calendar"><h2 class="cc-h2">Next 7 days</h2><p>Saved Calendar events could not be loaded.</p></section>`;
+  const events = calendar.events || [];
+  const notice = calendar.state === "not_configured"
+    ? "Calendar is not connected. Authorize the local read-only Calendar route to include upcoming meetings."
+    : calendar.state === "not_checked" ? "Click Update Command Center to check your Calendar."
+    : calendar.state === "stale" ? "The latest Calendar check failed; saved meetings may be out of date."
+    : calendar.state !== "ok" ? `Calendar check: ${ccLabel(calendar.state)}.` : "";
+  return `<section class="cc-calendar" aria-label="Upcoming Calendar meetings">
+    <h2 class="cc-h2">Next 7 days · Google Calendar</h2>
+    <p class="muted">${esc(notice || (calendar.refreshed_at ? `Checked ${ccWhen(calendar.refreshed_at)}` : "Not checked"))} · Primary calendar, timed events only. Meeting details are not assigned to opportunities automatically.</p>
+    ${events.length ? `<ul class="cc-calendar-list">${events.map((e) => `<li><span>${ccWhen(e.start)}</span><strong>${esc(e.title)}</strong>${e.link ? `<a href="${esc(e.link)}" target="_blank" rel="noopener noreferrer">Open in Calendar</a>` : ""}</li>`).join("")}</ul>`
+      : `<p class="muted">${calendar.state === "ok" ? "No upcoming timed events in the saved week." : "No saved upcoming meetings."}</p>`}
+  </section>`;
 }
 
 function ccLoading() {
@@ -210,6 +258,7 @@ async function ccPageToday(params) {
   let data;
   try { data = await api(`/api/command-center/today${ccQuery({ limit: CC_PAGE, offset })}`); }
   catch (e) { body.innerHTML = ccError(e, `${CC_BASE}/today`); return; }
+  const calendar = await api("/api/command-center/calendar").catch(() => null);
 
   const counts = data.counts_by_kind || {};
   const summary = Object.entries(CC_KIND_LABEL)
@@ -249,6 +298,7 @@ async function ccPageToday(params) {
   body.innerHTML = `
     ${ccCoverage(data.coverage)}
     ${ccCrmRefresh(data.coverage)}
+    ${ccCalendarPanel(calendar)}
     <section class="cc-crm-only"><h2 class="cc-h2">Active CRM opportunities without local state (${data.crm_only_count || 0})</h2>
       ${(data.crm_only || []).length ? `<ul>${data.crm_only.map((o) => `<li>${o.sfdc_url ? `<a href="${esc(o.sfdc_url)}" target="_blank" rel="noopener noreferrer">${esc(o.account_name)} · ${esc(o.name)}</a>` : `${esc(o.account_name)} · ${esc(o.name)}`} · ID ${esc(o.sfdc_id)} · ${esc(o.stage || "stage unknown")} · ${esc(o.owner || "owner unknown")} · close ${ccDay(o.close_date)}</li>`).join("")}</ul>` : `<p class="muted">No CRM-only rows in the saved snapshot. Check Portfolio for local and matched rows.</p>`}
       ${data.crm_only_count > 25 ? `<a href="${CC_BASE}/portfolio">View all in Portfolio</a>` : ""}

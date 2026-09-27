@@ -10,6 +10,8 @@ Today and Portfolio enumerate local opportunities and a saved, manually refreshe
 
 Portfolio leads with the next outstanding durable Action (earliest due date), due or overdue state, waiting-on parties, confirmed Overview blockers, potential Overview risks, the latest change, and source freshness. Each item links to its Action, Overview, Changes, or source review. Today shows prioritized attention, including associated sources queued for reconciliation or stale after an edited import, and recent accepted changes. Meeting and email intake remain user initiated; "current" means through the latest imported source, not through provider activity that has not been retrieved.
 
+The local pilot has a manual **Update Command Center** control. It refreshes the saved Salesforce scope and, when explicitly authorized, a read-only snapshot of timed events on the primary Google Calendar from now through seven days ahead. Calendar uses a separate OAuth grant from Gmail; the default transport is unavailable. Today displays the saved upcoming events without inferring opportunity association. Granola and Gmail continue to require the user to select individual sources under Sources. A page read does not call providers, and no periodic sync is scheduled.
+
 ## 1. Product outcome
 
 Command Center is the portfolio view above Opportunity Overview. It helps an SE or AE answer, across the active opportunities they can access:

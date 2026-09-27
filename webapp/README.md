@@ -7,6 +7,12 @@ an account's generated outputs, and invoke any skill with a button.
 > Claude Code + MCPs (Gong/Salesforce) + local `~/airbyte-work` files. It is NOT
 > a hosted multi-tenant app — see "Why local" below.
 
+## Command Center manual update and Calendar
+
+**Update Command Center** at the top right refreshes the previously selected Salesforce SE/AE scope and, if enabled, the next **seven days** of the primary Google Calendar. First choose an SE in Today or Portfolio and save that scope using **Refresh active opportunities**. Each source reports its own last check and failure state. Reading or switching pages never contacts either provider. Granola and Gmail remain explicit selection flows under Sources; Update does not search or import their content or run a model.
+
+Calendar is off by default. For a local pilot, enable the Google Calendar API in a Google Cloud project, add exactly `https://www.googleapis.com/auth/calendar.events.readonly` to the Desktop OAuth consent configuration, and run `uv run python scripts/calendar_local_authorize.py --client-file <downloaded-desktop-client.json>` in the checkout. Then start the app with `SE_CALENDAR_TRANSPORT=live_readonly`. The grant is separate from Gmail's and stays under your local profile in `~/.config/se-skills/calendar-oauth.json` (override with `SE_CALENDAR_OAUTH_FILE`, an absolute path under your profile). `--status` checks whether the grant exists and `--revoke` revokes it. Calendar titles, times, and safe Google Calendar links are saved locally; private, all-day, declined, and out-of-office events are omitted. No event is automatically associated with an opportunity, and there is no background sync or live Calendar test in this repository.
+
 ## Prerequisites
 
 The app runs on your machine, as you, using your own auth + local files. You need:

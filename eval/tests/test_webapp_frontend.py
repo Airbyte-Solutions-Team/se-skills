@@ -107,7 +107,7 @@ const coverage = {{complete: false, label: "Selected Salesforce scope refreshed;
 const portfolio = {{opportunities: rows, coverage, accounts: ["Synthetic Account"], total: 2, offset: 0, limit: 25, next_offset: null}};
 const today = {{attention: [], counts_by_kind: {{}}, coverage, recent_changes: [], opportunity_count: 2, crm_only: crm, crm_only_count: 2, total: 0, offset: 0, limit: 25, next_offset: null}};
 const calls = [];
-global.api = async (path) => {{ calls.push(path); if (path.includes("/portfolio")) return portfolio; if (path.includes("/today")) return today; throw new Error(path); }};
+global.api = async (path) => {{ calls.push(path); if (path.includes("/portfolio")) return portfolio; if (path.includes("/today")) return today; if (path.includes("/calendar")) return {{state: "not_configured", events: []}}; throw new Error(path); }};
 eval(src + "\\nglobalThis.ccPagePortfolio = ccPagePortfolio; globalThis.ccPageToday = ccPageToday;");
 (async () => {{
   await ccPagePortfolio(new URLSearchParams());
@@ -119,7 +119,7 @@ eval(src + "\\nglobalThis.ccPagePortfolio = ccPagePortfolio; globalThis.ccPageTo
     details: portfolioHtml.includes("Discovery") && portfolioHtml.includes("Synthetic AE") && portfolioHtml.includes("Actions, risks, and Overview unavailable") && portfolioHtml.includes("Establish local opportunity"),
     today: ids.every((id) => todayHtml.includes(id)) && todayHtml.includes("Active CRM opportunities without local state (2)"),
     manual: portfolioHtml.includes("Refresh active opportunities") && todayHtml.includes("authorization unverified"),
-    offline: calls.length === 2 && calls.every((path) => path.includes("/today") || path.includes("/portfolio"))
+    offline: calls.length === 3 && calls.every((path) => path.includes("/today") || path.includes("/portfolio") || path.includes("/calendar"))
   }}));
 }})().catch((error) => {{ console.error(error); process.exit(1); }});
 """
@@ -672,4 +672,3 @@ console.log(JSON.stringify({{
     assert "/tech-eval/items/${encodeURIComponent(item.dataset.techEvalItem)}" in app_js
     assert "wireTechEval();" in page
     assert "No structured readiness plan exists yet." not in app_js
-
