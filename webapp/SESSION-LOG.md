@@ -2,10 +2,12 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: September 26, 2026 — branch `codex/command-center-risk-visibility` @ HEAD (from `origin/main` `9d1a6364`).
+_Last updated: September 27, 2026 — branch `codex/command-center-risk-visibility` @ HEAD (from `origin/main` `9d1a6364`).
 
 
 ## Built this session (newest first — see `git log`)
+
+- **Command Center risk preview review (September 27; PR #75).** Portfolio shows the total potential-risk count and the two most severe risk summaries, with a link to the full Overview risk section; each preview still links to its exact risk card. Today retains individual high/critical review items. The Overview empty message now says only that no risks are recorded, without implying all valid risks must cite evidence. Synthetic frontend and read-model tests cover the preview limit, counts, links, and empty copy. Browser Use blocked the local preview URL and explicitly prohibited an alternate browser route, so populated desktop/mobile visual screenshots remain a manual review item; no provider or model workflow changed.
 
 - **Command Center risk visibility (September 26; synthetic fixtures only).** Portfolio now reads the current validated Overview risk list and shows severity, concise reason, citation strength, and a link to the exact risk card. Today queues high/critical risks as potential review items with the Overview revision timestamp and the opportunity's manual-source freshness. The existing confirmed-blocker logic remains separate; missing citations and metadata-only support are explicitly marked for verification. Retired or withheld Overviews and opportunities with inaccessible associated sources show no stale risk or blocker conclusion. A corrected first-Overview association moves the risk visibility to the correct opportunity after reprocessing. Read paths make no provider or model calls. Synthetic service/API and frontend checks cover two opportunities, risk replacement across revisions, weak or absent citations, unavailability, withholding, association correction, escaped markup, and responsive presentation.
 

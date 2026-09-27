@@ -224,6 +224,24 @@ function ccFreshness(f) {
   </div>`;
 }
 
+const CC_RISK_PREVIEW_LIMIT = 2;
+
+function ccPortfolioRisks(o, conclusionUnavailable) {
+  if (!o.risks.length) {
+    return `<span class="muted">${conclusionUnavailable ? `${esc(conclusionUnavailable)}; risk status unavailable` : "none recorded"}</span>`;
+  }
+  const preview = o.risks.slice(0, CC_RISK_PREVIEW_LIMIT);
+  return `<div class="cc-risk-summary"><strong>${o.risks.length} potential risk${o.risks.length === 1 ? "" : "s"}</strong>
+    <a class="cc-mini" href="${esc(o.risks_link)}">View all in Overview</a></div>
+    <ul class="cc-risk-list" aria-label="Most severe potential risks">${preview.map((r) => `<li>
+      <span class="cc-badge cc-badge--warn">${esc(ccLabel(r.severity))} · potential</span>
+      <a href="${esc(r.link)}">${esc(r.title)}</a>
+      <div class="cc-risk-reason">${esc(r.reason)}</div>
+      <div class="muted cc-risk-evidence">${esc(r.evidence_label)} · Overview revision ${Number(r.overview_revision)}</div>
+    </li>`).join("")}</ul>
+    ${o.risks.length > preview.length ? `<div class="muted cc-risk-more">Showing ${preview.length} most severe</div>` : ""}`;
+}
+
 async function ccPagePortfolio(params) {
   const filters = { account: params.get("account") || "", attention_only: params.get("attention_only") === "true" };
   const offset = Number(params.get("offset") || 0);
@@ -250,7 +268,7 @@ async function ccPagePortfolio(params) {
         <dt>Actions</dt><dd>${ac.open} open · ${ac.blocked} blocked · ${ac.proposed} proposed · ${ac.completed} done${ac.overdue ? ` · <strong class="cc-danger">${ac.overdue} overdue</strong>` : ""}</dd>
         <dt>Waiting on</dt><dd>${o.waiting_on.length ? o.waiting_on.map((p) => `<span class="chip">${esc(p)}</span>`).join("") : `<span class="muted">nobody recorded</span>`}</dd>
         <dt>Blockers</dt><dd>${o.confirmed_blockers.length ? o.confirmed_blockers.map((b) => `<span class="cc-badge cc-badge--error">${esc(b.title)}</span> ${esc(b.reason)}`).join("<br/>") : `<span class="muted">${conclusionUnavailable ? `${esc(conclusionUnavailable)}; blocker status unavailable` : "none confirmed"}</span>`}</dd>
-        <dt>Risks</dt><dd>${o.risks.length ? `<ul class="cc-risk-list">${o.risks.map((r) => `<li><span class="cc-badge cc-badge--warn">${esc(ccLabel(r.severity))} · potential</span> <a href="${esc(r.link)}">${esc(r.title)}</a><div class="cc-risk-reason">${esc(r.reason)}</div><div class="muted cc-risk-evidence">${esc(r.evidence_label)} · Overview revision ${Number(r.overview_revision)}</div></li>`).join("")}</ul>` : `<span class="muted">${conclusionUnavailable ? `${esc(conclusionUnavailable)}; risk status unavailable` : "none recorded"}</span>`}</dd>
+        <dt>Risks</dt><dd>${ccPortfolioRisks(o, conclusionUnavailable)}</dd>
         <dt>Evaluation</dt><dd>${esc(evText)}</dd>
         <dt>Freshness</dt><dd>${ccFreshness(o.freshness)}</dd>
       </dl>

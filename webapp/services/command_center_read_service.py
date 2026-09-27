@@ -86,6 +86,10 @@ def risk_link(account: str, slug: str, key: str) -> str:
     return f"{opportunity_link(account, slug)}/risk/{key}"
 
 
+def risks_link(account: str, slug: str) -> str:
+    return f"{opportunity_link(account, slug)}/risks"
+
+
 class CommandCenterReadService:
     """Bounded aggregate reads over persisted local Command Center state."""
 
@@ -492,6 +496,7 @@ class CommandCenterReadService:
             "opportunity_slug": slug,
             "opportunity_name": (version.identity.opportunity_name if version else entry.get("opportunity_name")) or slug,
             "opportunity_link": opportunity_link(account, slug),
+            "risks_link": risks_link(account, slug),
             "overview": {
                 "status": overview_status,
                 "revision": version.revision if version else None,

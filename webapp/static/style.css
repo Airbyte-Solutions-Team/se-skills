@@ -1989,11 +1989,14 @@ a.live-btn { text-decoration: none; display: inline-flex; align-items: center; }
 .cc-att-reason { margin-top: 2px; }
 .cc-risk-context { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 7px; font-size: 12px; overflow-wrap: anywhere; }
 .cc-risk-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.cc-risk-summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; margin-bottom: 5px; }
+.cc-risk-summary strong { font-size: 12px; }
 .cc-risk-list li { min-width: 0; }
 .cc-risk-list a { color: var(--accent); overflow-wrap: anywhere; }
 .cc-risk-reason { margin-top: 3px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .cc-risk-evidence { font-size: 12px; margin-top: 2px; }
-.overview-list-item[id^="overview-risk-"] { scroll-margin-top: 84px; }
+.cc-risk-more { font-size: 12px; margin-top: 5px; }
+.overview-list-item[id^="overview-risk-"], #overview-risks { scroll-margin-top: 84px; }
 .cc-att-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; font-size: 13px; }
 .cc-action-meta, .cc-source-meta { font-size: 12px; margin-top: 4px; overflow-wrap: anywhere; }
 .cc-action-controls { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }

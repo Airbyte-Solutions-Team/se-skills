@@ -164,6 +164,7 @@ async def test_portfolio_and_today_show_scoped_potential_risks_with_detail_and_f
     assert risk["severity"] == "high" and risk["status"] == "potential"
     assert risk["reason"] == "Synthetic reason for security-review."
     assert risk["link"] == f"#/opp/{ACCOUNT}/{OPP}/{OPP}/risk/security-review"
+    assert rows[OPP]["risks_link"] == f"#/opp/{ACCOUNT}/{OPP}/{OPP}/risks"
     assert risk["evidence_label"] == "1 transcript citation(s) · 00:00:05"
     assert risk["evidence_refs"][0]["locator"] == "00:00:05"
     assert rows[OPP]["attention"] == ["1 potential high/critical risk(s) to review"]
