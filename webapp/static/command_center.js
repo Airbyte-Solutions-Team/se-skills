@@ -62,7 +62,7 @@ function ccShell(tab, title, sub, body) {
   view.innerHTML = `
     <div class="row cc-head">
       <div><h1>Command Center</h1><p class="sub">${esc(sub)}</p></div>
-      <span class="cc-pilot-note" title="Local single-user pilot: pages read persisted local records only.">Local pilot · manual Granola / Gmail intake · no live sync</span>
+      <span class="cc-pilot-note" title="Local single-user pilot: pages read persisted local records only.">Local pilot · manual Salesforce refresh and source intake · no live sync</span>
     </div>
     <nav class="tabs cc-tabs" role="tablist" aria-label="Command Center views">
       ${CC_TABS.map(([id, label]) => `<a class="tab${id === tab ? " active" : ""}" role="tab" aria-selected="${id === tab}" href="${CC_BASE}/${id}">${label}</a>`).join("")}
@@ -113,7 +113,52 @@ function ccOppLink(item) {
 
 function ccCoverage(coverage) {
   if (!coverage || coverage.complete) return "";
-  return `<aside class="cc-coverage" role="note"><strong>${esc(coverage.label)}</strong><span>${esc(coverage.detail)}</span></aside>`;
+  const snap = coverage.snapshot;
+  return `<aside class="cc-coverage" role="note"><strong>${esc(coverage.label)}</strong><span>${esc(coverage.detail)}</span>
+    ${snap ? `<span>Scope: ${esc(snap.scope.se_name)}${snap.scope.ae_names.length ? ` + AEs ${esc(snap.scope.ae_names.join(", "))}` : ""} · refreshed ${ccWhen(snap.refreshed_at)} · ${snap.count} saved · ${snap.truncated ? "truncated" : "query complete"}${snap.stale ? " · stale" : ""}</span>` : ""}
+    ${coverage.refresh?.state && coverage.refresh.state !== "ok" && coverage.refresh.state !== "never_refreshed" ? `<span>Last attempt: ${esc(ccLabel(coverage.refresh.state))} · ${ccWhen(coverage.refresh.at)}</span>` : ""}</aside>`;
+}
+
+function ccCrmRefresh(coverage) {
+  const scope = coverage?.snapshot?.scope;
+  return `<section class="cc-crm-panel" aria-label="Salesforce opportunity snapshot">
+    <h2 class="cc-h2">Salesforce opportunities</h2>
+    <p class="muted">Refresh only when you choose. Open opportunities assigned to this SE or the named AEs are saved locally by Salesforce ID. Authorization and opportunities outside this scope remain unverified.</p>
+    <form class="cc-crm-form" id="cc-crm-refresh">
+      <label>Solutions Engineer <select name="member_id" required><option value="">Choose SE</option></select></label>
+      <label>AE names (optional, comma separated) <input name="ae_names" maxlength="2500" value="${esc(scope?.ae_names?.join(", ") || "")}" placeholder="AE name"/></label>
+      <button class="primary small" type="submit">Refresh active opportunities</button>
+    </form>
+    <div class="cc-crm-message" role="status"></div>
+  </section>`;
+}
+
+async function ccWireCrm(root, coverage) {
+  const form = root.querySelector("#cc-crm-refresh");
+  if (!form) return;
+  const select = form.elements.member_id;
+  const message = root.querySelector(".cc-crm-message");
+  try {
+    const members = await api("/api/members"); // local configuration only
+    select.innerHTML += members.map((m) => `<option value="${esc(m.id)}"${m.id === coverage?.snapshot?.scope?.member_id ? " selected" : ""}>${esc(m.name)}</option>`).join("");
+    if (!select.value && members.length === 1) select.value = members[0].id;
+  } catch (e) { message.textContent = `Could not load local SE choices: ${e.message}`; }
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = form.querySelector("button");
+    button.disabled = true;
+    message.textContent = "Refreshing selected scope…";
+    try {
+      const ae_names = form.elements.ae_names.value.split(",").map((v) => v.trim()).filter(Boolean);
+      const result = await api("/api/command-center/salesforce/refresh", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ member_id: select.value, ae_names }),
+      });
+      message.textContent = result.last_attempt.state === "ok" ? "Snapshot saved." : `Refresh failed (${ccLabel(result.last_attempt.state)}); last successful snapshot retained.`;
+      const { tab, params } = ccReadHash();
+      if (tab === "today") await ccPageToday(params); else await ccPagePortfolio(params);
+    } catch (e) { message.textContent = `Refresh failed: ${e.message}`; button.disabled = false; }
+  });
 }
 
 function ccFilterBar(fields, params) {
@@ -203,13 +248,19 @@ async function ccPageToday(params) {
 
   body.innerHTML = `
     ${ccCoverage(data.coverage)}
-    <div class="cc-summary">${summary || `<span class="muted">${data.opportunity_count} local opportunit${data.opportunity_count === 1 ? "y" : "ies"} · nothing flagged</span>`}</div>
+    ${ccCrmRefresh(data.coverage)}
+    <section class="cc-crm-only"><h2 class="cc-h2">Active CRM opportunities without local state (${data.crm_only_count || 0})</h2>
+      ${(data.crm_only || []).length ? `<ul>${data.crm_only.map((o) => `<li>${o.sfdc_url ? `<a href="${esc(o.sfdc_url)}" target="_blank" rel="noopener noreferrer">${esc(o.account_name)} · ${esc(o.name)}</a>` : `${esc(o.account_name)} · ${esc(o.name)}`} · ID ${esc(o.sfdc_id)} · ${esc(o.stage || "stage unknown")} · ${esc(o.owner || "owner unknown")} · close ${ccDay(o.close_date)}</li>`).join("")}</ul>` : `<p class="muted">No CRM-only rows in the saved snapshot. Check Portfolio for local and matched rows.</p>`}
+      ${data.crm_only_count > 25 ? `<a href="${CC_BASE}/portfolio">View all in Portfolio</a>` : ""}
+    </section>
+    <div class="cc-summary">${summary || `<span class="muted">${data.opportunity_count} saved CRM or local opportunit${data.opportunity_count === 1 ? "y" : "ies"} · nothing flagged locally</span>`}</div>
     ${list}
     ${ccPager(data, "today")}
     <h2 class="cc-h2">Recent changes</h2>
     ${recent}
     <p class="muted cc-foot-note">Risks are potential concerns to review. Confirmed blockers appear only when a persisted, evidence-backed blocker exists in an Opportunity Overview.</p>`;
   ccWirePager(body, {}, "today");
+  await ccWireCrm(body, data.coverage);
 }
 
 // ── Portfolio ────────────────────────────────────────────────────────────
@@ -252,13 +303,25 @@ function ccPortfolioRisks(o, conclusionUnavailable) {
 async function ccPagePortfolio(params) {
   const filters = { account: params.get("account") || "", attention_only: params.get("attention_only") === "true" };
   const offset = Number(params.get("offset") || 0);
-  const body = ccShell("portfolio", "Portfolio", "Locally known opportunities and what to do next.", ccLoading());
+  const body = ccShell("portfolio", "Portfolio", "Saved CRM opportunities alongside local work.", ccLoading());
   let data;
   try { data = await api(`/api/command-center/portfolio${ccQuery({ ...filters, limit: CC_PAGE, offset })}`); }
   catch (e) { body.innerHTML = ccError(e, `${CC_BASE}/portfolio`); return; }
 
   const accountOpts = (data.accounts || []).map((a) => [a, a]);
   const cards = data.opportunities.length ? `<div class="cc-cards">${data.opportunities.map((o) => {
+    if (o.origin === "crm_only") {
+      const crm = o.crm;
+      return `<article class="card cc-card cc-card--crm" aria-label="${esc(o.account)} ${esc(o.opportunity_name)}">
+        <div class="cc-card-head"><div><div class="muted">${esc(o.account)}</div><h3>${esc(o.opportunity_name)}</h3><small class="muted">Salesforce ID ${esc(crm.sfdc_id)}</small></div>${ccBadge("CRM only")}</div>
+        <dl class="cc-facts"><dt>Stage</dt><dd>${esc(crm.stage || "unknown")}</dd><dt>Owner</dt><dd>${esc(crm.owner || "unknown")}</dd><dt>Close</dt><dd>${ccDay(crm.close_date)}</dd>
+          <dt>Local state</dt><dd>Actions, risks, and Overview unavailable until a local opportunity is established or explicitly mapped.</dd></dl>
+        <div class="cc-card-foot">${crm.sfdc_url ? `<a class="ghost small" href="${esc(crm.sfdc_url)}" target="_blank" rel="noopener noreferrer">Open Salesforce</a>` : ""}
+          <button class="ghost small" type="button" data-crm-establish="${esc(crm.sfdc_id)}">Establish local opportunity</button></div>
+        <div class="cc-crm-map"><label>Or map to an existing local opportunity <select data-crm-map="${esc(crm.sfdc_id)}"><option value="">Choose local opportunity</option></select></label>
+          <button class="ghost small" type="button" data-crm-confirm="${esc(crm.sfdc_id)}">Confirm mapping</button></div>
+      </article>`;
+    }
     const ac = o.action_counts;
     const ev = o.evaluation;
     const evText = !ev.supported ? "not tracked here" : (ev.overall ? `${ccLabel(ev.overall)}${ev.current_phase ? ` · ${ccLabel(ev.current_phase)}` : ""}` : "no tracker yet");
@@ -276,6 +339,7 @@ async function ccPagePortfolio(params) {
         ${ccBadge(o.overview.status, "cc-badge--lg")}
       </div>
       <dl class="cc-facts">
+        ${o.crm ? `<dt>Salesforce</dt><dd>${esc(o.crm.account_name || "Unknown account")} · ${esc(o.crm.stage || "stage unknown")} · ${esc(o.crm.owner || "owner unknown")} · close ${ccDay(o.crm.close_date)}${o.crm.sfdc_url ? ` · <a href="${esc(o.crm.sfdc_url)}" target="_blank" rel="noopener noreferrer">Open CRM</a>` : ""}</dd>` : `<dt>CRM coverage</dt><dd>Local only; no verified Salesforce ID in this snapshot</dd>`}
         <dt>Next</dt><dd>${nextText}</dd>
         <dt>Actions</dt><dd>${ac.open} open · ${ac.blocked} blocked · ${ac.proposed} proposed${ac.overdue ? ` · <strong class="cc-danger">${ac.overdue} overdue</strong>` : ""}</dd>
         <dt>Waiting on</dt><dd>${o.waiting_on.length ? o.waiting_on.map((p) => `<span class="chip">${esc(p)}</span>`).join("") : `<span class="muted">nobody recorded</span>`}</dd>
@@ -305,6 +369,7 @@ async function ccPagePortfolio(params) {
 
   body.innerHTML = `
     ${ccCoverage(data.coverage)}
+    ${ccCrmRefresh(data.coverage)}
     ${ccFilterBar([
       { name: "account", label: "Account", options: accountOpts },
       { name: "attention_only", label: "Needs attention only", checkbox: true },
@@ -313,6 +378,30 @@ async function ccPagePortfolio(params) {
     ${ccPager(data)}`;
   ccWireFilters(body, "portfolio");
   ccWirePager(body, filters, "portfolio");
+  await ccWireCrm(body, data.coverage);
+  const mapSelects = [...body.querySelectorAll("[data-crm-map]")];
+  if (mapSelects.length) {
+    const local = await api("/api/command-center/opportunities").catch(() => ({ opportunities: [] }));
+    for (const select of mapSelects) {
+      select.innerHTML += local.opportunities.map((o) => `<option value="${esc(JSON.stringify([o.account, o.opportunity_slug]))}">${esc(o.account)} · ${esc(o.opportunity_name || o.opportunity_slug)}</option>`).join("");
+    }
+  }
+  body.querySelectorAll("[data-crm-confirm]").forEach((button) => button.addEventListener("click", async () => {
+    const select = [...mapSelects].find((s) => s.dataset.crmMap === button.dataset.crmConfirm);
+    if (!select?.value) { showToast("Choose a local opportunity first."); return; }
+    const [account, opportunity_slug] = JSON.parse(select.value);
+    try {
+      await api("/api/command-center/salesforce/mappings", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sfdc_id: button.dataset.crmConfirm, account, opportunity_slug }) });
+      await ccPagePortfolio(params);
+    } catch (e) { showToast(e.message); }
+  }));
+  body.querySelectorAll("[data-crm-establish]").forEach((button) => button.addEventListener("click", async () => {
+    try {
+      await api(`/api/command-center/salesforce/${encodeURIComponent(button.dataset.crmEstablish)}/establish`, { method: "POST" });
+      await ccPagePortfolio(params);
+    } catch (e) { showToast(e.message); }
+  }));
 }
 
 // ── Actions ──────────────────────────────────────────────────────────────

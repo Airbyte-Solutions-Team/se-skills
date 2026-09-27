@@ -43,6 +43,7 @@ from services.granola_retrieval_service import (
     GranolaRetrievalService,
     TimeRange,
 )
+from services.salesforce_portfolio_service import SalesforcePortfolioError, SalesforcePortfolioService
 
 
 router = APIRouter()
@@ -72,6 +73,19 @@ class ProposeAssociationBody(BaseModel):
 
     reason: str = Field(min_length=1, max_length=300)
     candidates: list[AssociationCandidate] = Field(min_length=1, max_length=20)
+
+
+class SalesforceRefreshBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    member_id: str = Field(pattern=r"^[A-Za-z0-9._-]{1,120}$")
+    ae_names: list[str] = Field(default_factory=list, max_length=20)
+
+
+class SalesforceMappingBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    sfdc_id: str = Field(pattern=r"^[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?$")
+    account: str = Field(pattern=r"^[A-Za-z0-9._-]{1,120}$")
+    opportunity_slug: str = Field(pattern=r"^[A-Za-z0-9._-]{1,120}$")
 
 
 class ClearAssociationBody(BaseModel):
@@ -333,6 +347,41 @@ async def api_gmail_retrieval(job_id: str, request: Request) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _sf_portfolio(request: Request) -> SalesforcePortfolioService:
+    return request.app.state.salesforce_portfolio_service
+
+
+@router.post("/api/command-center/salesforce/refresh")
+async def api_command_center_salesforce_refresh(body: SalesforceRefreshBody, request: Request) -> dict:
+    """Only this explicit request contacts Salesforce; page GETs read saved JSON."""
+    try:
+        saved = await _sf_portfolio(request).refresh(body.member_id, body.ae_names)
+    except SalesforcePortfolioError as exc:
+        _raise_domain(exc)
+    success = saved.get("last_success")
+    return {"last_attempt": saved["last_attempt"],
+            "last_success": {k: v for k, v in success.items() if k != "records"} if success else None}
+
+
+@router.post("/api/command-center/salesforce/mappings")
+def api_command_center_salesforce_mapping(body: SalesforceMappingBody, request: Request) -> dict:
+    try:
+        return _sf_portfolio(request).confirm_mapping(
+            body.sfdc_id, body.account, body.opportunity_slug,
+            _reads(request).local_opportunities(), _reads(request)._sources())
+    except SalesforcePortfolioError as exc:
+        _raise_domain(exc)
+
+
+@router.post("/api/command-center/salesforce/{sfdc_id}/establish")
+def api_command_center_salesforce_establish(sfdc_id: str, request: Request) -> dict:
+    try:
+        return _sf_portfolio(request).establish_local(
+            sfdc_id, _reads(request).local_opportunities(), _reads(request)._sources())
+    except SalesforcePortfolioError as exc:
+        _raise_domain(exc)
+
+
 @router.get("/api/command-center/today")
 async def api_command_center_today(
     request: Request,
@@ -348,7 +397,7 @@ async def api_command_center_today(
 @router.get("/api/command-center/portfolio")
 async def api_command_center_portfolio(
     request: Request,
-    account: str | None = _safe_token_query(),
+    account: str | None = Query(default=None, max_length=200),
     attention_only: bool = False,
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     offset: int = Query(default=0, ge=0),

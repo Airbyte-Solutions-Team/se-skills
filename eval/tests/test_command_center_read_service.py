@@ -507,6 +507,7 @@ async def test_empty_workspace_reads_are_empty_not_errors(tmp_path) -> None:
     assert h.get("/api/command-center/today") == {
         "total": 0, "offset": 0, "limit": 50, "next_offset": None, "attention": [], "counts_by_kind": {},
         "recent_changes": [], "as_of": NOW.isoformat(), "opportunity_count": 0,
+        "crm_only": [], "crm_only_count": 0,
         "coverage": h.reads.portfolio()["coverage"],
     }
     assert h.get("/api/command-center/portfolio")["opportunities"] == []
