@@ -4,6 +4,12 @@
 **Baseline:** `Airbyte-Solutions-Team/se-skills` `main` at `60fc7081e294662e6713c183d1afe69b270da420`, inspected September 24, 2026  
 **Scope:** Product behavior, source boundaries, reconciliation, read models, and an implementation sequence. This document changes no runtime behavior and does not authorize live customer-data ingestion, new credentials or providers, deployment, or Salesforce write-back.
 
+### Local pilot implementation note (September 2026)
+
+Today and Portfolio now enumerate locally known opportunity folders, including a folder with no imported source, Overview, or Action, plus opportunities named by persisted Actions or associated sources. A local folder opens an honest, incomplete Opportunity Workspace when CRM metadata is unavailable. The list is **not a verified set of active CRM opportunities**: an active opportunity with no local record may be absent, while a local record may no longer be active. Both views show that limit. The existing account-oriented Salesforce helpers select or summarize one opportunity per account, so they cannot prove full opportunity coverage; no CRM call is made by the Command Center aggregate page reads. A credentialed pilot acceptance check must establish authorized CRM coverage before either view can claim to include all active opportunities.
+
+Portfolio leads with the next outstanding durable Action (earliest due date), due or overdue state, waiting-on parties, confirmed Overview blockers, potential Overview risks, the latest change, and source freshness. Each item links to its Action, Overview, Changes, or source review. Today shows prioritized attention, including associated sources queued for reconciliation or stale after an edited import, and recent accepted changes. Meeting and email intake remain user initiated; "current" means through the latest imported source, not through provider activity that has not been retrieved.
+
 ## 1. Product outcome
 
 Command Center is the portfolio view above Opportunity Overview. It helps an SE or AE answer, across the active opportunities they can access:

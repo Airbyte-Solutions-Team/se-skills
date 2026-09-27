@@ -111,6 +111,11 @@ function ccOppLink(item) {
   return `<a class="cc-opp" href="${esc(item.opportunity_link)}">${esc(item.account)} · ${esc(item.opportunity_name || item.opportunity_slug)}</a>`;
 }
 
+function ccCoverage(coverage) {
+  if (!coverage || coverage.complete) return "";
+  return `<aside class="cc-coverage" role="note"><strong>${esc(coverage.label)}</strong><span>${esc(coverage.detail)}</span></aside>`;
+}
+
 function ccFilterBar(fields, params) {
   // fields: [{name,label,options:[[value,label]]}] — `options` null → text input.
   return `<form class="cc-filters" id="cc-filters" aria-label="Filters">
@@ -147,11 +152,11 @@ function ccWireFilters(root, tab, fixed = {}) {
 const CC_KIND_LABEL = {
   overdue_action: "Overdue", confirmed_blocker: "Confirmed blocker", risk_review: "Potential risk to review", due_action: "Due soon",
   proposal_review: "Proposal to review", association_review: "Association needed",
-  source_failure: "Source problem", reconciliation_failure: "Analysis failed",
+  source_pending: "Source needs review", source_failure: "Source problem", reconciliation_failure: "Analysis failed",
 };
 const ccKindTone = (k) => ({
   overdue_action: "error", confirmed_blocker: "error", source_failure: "error", reconciliation_failure: "error",
-  risk_review: "warn", due_action: "warn", proposal_review: "warn", association_review: "warn",
+  risk_review: "warn", due_action: "warn", proposal_review: "warn", association_review: "warn", source_pending: "warn",
 })[k] || "neutral";
 
 async function ccPageToday(params) {
@@ -173,7 +178,7 @@ async function ccPageToday(params) {
         ${it.account && it.opportunity_link ? ccOppLink(it) : `<span class="muted">No opportunity yet${it.source_id ? ` · source <code>${esc(it.source_id.slice(0, 12))}…</code>` : ""}</span>`}
         ${it.when ? `<span class="muted cc-att-when">${ccDay(it.when)}</span>` : ""}
       </div>
-      <div class="cc-att-title">${esc(it.title)}</div>
+      <div class="cc-att-title"><a href="${esc(it.link)}">${esc(it.title)}</a></div>
       <div class="cc-att-reason">${esc(it.reason)}</div>
       ${it.risk ? `<div class="cc-risk-context"><span class="cc-badge cc-badge--warn">${esc(ccLabel(it.risk.severity))} potential risk</span><span>${esc(it.risk.evidence_label)}</span><span>Overview revision ${Number(it.risk.overview_revision)} saved ${ccWhen(it.risk.overview_created_at)}</span></div>
         <div class="cc-risk-context muted">Freshness: ${esc(it.freshness.label)}</div>` : ""}
@@ -197,6 +202,7 @@ async function ccPageToday(params) {
     : `<p class="muted">No changes recorded yet.</p>`;
 
   body.innerHTML = `
+    ${ccCoverage(data.coverage)}
     <div class="cc-summary">${summary || `<span class="muted">${data.opportunity_count} local opportunit${data.opportunity_count === 1 ? "y" : "ies"} · nothing flagged</span>`}</div>
     ${list}
     ${ccPager(data, "today")}
@@ -219,8 +225,9 @@ function ccFreshness(f) {
   ].filter(Boolean).join(" · ");
   return `<div class="cc-fresh">
     ${ccBadge(f.state)} <span>${esc(f.label)}</span>
-    <div class="muted cc-fresh-detail">${esc(detail)}${f.last_manual_import_at ? ` · last manual import ${ccWhen(f.last_manual_import_at)}` : ""}${f.latest_processed_meeting_at ? ` · latest processed meeting ${ccDay(f.latest_processed_meeting_at)}` : ""}</div>
-    <div class="muted cc-fresh-detail">Granola: ${esc(ccLabel(f.connector.mode))} · health ${esc(ccLabel(f.connector.health))}</div>
+    ${f.source_link ? `<a class="cc-mini" href="${esc(f.source_link)}">Review source</a>` : `<a class="cc-mini" href="${CC_BASE}/sources">Sources</a>`}
+    <div class="muted cc-fresh-detail">${esc(detail)}${f.last_manual_import_at ? ` · last intake ${ccWhen(f.last_manual_import_at)}` : ""}${f.latest_processed_meeting_at ? ` · latest processed meeting ${ccDay(f.latest_processed_meeting_at)}` : ""}</div>
+    <div class="muted cc-fresh-detail">${esc(f.connector.provider)}: ${esc(ccLabel(f.connector.mode))} · health ${esc(ccLabel(f.connector.health))}</div>
   </div>`;
 }
 
@@ -245,7 +252,7 @@ function ccPortfolioRisks(o, conclusionUnavailable) {
 async function ccPagePortfolio(params) {
   const filters = { account: params.get("account") || "", attention_only: params.get("attention_only") === "true" };
   const offset = Number(params.get("offset") || 0);
-  const body = ccShell("portfolio", "Portfolio", "Every locally known opportunity, with honest per-source freshness.", ccLoading());
+  const body = ccShell("portfolio", "Portfolio", "Locally known opportunities and what to do next.", ccLoading());
   let data;
   try { data = await api(`/api/command-center/portfolio${ccQuery({ ...filters, limit: CC_PAGE, offset })}`); }
   catch (e) { body.innerHTML = ccError(e, `${CC_BASE}/portfolio`); return; }
@@ -258,36 +265,46 @@ async function ccPagePortfolio(params) {
     const conclusionUnavailable = o.overview.status !== "current"
       ? `Overview ${ccLabel(o.overview.status)}`
       : o.freshness.state === "unavailable" ? "Source unavailable" : null;
+    const next = o.next_action;
+    const nextText = next
+      ? `<a href="${CC_BASE}/actions/${esc(next.action_id)}">${esc(next.commitment)}</a> <span class="muted">${esc(next.party)}${next.due_date ? ` · due ${ccDay(next.due_date)}` : " · no due date"}</span>${next.overdue ? ` <span class="cc-danger">overdue</span>` : ""}`
+      : o.next_step.value ? `${esc(o.next_step.value)} <a class="cc-mini" href="${esc(o.opportunity_link)}">Overview</a>`
+      : `<span class="muted">No next step recorded · <a href="${esc(o.opportunity_link)}">open Overview</a></span>`;
     return `<article class="card cc-card" aria-label="${esc(o.account)} ${esc(o.opportunity_name || o.opportunity_slug)}">
       <div class="cc-card-head">
         <div><div class="muted">${esc(o.account)}</div><h3><a href="${esc(o.opportunity_link)}">${esc(o.opportunity_name || o.opportunity_slug)}</a></h3></div>
         ${ccBadge(o.overview.status, "cc-badge--lg")}
       </div>
       <dl class="cc-facts">
-        <dt>Next step</dt><dd>${o.next_step.value ? esc(o.next_step.value) + ` <span class="muted">(${esc(ccLabel(o.next_step.state))}${o.next_step.confirmation ? ", " + esc(ccLabel(o.next_step.confirmation)) : ""})</span>` : `<span class="muted">${esc(ccLabel(o.next_step.state))}</span>`}</dd>
-        <dt>Actions</dt><dd>${ac.open} open · ${ac.blocked} blocked · ${ac.proposed} proposed · ${ac.completed} done${ac.overdue ? ` · <strong class="cc-danger">${ac.overdue} overdue</strong>` : ""}</dd>
+        <dt>Next</dt><dd>${nextText}</dd>
+        <dt>Actions</dt><dd>${ac.open} open · ${ac.blocked} blocked · ${ac.proposed} proposed${ac.overdue ? ` · <strong class="cc-danger">${ac.overdue} overdue</strong>` : ""}</dd>
         <dt>Waiting on</dt><dd>${o.waiting_on.length ? o.waiting_on.map((p) => `<span class="chip">${esc(p)}</span>`).join("") : `<span class="muted">nobody recorded</span>`}</dd>
         <dt>Blockers</dt><dd>${o.confirmed_blockers.length ? o.confirmed_blockers.map((b) => `<span class="cc-badge cc-badge--error">${esc(b.title)}</span> ${esc(b.reason)}`).join("<br/>") : `<span class="muted">${conclusionUnavailable ? `${esc(conclusionUnavailable)}; blocker status unavailable` : "none confirmed"}</span>`}</dd>
         <dt>Risks</dt><dd>${ccPortfolioRisks(o, conclusionUnavailable)}</dd>
+        <dt>Source</dt><dd>${ccBadge(o.freshness.state)} ${esc(o.freshness.label)} ${o.freshness.source_link ? `<a class="cc-mini" href="${esc(o.freshness.source_link)}">Review</a>` : ""}</dd>
+      </dl>
+      <details class="cc-card-detail"><summary>More context</summary><dl class="cc-facts">
+        <dt>Overview priority</dt><dd>${o.next_step.value ? esc(o.next_step.value) : `<span class="muted">${esc(ccLabel(o.next_step.state))}</span>`}</dd>
         <dt>Evaluation</dt><dd>${esc(evText)}</dd>
         <dt>Freshness</dt><dd>${ccFreshness(o.freshness)}</dd>
-      </dl>
+      </dl></details>
       ${o.attention.length ? `<div class="cc-card-attn">${o.attention.map((a) => `<span class="cc-count cc-count--warn">${esc(a)}</span>`).join("")}</div>` : ""}
       <div class="cc-card-foot">
         <a class="ghost small" href="${esc(o.opportunity_link)}">Overview</a>
         <a class="ghost small" href="${CC_BASE}/actions${ccQuery({ account: o.account, opportunity_slug: o.opportunity_slug })}">Actions</a>
         <a class="ghost small" href="${CC_BASE}/changes${ccQuery({ account: o.account, opportunity_slug: o.opportunity_slug })}">Changes</a>
-        <span class="muted cc-card-when">${o.latest_change_at ? "changed " + ccWhen(o.latest_change_at) : "no changes yet"}</span>
+        <span class="muted cc-card-when">${o.latest_change_at ? `${esc(ccLabel(o.latest_change_type))} · ${ccWhen(o.latest_change_at)}` : "no changes yet"}</span>
       </div>
     </article>`;
   }).join("")}</div>`
     : emptyBox({
       icon: "⊘", title: filters.account || filters.attention_only ? "No opportunities match these filters" : "No local opportunities",
-      body: "Opportunities appear here once an Overview exists locally or a meeting source has been associated with one.",
+      body: "Opportunities appear here when a local opportunity folder, Overview, Action, or associated source exists.",
       actions: `<a class="ghost small" href="${CC_BASE}/sources">Go to Sources</a>`,
     });
 
   body.innerHTML = `
+    ${ccCoverage(data.coverage)}
     ${ccFilterBar([
       { name: "account", label: "Account", options: accountOpts },
       { name: "attention_only", label: "Needs attention only", checkbox: true },

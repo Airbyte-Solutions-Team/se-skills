@@ -38,9 +38,10 @@ const risk = {{key: "security-review", title: "Security <review>", reason: "Appr
 const critical = {{...risk, key: "critical", title: "Critical synthetic risk", severity: "critical", link: link.replace("security-review", "critical")}};
 const hidden = {{...risk, key: "hidden", title: "Hidden third risk", link: link.replace("security-review", "hidden")}};
 const hiddenToo = {{...risk, key: "hidden-two", title: "Hidden fourth risk", link: link.replace("security-review", "hidden-two")}};
-const row = {{account: "Acme", opportunity_slug: "synthetic-opportunity", opportunity_name: "Synthetic Opportunity", opportunity_link: "#/opp/Acme/synthetic-opportunity/synthetic-opportunity", risks_link: risksLink, overview: {{status: "current"}}, action_counts: {{open: 0, blocked: 0, proposed: 0, completed: 0, overdue: 0}}, next_step: {{state: "unknown", value: null}}, waiting_on: [], confirmed_blockers: [], risks: [critical, risk, hidden, hiddenToo], evaluation: {{supported: false}}, freshness: {{state: "processed_latest_import", label: "Current through latest manual import", source_counts: {{total: 1}}, connector: {{mode: "manual_import", health: "not_monitored"}}}}, attention: [], latest_change_at: null}};
-const portfolio = {{opportunities: [row], accounts: ["Acme"], total: 1, offset: 0, limit: 25, next_offset: null}};
-const today = {{attention: [{{kind: "risk_review", title: risk.title, reason: risk.reason, account: row.account, opportunity_slug: row.opportunity_slug, opportunity_link: row.opportunity_link, next_step: "Review the risk", link, when: risk.overview_created_at, risk, freshness: {{label: row.freshness.label}}}}], counts_by_kind: {{risk_review: 1}}, recent_changes: [], opportunity_count: 1, total: 1, offset: 0, limit: 25, next_offset: null}};
+const row = {{account: "Acme", opportunity_slug: "synthetic-opportunity", opportunity_name: "Synthetic Opportunity", opportunity_link: "#/opp/Acme/synthetic-opportunity/synthetic-opportunity", risks_link: risksLink, overview: {{status: "current"}}, action_counts: {{open: 1, blocked: 0, proposed: 0, completed: 0, overdue: 1}}, next_action: {{action_id: "act_synthetic", commitment: "Send diagram", party: "Airbyte", due_date: "2026-09-25", overdue: true}}, next_step: {{state: "unknown", value: null}}, waiting_on: [], confirmed_blockers: [], risks: [critical, risk, hidden, hiddenToo], evaluation: {{supported: false}}, freshness: {{state: "processed_latest_import", label: "Current through latest manual import", source_link: "#/command-center/sources/src_synthetic", source_counts: {{total: 1}}, connector: {{provider: "granola", mode: "manual_import", health: "not_monitored"}}}}, attention: [], latest_change_at: null}};
+const coverage = {{complete: false, label: "Local opportunities only", detail: "Active CRM coverage is unverified."}};
+const portfolio = {{opportunities: [row], coverage, accounts: ["Acme"], total: 1, offset: 0, limit: 25, next_offset: null}};
+const today = {{attention: [{{kind: "risk_review", title: risk.title, reason: risk.reason, account: row.account, opportunity_slug: row.opportunity_slug, opportunity_link: row.opportunity_link, next_step: "Review the risk", link, when: risk.overview_created_at, risk, freshness: {{label: row.freshness.label}}}}], coverage, counts_by_kind: {{risk_review: 1}}, recent_changes: [], opportunity_count: 1, total: 1, offset: 0, limit: 25, next_offset: null}};
 global.api = async (path) => path.includes("/portfolio") ? portfolio : today;
 eval(src + "\\nglobalThis.ccPagePortfolio = ccPagePortfolio; globalThis.ccPageToday = ccPageToday;");
 (async () => {{
@@ -53,7 +54,8 @@ eval(src + "\\nglobalThis.ccPagePortfolio = ccPagePortfolio; globalThis.ccPageTo
     compact: !portfolioHtml.includes("Hidden third risk") && !portfolioHtml.includes("Hidden fourth risk"),
     today: todayHtml.includes("Potential risk to review") && todayHtml.includes("Freshness: Current through latest manual import") && todayHtml.includes("1 transcript citation(s)") && todayHtml.includes(link),
     escaped: !portfolioHtml.includes("<script>") && !todayHtml.includes("<script>") && portfolioHtml.includes("Security &lt;review&gt;"),
-    noRedRisk: !todayHtml.includes("cc-att--error") && !portfolioHtml.includes("cc-badge--error")
+    noRedRisk: !todayHtml.includes("cc-att--error") && !portfolioHtml.includes("cc-badge--error"),
+    workflow: portfolioHtml.includes("Local opportunities only") && todayHtml.includes("Active CRM coverage is unverified") && portfolioHtml.includes("#/command-center/actions/act_synthetic") && portfolioHtml.includes("#/command-center/sources/src_synthetic") && portfolioHtml.includes("overdue")
   }}));
 }})().catch((error) => {{ console.error(error); process.exit(1); }});
 """
