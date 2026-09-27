@@ -44,6 +44,7 @@ from services.granola_retrieval_service import (
     TimeRange,
 )
 from services.salesforce_portfolio_service import SalesforcePortfolioError, SalesforcePortfolioService
+from services.calendar_snapshot_service import CalendarSnapshotService
 
 
 router = APIRouter()
@@ -349,6 +350,53 @@ async def api_gmail_retrieval(job_id: str, request: Request) -> dict:
 
 def _sf_portfolio(request: Request) -> SalesforcePortfolioService:
     return request.app.state.salesforce_portfolio_service
+
+
+def _calendar(request: Request) -> CalendarSnapshotService:
+    return request.app.state.calendar_snapshot_service
+
+
+@router.get("/api/command-center/update")
+def api_command_center_update_status(request: Request) -> dict:
+    """Saved source states only; no provider requests during page reads."""
+    crm = _sf_portfolio(request).snapshot()
+    success = crm.get("last_success")
+    return {"salesforce": {
+        "state": (crm.get("last_attempt") or {}).get("state", "not_checked"),
+        "at": (crm.get("last_attempt") or {}).get("at"),
+        "refreshed_at": success.get("refreshed_at") if success else None,
+        "scope_saved": bool(success and success.get("scope")),
+    }, "calendar": _calendar(request).snapshot(),
+        "granola": {"mode": "select_meetings_in_sources"},
+        "gmail": {"mode": "select_messages_in_sources"}}
+
+
+@router.post("/api/command-center/update")
+async def api_command_center_update(request: Request) -> dict:
+    """Explicit update of saved CRM scope and upcoming Calendar events only.
+
+    Granola and Gmail require user selection under Sources. Neither is triggered
+    here and no model or reconciliation is run by this endpoint.
+    """
+    crm = _sf_portfolio(request).snapshot().get("last_success")
+    if crm and crm.get("scope"):
+        scope = crm["scope"]
+        try:
+            saved = await _sf_portfolio(request).refresh(scope["member_id"], scope["ae_names"])
+            sf_state = saved["last_attempt"]["state"]
+        except (SalesforcePortfolioError, KeyError, TypeError):
+            sf_state = "invalid_scope"
+    else:
+        sf_state = "scope_needed"
+    cal = await _calendar(request).refresh() if _calendar(request).configured else _calendar(request).snapshot()
+    return {"salesforce": {"state": sf_state}, "calendar": cal,
+            "granola": {"mode": "select_meetings_in_sources"},
+            "gmail": {"mode": "select_messages_in_sources"}}
+
+
+@router.get("/api/command-center/calendar")
+def api_command_center_calendar(request: Request) -> dict:
+    return _calendar(request).snapshot()
 
 
 @router.post("/api/command-center/salesforce/refresh")

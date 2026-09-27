@@ -103,6 +103,11 @@ def _build_local_services(app: FastAPI) -> None:
     from services.command_center_operations_service import CommandCenterOperationsService
     from services.command_center_read_service import CommandCenterReadService
     from services.salesforce_portfolio_service import SalesforcePortfolioService
+    from services.calendar_snapshot_service import CalendarSnapshotService
+    from integrations.calendar_readonly import (
+        TRANSPORT_ENV as CALENDAR_TRANSPORT_ENV, GoogleCalendarReadOnlyTransport,
+        UnavailableCalendarTransport, credentials_path as calendar_credentials_path,
+    )
     from services.evidence_ledger_service import EvidenceLedgerService
     from services.feedback_service import FeedbackService
     from services.gmail_intake_service import GmailIntakeService
@@ -237,6 +242,17 @@ def _build_local_services(app: FastAPI) -> None:
         customers_dir=config.CUSTOMERS_DIR, accounts=account_service,
         salesforce=salesforce_integration,
     )
+    calendar_mode = (os.environ.get(CALENDAR_TRANSPORT_ENV) or "unavailable").strip().lower()
+    if calendar_mode == "live_readonly":
+        calendar_transport = GoogleCalendarReadOnlyTransport(credentials_file=calendar_credentials_path())
+    elif calendar_mode == "unavailable":
+        calendar_transport = UnavailableCalendarTransport()
+    else:
+        raise RuntimeError(f"Unknown {CALENDAR_TRANSPORT_ENV}={calendar_mode!r}; use unavailable or live_readonly.")
+    calendar_snapshot_service = CalendarSnapshotService(
+        customers_dir=config.CUSTOMERS_DIR, transport=calendar_transport,
+        configured=calendar_mode == "live_readonly",
+    )
     opportunity_workspace_service.set_crm_identity_lookup(salesforce_portfolio_service.local_identity)
     # Aggregate Command Center reads (Today/Portfolio/Actions/Changes): persisted local records only.
     command_center_read_service = CommandCenterReadService(
@@ -311,6 +327,7 @@ def _build_local_services(app: FastAPI) -> None:
     app.state.command_center_operations_service = command_center_operations_service
     app.state.command_center_read_service = command_center_read_service
     app.state.salesforce_portfolio_service = salesforce_portfolio_service
+    app.state.calendar_snapshot_service = calendar_snapshot_service
 
     # Public local routes — registered exactly once.
     app.include_router(skills_router)
