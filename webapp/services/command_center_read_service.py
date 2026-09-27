@@ -46,13 +46,14 @@ DUE_SOON_DAYS = 7
 RECENT_CHANGE_LIMIT = 10
 
 AttentionKind = Literal[
-    "overdue_action", "confirmed_blocker", "due_action", "proposal_review",
+    "overdue_action", "confirmed_blocker", "risk_review", "due_action", "proposal_review",
     "association_review", "source_failure", "reconciliation_failure",
 ]
 # Rule-based order (§8): the reason is inspectable, there is no score.
 _ATTENTION_ORDER: dict[str, int] = {
-    "overdue_action": 0, "confirmed_blocker": 1, "due_action": 2, "proposal_review": 3,
-    "association_review": 4, "source_failure": 5, "reconciliation_failure": 6,
+    "overdue_action": 0, "confirmed_blocker": 1, "risk_review": 2,
+    "due_action": 3, "proposal_review": 4, "association_review": 5,
+    "source_failure": 6, "reconciliation_failure": 7,
 }
 _UNPROCESSED = frozenset({
     "discovered", "awaiting_association", "awaiting_content", "queued", "processing", "failed",
@@ -79,6 +80,14 @@ def _page(items: list[Any], *, limit: int, offset: int) -> dict[str, Any]:
 
 def opportunity_link(account: str, slug: str) -> str:
     return f"#/opp/{account}/{slug}/{slug}"
+
+
+def risk_link(account: str, slug: str, key: str) -> str:
+    return f"{opportunity_link(account, slug)}/risk/{key}"
+
+
+def risks_link(account: str, slug: str) -> str:
+    return f"{opportunity_link(account, slug)}/risks"
 
 
 class CommandCenterReadService:
@@ -128,6 +137,8 @@ class CommandCenterReadService:
         except OpportunityStateError as exc:
             if exc.code == "overview_retired":
                 return None, "retired"
+            if exc.code == "source_forgotten":
+                return None, "withheld"
             return None, "malformed" if exc.code == "malformed_storage" else "unknown_account"
         return version, "current" if version is not None else "not_created"
 
@@ -263,6 +274,37 @@ class CommandCenterReadService:
                     "evidence_refs": [ref.model_dump(mode="json") for ref in indicator.evidence_refs],
                 })
         return out
+
+    @staticmethod
+    def _risks(
+        version: OpportunityStateVersion | None, freshness: dict[str, Any], account: str, slug: str,
+    ) -> list[dict[str, Any]]:
+        """Read only the effective validated revision. An inaccessible source withholds its risk conclusions."""
+        if version is None or freshness["state"] == "unavailable":
+            return []
+        order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+        risks = []
+        for risk in version.state.risks:
+            refs = [ref.model_dump(mode="json") for ref in risk.evidence_refs]
+            transcript_count = sum(ref["source_type"] == "transcript" for ref in refs)
+            if not refs:
+                evidence_label = "No cited evidence; verify before acting"
+            elif transcript_count:
+                evidence_label = f"{transcript_count} transcript citation(s)"
+                locators = [ref["locator"] for ref in refs if ref["source_type"] == "transcript" and ref["locator"]]
+                if locators:
+                    evidence_label += " · " + ", ".join(locators[:2])
+            else:
+                evidence_label = "Opportunity metadata only; verify with the customer"
+            risks.append({
+                "key": risk.key, "title": risk.title, "reason": risk.description,
+                "severity": risk.severity.value, "classification": risk.classification.value,
+                "status": "potential", "evidence_refs": refs, "evidence_label": evidence_label,
+                "last_updated_at": risk.last_updated_at.isoformat() if risk.last_updated_at else None,
+                "overview_revision": version.revision, "overview_created_at": version.created_at.isoformat(),
+                "link": risk_link(account, slug, risk.key),
+            })
+        return sorted(risks, key=lambda risk: (order[risk["severity"]], risk["title"], risk["key"]))
 
     def _evaluation(self, account: str, slug: str) -> dict[str, Any]:
         if self._tech_eval_summary is None:
@@ -430,13 +472,17 @@ class CommandCenterReadService:
             if a.status in _OPEN and a.due_date and date.fromisoformat(a.due_date) < today
         ]
         waiting_on = sorted({a.party for a in mine if a.status in _OPEN and a.party not in ("Airbyte", "Unknown")})
-        blockers = self._confirmed_blockers(version)
         freshness = self._source_freshness(account, slug, sources, version)
+        blockers = self._confirmed_blockers(version) if freshness["state"] != "unavailable" else []
+        risks = self._risks(version, freshness, account, slug)
         attention: list[str] = []
         if overdue:
             attention.append(f"{len(overdue)} overdue action(s)")
         if blockers:
             attention.append(f"{len(blockers)} confirmed blocker(s)")
+        material_risks = sum(risk["severity"] in ("high", "critical") for risk in risks)
+        if material_risks:
+            attention.append(f"{material_risks} potential high/critical risk(s) to review")
         if counts.get("proposed"):
             attention.append(f"{counts['proposed']} proposal(s) to review")
         if freshness["state"] in ("unavailable", "failed", "source_pending", "overview_behind"):
@@ -450,6 +496,7 @@ class CommandCenterReadService:
             "opportunity_slug": slug,
             "opportunity_name": (version.identity.opportunity_name if version else entry.get("opportunity_name")) or slug,
             "opportunity_link": opportunity_link(account, slug),
+            "risks_link": risks_link(account, slug),
             "overview": {
                 "status": overview_status,
                 "revision": version.revision if version else None,
@@ -462,6 +509,7 @@ class CommandCenterReadService:
                               "proposed": counts.get("proposed", 0), "completed": counts.get("completed", 0),
                               "overdue": len(overdue)},
             "confirmed_blockers": blockers,
+            "risks": risks,
             "evaluation": self._evaluation(account, slug),
             "freshness": freshness,
             "latest_change_at": latest_change.isoformat() if latest_change else None,
@@ -527,12 +575,26 @@ class CommandCenterReadService:
         opportunities = self.local_opportunities()
         for entry in opportunities:
             version, _ = self._current(entry["account"], entry["opportunity_slug"])
-            for blocker in self._confirmed_blockers(version):
+            freshness = self._source_freshness(entry["account"], entry["opportunity_slug"], sources, version)
+            blockers = self._confirmed_blockers(version) if freshness["state"] != "unavailable" else []
+            for blocker in blockers:
                 item("confirmed_blocker", title=blocker["title"], reason=blocker["reason"],
                      account=entry["account"], slug=entry["opportunity_slug"],
                      next_step="Open the Opportunity Overview stakeholder map",
                      link=opportunity_link(entry["account"], entry["opportunity_slug"]),
                      when=version.created_at.isoformat() if version else None, blocker=blocker)
+            for risk in self._risks(version, freshness, entry["account"], entry["opportunity_slug"]):
+                if risk["severity"] not in ("high", "critical"):
+                    continue
+                item("risk_review", title=risk["title"], reason=risk["reason"],
+                     account=entry["account"], slug=entry["opportunity_slug"],
+                     next_step="Review the risk and verify its evidence in the Opportunity Overview",
+                     link=risk["link"], when=risk["overview_created_at"],
+                     risk=risk, freshness={
+                         "state": freshness["state"], "label": freshness["label"],
+                         "overview_revision": freshness["overview_revision"],
+                         "overview_created_at": freshness["overview_created_at"],
+                     })
         for s in sources:
             assoc = s["association"]
             acct = assoc.get("account") if assoc["state"] == "associated" else None

@@ -145,13 +145,13 @@ function ccWireFilters(root, tab, fixed = {}) {
 
 // Kinds mirror `AttentionKind` in services/command_center_read_service.py.
 const CC_KIND_LABEL = {
-  overdue_action: "Overdue", confirmed_blocker: "Confirmed blocker", due_action: "Due soon",
+  overdue_action: "Overdue", confirmed_blocker: "Confirmed blocker", risk_review: "Potential risk to review", due_action: "Due soon",
   proposal_review: "Proposal to review", association_review: "Association needed",
   source_failure: "Source problem", reconciliation_failure: "Analysis failed",
 };
 const ccKindTone = (k) => ({
   overdue_action: "error", confirmed_blocker: "error", source_failure: "error", reconciliation_failure: "error",
-  due_action: "warn", proposal_review: "warn", association_review: "warn",
+  risk_review: "warn", due_action: "warn", proposal_review: "warn", association_review: "warn",
 })[k] || "neutral";
 
 async function ccPageToday(params) {
@@ -175,6 +175,8 @@ async function ccPageToday(params) {
       </div>
       <div class="cc-att-title">${esc(it.title)}</div>
       <div class="cc-att-reason">${esc(it.reason)}</div>
+      ${it.risk ? `<div class="cc-risk-context"><span class="cc-badge cc-badge--warn">${esc(ccLabel(it.risk.severity))} potential risk</span><span>${esc(it.risk.evidence_label)}</span><span>Overview revision ${Number(it.risk.overview_revision)} saved ${ccWhen(it.risk.overview_created_at)}</span></div>
+        <div class="cc-risk-context muted">Freshness: ${esc(it.freshness.label)}</div>` : ""}
       <div class="cc-att-foot">
         <span class="muted">Next: ${esc(it.next_step)}</span>
         ${it.link ? `<a class="ghost small" href="${esc(it.link)}">Open</a>` : ""}
@@ -183,7 +185,7 @@ async function ccPageToday(params) {
     : emptyBox({
       icon: "✓", title: "Nothing needs attention",
       body: data.opportunity_count
-        ? "No overdue or due actions, proposals, blockers, or source problems are recorded locally."
+        ? "No overdue or due actions, proposals, material risks, blockers, or source problems are recorded locally."
         : "No local opportunities yet. Import a meeting under Sources or create an Opportunity Overview first.",
       actions: `<a class="ghost small" href="${CC_BASE}/sources">Go to Sources</a>`,
     });
@@ -200,7 +202,7 @@ async function ccPageToday(params) {
     ${ccPager(data, "today")}
     <h2 class="cc-h2">Recent changes</h2>
     ${recent}
-    <p class="muted cc-foot-note">Confirmed blockers appear only when a persisted, evidence-backed blocker exists in an Opportunity Overview; inferred risks are never shown as blockers.</p>`;
+    <p class="muted cc-foot-note">Risks are potential concerns to review. Confirmed blockers appear only when a persisted, evidence-backed blocker exists in an Opportunity Overview.</p>`;
   ccWirePager(body, {}, "today");
 }
 
@@ -222,6 +224,24 @@ function ccFreshness(f) {
   </div>`;
 }
 
+const CC_RISK_PREVIEW_LIMIT = 2;
+
+function ccPortfolioRisks(o, conclusionUnavailable) {
+  if (!o.risks.length) {
+    return `<span class="muted">${conclusionUnavailable ? `${esc(conclusionUnavailable)}; risk status unavailable` : "none recorded"}</span>`;
+  }
+  const preview = o.risks.slice(0, CC_RISK_PREVIEW_LIMIT);
+  return `<div class="cc-risk-summary"><strong>${o.risks.length} potential risk${o.risks.length === 1 ? "" : "s"}</strong>
+    <a class="cc-mini" href="${esc(o.risks_link)}">View all in Overview</a></div>
+    <ul class="cc-risk-list" aria-label="Most severe potential risks">${preview.map((r) => `<li>
+      <span class="cc-badge cc-badge--warn">${esc(ccLabel(r.severity))} · potential</span>
+      <a href="${esc(r.link)}">${esc(r.title)}</a>
+      <div class="cc-risk-reason">${esc(r.reason)}</div>
+      <div class="muted cc-risk-evidence">${esc(r.evidence_label)} · Overview revision ${Number(r.overview_revision)}</div>
+    </li>`).join("")}</ul>
+    ${o.risks.length > preview.length ? `<div class="muted cc-risk-more">Showing ${preview.length} most severe</div>` : ""}`;
+}
+
 async function ccPagePortfolio(params) {
   const filters = { account: params.get("account") || "", attention_only: params.get("attention_only") === "true" };
   const offset = Number(params.get("offset") || 0);
@@ -235,6 +255,9 @@ async function ccPagePortfolio(params) {
     const ac = o.action_counts;
     const ev = o.evaluation;
     const evText = !ev.supported ? "not tracked here" : (ev.overall ? `${ccLabel(ev.overall)}${ev.current_phase ? ` · ${ccLabel(ev.current_phase)}` : ""}` : "no tracker yet");
+    const conclusionUnavailable = o.overview.status !== "current"
+      ? `Overview ${ccLabel(o.overview.status)}`
+      : o.freshness.state === "unavailable" ? "Source unavailable" : null;
     return `<article class="card cc-card" aria-label="${esc(o.account)} ${esc(o.opportunity_name || o.opportunity_slug)}">
       <div class="cc-card-head">
         <div><div class="muted">${esc(o.account)}</div><h3><a href="${esc(o.opportunity_link)}">${esc(o.opportunity_name || o.opportunity_slug)}</a></h3></div>
@@ -244,7 +267,8 @@ async function ccPagePortfolio(params) {
         <dt>Next step</dt><dd>${o.next_step.value ? esc(o.next_step.value) + ` <span class="muted">(${esc(ccLabel(o.next_step.state))}${o.next_step.confirmation ? ", " + esc(ccLabel(o.next_step.confirmation)) : ""})</span>` : `<span class="muted">${esc(ccLabel(o.next_step.state))}</span>`}</dd>
         <dt>Actions</dt><dd>${ac.open} open · ${ac.blocked} blocked · ${ac.proposed} proposed · ${ac.completed} done${ac.overdue ? ` · <strong class="cc-danger">${ac.overdue} overdue</strong>` : ""}</dd>
         <dt>Waiting on</dt><dd>${o.waiting_on.length ? o.waiting_on.map((p) => `<span class="chip">${esc(p)}</span>`).join("") : `<span class="muted">nobody recorded</span>`}</dd>
-        <dt>Blockers</dt><dd>${o.confirmed_blockers.length ? o.confirmed_blockers.map((b) => `<span class="cc-badge cc-badge--error">${esc(b.title)}</span> ${esc(b.reason)}`).join("<br/>") : `<span class="muted">none confirmed</span>`}</dd>
+        <dt>Blockers</dt><dd>${o.confirmed_blockers.length ? o.confirmed_blockers.map((b) => `<span class="cc-badge cc-badge--error">${esc(b.title)}</span> ${esc(b.reason)}`).join("<br/>") : `<span class="muted">${conclusionUnavailable ? `${esc(conclusionUnavailable)}; blocker status unavailable` : "none confirmed"}</span>`}</dd>
+        <dt>Risks</dt><dd>${ccPortfolioRisks(o, conclusionUnavailable)}</dd>
         <dt>Evaluation</dt><dd>${esc(evText)}</dd>
         <dt>Freshness</dt><dd>${ccFreshness(o.freshness)}</dd>
       </dl>

@@ -18,6 +18,73 @@ def test_app_js_parses_and_normalizes_output_meta(repo_root: Path) -> None:
     assert app_js.count("normalizeOutputMeta(") >= 4
 
 
+def test_command_center_risk_preview_and_review_rendering(repo_root: Path) -> None:
+    """Exercise the no-build renderers with synthetic risk data and check responsive rules."""
+    command_center = repo_root / "webapp" / "static" / "command_center.js"
+    subprocess.run(["node", "--check", str(command_center)], check=True)
+    script = f"""
+const fs = require("fs");
+const src = fs.readFileSync({json.dumps(str(command_center))}, "utf8");
+const body = {{innerHTML: "", querySelector: () => null, querySelectorAll: () => []}};
+global.document = {{getElementById: () => body}};
+global.view = {{innerHTML: ""}};
+global.location = {{hash: "#/command-center/portfolio"}};
+global.setCrumbs = () => {{}};
+global.emptyBox = (item) => item.title;
+global.esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+const link = "#/opp/Acme/synthetic-opportunity/synthetic-opportunity/risk/security-review";
+const risksLink = "#/opp/Acme/synthetic-opportunity/synthetic-opportunity/risks";
+const risk = {{key: "security-review", title: "Security <review>", reason: "Approval is pending <script>", severity: "high", status: "potential", evidence_label: "1 transcript citation(s) · 00:00:05", overview_revision: 2, overview_created_at: "2026-09-26T12:00:00Z", last_updated_at: null, link}};
+const critical = {{...risk, key: "critical", title: "Critical synthetic risk", severity: "critical", link: link.replace("security-review", "critical")}};
+const hidden = {{...risk, key: "hidden", title: "Hidden third risk", link: link.replace("security-review", "hidden")}};
+const hiddenToo = {{...risk, key: "hidden-two", title: "Hidden fourth risk", link: link.replace("security-review", "hidden-two")}};
+const row = {{account: "Acme", opportunity_slug: "synthetic-opportunity", opportunity_name: "Synthetic Opportunity", opportunity_link: "#/opp/Acme/synthetic-opportunity/synthetic-opportunity", risks_link: risksLink, overview: {{status: "current"}}, action_counts: {{open: 0, blocked: 0, proposed: 0, completed: 0, overdue: 0}}, next_step: {{state: "unknown", value: null}}, waiting_on: [], confirmed_blockers: [], risks: [critical, risk, hidden, hiddenToo], evaluation: {{supported: false}}, freshness: {{state: "processed_latest_import", label: "Current through latest manual import", source_counts: {{total: 1}}, connector: {{mode: "manual_import", health: "not_monitored"}}}}, attention: [], latest_change_at: null}};
+const portfolio = {{opportunities: [row], accounts: ["Acme"], total: 1, offset: 0, limit: 25, next_offset: null}};
+const today = {{attention: [{{kind: "risk_review", title: risk.title, reason: risk.reason, account: row.account, opportunity_slug: row.opportunity_slug, opportunity_link: row.opportunity_link, next_step: "Review the risk", link, when: risk.overview_created_at, risk, freshness: {{label: row.freshness.label}}}}], counts_by_kind: {{risk_review: 1}}, recent_changes: [], opportunity_count: 1, total: 1, offset: 0, limit: 25, next_offset: null}};
+global.api = async (path) => path.includes("/portfolio") ? portfolio : today;
+eval(src + "\\nglobalThis.ccPagePortfolio = ccPagePortfolio; globalThis.ccPageToday = ccPageToday;");
+(async () => {{
+  await ccPagePortfolio(new URLSearchParams());
+  const portfolioHtml = body.innerHTML;
+  await ccPageToday(new URLSearchParams());
+  const todayHtml = body.innerHTML;
+  console.log(JSON.stringify({{
+    portfolio: portfolioHtml.includes("Risks</dt>") && portfolioHtml.includes("4 potential risks") && portfolioHtml.includes("View all in Overview") && portfolioHtml.includes(risksLink) && portfolioHtml.includes("Showing 2 most severe") && portfolioHtml.includes("critical · potential") && portfolioHtml.includes("high · potential") && portfolioHtml.includes(link) && portfolioHtml.includes("Approval is pending &lt;script&gt;"),
+    compact: !portfolioHtml.includes("Hidden third risk") && !portfolioHtml.includes("Hidden fourth risk"),
+    today: todayHtml.includes("Potential risk to review") && todayHtml.includes("Freshness: Current through latest manual import") && todayHtml.includes("1 transcript citation(s)") && todayHtml.includes(link),
+    escaped: !portfolioHtml.includes("<script>") && !todayHtml.includes("<script>") && portfolioHtml.includes("Security &lt;review&gt;"),
+    noRedRisk: !todayHtml.includes("cc-att--error") && !portfolioHtml.includes("cc-badge--error")
+  }}));
+}})().catch((error) => {{ console.error(error); process.exit(1); }});
+"""
+    result = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+    assert all(json.loads(result.stdout).values()), result.stdout
+    css = (repo_root / "webapp" / "static" / "style.css").read_text(encoding="utf-8")
+    assert ".cc-cards { grid-template-columns: 1fr; }" in css
+    assert ".cc-risk-context { align-items: flex-start; }" in css
+    assert ".cc-risk-list { list-style: none;" in css
+    app_js = (repo_root / "webapp" / "static" / "app.js").read_text(encoding="utf-8")
+    assert 'id="overview-risk-${esc(risk.key)}"' in app_js
+    assert 'id="overview-risks"' in app_js
+    assert "No risks are recorded in this Overview." in app_js
+    assert "riskDetail.scrollIntoView" in app_js
+    scroll_script = f"""
+const fs = require("fs");
+const src = fs.readFileSync({json.dumps(str(repo_root / 'webapp' / 'static' / 'app.js'))}, "utf8");
+const start = src.indexOf("function scrollToOverviewRisk(");
+const end = src.indexOf("async function pageOpportunity", start);
+const seen = [];
+global.document = {{getElementById: (id) => ({{scrollIntoView: () => seen.push(id)}})}};
+eval(src.slice(start, end));
+scrollToOverviewRisk("#/opp/Acme/synthetic-opportunity/synthetic-opportunity/risk/security-review");
+scrollToOverviewRisk("#/opp/Acme/synthetic-opportunity/synthetic-opportunity/risks");
+scrollToOverviewRisk("#/opp/Acme/synthetic-opportunity/synthetic-opportunity");
+console.log(JSON.stringify(seen));
+"""
+    scrolled = subprocess.run(["node", "-e", scroll_script], check=True, capture_output=True, text=True)
+    assert json.loads(scrolled.stdout) == ["overview-risk-security-review", "overview-risks"]
+
+
 def test_profile_summary_is_promoted_with_profile_label(repo_root: Path) -> None:
     """The shared reader module recognizes current profiles and keeps their label."""
     reader_js = repo_root / "webapp" / "static" / "reader.js"

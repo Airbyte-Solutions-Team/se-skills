@@ -2206,12 +2206,12 @@ function renderOverviewHealth(current) {
 function renderOverviewRisksActions(current) {
   const risks = current?.state?.risks || [];
   const actions = current?.state?.recommended_actions || [];
-  const riskHtml = risks.length ? risks.map((risk) => `<article class="overview-list-item overview-risk--${esc(risk.severity)}">
+  const riskHtml = risks.length ? risks.map((risk) => `<article id="overview-risk-${esc(risk.key)}" class="overview-list-item overview-risk--${esc(risk.severity)}">
     <div><span class="workspace-status workspace-status--${risk.severity === "critical" || risk.severity === "high" ? "error" : "warn"}">${esc(overviewLabel(risk.severity))}</span> <strong>${esc(risk.title)}</strong></div>
     <p>${esc(risk.description)}</p>
     <small>${esc(overviewLabel(risk.classification))}${risk.owner ? ` · Owner ${esc(risk.owner)}` : " · Owner TBD"}</small>
     ${renderEvidenceButton(risk.evidence_refs)}
-  </article>`).join("") : '<p class="muted">No evidence-backed risks were identified.</p>';
+  </article>`).join("") : '<p class="muted">No risks are recorded in this Overview.</p>';
   const actionHtml = actions.length ? actions.map((action) => `<article class="overview-list-item">
     <div><span class="workspace-status workspace-status--neutral">${esc(overviewLabel(action.status))}</span> <strong>${esc(action.action)}</strong></div>
     <p>${esc(action.goal)}</p>
@@ -2219,7 +2219,7 @@ function renderOverviewRisksActions(current) {
     ${renderEvidenceButton(action.evidence_refs)}
   </article>`).join("") : '<p class="muted">No recommended actions were established.</p>';
   return `<div class="overview-two-column">
-    <section class="workspace-panel"><div class="workspace-panel-head"><div><div class="workspace-eyebrow">Operational blockers</div><h2>Top Risks</h2></div><span class="workspace-count">${risks.length}</span></div>${riskHtml}</section>
+    <section class="workspace-panel" id="overview-risks"><div class="workspace-panel-head"><div><div class="workspace-eyebrow">Operational blockers</div><h2>Top Risks</h2></div><span class="workspace-count">${risks.length}</span></div>${riskHtml}</section>
     <section class="workspace-panel"><div class="workspace-panel-head"><div><div class="workspace-eyebrow">Next best work</div><h2>Recommended Actions</h2></div><span class="workspace-count">${actions.length}</span></div>${actionHtml}</section>
   </div>`;
 }
@@ -2764,6 +2764,13 @@ async function loadOverviewHistory(account, slug) {
 }
 
 // ---- Page: opportunity workspace (local mode) ---------------------------
+function scrollToOverviewRisk(hash) {
+  const riskKey = (hash.match(/\/risk\/([a-z][a-z0-9_-]{0,79})$/) || [])[1];
+  const riskDetail = riskKey ? document.getElementById(`overview-risk-${riskKey}`)
+    : hash.endsWith("/risks") ? document.getElementById("overview-risks") : null;
+  if (riskDetail) riskDetail.scrollIntoView({ block: "start" });
+}
+
 async function pageOpportunity(account, slug, routeOppName) {
   const workspaceUrl = `/api/accounts/${encodeURIComponent(account)}/opportunities/${encodeURIComponent(slug)}/workspace`;
   let workspace;
@@ -2799,6 +2806,7 @@ async function pageOpportunity(account, slug, routeOppName) {
     workspaceOutputItems(workspace).map((o) => [o.path, normalizeOutputMeta(o)])
   );
   view.innerHTML = renderOpportunityWorkspace(workspace);
+  scrollToOverviewRisk(location.hash);
 
   const wireTechEval = () => {
     const trackerRoot = document.getElementById("tech-eval-tracker");
