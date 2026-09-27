@@ -7,7 +7,7 @@ opportunity brief or canonical state from generated Markdown.
 from __future__ import annotations
 
 from collections import OrderedDict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from .account_service import AccountError, AccountService
@@ -57,10 +57,15 @@ class OpportunityWorkspaceService:
         self._transcription_service = transcription_service
         self._tech_eval_service = tech_eval_service
         self._update_service = update_service
+        self._crm_identity_lookup: Callable[[str, str], dict[str, Any] | None] | None = None
 
     def set_update_service(self, update_service: Any) -> None:
         """Complete the local composition cycle after both services exist."""
         self._update_service = update_service
+
+    def set_crm_identity_lookup(self, lookup: Callable[[str, str], dict[str, Any] | None]) -> None:
+        """Use saved, explicitly mapped CRM metadata without a provider call."""
+        self._crm_identity_lookup = lookup
 
     @staticmethod
     def _group_outputs(outputs: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -137,6 +142,15 @@ class OpportunityWorkspaceService:
             opportunity = self._fallback_opportunity(
                 safe_opp, source="local_folder" if local_dir is not None else "local_outputs"
             )
+            crm = self._crm_identity_lookup(safe_account, safe_opp) if self._crm_identity_lookup else None
+            if crm and local_dir is not None:
+                opportunity.update({
+                    "name": crm.get("name") or opportunity["name"],
+                    "stage": crm.get("stage"), "close_date": crm.get("close_date"),
+                    "ae": crm.get("owner"), "sfdc_id": crm.get("sfdc_id"),
+                    "sfdc_account_id": crm.get("account_id"), "sfdc_url": crm.get("sfdc_url"),
+                    "metadata_source": "saved_salesforce_snapshot", "metadata_complete": False,
+                })
         else:
             opportunity = {field: matched.get(field) for field in _OPPORTUNITY_FIELDS}
             opportunity["slug"] = safe_opp

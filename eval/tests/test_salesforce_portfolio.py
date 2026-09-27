@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -35,7 +36,10 @@ class FakeAccounts:
         return {"id": "se", "name": "Synthetic SE"} if member_id == "se" else None
 
     def titlecase(self, name: str) -> str:
-        return name
+        return "-".join(part.capitalize() for part in re.split(r"[^A-Za-z0-9]+", name) if part)
+
+    def slug(self, name: str) -> str:
+        return name.replace(" ", "-")
 
     def _resolve_account_dir(self, account: str, must_exist=True) -> Path:
         return self.customers / account
@@ -142,6 +146,8 @@ def test_establish_is_explicit_and_mapping_rejects_double_assignment(tmp_path) -
     assert created.status_code == 200
     mapping = created.json()
     assert (h.customers / mapping["account"] / "opportunities" / mapping["opportunity_slug"]).is_dir()
+    assert mapping["account"].startswith("Synthetic-Account-")
+    assert mapping["opportunity_slug"].startswith("Pilot-")
     assert h.get("/api/command-center/portfolio")["total"] == 2
     conflict = h.client.post("/api/command-center/salesforce/mappings",
         json={"sfdc_id": ID2, "account": mapping["account"], "opportunity_slug": mapping["opportunity_slug"]})

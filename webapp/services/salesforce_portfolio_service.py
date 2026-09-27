@@ -63,6 +63,16 @@ class SalesforcePortfolioService:
         raw = self._read("salesforce-mappings.json", {"schema_version": 1, "mappings": {}})
         return raw.get("mappings", {}) if isinstance(raw.get("mappings"), dict) else {}
 
+    def local_identity(self, account: str, slug: str) -> dict | None:
+        """Return CRM display metadata only for an explicitly mapped local folder."""
+        mappings = self.mappings()
+        records = (self.snapshot().get("last_success") or {}).get("records", [])
+        by_id = {row["sfdc_id"]: row for row in records}
+        for crm_id, target in mappings.items():
+            if (target.get("account"), target.get("opportunity_slug")) == (account, slug):
+                return by_id.get(crm_id)
+        return None
+
     async def refresh(self, member_id: str, ae_names: list[str]) -> dict:
         member = self._accounts.member_by_id(member_id)
         if not member or not str(member.get("name") or "").strip():
@@ -155,8 +165,14 @@ class SalesforcePortfolioService:
         account_id = crm.get("account_id")
         if not account_id or not _ID.fullmatch(str(account_id)):
             raise SalesforcePortfolioError(409, "This CRM row has no stable account ID; map it to an existing local opportunity.")
-        account = self._accounts.titlecase(f"CRM-{hashlib.sha256(str(account_id).encode()).hexdigest()[:12]}")
-        slug = f"opp-{hashlib.sha256(sfdc_id.encode()).hexdigest()[:12]}"
+        # Keep both folders recognizable while the ID suffix preserves distinct
+        # records with identical account or opportunity names.
+        account_name = self._accounts.titlecase(str(crm.get("account_name") or "CRM"))[:55] or "CRM"
+        opportunity_name = self._accounts.slug(str(crm.get("name") or "Opportunity"))[:55] or "Opportunity"
+        account = self._accounts.titlecase(
+            f"{account_name}-{hashlib.sha256(str(account_id).encode()).hexdigest()[:10]}"
+        )
+        slug = f"{opportunity_name}-{hashlib.sha256(sfdc_id.encode()).hexdigest()[:10]}"
         existing = self.mappings().get(sfdc_id)
         if existing:
             return {"sfdc_id": sfdc_id, **existing}

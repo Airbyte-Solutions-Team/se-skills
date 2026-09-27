@@ -237,6 +237,7 @@ def _build_local_services(app: FastAPI) -> None:
         customers_dir=config.CUSTOMERS_DIR, accounts=account_service,
         salesforce=salesforce_integration,
     )
+    opportunity_workspace_service.set_crm_identity_lookup(salesforce_portfolio_service.local_identity)
     # Aggregate Command Center reads (Today/Portfolio/Actions/Changes): persisted local records only.
     command_center_read_service = CommandCenterReadService(
         customers_dir=config.CUSTOMERS_DIR,

@@ -178,6 +178,24 @@ async def test_workspace_opens_local_opportunity_before_any_import_or_overview()
 
 
 @pytest.mark.asyncio
+async def test_workspace_uses_saved_explicit_crm_mapping_for_display_without_live_lookup() -> None:
+    service = OpportunityWorkspaceService(
+        account_service=FakeAccountService([], local_slugs={"Pilot-123"}),
+        output_service=FakeOutputService(),
+    )
+    service.set_crm_identity_lookup(lambda account, slug: {
+        "name": "Pilot Expansion", "stage": "Discovery", "owner": "Synthetic AE",
+        "close_date": "2026-10-31", "sfdc_id": "006000000000001",
+        "account_id": "001000000000001", "sfdc_url": None,
+    } if (account, slug) == ("Acme", "Pilot-123") else None)
+    workspace = await service.get_workspace("Acme", "Pilot-123")
+    assert workspace["opportunity"]["name"] == "Pilot Expansion"
+    assert workspace["opportunity"]["sfdc_id"] == "006000000000001"
+    assert workspace["opportunity"]["metadata_source"] == "saved_salesforce_snapshot"
+    assert workspace["opportunity"]["metadata_complete"] is False
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "opportunities",
     [
