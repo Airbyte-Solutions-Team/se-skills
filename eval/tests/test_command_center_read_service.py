@@ -286,7 +286,7 @@ async def test_portfolio_keeps_two_opportunities_under_one_account_distinct(tmp_
         assert row["freshness"]["connector"] == {
             "provider": "granola", "mode": "manual_import", "unattended_discovery": False,
             "health": "not_monitored",
-            "note": "Sources arrive only when a user imports them; there is no connection check or sync.",
+            "note": "Sources arrive through user-initiated intake; there is no unattended discovery or sync.",
         }
         assert row["evaluation"] == {"supported": True, "overall": None, "current_phase": None}
         assert row["confirmed_blockers"] == []
@@ -374,6 +374,67 @@ async def test_completion_is_reflected_across_views_and_undo_restores(tmp_path) 
 
 
 @pytest.mark.asyncio
+async def test_three_opportunity_pilot_walkthrough_with_local_gap_risk_and_stale_source(tmp_path) -> None:
+    h, meeting, stale_source = await _two_opportunities(tmp_path)
+    # A third, locally saved opportunity can predate every import and Overview.
+    (h.customers / "Other" / "opportunities" / "new-pilot").mkdir(parents=True)
+    assert h.import_note("note_synthetic_v2_edited.json") == meeting
+    await _reconcile_risks(h, meeting, OPP, [
+        _risk(evidence_id_for(meeting, 2), key="security-review", severity=RiskSeverity.HIGH),
+    ])
+    assert h.import_variant("not_SYNTH000000002", extra_line="Synthetic later update.") == stale_source
+
+    portfolio = h.get("/api/command-center/portfolio")
+    assert portfolio["total"] == 3
+    assert portfolio["coverage"]["complete"] is False
+    assert portfolio["coverage"]["scope"] == "locally_known"
+    rows = {(r["account"], r["opportunity_slug"]): r for r in portfolio["opportunities"]}
+    assert set(rows) == {(ACCOUNT, OPP), (ACCOUNT, OPP2), ("Other", "new-pilot")}
+    assert rows[("Other", "new-pilot")]["overview"]["status"] == "not_created"
+    assert rows[("Other", "new-pilot")]["freshness"]["state"] == "no_sources"
+    assert rows[("Other", "new-pilot")]["next_action"] is None
+    assert rows[(ACCOUNT, OPP2)]["freshness"]["state"] == "source_pending"
+    assert rows[(ACCOUNT, OPP2)]["freshness"]["source_link"] == f"#/command-center/sources/{stale_source}"
+    assert rows[(ACCOUNT, OPP2)]["waiting_on"] == ["Customer"]
+    assert rows[(ACCOUNT, OPP)]["next_action"]["overdue"] is True
+    assert rows[(ACCOUNT, OPP)]["risks"][0]["status"] == "potential"
+
+    today = h.get("/api/command-center/today")
+    assert today["opportunity_count"] == 3 and today["coverage"] == portfolio["coverage"]
+    pending = next(i for i in today["attention"] if i["kind"] == "source_pending")
+    assert pending["source_id"] == stale_source
+    assert pending["link"] == rows[(ACCOUNT, OPP2)]["freshness"]["source_link"]
+    risk = next(i for i in today["attention"] if i["kind"] == "risk_review")
+    assert risk["link"] == rows[(ACCOUNT, OPP)]["risks"][0]["link"]
+    assert h.get(f"/api/command-center/sources/{stale_source}/review")["source"]["latest_revision"] == 2
+
+    action = rows[(ACCOUNT, OPP)]["next_action"]
+    assert h.get(f"/api/command-center/actions/{action['action_id']}")["overdue"] is True
+    completed = h.client.post(
+        f"/api/command-center/actions/{action['action_id']}/transitions",
+        json={"to_status": "completed", "reason": "Synthetic walkthrough completion"},
+    )
+    assert completed.status_code == 200
+    assert not any(i.get("action_id") == action["action_id"] for i in h.get("/api/command-center/today")["attention"])
+    after = next(r for r in h.get("/api/command-center/portfolio")["opportunities"] if r["opportunity_slug"] == OPP)
+    assert after["action_counts"]["overdue"] == 0
+    assert after["action_counts"]["completed"] == 1
+    assert h.get(f"/api/command-center/actions/{action['action_id']}")["status"] == "completed"
+    changes = h.get("/api/command-center/changes", change_type="action_transition")["changes"]
+    assert changes[0]["subject_id"] == action["action_id"] and changes[0]["after"]["status"] == "completed"
+
+    corrected = h.client.post(
+        f"/api/command-center/actions/{action['action_id']}/undo",
+        json={"reason": "Synthetic correction: still outstanding"},
+    )
+    assert corrected.status_code == 200
+    assert any(i.get("action_id") == action["action_id"] for i in h.get("/api/command-center/today")["attention"])
+    assert h.get("/api/command-center/actions", overdue=True)["total"] == 1
+    assert next(r for r in h.get("/api/command-center/portfolio")["opportunities"] if r["opportunity_slug"] == OPP)["action_counts"]["overdue"] == 1
+    assert h.get("/api/command-center/changes", change_type="action_transition")["total"] == 2
+
+
+@pytest.mark.asyncio
 async def test_changes_filters_and_paging(tmp_path) -> None:
     h, first, second = await _two_opportunities(tmp_path)
     everything = h.get("/api/command-center/changes")
@@ -446,6 +507,7 @@ async def test_empty_workspace_reads_are_empty_not_errors(tmp_path) -> None:
     assert h.get("/api/command-center/today") == {
         "total": 0, "offset": 0, "limit": 50, "next_offset": None, "attention": [], "counts_by_kind": {},
         "recent_changes": [], "as_of": NOW.isoformat(), "opportunity_count": 0,
+        "coverage": h.reads.portfolio()["coverage"],
     }
     assert h.get("/api/command-center/portfolio")["opportunities"] == []
     assert h.get("/api/command-center/actions")["total"] == 0
@@ -524,7 +586,7 @@ async def test_ui_association_path_confirm_reconcile_correct_and_clear(tmp_path)
     base = review["overview_base"]
     assert review["capabilities"]["reconcile"] is True and base["status"] == "current"
     assert base["opportunity_link"] == f"#/opp/{ACCOUNT}/{OPP}/{OPP}"
-    assert h.get("/api/command-center/today")["counts_by_kind"] == {}
+    assert h.get("/api/command-center/today")["counts_by_kind"] == {"source_pending": 1}
 
     h.set_recs(source_id, 1, lambda eid: [
         _recommendation(eid, key="sandbox", action="Confirm sandbox access", owner="Customer Synthetic Buyer", due="2026-10-15"),
@@ -551,7 +613,7 @@ async def test_ui_association_path_confirm_reconcile_correct_and_clear(tmp_path)
     assert review["source"]["association"]["opportunity_slug"] == OPP2
     assert review["overview_base"]["opportunity_link"] == f"#/opp/{ACCOUNT}/{OPP2}/{OPP2}"
     assert all(a["retracted"] for a in review["derived_actions"])
-    assert h.get("/api/command-center/today")["counts_by_kind"] == {}
+    assert h.get("/api/command-center/today")["counts_by_kind"] == {"source_pending": 1}
     assert h.get("/api/command-center/changes", change_type="association_corrected")["total"] == 1
 
     cleared = h.client.request(

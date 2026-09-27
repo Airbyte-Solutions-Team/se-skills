@@ -4251,10 +4251,13 @@ function initTheme() {
 
 // ---- Salesforce connection-health badge (header) --------------------------
 let sfdcHealthMenuOpen = false;
+let sfdcHealthRaw = null;
 
 async function initSfdcHealth() {
+  if (location.hash.startsWith("#/command-center")) return;
   try {
-    renderSfdcHealth(await api("/api/sfdc/status"));
+    sfdcHealthRaw = await api("/api/sfdc/status");
+    renderSfdcHealth(sfdcHealthRaw);
   } catch {
     // Best-effort: never let this block or break the app shell.
   }
@@ -4263,6 +4266,10 @@ async function initSfdcHealth() {
 function renderSfdcHealth(raw) {
   const el = document.getElementById("sfdc-health");
   if (!el) return;
+  if (location.hash.startsWith("#/command-center")) {
+    el.classList.add("hidden");
+    return;
+  }
   const decision = window.sfdcStatus(raw);
   if (!decision.visible) {
     el.className = "sfdc-health hidden";
@@ -4354,6 +4361,17 @@ async function pollSfdcReauth(anchor, menu, btn) {
 // ---- Router ---------------------------------------------------------------
 async function route() {
   const h = location.hash.slice(1) || "/";
+  if (!HOSTED) {
+    if (h.startsWith("/command-center")) {
+      document.getElementById("sfdc-health-menu")?.remove();
+      sfdcHealthMenuOpen = false;
+      document.getElementById("sfdc-health")?.classList.add("hidden");
+    } else if (sfdcHealthRaw) {
+      renderSfdcHealth(sfdcHealthRaw);
+    } else {
+      initSfdcHealth();
+    }
+  }
   try {
     // In-page anchor on the Help page (TOC chips → scroll to a skill card).
     // Don't re-route; just ensure Help is rendered and scroll to the card.
@@ -5510,7 +5528,6 @@ async function pageHosted() {
       const help = await api("/api/skills/help");
       SKILLS_HELP = Object.fromEntries(help.map((h) => [h.id, h]));
     } catch { SKILLS_HELP = {}; }
-    initSfdcHealth(); // fire-and-forget; never blocks first route render
     document.getElementById("cc-link")?.classList.remove("hidden");
   }
   window.addEventListener("hashchange", route);

@@ -82,8 +82,8 @@ class OpportunityWorkspaceService:
         ]
 
     @staticmethod
-    def _fallback_opportunity(opp_slug: str) -> dict[str, Any]:
-        """Return honest metadata when local artifacts outlive SFDC availability."""
+    def _fallback_opportunity(opp_slug: str, *, source: str = "local_outputs") -> dict[str, Any]:
+        """Return honest metadata when a local opportunity outlives SFDC availability."""
         display_name = opp_slug.replace("-", " ").replace("_", " ").strip().title()
         return {
             "name": display_name or "Opportunity",
@@ -98,7 +98,7 @@ class OpportunityWorkspaceService:
             "sfdc_url": None,
             "sfdc_id": None,
             "sfdc_account_id": None,
-            "metadata_source": "local_outputs",
+            "metadata_source": source,
             "metadata_complete": False,
         }
 
@@ -126,9 +126,17 @@ class OpportunityWorkspaceService:
         )
 
         if matched is None:
-            if not opportunity_outputs:
-                raise AccountError(404, "Unknown opportunity")
-            opportunity = self._fallback_opportunity(safe_opp)
+            # A local opportunity can exist before an import, Overview, or output.
+            # Resolve through AccountService so a symlink cannot escape the workspace.
+            try:
+                local_dir = self._account_service._resolve_opportunity_dir(safe_account, safe_opp)
+            except AccountError:
+                if not opportunity_outputs:
+                    raise
+                local_dir = None
+            opportunity = self._fallback_opportunity(
+                safe_opp, source="local_folder" if local_dir is not None else "local_outputs"
+            )
         else:
             opportunity = {field: matched.get(field) for field in _OPPORTUNITY_FIELDS}
             opportunity["slug"] = safe_opp

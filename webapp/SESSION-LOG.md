@@ -2,10 +2,12 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: September 27, 2026 — branch `codex/command-center-risk-visibility` @ HEAD (from `origin/main` `9d1a6364`).
+_Last updated: September 27, 2026 — branch `codex/command-center-local-pilot` @ HEAD (from `origin/main` `62fb296`).
 
 
 ## Built this session (newest first — see `git log`)
+
+- **Command Center local pilot completion (September 27; synthetic fixtures only).** Today and Portfolio now include local opportunity folders without an import, Overview, or Action and explicitly say active CRM coverage is unverified; the existing account-oriented Salesforce helpers cannot establish a complete opportunity set. Portfolio leads with the next durable Action, due state, waiting party, potential risk versus confirmed blocker, latest change, and a source review link. The shared header skips Salesforce status checks on Command Center routes. An empty local folder opens an incomplete Opportunity Workspace. A three-opportunity synthetic walkthrough (two under Acme; one empty; meeting-derived Action/risk; stale source) checks completion and undo across Today, Portfolio, Actions, and Changes. Browser Use verified desktop and 390 px Today/Portfolio, risk/Action/source/empty-Overview links, and no horizontal mobile page overflow. The mobile tabs were tightened after visual review. Focused tests: 86 passed; mock evaluation: passed. Full `eval/` collection remains Linux-only (`grp`, `fcntl`, `SIGKILL`) on this Windows host; Ubuntu CI is the gate. No customer data, live source intake, or model processing was used.
 
 - **Command Center risk preview review (September 27; PR #75).** Portfolio shows the total potential-risk count and the two most severe risk summaries, with a link to the full Overview risk section; each preview still links to its exact risk card. Today retains individual high/critical review items. The Overview empty message now says only that no risks are recorded, without implying all valid risks must cite evidence. Synthetic frontend and read-model tests cover the preview limit, counts, links, and empty copy. Browser Use blocked the local preview URL and explicitly prohibited an alternate browser route, so populated desktop/mobile visual screenshots remain a manual review item; no provider or model workflow changed.
 

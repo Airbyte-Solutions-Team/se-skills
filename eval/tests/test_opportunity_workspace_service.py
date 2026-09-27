@@ -10,8 +10,14 @@ from services.opportunity_workspace_service import OpportunityWorkspaceService
 
 
 class FakeAccountService:
-    def __init__(self, opportunities: list[dict[str, Any]]) -> None:
+    def __init__(self, opportunities: list[dict[str, Any]], local_slugs: set[str] | None = None) -> None:
         self.opportunities = opportunities
+        self.local_slugs = local_slugs or set()
+
+    def _resolve_opportunity_dir(self, account: str, opp: str) -> str:
+        if account != "Acme" or opp not in self.local_slugs:
+            raise AccountError(404, "Unknown opportunity")
+        return opp
 
     def safe_name(self, value: str) -> str:
         if ".." in value or "/" in value or "\\" in value:
@@ -157,6 +163,18 @@ async def test_workspace_rejects_unknown_opportunity_without_local_outputs() -> 
 
     assert exc.value.status_code == 404
     assert exc.value.detail == "Unknown opportunity"
+
+
+@pytest.mark.asyncio
+async def test_workspace_opens_local_opportunity_before_any_import_or_overview() -> None:
+    service = OpportunityWorkspaceService(
+        account_service=FakeAccountService([], local_slugs={"new-pilot"}),
+        output_service=FakeOutputService(),
+    )
+    workspace = await service.get_workspace("Acme", "new-pilot")
+    assert workspace["opportunity"]["metadata_source"] == "local_folder"
+    assert workspace["opportunity"]["metadata_complete"] is False
+    assert workspace["canonical_state"]["status"] == "not_created"
 
 
 @pytest.mark.asyncio

@@ -3,9 +3,9 @@
 Everything here is derived from persisted local records only: the current
 Opportunity Overview version, PR C action records / change entries / run
 receipts, and PR B ledger source summaries. No provider, CRM, or model is
-contacted while a page is rendered. Opportunities are discovered from what is
-persisted under `<customers>/<account>/opportunities/<slug>` and from records
-that name an account/opportunity, never from Salesforce.
+contacted while a page is rendered. Opportunities are discovered from local
+opportunity folders and records that name an account/opportunity, never from
+Salesforce. This is not a verified CRM active-opportunity set.
 
 Responses are body-free: they carry identifiers, statuses, counts, dates and
 short human-authored/model-authored *fields* that already live in state JSON
@@ -47,19 +47,26 @@ RECENT_CHANGE_LIMIT = 10
 
 AttentionKind = Literal[
     "overdue_action", "confirmed_blocker", "risk_review", "due_action", "proposal_review",
-    "association_review", "source_failure", "reconciliation_failure",
+    "association_review", "source_pending", "source_failure", "reconciliation_failure",
 ]
 # Rule-based order (§8): the reason is inspectable, there is no score.
 _ATTENTION_ORDER: dict[str, int] = {
     "overdue_action": 0, "confirmed_blocker": 1, "risk_review": 2,
     "due_action": 3, "proposal_review": 4, "association_review": 5,
-    "source_failure": 6, "reconciliation_failure": 7,
+    "source_pending": 6, "source_failure": 7, "reconciliation_failure": 8,
 }
 _UNPROCESSED = frozenset({
     "discovered", "awaiting_association", "awaiting_content", "queued", "processing", "failed",
 })
 _WITHHELD = frozenset({"pending_unknown", "access_lost", "deleted", "failed"})
 _OPEN = frozenset({"open", "blocked"})
+_COVERAGE = {
+    "scope": "locally_known",
+    "complete": False,
+    "label": "Local opportunities only; active CRM coverage is unverified",
+    "detail": "Includes local opportunity folders, Overviews, Actions, and associated sources. "
+              "An active CRM opportunity with no local record may be missing; local records are not proof it is still active.",
+}
 
 
 class CommandCenterReadError(Exception):
@@ -143,7 +150,7 @@ class CommandCenterReadService:
         return version, "current" if version is not None else "not_created"
 
     def local_opportunities(self) -> list[dict[str, Any]]:
-        """Every (account, opportunity) with persisted local state, actions, or an associated source."""
+        """Every locally known (account, opportunity), including empty opportunity folders."""
         found: dict[tuple[str, str], dict[str, Any]] = {}
 
         def add(account: str, slug: str, name: str | None = None) -> None:
@@ -162,9 +169,8 @@ class CommandCenterReadService:
                 for opp_dir in sorted(opps.iterdir()):
                     if not opp_dir.is_dir() or opp_dir.name.startswith(".") or opp_dir.is_symlink():
                         continue
-                    if (opp_dir / OpportunityStateService.STATE_DIR_NAME).is_dir():
-                        version, _ = self._current(account_dir.name, opp_dir.name)
-                        add(account_dir.name, opp_dir.name, version.identity.opportunity_name if version else None)
+                    version, _ = self._current(account_dir.name, opp_dir.name)
+                    add(account_dir.name, opp_dir.name, version.identity.opportunity_name if version else None)
         for action in self._actions():
             add(action.account, action.opportunity_slug)
         for source in self._sources():
@@ -195,7 +201,8 @@ class CommandCenterReadService:
             and s["processing"]["processed_revision"] < s["latest_revision"]
         ]
         latest_processed_meeting = max(
-            (s["latest"]["occurred_at"] for s in processed if s["latest"]["occurred_at"]), default=None
+            (s["latest"]["occurred_at"] for s in processed
+             if s["kind"] == "meeting" and s["latest"]["occurred_at"]), default=None
         )
         last_import = max((s["latest"]["observed_at"] for s in mine), default=None)
         overview_missing = [
@@ -204,7 +211,7 @@ class CommandCenterReadService:
         ]
 
         if not mine:
-            state, label = "no_sources", "No meeting sources imported for this opportunity"
+            state, label = "no_sources", "No sources imported for this opportunity"
         elif withheld:
             state, label = "unavailable", f"{len(withheld)} source(s) inaccessible · freshness unknown"
         elif failed:
@@ -216,18 +223,20 @@ class CommandCenterReadService:
             state, label = "overview_behind", f"Overview predates {len(overview_missing)} processed source(s)"
         else:
             state = "processed_latest_import"
-            label = "Current through the latest manually imported meeting"
+            label = "Current through the latest user-initiated import"
+        source_to_review = next(iter(withheld or failed or pending or stale or overview_missing or mine), None)
         return {
             "state": state,
             "label": label,
             "connector": {
-                "provider": "granola",
+                "provider": ", ".join(sorted({s["provider"] for s in mine})) or "none",
                 "mode": "manual_import",
                 "unattended_discovery": False,
                 "health": "not_monitored",
-                "note": "Sources arrive only when a user imports them; there is no connection check or sync.",
+                "note": "Sources arrive through user-initiated intake; there is no unattended discovery or sync.",
             },
             "last_manual_import_at": last_import,
+            "source_link": f"#/command-center/sources/{source_to_review['source_id']}" if source_to_review else None,
             "latest_processed_meeting_at": latest_processed_meeting,
             "source_counts": {
                 "total": len(mine), "processed": len(processed), "pending": len(pending),
@@ -471,6 +480,16 @@ class CommandCenterReadService:
             a for a in mine
             if a.status in _OPEN and a.due_date and date.fromisoformat(a.due_date) < today
         ]
+        outstanding = sorted(
+            (a for a in mine if a.status in _OPEN),
+            key=lambda a: (a.due_date or "9999-99-99", a.created_at, a.action_id),
+        )
+        next_action = None
+        if outstanding:
+            presented = self._present_action(outstanding[0])
+            next_action = {key: presented[key] for key in (
+                "action_id", "commitment", "party", "due_date", "overdue", "due_soon",
+            )}
         waiting_on = sorted({a.party for a in mine if a.status in _OPEN and a.party not in ("Airbyte", "Unknown")})
         freshness = self._source_freshness(account, slug, sources, version)
         blockers = self._confirmed_blockers(version) if freshness["state"] != "unavailable" else []
@@ -487,10 +506,8 @@ class CommandCenterReadService:
             attention.append(f"{counts['proposed']} proposal(s) to review")
         if freshness["state"] in ("unavailable", "failed", "source_pending", "overview_behind"):
             attention.append(freshness["label"])
-        latest_change = max(
-            (c.applied_at for c in changes if c.account == account and c.opportunity_slug == slug),
-            default=None,
-        )
+        own_changes = [c for c in changes if c.account == account and c.opportunity_slug == slug]
+        latest_change = max(own_changes, key=lambda c: (c.applied_at, c.sequence), default=None)
         return {
             "account": account,
             "opportunity_slug": slug,
@@ -504,6 +521,7 @@ class CommandCenterReadService:
                 "created_at": version.created_at.isoformat() if version else None,
             },
             "next_step": self._next_step(version),
+            "next_action": next_action,
             "waiting_on": waiting_on,
             "action_counts": {"open": counts.get("open", 0), "blocked": counts.get("blocked", 0),
                               "proposed": counts.get("proposed", 0), "completed": counts.get("completed", 0),
@@ -512,7 +530,8 @@ class CommandCenterReadService:
             "risks": risks,
             "evaluation": self._evaluation(account, slug),
             "freshness": freshness,
-            "latest_change_at": latest_change.isoformat() if latest_change else None,
+            "latest_change_at": latest_change.applied_at.isoformat() if latest_change else None,
+            "latest_change_type": latest_change.change_type if latest_change else None,
             "attention": attention,
         }
 
@@ -534,6 +553,7 @@ class CommandCenterReadService:
         page["opportunities"] = page.pop("items")
         page["filters"] = {"account": account, "attention_only": attention_only}
         page["accounts"] = sorted({e["account"] for e in opportunities}, key=str.casefold)
+        page["coverage"] = _COVERAGE.copy()
         return page
 
     # -------------------------------------------------------------- today
@@ -624,6 +644,17 @@ class CommandCenterReadService:
                      reason="Only metadata was available at import time.", account=acct, slug=slug,
                      next_step="Re-import when the transcript is ready", link=link,
                      when=s["latest"]["observed_at"], source_id=s["source_id"], status=status)
+            elif assoc["state"] == "associated" and (
+                status == "queued" or (
+                    s["processing"]["processed_revision"] is not None
+                    and s["processing"]["processed_revision"] < s["latest_revision"]
+                    and status != "processing"
+                )
+            ):
+                item("source_pending", title="Imported source needs reconciliation",
+                     reason="The latest source revision is not reflected in the accepted Overview.",
+                     account=acct, slug=slug, next_step="Review the source and reconcile it",
+                     link=link, when=s["latest"]["observed_at"], source_id=s["source_id"], status=status)
         items.sort(key=lambda i: (_ATTENTION_ORDER[i["kind"]], i["when"] or "", i["title"]))
         counts: dict[str, int] = {}
         for i in items:
@@ -634,6 +665,7 @@ class CommandCenterReadService:
         page["recent_changes"] = self.changes(limit=RECENT_CHANGE_LIMIT)["changes"]
         page["as_of"] = self._clock().astimezone(timezone.utc).isoformat()
         page["opportunity_count"] = len(opportunities)
+        page["coverage"] = _COVERAGE.copy()
         return page
 
     # -------------------------------------------------------------- sources
