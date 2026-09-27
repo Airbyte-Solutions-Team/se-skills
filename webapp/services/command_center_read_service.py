@@ -5,7 +5,8 @@ Opportunity Overview version, PR C action records / change entries / run
 receipts, and PR B ledger source summaries. No provider, CRM, or model is
 contacted while a page is rendered. Opportunities are discovered from local
 opportunity folders and records that name an account/opportunity, never from
-Salesforce. This is not a verified CRM active-opportunity set.
+Salesforce during page reads. A manually refreshed CRM metadata snapshot may
+add ID-keyed rows; it does not prove organization-wide coverage.
 
 Responses are body-free: they carry identifiers, statuses, counts, dates and
 short human-authored/model-authored *fields* that already live in state JSON
@@ -39,6 +40,7 @@ from services.opportunity_state_service import (
     OpportunityStateError,
     OpportunityStateService,
 )
+from services.salesforce_portfolio_service import SalesforcePortfolioService
 
 MAX_LIMIT = 200
 DEFAULT_LIMIT = 50
@@ -109,6 +111,7 @@ class CommandCenterReadService:
         state_service: OpportunityStateService,
         tech_eval_summary: Callable[[str, str], dict[str, Any] | None] | None = None,
         clock: Callable[[], datetime] | None = None,
+        salesforce_portfolio: SalesforcePortfolioService | None = None,
     ) -> None:
         self._customers = Path(customers_dir)
         self._ledger = ledger
@@ -116,6 +119,83 @@ class CommandCenterReadService:
         self._state = state_service
         self._tech_eval_summary = tech_eval_summary
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._salesforce_portfolio = salesforce_portfolio
+
+    def _crm_snapshot(self) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+        saved = self._salesforce_portfolio.snapshot() if self._salesforce_portfolio else {}
+        success = saved.get("last_success")
+        attempt = saved.get("last_attempt")
+        if not success:
+            coverage = {**_COVERAGE, "refresh": {"state": attempt.get("state") if attempt else "never_refreshed",
+                                                  "at": attempt.get("at") if attempt else None},
+                        "snapshot": None}
+            return None, coverage
+        age = self._clock().astimezone(timezone.utc) - datetime.fromisoformat(success["refreshed_at"])
+        failed = bool(attempt and attempt.get("state") != "ok")
+        stale = failed or age > timedelta(hours=24)
+        truncated = bool(success.get("truncated"))
+        label = ("Stale Salesforce snapshot; latest refresh failed" if failed else
+                 "Salesforce snapshot over 24 hours old" if stale else
+                 "Salesforce snapshot truncated" if truncated else
+                 "Selected Salesforce scope refreshed; authorization unverified")
+        coverage = {
+            "scope": "selected_se_and_aes", "complete": False, "label": label,
+            "detail": ("Includes saved open CRM opportunities in the selected SE/AE scope plus local-only rows. "
+                       "Salesforce visibility and opportunities outside this scope are unverified."),
+            "snapshot": {"scope": success["scope"], "refreshed_at": success["refreshed_at"],
+                         "count": success["count"], "complete": success["complete"],
+                         "truncated": truncated, "stale": stale},
+            "refresh": {"state": attempt.get("state") if attempt else "unknown",
+                        "at": attempt.get("at") if attempt else None},
+        }
+        return success, coverage
+
+    def _portfolio_rows(self, sources: list[dict[str, Any]], actions: list[ActionRecord],
+                        changes: list[ChangeEntry]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        local = [self._portfolio_row(entry, sources, actions, changes) for entry in self.local_opportunities()]
+        success, coverage = self._crm_snapshot()
+        if not success:
+            for row in local:
+                row["origin"] = "local_only"
+                row["crm"] = None
+            return local, coverage
+        by_local = {(row["account"], row["opportunity_slug"]): row for row in local}
+        verified: dict[str, set[tuple[str, str]]] = {}
+        for source in sources:
+            assoc = source["association"]
+            crm_id = assoc.get("crm_opportunity_id") if assoc.get("state") == "associated" else None
+            key = (assoc.get("account"), assoc.get("opportunity_slug"))
+            if crm_id and key in by_local:
+                verified.setdefault(crm_id, set()).add(key)
+        links = {crm_id: next(iter(keys)) for crm_id, keys in verified.items() if len(keys) == 1}
+        if self._salesforce_portfolio:
+            for crm_id, target in self._salesforce_portfolio.mappings().items():
+                key = (target.get("account"), target.get("opportunity_slug"))
+                if key in by_local and crm_id not in verified:
+                    links[crm_id] = key
+        # Ambiguous local targets are never joined silently.
+        targets: dict[tuple[str, str], list[str]] = {}
+        for crm_id, key in links.items():
+            targets.setdefault(key, []).append(crm_id)
+        rows = list(local)
+        for row in local:
+            row["origin"] = "local_only"
+            row["crm"] = None
+        for crm in success.get("records", []):
+            crm_id = crm["sfdc_id"]
+            key = links.get(crm_id)
+            if key and len(targets[key]) == 1:
+                row = by_local[key]
+                row["origin"] = "crm_and_local"
+                row["crm"] = crm
+                if row["overview"]["status"] != "current":
+                    row["opportunity_name"] = crm.get("name") or row["opportunity_name"]
+            else:
+                rows.append({"origin": "crm_only", "crm": crm, "account": crm.get("account_name") or "Unknown account",
+                             "opportunity_name": crm.get("name") or "Opportunity", "opportunity_slug": None,
+                             "opportunity_link": None, "attention": ["No local Command Center state"],
+                             "overview": {"status": "unavailable"}})
+        return rows, coverage
 
     # ------------------------------------------------------------ helpers
 
@@ -541,19 +621,17 @@ class CommandCenterReadService:
         sources = self._sources()
         actions = self._actions()
         changes = self._all_changes()
-        opportunities = self.local_opportunities()
-        rows = [
-            self._portfolio_row(entry, sources, actions, changes)
-            for entry in opportunities
-            if account is None or entry["account"] == account
-        ]
+        rows, coverage = self._portfolio_rows(sources, actions, changes)
+        accounts = sorted({row["account"] for row in rows}, key=str.casefold)
+        if account is not None:
+            rows = [row for row in rows if row["account"] == account]
         if attention_only:
             rows = [r for r in rows if r["attention"]]
         page = _page(rows, limit=limit, offset=offset)
         page["opportunities"] = page.pop("items")
         page["filters"] = {"account": account, "attention_only": attention_only}
-        page["accounts"] = sorted({e["account"] for e in opportunities}, key=str.casefold)
-        page["coverage"] = _COVERAGE.copy()
+        page["accounts"] = accounts
+        page["coverage"] = coverage
         return page
 
     # -------------------------------------------------------------- today
@@ -664,8 +742,16 @@ class CommandCenterReadService:
         page["counts_by_kind"] = counts
         page["recent_changes"] = self.changes(limit=RECENT_CHANGE_LIMIT)["changes"]
         page["as_of"] = self._clock().astimezone(timezone.utc).isoformat()
-        page["opportunity_count"] = len(opportunities)
-        page["coverage"] = _COVERAGE.copy()
+        portfolio_rows, coverage = self._portfolio_rows(sources, actions, self._all_changes())
+        crm_only = [row for row in portfolio_rows if row["origin"] == "crm_only"]
+        page["crm_only_count"] = len(crm_only)
+        page["crm_only"] = [{"sfdc_id": row["crm"]["sfdc_id"], "name": row["opportunity_name"],
+                             "account_name": row["account"], "stage": row["crm"].get("stage"),
+                             "owner": row["crm"].get("owner"), "close_date": row["crm"].get("close_date"),
+                             "sfdc_url": row["crm"].get("sfdc_url")}
+                            for row in crm_only[:25]]
+        page["opportunity_count"] = len(portfolio_rows)
+        page["coverage"] = coverage
         return page
 
     # -------------------------------------------------------------- sources

@@ -315,6 +315,72 @@ class SalesforceIntegration:
             logger.debug("Salesforce query failed: %s", exc)
             return None
 
+    async def active_opportunity_portfolio(
+        self, se_name: str, ae_names: list[str], *, limit: int = 200
+    ) -> dict[str, Any]:
+        """One bounded, ID-preserving read for a selected SE and AEs.
+
+        An extra row detects truncation. No close-date condition is used: an
+        overdue open opportunity is still active. This path does not use the
+        account helpers, which intentionally select one row per account.
+        """
+        if not self.is_enabled():
+            return {"state": "disabled", "records": [], "truncated": False}
+        if not 1 <= limit <= 200 or not se_name.strip() or len(ae_names) > 20:
+            return {"state": "invalid_scope", "records": [], "truncated": False}
+        clauses = [f"SE_Name__c = '{self._quote(se_name)}'"]
+        if ae_names:
+            quoted = ", ".join(f"'{self._quote(a)}'" for a in ae_names)
+            clauses.append(f"Owner.Name IN ({quoted})")
+        query = (
+            "SELECT Id, Name, Account.Id, Account.Name, StageName, Owner.Name, "
+            "CloseDate, IsClosed FROM Opportunity "
+            f"WHERE IsClosed = false AND ({' OR '.join(clauses)}) "
+            f"ORDER BY Id LIMIT {limit + 1}"
+        )
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                self._sf_executable(), "data", "query", "--query", query,
+                "--target-org", self._org_alias(), "--json",
+                cwd=str(self.workspace), stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            out, err = await asyncio.wait_for(proc.communicate(), timeout=self._timeout)
+            if proc.returncode != 0:
+                return {"state": _classify_sf_failure(err.decode(errors="replace")),
+                        "records": [], "truncated": False}
+            output = out.decode(errors="replace")
+            payload = json.loads(output[output.index("{"):])
+            result = payload.get("result")
+            if payload.get("status") not in (None, 0) or not isinstance(result, dict):
+                raise ValueError("Invalid Salesforce query result")
+            records = result.get("records")
+            if not isinstance(records, list):
+                raise ValueError("Missing Salesforce records")
+            if len(records) > limit + 1:
+                raise ValueError("Salesforce returned more than the requested bound")
+            base_url = await self.instance_url()
+            rows = []
+            for record in records[:limit]:
+                if not isinstance(record, dict) or not record.get("Id"):
+                    raise ValueError("Salesforce returned an opportunity without an ID")
+                opp_id = str(record["Id"])
+                account = record.get("Account") or {}
+                owner = record.get("Owner") or {}
+                rows.append({
+                    "sfdc_id": opp_id, "name": str(record.get("Name") or "Opportunity"),
+                    "account_id": account.get("Id"), "account_name": account.get("Name"),
+                    "stage": record.get("StageName"), "owner": owner.get("Name"),
+                    "close_date": record.get("CloseDate"),
+                    "sfdc_url": self.lightning_record_url(base_url, "Opportunity", opp_id),
+                })
+            if len({row["sfdc_id"] for row in rows}) != len(rows):
+                raise ValueError("Salesforce returned duplicate opportunity IDs")
+            return {"state": "ok", "records": rows,
+                    "truncated": len(records) > limit or result.get("done") is False}
+        except Exception:  # noqa: BLE001 - never expose CLI output or credentials
+            return {"state": "error", "records": [], "truncated": False}
+
     @staticmethod
     def _quote(value: str) -> str:
         """Escape `value` for use as a SOQL single-quoted string literal."""

@@ -102,6 +102,7 @@ def _build_local_services(app: FastAPI) -> None:
     from services.ask_service import AskService, anthropic_api_key
     from services.command_center_operations_service import CommandCenterOperationsService
     from services.command_center_read_service import CommandCenterReadService
+    from services.salesforce_portfolio_service import SalesforcePortfolioService
     from services.evidence_ledger_service import EvidenceLedgerService
     from services.feedback_service import FeedbackService
     from services.gmail_intake_service import GmailIntakeService
@@ -232,6 +233,11 @@ def _build_local_services(app: FastAPI) -> None:
         job_service=job_service,
         executor=opportunity_state_executor,
     )
+    salesforce_portfolio_service = SalesforcePortfolioService(
+        customers_dir=config.CUSTOMERS_DIR, accounts=account_service,
+        salesforce=salesforce_integration,
+    )
+    opportunity_workspace_service.set_crm_identity_lookup(salesforce_portfolio_service.local_identity)
     # Aggregate Command Center reads (Today/Portfolio/Actions/Changes): persisted local records only.
     command_center_read_service = CommandCenterReadService(
         customers_dir=config.CUSTOMERS_DIR,
@@ -239,6 +245,7 @@ def _build_local_services(app: FastAPI) -> None:
         operations=command_center_operations_service,
         state_service=opportunity_state_service,
         tech_eval_summary=tech_eval_service.peek_summary,
+        salesforce_portfolio=salesforce_portfolio_service,
     )
     # PR E Gmail intake. The default transport fails closed and the UI says so.
     # `SE_GMAIL_TRANSPORT=live_readonly` is the only way to select the local HTTP
@@ -303,6 +310,7 @@ def _build_local_services(app: FastAPI) -> None:
     app.state.gmail_forget_service = gmail_forget_service
     app.state.command_center_operations_service = command_center_operations_service
     app.state.command_center_read_service = command_center_read_service
+    app.state.salesforce_portfolio_service = salesforce_portfolio_service
 
     # Public local routes — registered exactly once.
     app.include_router(skills_router)

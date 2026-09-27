@@ -1944,6 +1944,16 @@ a.live-btn { text-decoration: none; display: inline-flex; align-items: center; }
 .cc-body { min-width: 0; }
 .cc-coverage { display: flex; flex-wrap: wrap; gap: 3px 8px; margin: 10px 0; padding: 9px 12px; border: 1px solid var(--warn); border-radius: 10px; background: var(--panel); font-size: 12px; }
 .cc-coverage strong { color: var(--warn); }
+.cc-body a:not(.ghost):not(.primary) { color: var(--accent); }
+.cc-crm-panel, .cc-crm-only { margin: 12px 0; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.cc-crm-form, .cc-crm-map { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.cc-crm-form label, .cc-crm-map label { display: flex; flex: 1 1 170px; flex-direction: column; gap: 4px; min-width: 0; }
+.cc-crm-form input, .cc-crm-form select, .cc-crm-map select { width: 100%; min-width: 0; }
+.cc-crm-message { font-size: 12px; margin-top: 6px; }
+.cc-crm-only ul { margin: 8px 0; padding-left: 20px; }
+.cc-crm-only li { margin: 5px 0; }
+.cc-card--crm { border-color: var(--warn); }
+.cc-card--crm .cc-crm-map { border-top: 1px solid var(--line); padding-top: 8px; }
 .cc-h2 { font-size: 16px; margin: 22px 0 10px; }
 .cc-loading { color: var(--muted); padding: 24px 0; }
 .cc-foot-note { font-size: 12px; margin-top: 18px; }

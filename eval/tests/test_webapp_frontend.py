@@ -87,6 +87,46 @@ console.log(JSON.stringify(seen));
     assert json.loads(scrolled.stdout) == ["overview-risk-security-review", "overview-risks"]
 
 
+def test_command_center_crm_snapshot_renders_without_refresh(repo_root: Path) -> None:
+    """Both views keep duplicate names distinct by ID and never call refresh on render."""
+    source = repo_root / "webapp" / "static" / "command_center.js"
+    script = f"""
+const fs = require("fs");
+const src = fs.readFileSync({json.dumps(str(source))}, "utf8");
+const body = {{innerHTML: "", querySelector: () => null, querySelectorAll: () => []}};
+global.document = {{getElementById: () => body}};
+global.view = {{innerHTML: ""}};
+global.location = {{hash: "#/command-center/portfolio"}};
+global.setCrumbs = () => {{}};
+global.emptyBox = (item) => item.title;
+global.esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+const ids = ["006000000000001", "006000000000002"];
+const crm = ids.map((sfdc_id) => ({{sfdc_id, name: "Same name", account_name: "Synthetic Account", stage: "Discovery", owner: "Synthetic AE", close_date: "2026-01-01", sfdc_url: `https://example.my.salesforce.com/lightning/r/Opportunity/${{sfdc_id}}/view`}}));
+const rows = crm.map((item) => ({{origin: "crm_only", crm: item, account: item.account_name, opportunity_name: item.name, overview: {{status: "unavailable"}}, attention: []}}));
+const coverage = {{complete: false, label: "Selected Salesforce scope refreshed; authorization unverified", detail: "Selected scope only", snapshot: {{scope: {{member_id: "se", se_name: "Synthetic SE", ae_names: []}}, refreshed_at: "2026-10-09T12:00:00Z", count: 2, truncated: false, stale: false}}, refresh: {{state: "ok"}}}};
+const portfolio = {{opportunities: rows, coverage, accounts: ["Synthetic Account"], total: 2, offset: 0, limit: 25, next_offset: null}};
+const today = {{attention: [], counts_by_kind: {{}}, coverage, recent_changes: [], opportunity_count: 2, crm_only: crm, crm_only_count: 2, total: 0, offset: 0, limit: 25, next_offset: null}};
+const calls = [];
+global.api = async (path) => {{ calls.push(path); if (path.includes("/portfolio")) return portfolio; if (path.includes("/today")) return today; throw new Error(path); }};
+eval(src + "\\nglobalThis.ccPagePortfolio = ccPagePortfolio; globalThis.ccPageToday = ccPageToday;");
+(async () => {{
+  await ccPagePortfolio(new URLSearchParams());
+  const portfolioHtml = body.innerHTML;
+  await ccPageToday(new URLSearchParams());
+  const todayHtml = body.innerHTML;
+  console.log(JSON.stringify({{
+    cards: ids.every((id) => portfolioHtml.includes(id)) && (portfolioHtml.match(/cc-card--crm/g) || []).length === 2,
+    details: portfolioHtml.includes("Discovery") && portfolioHtml.includes("Synthetic AE") && portfolioHtml.includes("Actions, risks, and Overview unavailable") && portfolioHtml.includes("Establish local opportunity"),
+    today: ids.every((id) => todayHtml.includes(id)) && todayHtml.includes("Active CRM opportunities without local state (2)"),
+    manual: portfolioHtml.includes("Refresh active opportunities") && todayHtml.includes("authorization unverified"),
+    offline: calls.length === 2 && calls.every((path) => path.includes("/today") || path.includes("/portfolio"))
+  }}));
+}})().catch((error) => {{ console.error(error); process.exit(1); }});
+"""
+    result = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+    assert all(json.loads(result.stdout).values()), result.stdout
+
+
 def test_profile_summary_is_promoted_with_profile_label(repo_root: Path) -> None:
     """The shared reader module recognizes current profiles and keeps their label."""
     reader_js = repo_root / "webapp" / "static" / "reader.js"
