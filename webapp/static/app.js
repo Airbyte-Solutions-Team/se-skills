@@ -1075,6 +1075,7 @@ async function pageMember(memberId, tab = "active") {
           ${isArchived
             ? `<button class="menu-item unarchive-btn" data-acct="${esc(a.name)}">Unarchive</button>`
             : `<button class="menu-item archive-btn" data-acct="${esc(a.name)}">Archive</button>`}
+          <button class="menu-item rename-btn" data-acct="${esc(a.name)}">Rename…</button>
           <button class="menu-item danger delete-btn" data-acct="${esc(a.name)}">Delete…</button>
         </div>
       </div>
@@ -1269,6 +1270,11 @@ async function pageMember(memberId, tab = "active") {
         body: JSON.stringify({ aes }),
       });
     } catch (err) { alert("SFDC pull failed: " + err.message); return; }
+    if (data.renamed?.length) {
+      const lines = data.renamed.map((r) => `${r.from} → ${r.to}`).join("\n");
+      alert(`Renamed to match Salesforce:\n${lines}`);
+      pageMember(memberId, tab);
+    }
     const nb = data.new_business || [], rn = data.renewals || [];
     if (!nb.length && !rn.length) { alert("No open opportunities with a future close date found."); return; }
     const datasets = { nb, rn };
@@ -1297,7 +1303,7 @@ async function pageMember(memberId, tab = "active") {
     const rowsFor = (items) => items.length ? sortItems(items).map((a) => `
       <label class="sfdc-prev-row ${a.exists ? "is-existing" : ""}">
         <input type="checkbox" class="sfdc-prev-check" data-name="${esc(a.name)}" ${a.exists ? "disabled" : (_picked.has(a.name) ? "checked" : "")} />
-        <span class="sfdc-prev-name">${esc(a.name)}${a.exists ? ' <span class="badge">already added</span>' : ""}</span>
+        <span class="sfdc-prev-name">${esc(a.name)}${a.renamed_from ? ` <span class="badge">renamed from ${esc(a.renamed_from)}</span>` : (a.exists ? ' <span class="badge">already added</span>' : "")}</span>
         <span class="sfdc-prev-col">${fmtAmt(a.amount)}</span>
         <span class="sfdc-prev-col">${stageCell(a)}</span>
         <span class="sfdc-prev-col">${dateCell(a.close_date)}</span>
@@ -1378,10 +1384,10 @@ async function pageMember(memberId, tab = "active") {
       try {
         // carry the real SFDC account name through so opp lookups match exactly
         // (folder names are lossy — punctuation is stripped for fs-safety).
-        const sfdcByFolder = {};
-        for (const it of [...nb, ...rn]) sfdcByFolder[it.name] = it.account_name;
+        const sfdcByFolder = {}, sfdcIdByFolder = {};
+        for (const it of [...nb, ...rn]) { sfdcByFolder[it.name] = it.account_name; sfdcIdByFolder[it.name] = it.sfdc_account_id; }
         const resp = await api("/api/bulk-create-accounts", { method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ accounts: names.map((name) => ({ name, owner: memberId, sfdc_name: sfdcByFolder[name] })) }) });
+          body: JSON.stringify({ accounts: names.map((name) => ({ name, owner: memberId, sfdc_name: sfdcByFolder[name], sfdc_id: sfdcIdByFolder[name] })) }) });
         // The endpoint returns HTTP 200 even when individual accounts fail
         // (per-account errors are collected in `results`). Surface those instead
         // of silently closing — a swallowed failure used to look like a no-op.
@@ -1509,6 +1515,20 @@ async function pageMember(memberId, tab = "active") {
   view.querySelectorAll(".unarchive-btn").forEach((b) => b.onclick = async (e) => {
     stop(e); await api(`/api/accounts/${encodeURIComponent(b.dataset.acct)}/unarchive`, { method: "POST" });
     pageMember(memberId, "archived");
+  });
+  view.querySelectorAll(".rename-btn").forEach((b) => b.onclick = async (e) => {
+    stop(e);
+    const acct = b.dataset.acct;
+    const newName = window.prompt(`Rename “${acct}” to (e.g. after a Salesforce account rename):`, acct);
+    if (!newName || !newName.trim() || newName.trim() === acct) return;
+    try {
+      const r = await api(`/api/accounts/${encodeURIComponent(acct)}/rename`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ new_name: newName.trim() }),
+      });
+      if (r.merged) alert(`“${acct}” already existed as “${r.name}” — merged both into “${r.name}”.`);
+      pageMember(memberId, tab);
+    } catch (err) { alert("Rename failed: " + err.message); }
   });
   view.querySelectorAll(".delete-btn").forEach((b) => b.onclick = (e) => {
     stop(e);

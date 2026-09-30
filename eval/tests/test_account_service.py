@@ -219,6 +219,94 @@ def test_set_owner(svc: AccountService) -> None:
     assert (svc.customers_dir / "Acme" / ".owner").read_text() == "alice"
 
 
+def test_rename_account_moves_folder_when_no_collision(svc: AccountService) -> None:
+    svc.create_account("Agentsoftware", owner="alice", sfdc_name="agentsoftware")
+    _write_output(svc, "Agentsoftware", "opp-1", "post-call", "note.md", "# note")
+
+    r = svc.rename_account("Agentsoftware", "Agent Software Street Group", sfdc_name="Agent Software (Street Group)")
+
+    assert r == {"name": "Agent-Software-Street-Group", "renamed": True, "merged": False}
+    assert not (svc.customers_dir / "Agentsoftware").exists()
+    dest = svc.customers_dir / "Agent-Software-Street-Group"
+    assert (dest / "opportunities" / "opp-1" / "outputs" / "post-call" / "note.md").read_text() == "# note"
+    assert (dest / ".owner").read_text() == "alice"
+    assert (dest / ".sfdc-name").read_text() == "Agent Software (Street Group)"
+
+
+def test_rename_account_merges_into_existing_folder_preserving_content(svc: AccountService) -> None:
+    # Old account has real content; sync already auto-created an empty folder
+    # under the renamed SFDC name (the bug this guards against).
+    svc.create_account("Agentsoftware", owner="alice", sfdc_name="agentsoftware")
+    old_output = _write_output(svc, "Agentsoftware", "opp-1", "post-call", "note.md", "# real content")
+    svc.create_account("Agent-Software-Street-Group", owner="alice", sfdc_name="Agent Software (Street Group)")
+
+    r = svc.rename_account("Agentsoftware", "Agent Software Street Group")
+
+    assert r == {"name": "Agent-Software-Street-Group", "renamed": True, "merged": True}
+    assert not (svc.customers_dir / "Agentsoftware").exists()
+    dest = svc.customers_dir / "Agent-Software-Street-Group"
+    assert (dest / "opportunities" / "opp-1" / "outputs" / "post-call" / "note.md").read_text() == "# real content"
+    # Destination's control files win — the auto-created folder's owner/name aren't clobbered.
+    assert (dest / ".owner").read_text() == "alice"
+    assert (dest / ".sfdc-name").read_text() == "Agent Software (Street Group)"
+
+
+def test_rename_account_dedupes_colliding_content_files(svc: AccountService) -> None:
+    svc.create_account("Agentsoftware")
+    _write_output(svc, "Agentsoftware", None, "post-call", "note.md", "# from old")
+    svc.create_account("Agent-Software-Street-Group")
+    _write_output(svc, "Agent-Software-Street-Group", None, "post-call", "note.md", "# from new")
+
+    svc.rename_account("Agentsoftware", "Agent Software Street Group")
+
+    skill_dir = svc.customers_dir / "Agent-Software-Street-Group" / "outputs" / "post-call"
+    names = {p.name for p in skill_dir.iterdir()}
+    assert "note.md" in names
+    assert any(n.startswith("note__dup-") for n in names)
+
+
+def test_rename_account_same_name_is_noop_rename(svc: AccountService) -> None:
+    svc.create_account("Acme")
+    r = svc.rename_account("Acme", "Acme")
+    assert r == {"name": "Acme", "renamed": False, "merged": False}
+
+
+def test_rename_account_missing_source_raises(svc: AccountService) -> None:
+    with pytest.raises(AccountError) as exc:
+        svc.rename_account("Missing", "Something Else")
+    assert exc.value.status_code == 404
+
+
+def test_create_account_captures_sfdc_id(svc: AccountService) -> None:
+    svc.create_account("Acme", sfdc_id="001XXXXXXXXXXXXAAA")
+    assert (svc.customers_dir / "Acme" / ".sfdc-account-id").read_text() == "001XXXXXXXXXXXXAAA"
+
+
+def test_rename_account_carries_sfdc_id_to_destination(svc: AccountService) -> None:
+    svc.create_account("Agentsoftware")
+    svc.rename_account("Agentsoftware", "Agent Software Street Group", sfdc_id="001XXXXXXXXXXXXAAA")
+    dest = svc.customers_dir / "Agent-Software-Street-Group"
+    assert (dest / ".sfdc-account-id").read_text() == "001XXXXXXXXXXXXAAA"
+
+
+def test_find_account_by_sfdc_id(svc: AccountService) -> None:
+    svc.create_account("Agentsoftware", sfdc_id="001XXXXXXXXXXXXAAA")
+    svc.create_account("Other", sfdc_id="001XXXXXXXXXXXXZZZ")
+    assert svc.find_account_by_sfdc_id("001XXXXXXXXXXXXAAA") == "Agentsoftware"
+    assert svc.find_account_by_sfdc_id("001XXXXXXXXXXXXZZZ") == "Other"
+    assert svc.find_account_by_sfdc_id("001XXXXXXXXXXXXQQQ") is None
+    assert svc.find_account_by_sfdc_id("") is None
+
+
+def test_set_sfdc_identity_backfills_without_renaming(svc: AccountService) -> None:
+    svc.create_account("Acme")
+    svc.set_sfdc_identity("Acme", sfdc_name="Acme, Inc.", sfdc_id="001XXXXXXXXXXXXAAA")
+    acc_dir = svc.customers_dir / "Acme"
+    assert acc_dir.is_dir()
+    assert (acc_dir / ".sfdc-name").read_text() == "Acme, Inc."
+    assert (acc_dir / ".sfdc-account-id").read_text() == "001XXXXXXXXXXXXAAA"
+
+
 def test_delete_account_moves_to_trash(svc: AccountService) -> None:
     svc.create_account("Acme")
     r = svc.delete_account("Acme")

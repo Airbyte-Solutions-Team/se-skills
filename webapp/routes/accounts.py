@@ -33,6 +33,7 @@ class CreateAccount(BaseModel):
     name: str
     owner: str | None = None
     sfdc_name: str | None = None
+    sfdc_id: str | None = None
 
 
 class BulkCreateAccounts(BaseModel):
@@ -41,6 +42,11 @@ class BulkCreateAccounts(BaseModel):
 
 class SetOwner(BaseModel):
     owner: str
+
+
+class RenameAccount(BaseModel):
+    new_name: str
+    sfdc_name: str | None = None
 
 
 class BulkBody(BaseModel):
@@ -72,7 +78,7 @@ def api_member_accounts(member_id: str, request: Request) -> dict:
 @router.post("/api/accounts")
 def api_create_account(body: CreateAccount, request: Request) -> dict:
     try:
-        return _get_account_service(request).create_account(body.name, body.owner, body.sfdc_name)
+        return _get_account_service(request).create_account(body.name, body.owner, body.sfdc_name, body.sfdc_id)
     except AccountError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
 
@@ -83,7 +89,7 @@ def api_bulk_create_accounts(body: BulkCreateAccounts, request: Request) -> dict
     results = []
     for acc in body.accounts:
         try:
-            r = svc.create_account(acc.name, acc.owner, acc.sfdc_name)
+            r = svc.create_account(acc.name, acc.owner, acc.sfdc_name, acc.sfdc_id)
             results.append({**r, "ok": True})
         except AccountError as e:
             results.append({"name": acc.name, "ok": False, "error": e.detail})
@@ -153,6 +159,16 @@ def api_last_run(account: str, opp_slug: str | None = None, request: Request = N
 def api_set_owner(account: str, body: SetOwner, request: Request) -> dict:
     try:
         return _get_account_service(request).set_owner(account, body.owner)
+    except AccountError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+
+@router.post("/api/accounts/{account}/rename")
+def api_rename_account(account: str, body: RenameAccount, request: Request) -> dict:
+    """Rename an account folder (e.g. after its Salesforce Account.Name changes),
+    merging into an existing same-named folder rather than losing content."""
+    try:
+        return _get_account_service(request).rename_account(account, body.new_name, body.sfdc_name)
     except AccountError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
 

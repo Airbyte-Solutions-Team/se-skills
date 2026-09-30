@@ -104,6 +104,26 @@ def test_create_account(client: TestClient) -> None:
     assert (app.state.account_service.customers_dir / "Acme" / ".owner").exists()
 
 
+def test_rename_account(client: TestClient) -> None:
+    svc = app.state.account_service
+    svc.create_account("Agentsoftware")
+    resp = client.post("/api/accounts/Agentsoftware/rename", json={
+        "new_name": "Agent Software Street Group", "sfdc_name": "Agent Software (Street Group)",
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data == {"name": "Agent-Software-Street-Group", "renamed": True, "merged": False}
+    assert not (svc.customers_dir / "Agentsoftware").exists()
+    dest = svc.customers_dir / "Agent-Software-Street-Group"
+    assert dest.is_dir()
+    assert (dest / ".sfdc-name").read_text() == "Agent Software (Street Group)"
+
+
+def test_rename_account_unknown_source(client: TestClient) -> None:
+    resp = client.post("/api/accounts/Missing/rename", json={"new_name": "Something"})
+    assert resp.status_code == 404
+
+
 def test_delete_account(client: TestClient) -> None:
     svc = app.state.account_service
     svc.create_account("Acme")

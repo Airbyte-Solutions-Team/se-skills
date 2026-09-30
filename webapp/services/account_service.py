@@ -286,7 +286,9 @@ class AccountService:
     # -----------------------------------------------------------------------
     # Account mutations
     # -----------------------------------------------------------------------
-    def create_account(self, name: str, owner: str | None = None, sfdc_name: str | None = None) -> dict:
+    def create_account(
+        self, name: str, owner: str | None = None, sfdc_name: str | None = None, sfdc_id: str | None = None
+    ) -> dict:
         folder = self.titlecase(self._safe(name))
         if not folder:
             raise AccountError(400, "Empty account name")
@@ -297,9 +299,105 @@ class AccountService:
         (acc_dir / "raw").mkdir(parents=True, exist_ok=True)
         if owner:
             self._owner_file(acc_dir).write_text(self._safe(owner), encoding="utf-8")
+        self._write_sfdc_identity(acc_dir, sfdc_name=sfdc_name, sfdc_id=sfdc_id)
+        return {"name": folder, "created": created, "owner": owner}
+
+    # Sidecar files that identify/own an account rather than hold its content;
+    # on merge, whichever side already has one wins instead of being deduped.
+    _CONTROL_FILES = (".owner", ".archived", ".sfdc-name", ".sfdc-account-id")
+
+    def _sfdc_id_file(self, acc_dir: Path) -> Path:
+        return acc_dir / ".sfdc-account-id"
+
+    def _read_sfdc_id(self, acc_dir: Path) -> str | None:
+        f = self._sfdc_id_file(acc_dir)
+        return f.read_text(encoding="utf-8").strip() if f.exists() else None
+
+    def _write_sfdc_identity(self, acc_dir: Path, *, sfdc_name: str | None, sfdc_id: str | None) -> None:
         if sfdc_name and sfdc_name.strip():
             (acc_dir / ".sfdc-name").write_text(sfdc_name.strip(), encoding="utf-8")
-        return {"name": folder, "created": created, "owner": owner}
+        if sfdc_id and sfdc_id.strip():
+            self._sfdc_id_file(acc_dir).write_text(sfdc_id.strip(), encoding="utf-8")
+
+    def find_account_by_sfdc_id(self, sfdc_id: str) -> str | None:
+        """Local folder name whose captured Salesforce Account.Id matches, if any.
+
+        Lets a caller recognize an account it already has, under a possibly
+        different local name, once a Salesforce Account.Id has been captured
+        for it (via `create_account`/`rename_account`/`set_sfdc_identity`).
+        """
+        if not sfdc_id or not self.customers_dir.exists():
+            return None
+        for d in sorted(self.customers_dir.iterdir()):
+            if not d.is_dir() or d.name.startswith(("_", ".")):
+                continue
+            if self._read_sfdc_id(d) == sfdc_id:
+                return d.name
+        return None
+
+    def set_sfdc_identity(self, account: str, *, sfdc_name: str | None = None, sfdc_id: str | None = None) -> None:
+        """Backfill an existing account's Salesforce identity sidecars, without renaming.
+
+        Used to capture a Salesforce Account.Id for an account that was matched by
+        name so a future rename of that same account can be detected by ID.
+        """
+        acc_dir = self._resolve_account_dir(account)
+        self._write_sfdc_identity(acc_dir, sfdc_name=sfdc_name, sfdc_id=sfdc_id)
+
+    def rename_account(
+        self, account: str, new_name: str, sfdc_name: str | None = None, sfdc_id: str | None = None
+    ) -> dict:
+        """Rename an account folder, e.g. after its Salesforce Account.Name changes.
+
+        If a folder for `new_name` already exists (for instance because a Sync from
+        SFDC run auto-created one under the new name before the old one was renamed),
+        merges `account`'s content into it instead of overwriting, so no outputs are
+        lost. Non-colliding files/dirs move as-is; colliding *content* files are kept
+        under both names with a `__dup-<timestamp>` suffix; colliding control files
+        (`.owner`, `.archived`, `.sfdc-name`, `.sfdc-account-id`) keep the destination's
+        value.
+        """
+        src_dir = self._resolve_account_dir(account)
+        new_folder = self.titlecase(self._safe(new_name))
+        if not new_folder:
+            raise AccountError(400, "Empty account name")
+
+        if new_folder == src_dir.name:
+            dest_dir = src_dir
+            merged = False
+        else:
+            dest_dir = self._resolve_account_dir(new_folder, must_exist=False)
+            merged = dest_dir.exists()
+            if merged:
+                self._merge_account_dirs(src_dir, dest_dir)
+                src_dir.rmdir()
+            else:
+                src_dir.rename(dest_dir)
+
+        self._write_sfdc_identity(dest_dir, sfdc_name=sfdc_name, sfdc_id=sfdc_id)
+        return {"name": dest_dir.name, "renamed": dest_dir.name != account, "merged": merged}
+
+    def _merge_account_dirs(self, src: Path, dest: Path) -> None:
+        """Recursively move everything from `src` into `dest`, without clobbering."""
+        for item in sorted(src.iterdir()):
+            target = dest / item.name
+            if item.name in self._CONTROL_FILES:
+                if target.exists():
+                    item.unlink()
+                else:
+                    shutil.move(str(item), str(target))
+                continue
+            if item.is_dir() and target.is_dir():
+                self._merge_account_dirs(item, target)
+                item.rmdir()
+            elif target.exists():
+                shutil.move(str(item), str(self._dedupe_path(target)))
+            else:
+                shutil.move(str(item), str(target))
+
+    def _dedupe_path(self, path: Path) -> Path:
+        stamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M%S")
+        return path.with_name(f"{path.stem}__dup-{stamp}{path.suffix}")
 
     def set_owner(self, account: str, owner: str) -> dict:
         acc_dir = self._resolve_account_dir(account)

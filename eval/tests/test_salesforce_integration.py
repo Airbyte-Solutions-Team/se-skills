@@ -284,6 +284,83 @@ def test_accounts_for_member_splits_and_checks_exists(tmp_path: Path, monkeypatc
     assert "Gary" in captured_queries[0] and "Owner1" in captured_queries[0]
 
 
+def test_accounts_for_member_detects_rename_by_account_id(tmp_path: Path, monkeypatch) -> None:
+    """A pulled account whose Account.Id matches an existing (differently-named)
+    local folder is flagged as a rename, not new business."""
+    sf = _make_integration(tmp_path, sf_config={"enabled": True})
+    old_dir = tmp_path / "customers" / "Agentsoftware"
+    old_dir.mkdir(parents=True)
+    (old_dir / ".sfdc-account-id").write_text("001XXXXXXXXXXXXAAA")
+
+    async def fake_query(query: str) -> list[dict]:
+        return [{
+            "Account": {"Id": "001XXXXXXXXXXXXAAA", "Name": "Agent Software (Street Group)"},
+            "Amount": 100.0,
+            "StageName": "3 - Solution",
+            "Stage_Number__c": 3,
+            "CloseDate": "2026-08-01",
+            "Type": "New Business",
+            "Owner": {"Name": "Owner1"},
+            "SE_Name__c": "Gary",
+        }]
+
+    monkeypatch.setattr(sf, "_run_query", fake_query)
+    result = _run(sf.accounts_for_member({"name": "Gary"}, ["Owner1"]))
+    item = result["new_business"][0]
+    assert item["name"] == "Agent-Software-Street-Group"
+    assert item["exists"] is True
+    assert item["renamed_from"] == "Agentsoftware"
+    assert item["sfdc_account_id"] == "001XXXXXXXXXXXXAAA"
+
+
+def test_accounts_for_member_no_rename_when_folder_already_matches(tmp_path: Path, monkeypatch) -> None:
+    sf = _make_integration(tmp_path, sf_config={"enabled": True})
+    acc_dir = tmp_path / "customers" / "Acme-Corp"
+    acc_dir.mkdir(parents=True)
+    (acc_dir / ".sfdc-account-id").write_text("001XXXXXXXXXXXXBBB")
+
+    async def fake_query(query: str) -> list[dict]:
+        return [{
+            "Account": {"Id": "001XXXXXXXXXXXXBBB", "Name": "Acme Corp"},
+            "Amount": 100.0,
+            "StageName": "3 - Solution",
+            "Stage_Number__c": 3,
+            "CloseDate": "2026-08-01",
+            "Type": "New Business",
+            "Owner": {"Name": "Owner1"},
+            "SE_Name__c": "Gary",
+        }]
+
+    monkeypatch.setattr(sf, "_run_query", fake_query)
+    result = _run(sf.accounts_for_member({"name": "Gary"}, ["Owner1"]))
+    item = result["new_business"][0]
+    assert item["exists"] is True
+    assert item["renamed_from"] is None
+
+
+def test_accounts_for_member_ignores_malformed_account_id(tmp_path: Path, monkeypatch) -> None:
+    sf = _make_integration(tmp_path, sf_config={"enabled": True})
+
+    async def fake_query(query: str) -> list[dict]:
+        return [{
+            "Account": {"Id": "not-a-real-id", "Name": "New Co"},
+            "Amount": 100.0,
+            "StageName": "3 - Solution",
+            "Stage_Number__c": 3,
+            "CloseDate": "2026-08-01",
+            "Type": "New Business",
+            "Owner": {"Name": "Owner1"},
+            "SE_Name__c": "Gary",
+        }]
+
+    monkeypatch.setattr(sf, "_run_query", fake_query)
+    result = _run(sf.accounts_for_member({"name": "Gary"}, ["Owner1"]))
+    item = result["new_business"][0]
+    assert item["sfdc_account_id"] is None
+    assert item["renamed_from"] is None
+    assert item["exists"] is False
+
+
 # ---------------------------------------------------------------------------
 # Query construction and safety
 # ---------------------------------------------------------------------------

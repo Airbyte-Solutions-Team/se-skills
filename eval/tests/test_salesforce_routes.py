@@ -13,6 +13,9 @@ class FakeAccountService:
     def __init__(self) -> None:
         self.prefs: dict = {"selected_aes": ["Old AE"]}
         self.saved: dict | None = None
+        self.renames: list[tuple] = []
+        self.identities: list[tuple] = []
+        self.rename_fails: set[str] = set()
 
     def safe_name(self, name: str) -> str:
         if not isinstance(name, str) or ".." in name or "/" in name or "\\" in name:
@@ -29,6 +32,15 @@ class FakeAccountService:
 
     def save_member_prefs(self, member_id: str, prefs: dict) -> None:
         self.saved = prefs
+
+    def rename_account(self, account, new_name, sfdc_name=None, sfdc_id=None) -> dict:
+        if account in self.rename_fails:
+            raise AccountError(404, "Unknown account")
+        self.renames.append((account, new_name, sfdc_name, sfdc_id))
+        return {"name": new_name, "renamed": True, "merged": False}
+
+    def set_sfdc_identity(self, account, *, sfdc_name=None, sfdc_id=None) -> None:
+        self.identities.append((account, sfdc_name, sfdc_id))
 
 
 class FakeSalesforce:
@@ -126,6 +138,71 @@ def test_sfdc_accounts_route_registered_and_delegates(client, fake_services) -> 
     assert fake_salesforce.calls == [
         ("accounts_for_member", ({"id": "gary", "name": "Gary"}, ["Alice"]), {}),
     ]
+
+
+def test_sfdc_accounts_route_applies_detected_rename(client, fake_services) -> None:
+    fake_account, fake_salesforce = fake_services
+
+    async def accounts_for_member(member, aes):
+        return {
+            "new_business": [{
+                "name": "Agent-Software-Street-Group", "account_name": "Agent Software (Street Group)",
+                "sfdc_account_id": "001XXXXXXXXXXXXAAA", "renamed_from": "Agentsoftware", "exists": True,
+            }],
+            "renewals": [],
+        }
+
+    fake_salesforce.accounts_for_member = accounts_for_member
+    response = client.post("/api/members/gary/sfdc-accounts", json={"aes": []})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["renamed"] == [{"from": "Agentsoftware", "to": "Agent-Software-Street-Group"}]
+    assert data["new_business"][0]["exists"] is True
+    assert fake_account.renames == [
+        ("Agentsoftware", "Agent Software (Street Group)", "Agent Software (Street Group)", "001XXXXXXXXXXXXAAA"),
+    ]
+
+
+def test_sfdc_accounts_route_backfills_id_for_existing_match(client, fake_services) -> None:
+    fake_account, fake_salesforce = fake_services
+
+    async def accounts_for_member(member, aes):
+        return {
+            "new_business": [{
+                "name": "Acme-Corp", "account_name": "Acme Corp",
+                "sfdc_account_id": "001XXXXXXXXXXXXBBB", "renamed_from": None, "exists": True,
+            }],
+            "renewals": [],
+        }
+
+    fake_salesforce.accounts_for_member = accounts_for_member
+    response = client.post("/api/members/gary/sfdc-accounts", json={"aes": []})
+    assert response.status_code == 200
+    assert "renamed" not in response.json()
+    assert fake_account.identities == [("Acme-Corp", "Acme Corp", "001XXXXXXXXXXXXBBB")]
+    assert fake_account.renames == []
+
+
+def test_sfdc_accounts_route_rename_failure_clears_flag(client, fake_services) -> None:
+    fake_account, fake_salesforce = fake_services
+    fake_account.rename_fails.add("Agentsoftware")
+
+    async def accounts_for_member(member, aes):
+        return {
+            "new_business": [{
+                "name": "Agent-Software-Street-Group", "account_name": "Agent Software (Street Group)",
+                "sfdc_account_id": "001XXXXXXXXXXXXAAA", "renamed_from": "Agentsoftware", "exists": False,
+            }],
+            "renewals": [],
+        }
+
+    fake_salesforce.accounts_for_member = accounts_for_member
+    response = client.post("/api/members/gary/sfdc-accounts", json={"aes": []})
+    assert response.status_code == 200
+    data = response.json()
+    assert "renamed" not in data
+    assert data["new_business"][0]["renamed_from"] is None
+    assert data["new_business"][0]["exists"] is False
 
 
 def test_sfdc_accounts_route_unknown_member_returns_404(client, fake_services) -> None:

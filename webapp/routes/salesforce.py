@@ -88,11 +88,39 @@ def api_save_sfdc_aes(member_id: str, body: SelectedAes, request: Request):
 
 @router.post("/api/members/{member_id}/sfdc-accounts")
 async def api_sfdc_accounts(member_id: str, body: PullAccounts, request: Request):
-    """Open, future-dated opps for this member, split new_business / renewals."""
+    """Open, future-dated opps for this member, split new_business / renewals.
+
+    Also reconciles Salesforce Account.Name renames: an account already matched
+    locally by Account.Id, but under a different name, is renamed (merging
+    content if a folder for the new name was already auto-created) rather than
+    left to be re-created as a duplicate. An account matched by name that hasn't
+    captured its Account.Id yet gets it backfilled, so a future rename of that
+    same account can be detected the same way.
+    """
     account_svc = _get_account_service(request)
     member = account_svc.member_by_id(member_id)
     if not member:
         raise HTTPException(404, "Unknown member")
 
     aes = [a for a in body.aes if isinstance(a, str) and a.strip()]
-    return await _get_salesforce(request).accounts_for_member(member, aes)
+    result = await _get_salesforce(request).accounts_for_member(member, aes)
+
+    renamed = []
+    for item in [*result.get("new_business", []), *result.get("renewals", [])]:
+        old_name = item.get("renamed_from")
+        sfdc_id = item.get("sfdc_account_id")
+        if old_name:
+            try:
+                account_svc.rename_account(old_name, item["account_name"], sfdc_name=item["account_name"], sfdc_id=sfdc_id)
+                item["exists"] = True
+                renamed.append({"from": old_name, "to": item["name"]})
+            except AccountError:
+                item["renamed_from"] = None
+        elif item.get("exists") and sfdc_id:
+            try:
+                account_svc.set_sfdc_identity(item["name"], sfdc_name=item["account_name"], sfdc_id=sfdc_id)
+            except AccountError:
+                pass
+    if renamed:
+        result["renamed"] = renamed
+    return result

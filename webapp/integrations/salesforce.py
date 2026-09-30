@@ -35,6 +35,9 @@ _AUTH_ERROR_PATTERNS = (
     "invalid session id",
 )
 
+# Salesforce record ID: 15-char case-sensitive or 18-char case-insensitive.
+_ACCOUNT_ID_RE = re.compile(r"^[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?$")
+
 
 def _classify_sf_failure(stderr: str) -> str:
     """Classify a non-zero `sf` CLI exit as "auth_error" or generic "error"."""
@@ -547,7 +550,7 @@ class SalesforceIntegration:
             clauses.append(f"Owner.Name IN ({', '.join(quoted_aes)})")
         where_owner = " OR ".join(clauses)
         query = (
-            "SELECT Account.Name, Amount, StageName, Stage_Number__c, CloseDate, "
+            "SELECT Account.Id, Account.Name, Amount, StageName, Stage_Number__c, CloseDate, "
             "Type, Owner.Name, SE_Name__c FROM Opportunity "
             f"WHERE IsClosed = false AND CloseDate >= {today} "
             f"AND ({where_owner}) ORDER BY Account.Name"
@@ -573,6 +576,14 @@ class SalesforceIntegration:
         for acct, r in sorted(by_acct.items()):
             folder = self._titlecase(acct)
             renewal = (r.get("Type") == "Renewal")
+            account_id = (r.get("Account") or {}).get("Id")
+            if account_id and not _ACCOUNT_ID_RE.fullmatch(str(account_id)):
+                account_id = None
+            # A folder elsewhere already carrying this Salesforce Account.Id is the
+            # same account under a name Salesforce has since renamed; treat it as
+            # already added (under its current local name) rather than new business,
+            # so the caller can reconcile the two names instead of creating a duplicate.
+            local_match = self._find_local_account_by_sfdc_id(account_id) if account_id else None
             item = {
                 "name": folder,
                 "account_name": acct,
@@ -584,7 +595,28 @@ class SalesforceIntegration:
                 "ae": ((r.get("Owner") or {}).get("Name")),
                 "se": r.get("SE_Name__c"),
                 "renewal": renewal,
-                "exists": (self.customers_dir / folder).exists(),
+                "exists": (self.customers_dir / folder).exists() or bool(local_match),
+                "sfdc_account_id": account_id,
+                "renamed_from": local_match if local_match and local_match != folder else None,
             }
             (renewals if renewal else new_business).append(item)
         return {"new_business": new_business, "renewals": renewals}
+
+    def _sfdc_id_file(self, account_dir: Path) -> Path:
+        return account_dir / ".sfdc-account-id"
+
+    def _find_local_account_by_sfdc_id(self, sfdc_id: str) -> str | None:
+        """Local folder name whose captured Salesforce Account.Id matches, if any.
+
+        Read-only lookup across `customers_dir`; the actual identity sidecar is
+        written by `AccountService.create_account`/`rename_account`/`set_sfdc_identity`.
+        """
+        if not sfdc_id or not self.customers_dir.exists():
+            return None
+        for d in sorted(self.customers_dir.iterdir()):
+            if not d.is_dir() or d.name.startswith(("_", ".")):
+                continue
+            f = self._sfdc_id_file(d)
+            if f.exists() and f.read_text(encoding="utf-8").strip() == sfdc_id:
+                return d.name
+        return None
