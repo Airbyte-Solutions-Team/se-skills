@@ -233,6 +233,20 @@ def test_rename_account_moves_folder_when_no_collision(svc: AccountService) -> N
     assert (dest / ".sfdc-name").read_text() == "Agent Software (Street Group)"
 
 
+def test_rename_account_reprefixes_transcripts(svc: AccountService) -> None:
+    svc.create_account("Agentsoftware")
+    tdir = svc.customers_dir / "_transcripts"
+    tdir.mkdir()
+    (tdir / "Agentsoftware-09.02.26.txt").write_text("a")
+    (tdir / "Agentsoftware-Labs-09.02.26.txt").write_text("sibling account")
+
+    svc.rename_account("Agentsoftware", "Agent Software Street Group")
+
+    assert (tdir / "Agent-Software-Street-Group-09.02.26.txt").read_text() == "a"
+    assert not (tdir / "Agentsoftware-09.02.26.txt").exists()
+    assert (tdir / "Agentsoftware-Labs-09.02.26.txt").exists()
+
+
 def test_rename_account_merges_into_existing_folder_preserving_content(svc: AccountService) -> None:
     # Old account has real content; sync already auto-created an empty folder
     # under the renamed SFDC name (the bug this guards against).

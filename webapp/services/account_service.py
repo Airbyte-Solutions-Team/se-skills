@@ -374,8 +374,32 @@ class AccountService:
             else:
                 src_dir.rename(dest_dir)
 
+        if dest_dir.name != src_dir.name:
+            self._rename_transcripts(src_dir.name, dest_dir.name)
         self._write_sfdc_identity(dest_dir, sfdc_name=sfdc_name, sfdc_id=sfdc_id)
         return {"name": dest_dir.name, "renamed": dest_dir.name != account, "merged": merged}
+
+    def _rename_transcripts(self, old_folder: str, new_folder: str) -> None:
+        """Re-prefix `_transcripts/<Old>-<date>.txt` to the new folder name.
+
+        Transcripts are matched to an account by filename prefix, so they would
+        otherwise be orphaned by a rename. Only `<prefix><digit>…` names move, so a
+        sibling account whose name merely starts with `<old>-` is left alone, and
+        existing files are never overwritten.
+        """
+        transcript_dir = self.customers_dir / "_transcripts"
+        if not transcript_dir.is_dir() or transcript_dir.is_symlink():
+            return
+        old_prefix = self.titlecase(old_folder) + "-"
+        for path in sorted(transcript_dir.iterdir()):
+            if path.is_symlink() or not path.is_file() or path.suffix != ".txt":
+                continue
+            rest = path.name[len(old_prefix):]
+            if not path.name.startswith(old_prefix) or not rest[:1].isdigit():
+                continue
+            target = transcript_dir / f"{new_folder}-{rest}"
+            if not target.exists():
+                path.rename(target)
 
     def _merge_account_dirs(self, src: Path, dest: Path) -> None:
         """Recursively move everything from `src` into `dest`, without clobbering."""

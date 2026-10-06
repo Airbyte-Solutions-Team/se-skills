@@ -552,6 +552,8 @@ body:has(.opp-workspace) .bar { max-width: 1440px; }
   display: flex; flex-direction: column; min-width: 0;
   background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
 }
+/* The ⋮ export menu is absolutely positioned and must extend past the card edges. */
+.workspace-output-list, .workspace-output-row.workspace-disclosure { overflow: visible; }
 .workspace-output-row { border: none; border-radius: 0; background: transparent; border-bottom: 1px solid var(--line); }
 .workspace-output-row:last-child { border-bottom: none; }
 .workspace-output-row > summary { padding: 10px 16px; }
