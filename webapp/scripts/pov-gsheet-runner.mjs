@@ -32,14 +32,58 @@ const TABS = [
   "Architecture Diagrams",
 ];
 
+// Dropdown lists read from the template's data validation on 2026-10-07.
+// Several values end in a space; the space is part of the value and must be kept.
+// The Sheets UI flags anything else as "Invalid", but neither paste nor the
+// Sheets API rejects it, so every value written below goes through pick().
 const DROPDOWNS = {
-  milestoneStatus: ["Not Started", "Needs Scheduling", "In Progress", "Completed", "Blocked"],
+  milestoneStatus: ["Needs Scheduling ", "Scheduled ", "Completed ", "In Progress"],
   inScope: ["Yes", "No"],
   priority: ["Must Have", "Nice to Have", "Out of Scope"],
+  criteriaStatus: ["Completed", "Pending"],
   sourceOrDestination: ["Source", "Destination"],
   useCase: ["Use Case #1", "Use Case #2", "Use Case #3"],
   integrationType: ["API", "OAuth", "Other means of integration"],
-  productArea: ["Connectors", "Platform", "Cloud", "Enterprise"],
+  prodNonProd: ["Prod", "Non-prod"],
+  approvalRequired: ["No", "Yes"],
+  // Feature Requests > Airbyte Product Area only offers the placeholder "Product Area 1",
+  // so the product area is written into Notes instead of column C.
+  featurePriority: ["1 - Critical", "2 - High", "3 - Medium", "4 - Low", "5 - Not Needed"],
+  featureScope: ["POC ", "Implementation"],
+  featureFlagged: ["Yes", "No"],
+  featureStatus: [
+    "Not Started",
+    "On Roadmap",
+    "Not Planned",
+    "In Progress - At Risk",
+    "In Progress - Off track",
+    "In Progress - On track",
+    "Completed - Pending Verification",
+    "Completed",
+    "Canceled",
+  ],
+};
+
+// Fixed row layout of the template (verified 2026-10-07). Writing outside these
+// rows overwrites template headers.
+const LAYOUT = {
+  contacts: { internalRows: [3, 6], prospectHeaderCell: "A11", prospectRows: [13, 15] },
+  milestones: [
+    { row: 3, label: "Demo", match: /\bdemo\b/i },
+    { row: 4, label: "Technical Discovery / Workshop & Architecture Review", match: /discovery|workshop|architecture/i },
+    { row: 5, label: "Success Criteria & Requirements Review", match: /success criteria|requirements/i },
+    { row: 6, label: "Executive Business Case", match: /business case|executive/i },
+    { row: 7, label: "POV Mutual Slack Channel", match: /slack|channel|support email/i },
+  ],
+  objectivesFirstRow: 2,
+  criteriaSetupRows: [3, 5],
+  criteriaSections: [
+    { headerRow: 6, rows: [8, 16], placeholderCell: "A8" },
+    { headerRow: 17, rows: [19, 26], placeholderCell: "A19" },
+    { headerRow: 27, rows: [29, 40], placeholderCell: "A29" },
+  ],
+  appsFirstRow: 4,
+  featuresFirstRow: 2,
 };
 
 const DEFAULT_MILESTONES = [
@@ -130,118 +174,257 @@ function tsv(rows) {
 }
 
 function safeDropdown(value, allowed, fallback = "TBD") {
-  if (!value) return fallback;
-  const v = String(value).trim();
-  return allowed.includes(v) ? v : fallback;
+  return pick(value, allowed, fallback);
+}
+
+// Match a value to a dropdown option ignoring case and surrounding whitespace,
+// and return the option exactly as the template spells it (trailing spaces included).
+function pick(value, allowed, fallback) {
+  if (value === undefined || value === null || String(value).trim() === "") return fallback;
+  const v = String(value).trim().toLowerCase();
+  const hit = allowed.find((a) => a.trim().toLowerCase() === v);
+  return hit === undefined ? fallback : hit;
+}
+
+function milestoneStatus(raw) {
+  const v = String(raw || "").trim().toLowerCase();
+  if (v === "completed" || v === "done") return "Completed ";
+  if (v === "in progress") return "In Progress";
+  if (v === "scheduled") return "Scheduled ";
+  return "Needs Scheduling "; // Not Started, Blocked, Needs Scheduling, unknown
+}
+
+function featurePriority(raw) {
+  const exact = pick(raw, DROPDOWNS.featurePriority, null);
+  if (exact) return exact;
+  const v = String(raw || "").trim().toLowerCase();
+  if (v === "must have" || v === "critical") return "1 - Critical";
+  if (v === "high") return "2 - High";
+  if (v === "nice to have" || v === "medium") return "3 - Medium";
+  if (v === "low") return "4 - Low";
+  if (v === "out of scope" || v === "not needed") return "5 - Not Needed";
+  return "3 - Medium";
+}
+
+// One cell of pasted text: no tabs or newlines (they would split cells/rows),
+// and no leading "=", "+", "-" or "@" that Sheets would parse as a formula.
+function cell(value) {
+  if (value === undefined || value === null) return "";
+  // No trim: some dropdown values end in a space that must survive.
+  let s = String(value).replace(/[\t\r\n]+/g, " ");
+  if (/^[=+@]/.test(s) || /^-[^ ]/.test(s)) s = "'" + s;
+  return s;
+}
+
+function colLetter(n) {
+  let s = "";
+  while (n > 0) {
+    const m = (n - 1) % 26;
+    s = String.fromCharCode(65 + m) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
+
+function quoteTab(tab) {
+  return `'${tab.replace(/'/g, "''")}'`;
+}
+
+// A block is a rectangle of values pasted (or written with the Sheets API) at startCell.
+function block(tab, startCell, rows) {
+  const m = startCell.match(/^([A-Z]+)(\d+)$/);
+  const startColNum = m[1].split("").reduce((acc, ch) => acc * 26 + (ch.charCodeAt(0) - 64), 0);
+  const startRow = Number(m[2]);
+  const width = Math.max(1, ...rows.map((r) => r.length));
+  const values = rows.map((r) => {
+    const padded = r.map(cell);
+    while (padded.length < width) padded.push("");
+    return padded;
+  });
+  const endCell = `${colLetter(startColNum + width - 1)}${startRow + values.length - 1}`;
+  return {
+    startCell,
+    range: `${quoteTab(tab)}!${startCell}:${endCell}`,
+    values,
+    tsv: tsv(values),
+  };
 }
 
 function classifyIntegrationType(connectorName) {
+  // Template guidance: databases (CDC/replication), warehouses, files and lakes are
+  // "Other means of integration"; OAuth SaaS apps are "OAuth"; other REST/SaaS APIs are "API".
   const lower = String(connectorName).toLowerCase();
-  if (lower.includes("postgres") || lower.includes("sql") || lower.includes("mysql") || lower.includes("mongodb") || lower.includes("database") || lower.includes("cdc")) {
-    return "Other means of integration";
-  }
-  if (lower.includes("salesforce") || lower.includes("hubspot") || lower.includes("oauth")) {
+  const other = [
+    "postgres", "sql", "mysql", "mariadb", "oracle", "db2", "mongodb", "database", "cdc",
+    "snowflake", "bigquery", "redshift", "databricks", "clickhouse", "warehouse",
+    "s3", "gcs", "azure blob", "blob storage", "sftp", "ftp", "file", "csv", "iceberg", "lake", "kafka",
+  ];
+  if (other.some((k) => lower.includes(k))) return "Other means of integration";
+  if (["salesforce", "hubspot", "google", "linkedin", "facebook", "meta", "zendesk", "oauth"].some((k) => lower.includes(k))) {
     return "OAuth";
-  }
-  if (lower.includes("s3") || lower.includes("gcs") || lower.includes("azure") || lower.includes("api")) {
-    return "API";
   }
   return "API";
 }
 
-function buildPlan(ctx) {
-  const plan = { tabs: {} };
-
-  // Contacts
-  const contactsRows = [];
-  const internal = (ctx.contacts?.internal || []).filter((c) => c.name);
-  const prospect = (ctx.contacts?.prospect || []).filter((c) => c.name);
-  // Airbyte team starting at A3
-  contactsRows.push(["Airbyte team"]); // header-ish row
-  for (const c of internal) {
-    contactsRows.push([c.name, c.role || "", c.email || "", c.side || "Airbyte"]);
-  }
-  // blank separator
-  contactsRows.push([]);
-  contactsRows.push(["Prospect contacts"]);
-  for (const c of prospect) {
-    contactsRows.push([c.name, c.role || "", c.email || "", c.side || "Customer"]);
-  }
-  plan.tabs.Contacts = {
-    startCell: "A3",
-    tsv: tsv(contactsRows),
+function addTab(plan, tab, blocks) {
+  const usable = blocks.filter((b) => b && b.values.length);
+  plan.tabs[tab] = {
+    blocks: usable,
+    // First block, kept for callers that read a single start cell.
+    startCell: usable[0] ? usable[0].startCell : null,
+    tsv: usable[0] ? usable[0].tsv : "",
   };
+}
 
-  // POV Milestones
-  const milestoneRows = [];
-  const provided = new Map((ctx.milestones || []).map((m) => [m.name, m]));
-  for (const name of DEFAULT_MILESTONES) {
-    const m = provided.get(name) || {};
-    const status = safeDropdown(m.status || "Not Started", DROPDOWNS.milestoneStatus, "Not Started");
-    const date = m.target_date || "";
-    const notes = m.evidence || "";
-    milestoneRows.push([name, date, status, notes]);
+function buildPlan(ctx) {
+  const plan = { tabs: {}, warnings: [], placeholders_to_clear: [] };
+  const today = new Date().toISOString().slice(0, 10);
+  const prospectName = ctx.prospect?.account_name || "Prospect";
+
+  // ---- Contacts: Airbyte team A3:B6, prospect header A11, evaluators A13:B15
+  const internal = (ctx.contacts?.internal || []).filter((c) => c.name);
+  const names = new Set(internal.map((c) => c.name.trim().toLowerCase()));
+  const owner = ctx.prospect?.owner;
+  if (owner && !names.has(owner.trim().toLowerCase())) internal.unshift({ name: owner, role: "Account Executive" });
+  const seName = ctx.prospect?.se_name;
+  if (seName && !names.has(seName.trim().toLowerCase())) {
+    internal.push({ name: seName, role: ctx.prospect?.se_title || "Solutions Engineer" });
   }
-  plan.tabs["POV Milestones"] = { startCell: "A2", tsv: tsv(milestoneRows) };
-
-  // Business Objectives
-  const objectiveRows = (ctx.business_objectives || []).slice(0, 8).map((o) => [
-    o.objective || "",
-    o.desired_outcome || "",
-    (o.sources || []).join(", "),
+  const [iFirst, iLast] = LAYOUT.contacts.internalRows;
+  const internalRows = internal.slice(0, iLast - iFirst + 1).map((c) => [c.role ? `${c.name}, ${c.role}` : c.name, c.email || ""]);
+  if (internal.length > iLast - iFirst + 1) plan.warnings.push(`Contacts: ${internal.length - (iLast - iFirst + 1)} Airbyte contact(s) did not fit rows ${iFirst}-${iLast}.`);
+  const prospect = (ctx.contacts?.prospect || []).filter((c) => c.name);
+  const [pFirst, pLast] = LAYOUT.contacts.prospectRows;
+  const prospectRows = prospect.slice(0, pLast - pFirst + 1).map((c) => [c.role ? `${c.name}, ${c.role}` : c.name, c.email || ""]);
+  if (prospect.length > pLast - pFirst + 1) {
+    plan.warnings.push(`Contacts: ${prospect.length - (pLast - pFirst + 1)} prospect contact(s) need extra rows inserted after row ${pLast} before writing.`);
+  }
+  addTab(plan, "Contacts", [
+    internalRows.length ? block("Contacts", `A${iFirst}`, internalRows) : null,
+    block("Contacts", LAYOUT.contacts.prospectHeaderCell, [[`${prospectName} Contacts`]]),
+    prospectRows.length ? block("Contacts", `A${pFirst}`, prospectRows) : null,
   ]);
-  plan.tabs["Business Objectives"] = { startCell: "A2", tsv: tsv(objectiveRows) };
 
-  // POV - Success Criteria
-  const criteriaRows = (ctx.success_criteria || []).slice(0, 20).map((c) => [
-    c.use_case || "",
-    c.feature_or_capability || "",
-    c.validation_method || "Customer validation during POV",
-    c.acceptance_threshold || "TBD — confirm with customer",
-    safeDropdown(c.in_scope, DROPDOWNS.inScope, "Yes"),
-    safeDropdown(c.priority, DROPDOWNS.priority, "Must Have"),
-    c.notes || c.evidence || "",
+  // ---- POV Milestones: Date/Status in B:C of the fixed Pre-Evaluation rows
+  const milestoneBlocks = [];
+  const used = new Set();
+  for (const slot of LAYOUT.milestones) {
+    const m = (ctx.milestones || []).find((x, i) => !used.has(i) && slot.match.test(x.name || "") && used.add(i));
+    if (m) {
+      milestoneBlocks.push(block("POV Milestones", `B${slot.row}`, [[m.target_date || "", milestoneStatus(m.status)]]));
+    } else if (slot.row === 5) {
+      // The Success Criteria review is happening now.
+      milestoneBlocks.push(block("POV Milestones", "B5", [[ctx.prospect?.pov_start_date || today, "In Progress"]]));
+    }
+  }
+  (ctx.milestones || []).forEach((m, i) => {
+    if (!used.has(i)) plan.warnings.push(`POV Milestones: "${m.name}" has no matching template row; add it by hand.`);
+  });
+  addTab(plan, "POV Milestones", milestoneBlocks);
+
+  // ---- Business Objectives: A2:B from row 2
+  const objectiveRows = (ctx.business_objectives || []).slice(0, 8).map((o, i) => [
+    `Objective #${i + 1}: ${o.objective || ""}`,
+    [o.desired_outcome, o.evidence, (o.sources || []).length ? `Sources: ${(o.sources || []).join(", ")}` : ""]
+      .filter(Boolean)
+      .join(" "),
   ]);
-  plan.tabs["POV - Success Criteria"] = { startCell: "A2", tsv: tsv(criteriaRows) };
+  addTab(plan, "Business Objectives", objectiveRows.length ? [block("Business Objectives", `A${LAYOUT.objectivesFirstRow}`, objectiveRows)] : []);
 
-  // In-scope Apps
-  const appRows = [];
-  let useCaseIndex = 0;
-  const allSystems = [
+  // ---- POV - Success Criteria: columns A-F = Feature, Validation, In-scope, Priority, Status, Notes
+  const scBlocks = [];
+  const tab = "POV - Success Criteria";
+  const sources = (ctx.technical_scope?.sources || []).map((s) => s.name).filter(Boolean);
+  const destinations = (ctx.technical_scope?.destinations || []).map((s) => s.name).filter(Boolean);
+  const setupRows = [];
+  if (sources.length) setupRows.push([`Source connectors: ${sources.join(", ")}`, "All source connectors authenticate and complete an initial sync", "Yes", "Must Have", "Pending", ""]);
+  if (destinations.length) setupRows.push([`Destinations: ${destinations.join(", ")}`, "Destinations configured; data lands as expected", "Yes", "Must Have", "Pending", ""]);
+  if (setupRows.length) scBlocks.push(block(tab, `A${LAYOUT.criteriaSetupRows[0]}`, setupRows));
+
+  const groups = [];
+  for (const c of ctx.success_criteria || []) {
+    const key = (c.use_case || "").trim() || "POV requirements";
+    let g = groups.find((x) => x.name === key);
+    if (!g) groups.push((g = { name: key, items: [] }));
+    g.items.push(c);
+  }
+  groups.forEach((g, gi) => {
+    const section = LAYOUT.criteriaSections[gi];
+    if (!section) {
+      plan.warnings.push(`POV - Success Criteria: use case "${g.name}" (${g.items.length} criteria) has no free section; add it by hand.`);
+      return;
+    }
+    const capacity = section.rows[1] - section.rows[0] + 1;
+    if (g.items.length > capacity) plan.warnings.push(`POV - Success Criteria: use case "${g.name}" has ${g.items.length - capacity} more criteria than rows ${section.rows[0]}-${section.rows[1]} hold.`);
+    scBlocks.push(block(tab, `A${section.headerRow}`, [[`Use case #${gi + 1}: ${g.name}`]]));
+    const rows = g.items.slice(0, capacity).map((c, i) => [
+      `${i + 1} - ${c.feature_or_capability}`,
+      `${c.validation_method || "Customer validation during POV"}. Acceptance: ${c.acceptance_threshold || "TBD, confirm with customer"}`,
+      pick(c.in_scope, DROPDOWNS.inScope, "Yes"),
+      pick(c.priority, DROPDOWNS.priority, "Must Have"),
+      "Pending",
+      c.notes || c.evidence || (c.sources || []).join(", "),
+    ]);
+    scBlocks.push(block(tab, `A${section.rows[0]}`, rows));
+  });
+  LAYOUT.criteriaSections.slice(groups.length).forEach((s) => plan.placeholders_to_clear.push(`${quoteTab(tab)}!${s.placeholderCell}`));
+  addTab(plan, tab, scBlocks);
+
+  // ---- In-scope Apps: data from row 4, columns A-H
+  const groupIndex = (name) => {
+    const n = String(name || "").trim().toLowerCase();
+    const i = groups.findIndex((g) => g.name.toLowerCase() === n);
+    return i >= 0 && i < 3 ? i : -1;
+  };
+  const systemUseCases = (sys) => {
+    const hits = new Set();
+    const direct = groupIndex(sys.use_case);
+    if (direct >= 0) hits.add(direct);
+    const needle = String(sys.name || "").toLowerCase();
+    groups.slice(0, 3).forEach((g, gi) => {
+      if (needle && g.items.some((c) => `${c.feature_or_capability} ${c.validation_method || ""}`.toLowerCase().includes(needle))) hits.add(gi);
+    });
+    if (!hits.size && sys.kind === "Destination") groups.slice(0, 3).forEach((_, gi) => hits.add(gi));
+    if (!hits.size) hits.add(0);
+    return [...hits].sort().map((i) => DROPDOWNS.useCase[i]).join(", ");
+  };
+  const appRows = [
     ...(ctx.technical_scope?.sources || []).map((s) => ({ ...s, kind: "Source" })),
     ...(ctx.technical_scope?.destinations || []).map((s) => ({ ...s, kind: "Destination" })),
-  ];
-  for (const sys of allSystems) {
-    const useCase = DROPDOWNS.useCase[Math.min(useCaseIndex, 2)] || "Use Case #1";
-    useCaseIndex++;
-    appRows.push([
-      sys.name || "",
-      safeDropdown(sys.kind || sys.side, DROPDOWNS.sourceOrDestination, "Source"),
-      useCase,
-      classifyIntegrationType(sys.name || ""),
-      (sys.sources || []).join(", "),
+  ]
+    .filter((s) => s.name)
+    .map((sys) => [
+      sys.name,
+      pick(sys.kind, DROPDOWNS.sourceOrDestination, "Source"),
+      systemUseCases(sys),
+      pick(sys.integration_type, DROPDOWNS.integrationType, null) || classifyIntegrationType(sys.name),
+      "",
+      "",
+      sys.evidence || (sys.sources || []).join(", "),
+      "",
     ]);
-  }
-  // If no systems but use cases exist, still create rows
-  for (const uc of ctx.technical_scope?.use_cases || []) {
-    appRows.push([uc.name || "", "Source", "Use Case #1", "API", (uc.sources || []).join(", ")]);
-  }
-  plan.tabs["In-scope Apps"] = { startCell: "A2", tsv: tsv(appRows) };
+  addTab(plan, "In-scope Apps", appRows.length ? [block("In-scope Apps", `A${LAYOUT.appsFirstRow}`, appRows)] : []);
 
-  // Feature Requests
-  const featureRows = (ctx.feature_requests || []).slice(0, 10).map((f) => [
-    f.date || "",
-    safeDropdown(f.product_area, DROPDOWNS.productArea, "Connectors"),
+  // ---- Feature Requests: columns A-J from row 2
+  const featureRows = (ctx.feature_requests || []).slice(0, 20).map((f) => [
+    f.date || today,
+    "",
+    "", // Airbyte Product Area: template list is a placeholder; area goes in Notes
     f.description || "",
-    safeDropdown(f.priority, DROPDOWNS.priority, "Must Have"),
+    featurePriority(f.priority),
+    "",
+    "",
+    "",
+    "Not Started",
+    [f.product_area ? `Product area: ${f.product_area}.` : "", f.evidence || ""].filter(Boolean).join(" "),
   ]);
-  plan.tabs["Feature Requests"] = { startCell: "A2", tsv: tsv(featureRows) };
+  addTab(plan, "Feature Requests", featureRows.length ? [block("Feature Requests", `A${LAYOUT.featuresFirstRow}`, featureRows)] : []);
 
-  // Architecture Diagrams
+  // ---- Architecture Diagrams
   const archRows = (ctx.architecture_notes || []).length
     ? (ctx.architecture_notes || []).map((n) => [n])
-    : [["Placeholder — add architecture diagram once technical scope is finalized"]];
-  plan.tabs["Architecture Diagrams"] = { startCell: "A2", tsv: tsv(archRows) };
+    : [["Placeholder: add the architecture diagram once technical scope is final"]];
+  addTab(plan, "Architecture Diagrams", [block("Architecture Diagrams", "A2", archRows)]);
 
   return plan;
 }
@@ -408,7 +591,7 @@ async function doRun(ctx, args) {
     // Fill each tab.
     for (const tabName of TABS) {
       const tabPlan = plan.tabs[tabName];
-      if (!tabPlan || !tabPlan.tsv) continue;
+      if (!tabPlan || !(tabPlan.blocks || []).length) continue;
 
       // Click the sheet tab by name.
       const tab = page.locator(`button[aria-label="${tabName}"], [role="tab"]:has-text("${tabName}")`).first();
@@ -417,18 +600,20 @@ async function doRun(ctx, args) {
         await page.waitForTimeout(500);
       }
 
-      // Select the start cell via the Name Box.
-      const nameBox = page.locator('[id="formula-bar-name-box"]').first();
-      await nameBox.click();
-      await nameBox.fill(tabPlan.startCell);
-      await nameBox.press("Enter");
-      await page.waitForTimeout(300);
+      for (const b of tabPlan.blocks) {
+        // Select the start cell via the Name Box.
+        const nameBox = page.locator('[id="formula-bar-name-box"]').first();
+        await nameBox.click();
+        await nameBox.fill(b.startCell);
+        await nameBox.press("Enter");
+        await page.waitForTimeout(300);
 
-      // Set clipboard and paste.
-      await writeClipboard(tabPlan.tsv);
-      const isMac = platform() === "darwin";
-      await page.keyboard.press(isMac ? "Meta+v" : "Control+v");
-      await page.waitForTimeout(800);
+        // Set clipboard and paste.
+        await writeClipboard(b.tsv);
+        const isMac = platform() === "darwin";
+        await page.keyboard.press(isMac ? "Meta+v" : "Control+v");
+        await page.waitForTimeout(800);
+      }
     }
 
     // Verify the title.

@@ -48,15 +48,57 @@ EXPECTED_TAB_NAMES = [
     "Architecture Diagrams",
 ]
 
+# Read from the template's data validation on 2026-10-07. Trailing spaces are part of the values.
 DROPDOWN_VALUES = {
-    "Status": ["Not Started", "Needs Scheduling", "In Progress", "Completed", "Blocked"],
+    "Milestone Status": ["Needs Scheduling ", "Scheduled ", "Completed ", "In Progress"],
     "In-scope for POV": ["Yes", "No"],
     "Priority Level": ["Must Have", "Nice to Have", "Out of Scope"],
+    "Criteria Status": ["Completed", "Pending"],
     "Source or Destination": ["Source", "Destination"],
     "App / System Role - Use Cases": ["Use Case #1", "Use Case #2", "Use Case #3"],
     "Integration Type": ["API", "OAuth", "Other means of integration"],
-    "Airbyte Product Area": ["Connectors", "Platform", "Cloud", "Enterprise"],
+    "Prod / Non-prod": ["Prod", "Non-prod"],
+    "Approval Required": ["No", "Yes"],
+    "Requirement Priority": ["1 - Critical", "2 - High", "3 - Medium", "4 - Low", "5 - Not Needed"],
+    "Requirement Scope": ["POC ", "Implementation"],
+    "Feature Request Status": [
+        "Not Started",
+        "On Roadmap",
+        "Not Planned",
+        "In Progress - At Risk",
+        "In Progress - Off track",
+        "In Progress - On track",
+        "Completed - Pending Verification",
+        "Completed",
+        "Canceled",
+    ],
 }
+
+# Template cells that hold labels or headers and must never be overwritten by the plan.
+PROTECTED_CELLS = {
+    "Contacts": {"A1", "A2", "A7", "A8", "B8", "A12", "A17"},
+    "POV Milestones": {f"{c}{r}" for c in "ABCD" for r in (1, 2)} | {f"A{r}" for r in range(3, 8)},
+    "POV - Success Criteria": {f"{c}{r}" for c in "ABCDEF" for r in (1, 2, 7, 18, 28)},
+    "In-scope Apps": {f"{c}{r}" for c in "ABCDEFGH" for r in (1, 2, 3)},
+    "Feature Requests": {f"{c}1" for c in "ABCDEFGHIJ"},
+}
+
+# (tab, column letter) -> allowed values for every data cell the plan writes in that column.
+DROPDOWN_COLUMNS = {
+    ("POV Milestones", "C"): DROPDOWN_VALUES["Milestone Status"],
+    ("POV - Success Criteria", "C"): DROPDOWN_VALUES["In-scope for POV"],
+    ("POV - Success Criteria", "D"): DROPDOWN_VALUES["Priority Level"],
+    ("POV - Success Criteria", "E"): DROPDOWN_VALUES["Criteria Status"],
+    ("In-scope Apps", "B"): DROPDOWN_VALUES["Source or Destination"],
+    ("In-scope Apps", "C"): DROPDOWN_VALUES["App / System Role - Use Cases"],
+    ("In-scope Apps", "D"): DROPDOWN_VALUES["Integration Type"],
+    ("In-scope Apps", "E"): DROPDOWN_VALUES["Prod / Non-prod"],
+    ("In-scope Apps", "F"): DROPDOWN_VALUES["Approval Required"],
+    ("Feature Requests", "E"): DROPDOWN_VALUES["Requirement Priority"],
+    ("Feature Requests", "F"): DROPDOWN_VALUES["Requirement Scope"],
+    ("Feature Requests", "I"): DROPDOWN_VALUES["Feature Request Status"],
+}
+MULTI_SELECT = {("In-scope Apps", "C"), ("In-scope Apps", "D")}
 
 LEGACY_FORBIDDEN_REFS = [
     "se-assistant",
@@ -669,6 +711,106 @@ def test_runner_dry_run_generates_plan(repo_root: Path, minimal_context: dict, t
         assert tab in plan_tabs, f"Plan missing tab {tab}"
         assert "startCell" in plan_tabs[tab]
         assert "tsv" in plan_tabs[tab]
+        for block in plan_tabs[tab]["blocks"]:
+            assert {"startCell", "range", "values", "tsv"} <= set(block)
+            assert block["range"].startswith(f"'{tab}'!")
+
+
+def _run_runner_plan(repo_root: Path, ctx: dict, tmp_path: Path) -> dict:
+    ctx_file = tmp_path / "ctx.json"
+    ctx_file.write_text(json.dumps(ctx), encoding="utf-8")
+    receipt_file = tmp_path / "receipt.json"
+    subprocess.run(
+        [
+            "node",
+            str(repo_root / "webapp" / "scripts" / "pov-gsheet-runner.mjs"),
+            "--context",
+            str(ctx_file),
+            "--template-url",
+            "https://docs.google.com/spreadsheets/d/TEMPLATE_ID/edit",
+            "--drive-folder-url",
+            "https://drive.google.com/drive/folders/FOLDER_ID",
+            "--copy-title",
+            "Airbyte || TestCo - POV Success Criteria",
+            "--dry-run",
+            "--out-receipt",
+            str(receipt_file),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(receipt_file.read_text(encoding="utf-8"))["plan"]
+
+
+def _block_cells(block: dict):
+    """Yield (cell_ref, column_letter, row, value) for every cell a plan block writes."""
+    m = re.match(r"^([A-Z]+)(\d+)$", block["startCell"])
+    col0 = ord(m.group(1)) - 64  # template only uses single-letter columns
+    row0 = int(m.group(2))
+    for r, row in enumerate(block["values"]):
+        for c, value in enumerate(row):
+            letter = chr(64 + col0 + c)
+            yield f"{letter}{row0 + r}", letter, row0 + r, value
+
+
+@pytest.fixture
+def rich_context(minimal_context: dict) -> dict:
+    ctx = json.loads(json.dumps(minimal_context))
+    ctx["contacts"]["prospect"] = [
+        {"name": f"Person {i}", "role": "Engineer", "email": f"p{i}@example.com"} for i in range(4)
+    ]
+    ctx["technical_scope"]["sources"].append({"name": "Salesforce", "kind": "source", "sources": []})
+    ctx["success_criteria"] = [
+        {"use_case": "CDC", "feature_or_capability": "Postgres CDC", "in_scope": "yes", "priority": "must have"},
+        {"use_case": "SaaS", "feature_or_capability": "Salesforce incremental", "priority": "Nice to Have"},
+        {"feature_or_capability": "SSO", "in_scope": "TBD", "priority": "P1"},
+    ]
+    ctx["milestones"] = [
+        {"name": "Demo", "target_date": "2026-06-01", "status": "Completed"},
+        {"name": "Technical Discovery", "status": "Not Started"},
+        {"name": "Kickoff", "status": "Blocked"},
+    ]
+    ctx["feature_requests"] = [{"description": "SCIM", "product_area": "Enterprise", "priority": "Must Have"}]
+    return ctx
+
+
+def test_runner_plan_uses_only_template_dropdown_values(repo_root: Path, rich_context: dict, tmp_path: Path) -> None:
+    """Every dropdown cell the plan writes holds an exact template option (paste and the API do not validate)."""
+    plan = _run_runner_plan(repo_root, rich_context, tmp_path)
+    checked = 0
+    for tab, tab_plan in plan["tabs"].items():
+        for block in tab_plan["blocks"]:
+            for ref, letter, row, value in _block_cells(block):
+                allowed = DROPDOWN_COLUMNS.get((tab, letter))
+                if allowed is None or value == "":
+                    continue
+                if tab == "POV - Success Criteria" and row in (1, 6, 17, 27):
+                    continue  # section header cells span the row
+                parts = value.split(", ") if (tab, letter) in MULTI_SELECT else [value]
+                for part in parts:
+                    assert part in allowed, f"{tab}!{ref} = {value!r} is not a template option"
+                checked += 1
+    assert checked >= 10
+
+
+def test_runner_plan_respects_template_layout(repo_root: Path, rich_context: dict, tmp_path: Path) -> None:
+    """The plan never writes over template labels/headers and reports what did not fit."""
+    plan = _run_runner_plan(repo_root, rich_context, tmp_path)
+    for tab, protected in PROTECTED_CELLS.items():
+        for block in plan["tabs"][tab]["blocks"]:
+            for ref, _letter, _row, _value in _block_cells(block):
+                assert ref not in protected, f"plan writes protected cell {tab}!{ref}"
+    criteria = plan["tabs"]["POV - Success Criteria"]["blocks"]
+    starts = {b["startCell"] for b in criteria}
+    assert {"A6", "A8", "A17", "A19", "A27", "A29"} <= starts
+    # Six columns, Status always "Pending" for new criteria.
+    for b in criteria:
+        if b["startCell"] in {"A8", "A19", "A29"}:
+            assert all(len(r) == 6 and r[4] == "Pending" for r in b["values"])
+    joined = " ".join(plan["warnings"])
+    assert "prospect contact" in joined  # 4 contacts, 3 slots
+    assert "Kickoff" in joined  # no template row for it
 
 
 def _minimal_config(tmp_path: Path) -> None:
