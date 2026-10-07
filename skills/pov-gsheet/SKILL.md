@@ -238,7 +238,20 @@ Do not silently overwrite or duplicate an existing POV sheet.
 
 ### Step 1: Copy the Template
 
-Open `TEMPLATE_URL` in Chrome and make a copy. The fastest reliable path is the `/copy` URL with the
+**With a Google Drive MCP (preferred when configured).** If a Drive MCP exposing `copy_file`,
+`create_file` and `search_files` is available (for example the claude.ai Google Drive connector),
+no browser is needed:
+
+1. Find the prospect subfolder: `search_files` with
+   `parentId = '<DRIVE_TARGET_FOLDER_ID>' and mimeType = 'application/vnd.google-apps.folder'`, matching
+   the prospect name case- and accent-insensitively. If none exists, create it with `create_file`
+   (`contentMimeType: application/vnd.google-apps.folder`, `parentId: <DRIVE_TARGET_FOLDER_ID>`).
+2. `copy_file` the template with `parentId` = the prospect subfolder and `title` =
+   `Airbyte || [Prospect Name] - POV Success Criteria`. The copy is created directly in the shared
+   drive, so the Move dialog and the cross-shared-drive restriction in Step 4 do not apply.
+3. Confirm with `get_file_metadata` that `parentId` and title are right.
+
+**With Chrome.** Open `TEMPLATE_URL` in Chrome and make a copy. The fastest reliable path is the `/copy` URL with the
 prospect subfolder as the destination:
 
 ```
@@ -251,10 +264,40 @@ file in My Drive instead, rename it to `Airbyte || [Prospect Name] - POV Success
 
 If you cannot use the `/copy` URL, open `TEMPLATE_URL` and use **File > Make a copy**.
 
-### Step 2: Fill the Sheets Using the Clipboard Paste Method
+### Step 2: Fill the Sheets
+
+Always build the fill plan first. It maps the context onto the template's fixed rows and columns
+(Step 3) and only emits valid dropdown values:
+
+```bash
+node "$REPO_DIR/webapp/scripts/pov-gsheet-runner.mjs" \
+  --context "$CTX_FILE" --template-url "$TEMPLATE_URL" \
+  --drive-folder-url "$DRIVE_TARGET_FOLDER_URL" \
+  --copy-title "Airbyte || $ACCOUNT - POV Success Criteria" \
+  --dry-run --out-receipt "$JOB_DIR/pov-gsheet-plan.json"
+```
+
+`plan.tabs[<tab>].blocks` lists every write as `{range, values, startCell, tsv}`. `plan.warnings`
+lists anything that did not fit (extra contacts, unmatched milestones, a fourth use case) and
+`plan.placeholders_to_clear` lists template placeholder cells left behind. Carry both into the receipt.
+
+**Validation is your job.** The template's dropdowns are "strict" in the UI, but neither a clipboard
+paste nor the Sheets API rejects an invalid value: it is written and shows a red "Invalid" chip. Only
+write values from the dropdown table below (the runner already does this).
+
+#### 2A. With a Google Sheets MCP (preferred when configured)
+
+If a Sheets MCP exposing `update_values` and `get_values` is available (for example the claude.ai
+Google Sheets connector), write each plan block with `update_values(range=block.range,
+values=block.values)`. Independent blocks can be written in parallel. Then read every written range
+back with `get_values` and compare it with the plan. Dates such as `2026-10-07` are stored as dates
+(the Milestones tab displays them as `10/7/26`); that is expected.
+
+#### 2B. With Chrome: the clipboard paste method
 
 Google Sheets editing via browser automation requires a specific technique that works reliably. The
-method below avoids validation popup errors and cell misalignment issues.
+method below avoids validation popup errors and cell misalignment issues. Paste each plan block at its
+`startCell`; the runner's `--run` mode does exactly this.
 
 #### The Reliable Editing Method
 
@@ -293,34 +336,43 @@ method below avoids validation popup errors and cell misalignment issues.
    - Tabs map to column separators
    - Newlines map to row separators
 
-**Important notes on dropdowns:**
+**Dropdown values (read from the template's data validation on 2026-10-07).** Use these exact
+strings, **including trailing spaces**: several values end in a space inside the quotes, and a value
+without it is "Invalid".
 
-- Google Sheets dropdown cells accept pasted text that matches valid options
-- You MUST use the EXACT dropdown values below — any other text will show as "Invalid"
-- Known valid dropdown values in this template:
-  - **Status** (POV Milestones): "Not Started", "Needs Scheduling", "In Progress", "Completed", "Blocked"
-  - **In-scope for POV** (Success Criteria): "Yes", "No"
-  - **Priority Level** (Success Criteria, Column D): "Must Have", "Nice to Have", "Out of Scope"
-  - **Source or Destination** (In-scope Apps, Column B): "Source", "Destination"
-  - **App / System Role - Use Cases** (In-scope Apps, Column C): "Use Case #1", "Use Case #2", "Use Case #3"
-  - **Integration Type** (In-scope Apps, Column D): "API", "OAuth", "Other means of integration"
-  - **Airbyte Product Area** (Feature Requests): "Connectors", "Platform", "Cloud", "Enterprise"
+| Tab, column | Allowed values | Notes |
+|---|---|---|
+| POV Milestones, C (Status) | "Needs Scheduling ", "Scheduled ", "Completed ", "In Progress" | Three of four end in a space. There is no "Not Started" or "Blocked". |
+| POV - Success Criteria, C (In-scope for POV) | "Yes", "No" | |
+| POV - Success Criteria, D (Priority Level) | "Must Have", "Nice to Have", "Out of Scope" | |
+| POV - Success Criteria, E (Status) | "Completed", "Pending" | Only these two. New criteria start "Pending". |
+| In-scope Apps, B (Source or Destination) | "Source", "Destination" | |
+| In-scope Apps, C (App / System Role - Use Cases) | "Use Case #1", "Use Case #2", "Use Case #3" | Multi-select: join with ", " (e.g. "Use Case #1, Use Case #2"). |
+| In-scope Apps, D (Integration Type) | "API", "OAuth", "Other means of integration" | Multi-select, same join. |
+| In-scope Apps, E (Prod / Non-prod?) | "Prod", "Non-prod" | Leave blank unless known. |
+| In-scope Apps, F (Approval Required for Airbyte Connection?) | "No", "Yes" | Leave blank unless known. |
+| Feature Requests, C (Airbyte Product Area) | "Product Area 1" only | The template list is a placeholder. Leave C blank and start Notes (J) with "Product area: Connectors / Platform / Cloud / Enterprise." |
+| Feature Requests, E (Requirement Priority) | "1 - Critical", "2 - High", "3 - Medium", "4 - Low", "5 - Not Needed" | |
+| Feature Requests, F (Requirement Scope) | "POC ", "Implementation" | "POC " ends in a space. |
+| Feature Requests, G (Flagged to Airbyte Product) | "Yes", "No" | |
+| Feature Requests, I (Status) | "Not Started", "On Roadmap", "Not Planned", "In Progress - At Risk", "In Progress - Off track", "In Progress - On track", "Completed - Pending Verification", "Completed", "Canceled" | |
 
 **CRITICAL — Dropdown value mapping guidance for In-scope Apps:**
 
-- When filling Column C (App / System Role), map each app to its primary use case number:
+- When filling Column C (App / System Role), map each app to the use case(s) it serves:
   - Use Case #1 = Primary/core data pipeline use case (e.g., database replication, warehouse loading)
   - Use Case #2 = Secondary use case (e.g., CRM/SaaS integrations)
   - Use Case #3 = Tertiary/exploratory use case (e.g., custom APIs, homegrown systems)
+  - A destination that serves several use cases gets all of them.
 - When filling Column D (Integration Type), map the connector type:
-  - "API" = REST API, SaaS connectors (e.g., Salesforce, HubSpot), custom API sources
-  - "OAuth" = OAuth-based authentication connectors
-  - "Other means of integration" = Database connectors (CDC, replication), warehouse loads, file transfers, Iceberg, or any non-API method
+  - "API" = REST API and custom API sources
+  - "OAuth" = OAuth-based SaaS connectors (e.g., Salesforce, HubSpot)
+  - "Other means of integration" = Database connectors (CDC, replication), warehouses, file transfers, Iceberg, or any non-API method
 
 #### What NOT to do
 
 - Don't try typing directly into cells with Tab to advance — it's unreliable
-- Don't use the Google Sheets API (requires OAuth tokens not available in browser context)
+- Don't call the Sheets REST API from the browser page (there is no OAuth token there); use a configured Sheets MCP (2A) or the clipboard method (2B)
 - Don't use `navigator.clipboard.writeText()` from JavaScript — it fails with "Document not focused"
 - Don't manually click each cell and type — too slow and error-prone
 
@@ -328,69 +380,92 @@ method below avoids validation popup errors and cell misalignment issues.
 
 Use the structured context (`$CTX_FILE`) as the single source of truth. Do not invent data.
 
-#### Contacts Sheet
+The template has fixed rows. Writing outside them overwrites template headers. Row map (verified
+2026-10-07):
 
-- **Row 3-6 (Airbyte team):** AE name + title, `SE_NAME` (`SE_TITLE`), and any other Airbyte contacts
-  from `contacts.internal`.
-- **Row 11+ (Prospect contacts):** Names, titles, emails from `contacts.prospect`. Only include contacts
-  with a supported name; do not invent emails or roles.
+#### Contacts Sheet (20 rows only)
 
-#### POV Milestones Sheet
+- **A3:B6 (Airbyte evaluation team):** `Name, Role` in A and email in B. A3:A4 hold the `{name}, Account
+  Executive` / `{name}, Solutions Engineer` placeholders: AE first, then `SE_NAME, SE_TITLE`, then other
+  contacts from `contacts.internal`.
+- **Row 8:** executive sponsor row that ships with the template; leave it unless told otherwise.
+- **A11:** replace `<<CustomerName>> Contacts` with `[Prospect Name] Contacts`.
+- **A13:B15:** three prospect evaluator slots from `contacts.prospect`, replacing `Evaluator`. For more than
+  three, insert rows after row 15 first (Sheets MCP `insert_dimension`, or by hand), then re-read the
+  layout before writing. Do not invent emails or roles.
+- **Row 17:** "Executive Sponsors" heading for the prospect; add sponsors below it only if known.
 
-Use `milestones` from the context. For the default milestone list (Demo, Discovery, Success Criteria,
-Environment Setup, POV Execution, Wrap-up):
+#### POV Milestones Sheet (A = Action, B = Date, C = Status, D = Stakeholders)
 
-- Fill dates and statuses for milestones that have occurred
-- Set the "Success Criteria" milestone to the current date with "In Progress" status
-- Set all genuinely future milestones to "Not Started"
-- Do not invent exact dates
+- **Pre-Evaluation, rows 3-7:** Demo; Technical Discovery / Workshop & Architecture Review; Success
+  Criteria & Requirements Review; Executive Business Case; POV Mutual Slack channel. Write only B:C (and D
+  when stakeholders are known) on the matching row from `milestones`.
+- Past milestones are "Completed ", the Success Criteria review is today with "In Progress", booked
+  future items are "Scheduled ", everything else stays "Needs Scheduling ". Do not invent exact dates.
+- Rows 9-15 ("[OPTION A - MM]") and 17-25 ("[OPTION B - Enterprise]") are alternative working-session
+  blocks; fill the one that matches the deal and leave the other for the SE to delete.
+- Rows 27-33 are AE-led post-evaluation items; leave them unless dates are known.
 
-#### Business Objectives Sheet
+#### Business Objectives Sheet (A2:B, one row per objective)
 
-Use `business_objectives` from the context (2–4 concise customer-specific objectives). Each objective
-should map to one row. Include the supporting evidence/source where the sheet has a place for it.
+Use `business_objectives` from the context (2–4 concise customer-specific objectives): column A
+`Objective #N: <objective>`, column B the driver, pain and desired outcome with the supporting evidence.
+This replaces the template's "[TODO - Account Executive]" text, which must not remain in filled rows.
 
 #### POV - Success Criteria Sheet
 
-This is the most important sheet. Use `success_criteria` from the context.
+This is the most important sheet. Use `success_criteria` from the context. Columns A-F are Feature
+Description, Validation Criteria, In-scope for POV, Priority Level, Status, Notes.
 
-Group related criteria under use-case headers when `use_case` is present. For each row include:
+| Section | Header row | Column headers | Data rows |
+|---|---|---|---|
+| Initial Setup: Syncing & Connectors | 1 | 2 | 3-5 (sources, destinations, workspace) |
+| Use case #1 | 6 | 7 | 8-16 |
+| Use case #2 | 17 | 18 | 19-26 |
+| Use case #3 | 27 | 28 | 29+ |
 
-- Feature or capability (from `feature_or_capability`)
-- Validation method (from `validation_method`)
-- Acceptance threshold (from `acceptance_threshold`; if null, label `TBD — confirm with customer`)
-- In-scope (from `in_scope`; default "Yes")
-- Priority (from `priority`; default "Must Have")
-- Notes/dependencies (from `notes` or `evidence`)
+- Write the use-case name into the header cell (`A6`, `A17`, `A27`) as `Use case #N: <name>`; group
+  criteria by `use_case`.
+- Feature Description: `N - <feature_or_capability>`. Validation Criteria: the validation method plus
+  `Acceptance: <acceptance_threshold>` (if null, `Acceptance: TBD, confirm with customer`).
+- In-scope default "Yes"; Priority default "Must Have"; Status "Pending" ("Completed" only for something
+  already proven). Notes: notes or evidence.
+- Clear the unused `1 - Feature Name: Description` placeholders (`A8`, `A19`, `A29`).
 
 If a criterion is not testable as written (e.g., "Validate CDC works well"), rephrase it to a measurable
 statement such as "Replicate inserts, updates, and deletes from SQL Server to Snowflake with no
 unexplained record loss during the agreed test window."
 
-#### In-scope Apps Sheet
+#### In-scope Apps Sheet (headers on row 3, data from row 4; rows 1-3 frozen)
 
-Use `technical_scope.sources`, `technical_scope.destinations`, and `technical_scope.use_cases`.
-
-Columns:
+Use `technical_scope.sources` and `technical_scope.destinations`. Columns:
 
 - A = In-scope App / System name
 - B = Source or Destination (dropdown)
-- C = App / System Role (dropdown: Use Case #1 / #2 / #3)
-- D = Integration Type (dropdown)
-- E = Notes
+- C = App / System Role (dropdown, multi-select)
+- D = Integration Type (dropdown, multi-select)
+- E = Prod / Non-prod? (dropdown; blank unless known)
+- F = Approval Required for Airbyte Connection? (dropdown; blank unless known)
+- G = Status / Notes
+- H = Airbyte Connector Docs (URL, optional)
 
 Use exact dropdown values. Do not use free-text like "CDC (Debezium)", "Database Replication",
 "API (REST)", or "Warehouse Load".
 
-#### Feature Requests Sheet
+#### Feature Requests Sheet (headers on row 1, data from row 2)
 
-Use `feature_requests` from the context. Include only supported product gaps or asks.
-Columns:
+Use `feature_requests` from the context. Include only supported product gaps or asks. Columns:
 
-- A = Date
-- B = Airbyte Product Area (dropdown)
-- C = Task / Description
-- D = Priority
+- A = Reported Date
+- B = Ticket ID (Airbyte Internal) (blank unless known)
+- C = Airbyte Product Area (leave blank; see the dropdown table)
+- D = Task / Description
+- E = Requirement Priority (dropdown)
+- F = Requirement Scope (dropdown; blank unless known)
+- G = Flagged to Airbyte Product (dropdown; blank unless known)
+- H = Needed Delivery Date
+- I = Status (dropdown; new rows "Not Started")
+- J = Notes / Validation Steps, starting with `Product area: <area>.`
 
 #### Architecture Diagrams Sheet
 
@@ -400,6 +475,8 @@ architecture diagram from incomplete context.
 ### Step 4: Move to Prospect Folder (REQUIRED — every PoV sheet)
 
 Every PoV sheet MUST end up inside a prospect-specific subfolder under the canonical Drive target.
+If Step 1 used a Drive MCP `copy_file` into the subfolder, this step is only the verification in 4.6
+(a misplaced copy can be moved with the MCP's `update_file` and a new `parentId`).
 
 ```
 Configured customer target folder
@@ -479,7 +556,7 @@ the run happened, what inputs were available, and what still needs to be filled.
 ## Receipt
 - **Prospect data sources checked:** [list each source from `source_coverage` with available: true/false]
 - **Inputs used:** [what was actually pre-filled from the sources]
-- **Unresolved fields:** [what could not be filled and why]
+- **Unresolved fields:** [what could not be filled and why, including the plan's `warnings` and `placeholders_to_clear`]
 - **Drive move completed:** Yes / No (with subfolder path)
 - **Sheet title:** `Airbyte || [Prospect Name] - POV Success Criteria`
 
@@ -499,7 +576,7 @@ platform does not already require approval:
 - Query Salesforce via the configured `mcp__salesforce__run_soql_query` MCP (read-only SOQL).
 - Query Gong via the configured `mcp__gong__search_calls` and `gong://calls/{callId}/transcript` MCP resources.
 - Read local workspace transcripts.
-- Control Chrome to copy the configured Google Sheets template, paste data, and move the copy to the configured Drive folder.
+- Copy the configured Google Sheets template, write the plan, and place the copy in the configured Drive folder, through a configured Google Drive / Google Sheets MCP or by controlling Chrome.
 - Write to the system clipboard.
 - Create a Google Sheet and create/use a Drive folder.
 - Write a local Markdown receipt under the opportunity `outputs/pov-gsheet/` folder.
@@ -540,3 +617,4 @@ Neither requires external dependency skills, note-taking tools, or personal data
 - 2026-07-15 — Ported from external dependency skill to repository-native context loader; removed external databases and personal-path references.
 - 2026-07-15 — Added `.se-config.yaml` `pov_gsheet` block, preflight checks, and structured POV context output.
 - 2026-07-16 — Wired Salesforce and Gong MCP results through `pov_gsheet_bridge.py`; removed manual evidence-file preparation from the normal workflow; added existing-sheet detection and consent/permissions disclosure.
+- 2026-10-07 — Matched the real template: exact dropdown values (including trailing spaces) read from the template's data validation, the fixed row/column map for every tab, and the note that neither paste nor the Sheets API enforces strict dropdowns. The runner plan now emits per-tab `blocks` with A1 `range` + `values`; added the Google Drive / Google Sheets MCP path (copy into the prospect folder, `update_values` per block) ahead of the Chrome path. Verified by writing the plan into a fresh copy of the template and reading it back.
