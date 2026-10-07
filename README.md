@@ -31,6 +31,7 @@ Built by Gary Yang (Solutions Engineer, Airbyte). Designed to be team-shareable.
 | `coverage-handoff` | PTO coverage handoff — self-contained HTML page for a covering SE | "coverage handoff", "PTO handoff for X" |
 | `pov-gsheet` | Create and pre-fill a POV Success Criteria Google Sheet for a prospect | "POV sheet", "success criteria for X", "prep the POV" |
 | `worker-analysis` | Analyze, estimate, and optimize Airbyte Data Worker usage | "worker analysis", "how many workers", "capacity" |
+| `connector-builder-demo` | Plans a live Connector Builder demo: picks a stand-in API, maps the prospect's question to Builder primitives, writes the session doc + HTML walkthrough | "connector builder demo", "connector workshop", "custom connector demo for X" |
 
 Plus the shared reference (not a skill): **`_se-playbook.md`** — the SE-craft canon all skills read from. It now also contains a `Shared Skill Boilerplate` section (`Output format reference`, `Pre-flight source check`, `After Generating (saving skills)`) that individual `SKILL.md` files reference as `~/.claude/skills/_se-playbook.md` instead of duplicating.
 
@@ -89,6 +90,7 @@ objection-handler         ← when a concern surfaces
 internal-prep             ← AE syncs, forecasts, exec readouts
 pov-gsheet                ← create + pre-fill a POV Success Criteria Google Sheet
 worker-analysis           ← analyze data worker usage / capacity
+connector-builder-demo    ← plan + script a live Connector Builder demo
 
 next-move        ← run anytime: "what should I do next on X?"
 ```

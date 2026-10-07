@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<!--
+  Connector Builder screenshare walkthrough - TEMPLATE.
+  Replace every {{PLACEHOLDER}} and the example STEP/row content.
+  This is the doc you keep on a second monitor and paste from during the live session.
+  If a past walkthrough exists under {customers_dir}/*/outputs/connector-builder-demo/, mirror its level of click-by-click detail.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{PROSPECT}} - Connector Builder Walkthrough</title>
+<style>
+  :root{
+    --bg:#0f1115; --card:#171a21; --ink:#e8eaed; --muted:#9aa3af;
+    --accent:#615eff; --accent2:#22d3a6; --warn:#f5a623; --line:#262b35; --code:#0b0d12;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  header{padding:32px 40px;border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,#1a1d26,#0f1115)}
+  h1{margin:0 0 6px;font-size:26px}
+  .sub{color:var(--muted);font-size:15px}
+  main{max-width:980px;margin:0 auto;padding:28px 24px 80px}
+  section{background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:22px 24px;margin:18px 0}
+  h2{margin:0 0 4px;font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent2)}
+  h3{margin:6px 0 12px;font-size:20px}
+  .pill{display:inline-block;font-size:12px;padding:3px 10px;border-radius:999px;
+    background:rgba(97,94,255,.15);color:#b9b8ff;border:1px solid rgba(97,94,255,.4);margin-left:8px}
+  .live{background:rgba(34,211,166,.15);color:#7ef0cf;border-color:rgba(34,211,166,.4)}
+  .ref{background:rgba(245,166,35,.13);color:#ffd58a;border-color:rgba(245,166,35,.4)}
+  table{width:100%;border-collapse:collapse;margin:8px 0;font-size:14px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.05em}
+  code,.copy{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+  .copy{display:block;background:var(--code);border:1px solid var(--line);border-radius:8px;
+    padding:10px 12px;margin:8px 0;color:#cdd6f4;white-space:pre-wrap;word-break:break-word}
+  ol{padding-left:20px}ol li{margin:6px 0}
+  .money{border-left:4px solid var(--accent2);background:rgba(34,211,166,.06)}
+  .gotcha{border-left:4px solid var(--warn);background:rgba(245,166,35,.06)}
+  .ans{font-size:18px;color:#fff;border-left:4px solid var(--accent);padding-left:14px;margin:6px 0}
+  .muted{color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <h1>{{PROSPECT}} - Connector Builder Walkthrough</h1>
+  <div class="sub">{{DATE}} · stand-in API: <b>{{API}}</b> · fallback draft in workspace: <b>{{FALLBACK_DRAFT_NAME}}</b> · UI verified {{UI_VERIFIED_DATE}}</div>
+</header>
+<main>
+
+  <section>
+    <h2>Context</h2>
+    <h3>Their question</h3>
+    <p class="ans">{{CORE_QUESTION}}</p>
+    <p class="muted">We build against <b>{{API}}</b> because it isn't in the Airbyte catalog (authentic custom-connector story) and mirrors {{PROSPECT}}'s real API shape: {{API_SHAPE_SUMMARY}}.</p>
+    <h3>How {{API}} maps to their pattern</h3>
+    <table>
+      <tr><th>{{PROSPECT}} concept</th><th>{{API}} equivalent</th><th>Builder feature</th></tr>
+      <tr><td>{{THEIR_CONCEPT}}</td><td>{{API_CONCEPT}}</td><td>{{BUILDER_FEATURE}}</td></tr>
+    </table>
+  </section>
+
+  <section class="gotcha">
+    <h2>Before you start</h2>
+    <h3>Pre-flight (the stuff that burns you)</h3>
+    <ol>
+      <li><b>Secret toggle OFF</b> on the Inputs page before entering testing values (else silent 500 / "required property" on every test).</li>
+      <li><b>Paste Jinja, never type it</b> - brace auto-pair → TemplateSyntaxError. Fix in the YAML view.</li>
+      <li>Disable 1Password / password-manager extensions for the screenshare.</li>
+      <li>Fallback draft <b>{{FALLBACK_DRAFT_NAME}}</b> open in a second tab.</li>
+    </ol>
+    <p class="muted">Full list: references/ui-gotchas.md.</p>
+  </section>
+
+  <section>
+    <h2>Step 1</h2><h3>Create connector + first stream + auth</h3>
+    <ol>
+      <li>Builder → New custom connector → Start from scratch → <b>Skip and start manually</b>.</li>
+      <li>Rename connector (top-left chip) → <code>{{CONNECTOR_NAME}}</code>.</li>
+      <li>Name the stream; set the full API Endpoint URL:</li>
+    </ol>
+    <span class="copy">{{PARENT_URL}}</span>
+    <ol start="4">
+      <li>Authenticator → check → <b>{{AUTH_TYPE}}</b> → keep the default config reference (auto-creates the input).</li>
+      <li>Inputs → gear → <b>Secret OFF</b> → Save changes → enter testing value → Done → wait for "Draft saved".</li>
+    </ol>
+    <p class="muted">Talking point: open the Authenticator dropdown to show the full range of auth types Airbyte supports.</p>
+  </section>
+
+  <section>
+    <h2>Step 2</h2><h3>Parent stream - discovery + pagination <span class="pill live">live</span></h3>
+    <ol>
+      <li>Record Selector → Field Path: <code>{{RECORD_SELECTOR}}</code></li>
+      <li>Primary Key: <code>{{PRIMARY_KEY}}</code></li>
+      <li>Paginator: {{PAGINATOR_SUMMARY}}</li>
+      <li>Test.</li>
+    </ol>
+    <p class="muted">Expected (from rehearsal): {{PARENT_EXPECTED}}.</p>
+  </section>
+
+  <section class="money">
+    <h2>Step 3 - the headline</h2><h3>Child stream - {{CHILD_HEADLINE}} <span class="pill live">live</span></h3>
+    <ol>
+      <li>+ New stream → <b>Use an existing stream configuration</b> → copy from parent.</li>
+      <li>PASTE the URL (never type the braces):</li>
+    </ol>
+    <span class="copy">{{CHILD_URL}}</span>
+    <ol start="3">
+      <li>Partition Router → Parent Stream <code>{{PARENT_STREAM}}</code> / Parent Key <code>{{PARENT_KEY}}</code> / Current Parent Key Value Identifier <code>{{PARTITION_FIELD}}</code>.</li>
+      <li>Test → narrate the partition selector + the <b>Other Requests</b> panel (parent reads).</li>
+    </ol>
+    <h3>🎯 The money moment</h3>
+    <p>{{MONEY_MOMENT_SCRIPT}}</p>
+  </section>
+
+  <section class="ref">
+    <h2>Capability tour</h2><h3>Features the stand-in can't show <span class="pill ref">reference</span></h3>
+    <p>{{REFERENCE_FEATURES}} - walk the validated reference manifest ({{REFERENCE_MANIFEST}}).</p>
+  </section>
+
+  <section>
+    <h2>Close</h2><h3>Map back to {{PROSPECT}}'s real stack</h3>
+    <table>
+      <tr><th>What we built</th><th>What it proves for their stack</th></tr>
+      <tr><td>{{BUILT}}</td><td>{{PROVES}}</td></tr>
+    </table>
+    <p class="ans">{{ONE_SENTENCE_ANSWER}}</p>
+  </section>
+
+  <section>
+    <h2>After the session</h2>
+    <ol>
+      <li>Regenerate any demo token used.</li>
+      <li>Delete demo records created in the public sandbox.</li>
+      <li>Log next steps (POV doc, real-API rebuild) in the prospect folder + Salesforce.</li>
+      <li>Fold any new UI gotcha back into references/ui-gotchas.md.</li>
+    </ol>
+  </section>
+
+</main>
+</body>
+</html>
