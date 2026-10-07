@@ -843,6 +843,16 @@ _WORKER_ANALYSIS = SkillArchitecture(
     notes="Worker analysis is a specialized report with its own page architecture.",
 )
 
+_CONNECTOR_BUILDER_DEMO = SkillArchitecture(
+    skill="connector-builder-demo",
+    profile="Specialized output such as demo session doc",
+    top_summary_name="",
+    canonical_h2_order=[],
+    structured_exception=True,
+    source_coverage_required=False,
+    notes="Demo working-session doc (ends in Source Coverage) plus a self-contained HTML screenshare walkthrough.",
+)
+
 CANONICAL_ARCHITECTURE: dict[str, SkillArchitecture] = {
     arch.skill: arch
     for arch in [
@@ -865,6 +875,7 @@ CANONICAL_ARCHITECTURE: dict[str, SkillArchitecture] = {
         _FULL_QUAL,
         _POV_GSHEET,
         _WORKER_ANALYSIS,
+        _CONNECTOR_BUILDER_DEMO,
     ]
 }
 

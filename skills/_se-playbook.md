@@ -1,6 +1,6 @@
 # SE Playbook — Frameworks & Tactics
 
-This is the canonical reference for SE craft. All SE skills in `~/.claude/skills/` (prep-call, post-call, biz-qual, tech-qual, full-qual, poc-plan, deal-assessment, connector-feasibility, deployment-model-qual, follow-up-email, objection-handler, internal-prep, next-move, account-refresher, coverage-handoff, roi-business-case, mutual-close-plan, pov-gsheet, worker-analysis) reference this document. When a skill fires, it should read the relevant section here and apply the tactics.
+This is the canonical reference for SE craft. All SE skills in `~/.claude/skills/` (prep-call, post-call, biz-qual, tech-qual, full-qual, poc-plan, deal-assessment, connector-feasibility, deployment-model-qual, follow-up-email, objection-handler, internal-prep, next-move, account-refresher, coverage-handoff, roi-business-case, mutual-close-plan, pov-gsheet, worker-analysis, connector-builder-demo) reference this document. When a skill fires, it should read the relevant section here and apply the tactics.
 
 **Not a skill itself** — the leading underscore prevents auto-trigger. Read it on demand from other skills.
 
@@ -505,6 +505,7 @@ Per-skill canonical H2 order:
 | full-qual | *structured exception — no standalone canonical H2 order* | full-qual orchestrates biz-qual and tech-qual; it does not emit a standalone Markdown report. |
 | pov-gsheet | Receipt → Source Coverage | Sheet artifact with a lightweight receipt and source coverage; not a normal report. |
 | worker-analysis | *structured exception — no standalone canonical H2 order* | Worker analysis is a specialized report with its own page architecture. |
+| connector-builder-demo | *structured exception — no standalone canonical H2 order* | Demo working-session doc (ends in Source Coverage) plus a self-contained HTML screenshare walkthrough. |
 
 Legacy headings are preserved through the `aliases` map in `webapp/architecture.py`. Older outputs that use those headings remain openable and are not reclassified as corrupt; they are flagged as `is_legacy` and skip the strict Source-Coverage-must-be-last rule.
 

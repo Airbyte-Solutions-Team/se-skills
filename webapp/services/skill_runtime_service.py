@@ -66,6 +66,7 @@ SKILL_PRESENTATION: dict[str, dict[str, Any]] = {
     "coverage-handoff": {"label": "Coverage Handoff", "blurb": "PTO handoff for a covering SE", "tier": TIER_ANYTIME, "step": None, "order": 25},
     "pov-gsheet": {"label": "POV Google Sheet", "blurb": "Create and pre-fill a POV Success Criteria Google Sheet", "tier": TIER_ANYTIME, "step": None, "order": 26},
     "worker-analysis": {"label": "Worker Analysis", "blurb": "Analyze, estimate, and optimize Airbyte Data Worker usage", "tier": TIER_ANYTIME, "step": None, "order": 27},
+    "connector-builder-demo": {"label": "Connector Builder Demo", "blurb": "Plan and script a live custom-connector demo", "tier": TIER_ANYTIME, "step": None, "order": 28},
     # Router (unnumbered)
     "next-move": {"label": "Next Move", "blurb": "Not sure what to run? This inspects the deal and tells you", "tier": TIER_META, "step": None, "order": 30},
 }
