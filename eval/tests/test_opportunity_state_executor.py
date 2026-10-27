@@ -263,3 +263,69 @@ def test_generation_subprocess_disables_extended_thinking_by_default(tmp_path) -
     env = _executor(tmp_path).child_env()
     assert env is not None and env["MAX_THINKING_TOKENS"] == "0"
     assert _executor(tmp_path, max_thinking_tokens=None).child_env() is None
+
+
+def _invalid_candidate_json() -> str:
+    data = candidate().model_dump(mode="json")
+    claim = data["business_case"]["current_state"]["knowledge"]
+    claim["confirmation"] = "evidence_backed"
+    claim["evidence_refs"] = []
+    return json.dumps({"structured_output": data})
+
+
+def _sequenced_cli(tmp_path, outputs: list[str]) -> str:
+    """CLI stand-in that saves each stdin and prints the next canned stdout (last one repeats)."""
+    return (
+        "import sys, pathlib\n"
+        f"d = pathlib.Path({str(tmp_path)!r})\n"
+        "n = len(list(d.glob('stdin_*.json')))\n"
+        "(d / f'stdin_{n}.json').write_bytes(sys.stdin.buffer.read())\n"
+        f"outs = {outputs!r}\n"
+        "print(outs[min(n, len(outs) - 1)])\n"
+    )
+
+
+@pytest.mark.asyncio
+async def test_invalid_candidate_is_retried_once_with_evidence_free_rejection_reasons(tmp_path, monkeypatch) -> None:
+    executor = _executor(tmp_path)
+    _set_version_command(monkeypatch, executor)
+    valid = json.dumps({"structured_output": candidate().model_dump(mode="json")})
+    code = _sequenced_cli(tmp_path, [_invalid_candidate_json(), valid])
+    monkeypatch.setattr(executor, "command", lambda executable=None: [sys.executable, "-c", code])
+
+    result = await executor.execute(_request())
+
+    assert result.candidate == candidate()
+    first, second = (json.loads((tmp_path / f"stdin_{i}.json").read_bytes()) for i in (0, 1))
+    assert "previous_attempt_rejected" not in first
+    errors = second["previous_attempt_rejected"]["errors"]
+    assert any("business_case.current_state.knowledge" in e and "evidence reference" in e for e in errors)
+    assert "SYNTHETIC_SENTINEL" not in json.dumps(second["previous_attempt_rejected"])
+
+
+@pytest.mark.asyncio
+async def test_invalid_candidate_fails_after_max_attempts(tmp_path, monkeypatch) -> None:
+    executor = _executor(tmp_path)
+    _set_version_command(monkeypatch, executor)
+    code = _sequenced_cli(tmp_path, [_invalid_candidate_json()])
+    monkeypatch.setattr(executor, "command", lambda executable=None: [sys.executable, "-c", code])
+
+    with pytest.raises(CanonicalStateExecutionError) as exc:
+        await executor.execute(_request())
+
+    assert exc.value.code == "invalid_model_output"
+    assert len(list(tmp_path.glob("stdin_*.json"))) == 2
+
+
+@pytest.mark.asyncio
+async def test_non_validation_failures_are_not_retried(tmp_path, monkeypatch) -> None:
+    executor = _executor(tmp_path)
+    _set_version_command(monkeypatch, executor)
+    code = _sequenced_cli(tmp_path, ["x"]) + "raise SystemExit(3)\n"
+    monkeypatch.setattr(executor, "command", lambda executable=None: [sys.executable, "-c", code])
+
+    with pytest.raises(CanonicalStateExecutionError) as exc:
+        await executor.execute(_request())
+
+    assert exc.value.code == "runtime_failed"
+    assert len(list(tmp_path.glob("stdin_*.json"))) == 1

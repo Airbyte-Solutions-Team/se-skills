@@ -31,9 +31,12 @@ def _version_tuple(version: str) -> tuple[int, ...]:
 class CanonicalStateExecutionError(Exception):
     """A safe executor failure that never contains evidence or raw CLI output."""
 
-    def __init__(self, code: str, detail: str) -> None:
+    def __init__(self, code: str, detail: str, *, hints: list[str] | None = None) -> None:
         self.code = code
         self.detail = detail
+        # Evidence-free validation diagnostics (field path + rule message) that may be fed back to
+        # the model on a retry. Never contains model output values.
+        self.hints = hints or []
         super().__init__(detail)
 
 
@@ -101,7 +104,9 @@ class ClaudeCanonicalStateExecutor:
         max_version_stdout_bytes: int = 256,
         max_version_stderr_bytes: int = 1_024,
         max_thinking_tokens: int | None = 0,
+        max_attempts: int = 2,
     ) -> None:
+        self.max_attempts = max_attempts
         # The overview is schema-constrained extraction whose evidence refs are re-validated after
         # generation, so hidden extended thinking only adds latency: measured ~50% of output tokens
         # and ~2x wall time (287s vs 146s) for identical output. None keeps the CLI default.
@@ -163,7 +168,7 @@ class ClaudeCanonicalStateExecutor:
         ]
 
     @staticmethod
-    def _prompt(request: CanonicalStateExecutionRequest) -> bytes:
+    def _prompt(request: CanonicalStateExecutionRequest, rejected_errors: list[str] | None = None) -> bytes:
         is_update = request.base_state is not None
         payload = {
             "task": (
@@ -199,7 +204,10 @@ class ClaudeCanonicalStateExecutor:
                 "or conflicting state when evidence is absent, incomplete, or contradictory. A claim's value must "
                 "be null whenever its knowledge_state is unknown or not_applicable -- never fill in a guess, "
                 "placeholder, or explanatory sentence there; a value is required only for known, partial, or "
-                "conflicting states. Record concrete "
+                "conflicting states. A claim's confirmation and evidence_refs must agree: confirmation "
+                "evidence_backed requires at least one evidence ref; confirmation unknown requires an empty "
+                "evidence_refs list, so a claim that cites any evidence must use evidence_backed or inferred, "
+                "never unknown. Record concrete "
                 "missing_information for incomplete business-case areas and MEDDPICC dimensions, and record "
                 "suggested_discovery for every MEDDPICC gap."
             ),
@@ -219,6 +227,14 @@ class ClaudeCanonicalStateExecutor:
                 for item in request.transcripts
             ],
         }
+        if rejected_errors:
+            payload["previous_attempt_rejected"] = {
+                "errors": rejected_errors,
+                "instruction": (
+                    "Your previous response failed validation with the errors listed. Return the complete "
+                    "corrected object and fix every listed error."
+                ),
+            }
         if is_update:
             payload["base"] = {
                 "version_id": request.base_version_id,
@@ -384,8 +400,9 @@ class ClaudeCanonicalStateExecutor:
                 for e in exc.errors()
             ]
             logger.warning("Canonical-state candidate failed schema validation: %s", safe_errors)
+            hints = [f"{e['loc']}: {e['msg']}"[:300] for e in safe_errors[:20]]
             raise CanonicalStateExecutionError(
-                "invalid_model_output", "Claude returned an invalid canonical-state candidate."
+                "invalid_model_output", "Claude returned an invalid canonical-state candidate.", hints=hints
             ) from exc
         except (UnicodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
             logger.warning("Canonical-state candidate could not be parsed: %s: %s", type(exc).__name__, exc)
@@ -394,6 +411,26 @@ class ClaudeCanonicalStateExecutor:
             ) from exc
 
     async def execute(self, request: CanonicalStateExecutionRequest) -> CanonicalStateExecutionResult:
+        """Run the model, retrying once with the rejection reasons if it returns an invalid candidate.
+
+        Cross-field rules (e.g. evidence_backed claims must cite evidence) can't be expressed in the
+        JSON schema, so the model intermittently violates them (~1 in 3 runs observed). Only
+        ``invalid_model_output`` is retried; timeouts and runtime failures are not.
+        """
+        rejected_errors: list[str] | None = None
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                return await self._execute_once(request, rejected_errors)
+            except CanonicalStateExecutionError as exc:
+                if exc.code != "invalid_model_output" or attempt >= self.max_attempts:
+                    raise
+                logger.warning("Canonical-state output rejected (attempt %d/%d); retrying", attempt, self.max_attempts)
+                rejected_errors = exc.hints or None
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    async def _execute_once(
+        self, request: CanonicalStateExecutionRequest, rejected_errors: list[str] | None = None
+    ) -> CanonicalStateExecutionResult:
         temp_dir = Path(tempfile.mkdtemp(prefix="se-opportunity-state-"))
         proc: asyncio.subprocess.Process | None = None
         stdout_task: asyncio.Task[bytes] | None = None
@@ -415,7 +452,7 @@ class ClaudeCanonicalStateExecutor:
                 cwd=temp_dir,
                 subprocess_options=subprocess_options,
             )
-            stdin = self._prompt(request)
+            stdin = self._prompt(request, rejected_errors) if rejected_errors else self._prompt(request)
             if len(stdin) > self.max_stdin_bytes:
                 raise CanonicalStateExecutionError(
                     "input_too_large", "The selected evidence is too large for one overview creation."
