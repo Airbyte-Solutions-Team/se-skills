@@ -6,7 +6,7 @@ import pytest
 
 import pdf_render
 from eval.tests.test_opportunity_state_routes import _client
-from opportunity_export import build_markdown, export_filename, render_export
+from opportunity_export import export_filename, render_export
 from opportunity_print import render_print_html
 
 BASE = "/api/accounts/Acme/opportunities/synthetic-opportunity/overview"
@@ -46,7 +46,7 @@ def test_export_rejects_unknown_format(tmp_path) -> None:
     assert client.get(f"{BASE}/export?format=docx").status_code == 422
 
 
-def test_export_html_downloads_styled_page(tmp_path) -> None:
+def test_export_html_downloads_workspace_style_page(tmp_path) -> None:
     client, evidence_id = _client(tmp_path)
     _create_overview(client, evidence_id)
 
@@ -58,9 +58,12 @@ def test_export_html_downloads_styled_page(tmp_path) -> None:
         'attachment; filename="synthetic-opportunity-opportunity-brief-r1.html"'
     )
     page = response.text
-    for heading in ("Opportunity Brief", "Health Indicators", "MEDDPICC", "Stakeholders", "Evidence Used"):
-        assert heading in page
-    assert "Customer objective" in page
+    # Same document the PDF is printed from: workspace sections and class names.
+    for marker in ("workspace-hero", "Opportunity Brief", "Health indicators", "MEDDPICC",
+                   "Stakeholders", "Evidence and missing information", "overview-brief-grid",
+                   "Customer objective", "@media screen"):
+        assert marker in page
+    assert "<script" not in page and "https://" not in page  # self-contained, no external assets
     # Default format is HTML.
     assert client.get(f"{BASE}/export").headers["content-type"].startswith("text/html")
 
@@ -109,38 +112,27 @@ def test_export_pdf_reports_missing_chrome_as_503(tmp_path, monkeypatch) -> None
     assert "Chrome" in response.json()["detail"]
 
 
-def test_model_authored_text_cannot_inject_structure_or_markup(tmp_path) -> None:
+def test_model_authored_text_is_escaped(tmp_path) -> None:
     client, evidence_id = _client(tmp_path)
     _create_overview(client, evidence_id)
     version = _current_version(client)
-    hostile = "ok\n\n## Injected heading\n\n<script>alert(1)</script> ==hot== | a | b |\n> [!warning] x"
-    version.state.brief.customer_objective.value = hostile
+    version.state.brief.customer_objective.value = "<script>alert(1)</script> ==hot== | a | b |"
     version.state.recommended_actions[0].action = "<img src=x onerror=alert(1)> **bold**"
 
-    markdown_text = build_markdown(version, account={"name": "Acme"}, opportunity={"name": "Deal # 1"})
-    page = render_export(version, "html", account={"name": "Acme"}, opportunity={"name": "Deal # 1"})
+    page = render_export(version, "html", account={"name": "<i>Acme</i>"}, opportunity={"name": "<b>Deal</b>"})
 
-    assert "\n## Injected heading" not in markdown_text
-    assert "Injected heading" in page  # the words survive as plain text...
-    assert "<h2>Injected heading" not in page and ">Injected heading</h2>" not in page
     assert "<script>alert(1)</script>" not in page
     assert "<img src=x" not in page
-    assert "<mark>hot</mark>" not in page
-    assert 'class="admon' not in page
-    assert "<strong>bold</strong>" not in page
-
-    print_page = render_print_html(version, account={"name": "Acme"}, opportunity={"name": "<b>Deal</b>"})
-    assert "<script>alert(1)</script>" not in print_page
-    assert "<img src=x" not in print_page
-    assert "<b>Deal</b>" not in print_page and "&lt;b&gt;Deal&lt;/b&gt;" in print_page
+    assert "<b>Deal</b>" not in page and "&lt;b&gt;Deal&lt;/b&gt;" in page
+    assert "<i>Acme</i>" not in page
 
 
-def test_header_facts_and_fallbacks(tmp_path) -> None:
+def test_header_facts_and_evidence_names_only(tmp_path) -> None:
     client, evidence_id = _client(tmp_path)
     _create_overview(client, evidence_id)
     version = _current_version(client)
 
-    markdown_text = build_markdown(
+    page = render_print_html(
         version,
         account={"name": "Acme", "owner_name": "Pat SE"},
         opportunity={
@@ -149,15 +141,12 @@ def test_header_facts_and_fallbacks(tmp_path) -> None:
         },
     )
 
-    assert markdown_text.startswith("# Acme Expansion\n")
-    assert "**As of:** " in markdown_text
-    assert "3 · Technical Validation" in markdown_text
-    assert "$120,000" in markdown_text
-    assert "Target close 2026-12-01" in markdown_text
-    assert "Owner Pat SE" in markdown_text and "AE Sam AE" in markdown_text
-    assert "Overview revision 1" in markdown_text
+    assert "<h1>Acme Expansion</h1>" in page
+    for fact in ("3 · Technical Validation", "$120,000", "Target close 2026-12-01",
+                 "Owner Pat SE", "AE Sam AE", "Revision 1"):
+        assert fact in page
     # Evidence is listed by display name only -- never hashes.
-    assert version.evidence_manifest[0].sha256 not in markdown_text
+    assert version.evidence_manifest[0].sha256 not in page
 
 
 @pytest.mark.parametrize(

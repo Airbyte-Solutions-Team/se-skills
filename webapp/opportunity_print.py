@@ -1,4 +1,4 @@
-"""Print-ready HTML of the Opportunity workspace Overview, for the PDF export.
+"""Self-contained HTML of the Opportunity workspace Overview, for the HTML and PDF exports.
 
 Mirrors what the user sees in the workspace (`static/app.js` `renderOverview*`,
 `renderBusinessCase`, `renderMeddpicc`, `renderStakeholders`): same sections in the
@@ -161,6 +161,19 @@ p { margin: 0 0 8px; }
 .overview-evidence-row + .overview-evidence-row { border-top: 1px solid var(--line); }
 .overview-evidence-row small { color: var(--muted); margin-left: 6px; font-size: 10.5px; }
 .print-footnote { color: var(--muted); font-size: 10px; margin: 8px 0 0; }
+/* In a browser (HTML export): centred column on a soft backdrop, grids collapse on narrow screens.
+   Headless-Chrome PDF printing uses the print media type, so none of this affects the PDF. */
+@media screen {
+  body { background: #f3f5f9; padding: 28px 16px; font-size: 13px; }
+  .opp-workspace { max-width: 1040px; margin: 0 auto; }
+}
+@media screen and (max-width: 760px) {
+  .workspace-facts, .overview-health-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .overview-brief-grid, .overview-two-column, .overview-business-case-quad, .overview-stakeholder-grid { grid-template-columns: minmax(0, 1fr); }
+  .workspace-fact:nth-child(odd) { border-left: none; padding-left: 0; }
+  .workspace-panel-head { flex-direction: column; }
+  .workspace-panel-head .workspace-state { max-width: 100%; text-align: left; }
+}
 """
 
 
@@ -443,7 +456,7 @@ def _missing_and_evidence(version: OpportunityStateVersion) -> str:
 def render_print_html(
     version: OpportunityStateVersion, *, account: dict[str, Any], opportunity: dict[str, Any]
 ) -> str:
-    """A self-contained, print-styled HTML document of the workspace Overview."""
+    """A self-contained HTML document of the workspace Overview (screen and print styles)."""
     name = opportunity.get("name") or version.identity.opportunity_name
     sections = (
         _hero(version, account, opportunity), _brief(version), _health(version),
