@@ -7,6 +7,7 @@ import pytest
 import pdf_render
 from eval.tests.test_opportunity_state_routes import _client
 from opportunity_export import build_markdown, export_filename, render_export
+from opportunity_print import render_print_html
 
 BASE = "/api/accounts/Acme/opportunities/synthetic-opportunity/overview"
 
@@ -64,7 +65,7 @@ def test_export_html_downloads_styled_page(tmp_path) -> None:
     assert client.get(f"{BASE}/export").headers["content-type"].startswith("text/html")
 
 
-def test_export_pdf_flows_sections_and_sets_pdf_headers(tmp_path, monkeypatch) -> None:
+def test_export_pdf_mirrors_workspace_layout_and_sets_pdf_headers(tmp_path, monkeypatch) -> None:
     client, evidence_id = _client(tmp_path)
     _create_overview(client, evidence_id)
     seen: dict[str, str] = {}
@@ -80,9 +81,18 @@ def test_export_pdf_flows_sections_and_sets_pdf_headers(tmp_path, monkeypatch) -
     assert response.content == b"%PDF-fake"
     assert response.headers["content-type"] == "application/pdf"
     assert response.headers["content-disposition"].endswith('-r1.pdf"')
-    # Short Overview sections must not each force a new page.
-    assert "h2 { break-before: auto;" in seen["html"]
-    assert "Opportunity Brief" in seen["html"]
+    page = seen["html"]
+    # Same sections, in the same order, and with the workspace's own class names.
+    order = [
+        "workspace-hero", "Opportunity Brief", "Health indicators", "Top Risks",
+        "Recommended Actions", "Business Case", "MEDDPICC", "Stakeholders",
+        "Evidence and missing information",
+    ]
+    positions = [page.index(marker) for marker in order]
+    assert positions == sorted(positions)
+    for cls in ("overview-brief-grid", "overview-health-grid", "overview-two-column",
+                "overview-business-case-quad", "overview-meddpicc-dimensions"):
+        assert cls in page
 
 
 def test_export_pdf_reports_missing_chrome_as_503(tmp_path, monkeypatch) -> None:
@@ -118,6 +128,11 @@ def test_model_authored_text_cannot_inject_structure_or_markup(tmp_path) -> None
     assert "<mark>hot</mark>" not in page
     assert 'class="admon' not in page
     assert "<strong>bold</strong>" not in page
+
+    print_page = render_print_html(version, account={"name": "Acme"}, opportunity={"name": "<b>Deal</b>"})
+    assert "<script>alert(1)</script>" not in print_page
+    assert "<img src=x" not in print_page
+    assert "<b>Deal</b>" not in print_page and "&lt;b&gt;Deal&lt;/b&gt;" in print_page
 
 
 def test_header_facts_and_fallbacks(tmp_path) -> None:

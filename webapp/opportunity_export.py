@@ -1,10 +1,10 @@
 """Export the current canonical Opportunity Overview as a shareable HTML or PDF file.
 
-Pipeline: validated `OpportunityStateVersion` -> Markdown -> the shared exporters
-(`internal_html.render_internal_html` / `pdf_render.render_pdf`). Going through
-Markdown keeps one sanitizing render path for every export; model-authored
+HTML: validated `OpportunityStateVersion` -> Markdown -> `internal_html`. Model-authored
 strings are escaped here so they can never introduce structure (headings, tables,
 admonitions, raw HTML) into the document.
+PDF: validated state -> `opportunity_print.render_print_html` (mirrors the workspace
+layout) -> headless Chrome.
 
 Only the validated canonical state is exported -- conclusions, gaps, and evidence
 *names*. Transcript bodies, hashes, and filesystem paths are never part of the
@@ -18,6 +18,7 @@ from typing import Any, Literal
 
 import internal_html
 import pdf_render
+from opportunity_print import label, render_print_html
 from opportunity_state import Claim, KnowledgeState, OpportunityStateVersion
 
 ExportFormat = Literal["html", "pdf"]
@@ -44,12 +45,6 @@ _BUSINESS_CASE_ORDER = (
     ("negative_consequences", "Negative consequences"),
     ("positive_business_outcomes", "Positive business outcomes"),
 )
-
-
-def label(value: Any) -> str:
-    """'at_risk' / HealthStatus.AT_RISK -> 'At Risk' (mirrors the web UI's overviewLabel)."""
-    raw = getattr(value, "value", value)
-    return str(raw or "unknown").replace("_", " ").title()
 
 
 def _t(value: Any) -> str:
@@ -255,7 +250,8 @@ def render_export(
     opportunity: dict[str, Any],
 ) -> str | bytes:
     """HTML (str) or PDF (bytes). PDF raises RuntimeError when Chrome is unavailable."""
+    if fmt == "pdf":
+        # The PDF mirrors the workspace layout rather than the Markdown document.
+        return pdf_render.render_html_pdf(render_print_html(version, account=account, opportunity=opportunity))
     markdown_text = build_markdown(version, account=account, opportunity=opportunity)
-    if fmt == "html":
-        return internal_html.render_internal_html(markdown_text, customer=str(account.get("name") or ""))
-    return pdf_render.render_pdf(markdown_text, page_per_section=False)
+    return internal_html.render_internal_html(markdown_text, customer=str(account.get("name") or ""))
