@@ -137,13 +137,15 @@ def find_chrome() -> str | None:
     return None
 
 
-def markdown_to_html(md_text: str) -> str:
+def markdown_to_html(md_text: str, *, page_per_section: bool = True) -> str:
     """Convert skill-output markdown to a full print-styled HTML document string
-    (used by the PDF pipeline)."""
+    (used by the PDF pipeline). `page_per_section=False` lets short sections flow
+    onto the same page (e.g. the Opportunity Overview export)."""
     body = markdown_to_body_html(md_text)
+    flow = "" if page_per_section else "h2 { break-before: auto; margin-top: 14pt; }"
     return (
         '<!doctype html><html><head><meta charset="utf-8">'
-        f"<style>{_CSS}</style></head><body>{body}</body></html>"
+        f"<style>{_CSS}{flow}</style></head><body>{body}</body></html>"
     )
 
 
@@ -175,6 +177,6 @@ def render_html_pdf(html_doc: str) -> bytes:
             return f.read()
 
 
-def render_pdf(md_text: str) -> bytes:
+def render_pdf(md_text: str, *, page_per_section: bool = True) -> bytes:
     """Render markdown to PDF bytes. Raises RuntimeError if Chrome isn't found."""
-    return render_html_pdf(markdown_to_html(md_text))
+    return render_html_pdf(markdown_to_html(md_text, page_per_section=page_per_section))

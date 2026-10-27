@@ -2482,6 +2482,58 @@ function wireTechEvalTracker(root, account, slug, onUpdated) {
   });
 }
 
+// Download the current Overview revision as PDF/HTML. The server renders it from
+// the validated canonical state (same content as the workspace, no transcript text).
+function wireOverviewExport(account, slug) {
+  const wrap = document.getElementById("overview-export-menu");
+  if (!wrap) return;
+  const button = document.getElementById("overview-export-btn");
+  const menu = wrap.querySelector(".dropdown-menu");
+  const setOpen = (open) => {
+    menu.classList.toggle("hidden", !open);
+    button.setAttribute("aria-expanded", String(open));
+  };
+  button.onclick = (event) => {
+    event.stopPropagation();
+    setOpen(menu.classList.contains("hidden"));
+  };
+  const closeOnOutsideClick = () => {
+    // The workspace re-renders wholesale; drop this listener once our menu is gone.
+    if (!wrap.isConnected) document.removeEventListener("click", closeOnOutsideClick);
+    else setOpen(false);
+  };
+  document.addEventListener("click", closeOnOutsideClick);
+  wrap.querySelectorAll("[data-export-format]").forEach((item) => {
+    item.onclick = async (event) => {
+      event.stopPropagation();
+      const format = item.dataset.exportFormat;
+      setOpen(false);
+      button.disabled = true;
+      button.firstChild.textContent = "Exporting… ";
+      try {
+        const res = await fetch(`/api/accounts/${encodeURIComponent(account)}/opportunities/${encodeURIComponent(slug)}/overview/export?format=${format}`);
+        if (!res.ok) {
+          let msg = `${format.toUpperCase()} export failed.`;
+          try { msg = (await res.json()).detail || msg; } catch {}
+          throw new Error(msg);
+        }
+        const filename = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") || "")?.[1]
+          || `opportunity-brief.${format}`;
+        const url = URL.createObjectURL(await res.blob());
+        const a = document.createElement("a");
+        a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      } catch (error) {
+        showToast(error.message || "Export failed.", "warn");
+      } finally {
+        button.disabled = false;
+        button.firstChild.textContent = "Export ";
+      }
+    };
+  });
+}
+
 function renderOpportunityWorkspace(workspace) {
   const opportunity = workspace.opportunity || {};
   const account = workspace.account || {};
@@ -2502,6 +2554,12 @@ function renderOpportunityWorkspace(workspace) {
         <button class="ghost" id="handoff-btn" title="Generate a PTO coverage handoff for a covering SE">🤝 Coverage Handoff</button>
         ${!canonicalCreated && workspace.canonical_state?.status === "not_created" && workspace.canonical_state?.create_job?.status !== "running" ? '<button class="primary" id="create-overview-header">Create overview</button>' : ""}
         ${canonicalCreated ? `<button class="ghost" id="update-overview-btn"${workspace.canonical_state?.freshness?.update_active ? " disabled" : ""}>Update Overview</button>` : ""}
+        ${canonicalCreated ? `<span class="export-menu" id="overview-export-menu">
+          <button class="ghost" id="overview-export-btn" type="button" aria-haspopup="true" aria-expanded="false" title="Download the current Opportunity Overview">Export <span class="dl-caret">▾</span></button>
+          <div class="dropdown-menu hidden" role="menu">
+            <button class="menu-item" type="button" role="menuitem" data-export-format="pdf">Download PDF</button>
+            <button class="menu-item" type="button" role="menuitem" data-export-format="html">Download HTML</button>
+          </div></span>` : ""}
         <button class="${canonicalCreated ? "primary" : "ghost"}" id="invoke-btn">Generate</button>
       </div>
       <section class="workspace-hero">
@@ -2906,6 +2964,7 @@ async function pageOpportunity(account, slug, routeOppName) {
     void watchUpdate(workspace.canonical_state.update_job.job_id);
   }
   void loadOverviewHistory(account, slug);
+  wireOverviewExport(account, slug);
 
   const wireWorkspace = (root) => {
     wireOutItems(root, outputContext);

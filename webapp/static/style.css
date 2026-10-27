@@ -751,7 +751,7 @@ button:disabled { opacity: .5; cursor: default; }
 .validation-banner.validation-banner-unvalidated strong { color: var(--muted); }
 
 /* ⬇ download control + PDF/MD popup (reuses .dropdown-menu / .menu-item look) */
-.dl-menu { position: relative; display: inline-flex; }
+.dl-menu, .export-menu { position: relative; display: inline-flex; }
 .dl-btn {
   background: transparent; border: 1px solid var(--line); color: var(--muted);
   border-radius: 8px; padding: 4px 9px; font-size: 14px; line-height: 1; cursor: pointer;
@@ -766,16 +766,16 @@ button:disabled { opacity: .5; cursor: default; }
   padding: 6px 12px; font-size: 13px; color: var(--text);
   display: inline-flex; align-items: center; gap: 6px; line-height: 1;
 }
-.dl-btn-labeled .dl-caret { font-size: 11px; color: var(--muted); }
+.dl-btn-labeled .dl-caret, .export-menu .dl-caret { font-size: 11px; color: var(--muted); }
 .dl-menu-doc { vertical-align: middle; }
-.dl-menu .dropdown-menu {
+.dl-menu .dropdown-menu, .export-menu .dropdown-menu {
   position: absolute; right: 0; top: calc(100% + 4px);
   background-color: #1c2433; border: 1px solid #334155; border-radius: 10px; padding: 6px;
   min-width: 210px; z-index: 200; box-shadow: 0 16px 40px rgba(0,0,0,.6);
 }
-.dl-menu .dropdown-menu.hidden { display: none; }
-.dl-menu .menu-item { display: block; width: 100%; text-align: left; background: transparent; border: none; color: #f1f5f9; border-radius: 6px; padding: 9px 12px; font-size: 13px; cursor: pointer; white-space: nowrap; }
-.dl-menu .menu-item:hover { background: #273245; }
+.dl-menu .dropdown-menu.hidden, .export-menu .dropdown-menu.hidden { display: none; }
+.dl-menu .menu-item, .export-menu .menu-item { display: block; width: 100%; text-align: left; background: transparent; border: none; color: #f1f5f9; border-radius: 6px; padding: 9px 12px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.dl-menu .menu-item:hover, .export-menu .menu-item:hover { background: #273245; }
 .dl-menu .menu-item.danger { color: #f87171; }
 .dl-menu .menu-item.danger:hover { background: var(--danger); color: #fff; }
 .dl-menu .menu-item.danger.armed { background: var(--danger); color: #fff; font-weight: 600; }

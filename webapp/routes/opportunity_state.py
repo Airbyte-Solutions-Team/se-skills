@@ -1,9 +1,15 @@
 """Local-only routes for Create Overview canonical opportunity state."""
 from __future__ import annotations
 
+import asyncio
+from typing import Literal
+
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
+import security
+from opportunity_export import export_filename, render_export
 from services.account_service import AccountError
 from services.opportunity_state_create_service import (
     OpportunityStateCreateError,
@@ -99,6 +105,39 @@ async def api_current_opportunity_state(account: str, opp_slug: str, request: Re
         return inspected["current"]
     except (AccountError, OpportunityStateError) as exc:
         _raise_domain(exc)
+
+
+@router.get("/api/accounts/{account}/opportunities/{opp_slug}/overview/export")
+async def api_export_opportunity_overview(
+    account: str,
+    opp_slug: str,
+    request: Request,
+    format: Literal["html", "pdf"] = "html",
+) -> Response:
+    """Download the current Overview revision as a styled HTML page or a PDF."""
+    try:
+        identity = await _create_service(request).resolve_identity(account, opp_slug)
+        version = _state_service(request).read_current(identity["safe_account"], identity["safe_opp"])
+    except (AccountError, OpportunityStateError) as exc:
+        _raise_domain(exc)
+    if version is None:
+        raise HTTPException(404, "No canonical overview exists for this opportunity.")
+    try:
+        # Rendering PDFs shells out to headless Chrome; keep it off the event loop.
+        document = await asyncio.to_thread(
+            render_export, version, format,
+            account=identity["account"], opportunity=identity["opportunity"],
+        )
+    except RuntimeError as exc:
+        raise HTTPException(503, security.redact_sensitive(str(exc))) from exc
+    except Exception as exc:
+        raise HTTPException(500, security.redact_sensitive(f"Overview export failed: {exc}")) from exc
+    filename = export_filename(identity["safe_opp"], version.revision, format)
+    return Response(
+        content=document,
+        media_type="application/pdf" if format == "pdf" else "text/html; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/api/accounts/{account}/opportunities/{opp_slug}/overview/freshness")
