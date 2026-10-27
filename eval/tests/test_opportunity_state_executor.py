@@ -257,3 +257,9 @@ async def test_executor_rejects_oversized_input_after_safe_version_check(tmp_pat
     with pytest.raises(CanonicalStateExecutionError) as exc:
         await executor.execute(_request())
     assert exc.value.code == "input_too_large"
+
+
+def test_generation_subprocess_disables_extended_thinking_by_default(tmp_path) -> None:
+    env = _executor(tmp_path).child_env()
+    assert env is not None and env["MAX_THINKING_TOKENS"] == "0"
+    assert _executor(tmp_path, max_thinking_tokens=None).child_env() is None

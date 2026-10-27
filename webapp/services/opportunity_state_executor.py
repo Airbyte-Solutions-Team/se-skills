@@ -100,7 +100,12 @@ class ClaudeCanonicalStateExecutor:
         max_stderr_bytes: int = 65_536,
         max_version_stdout_bytes: int = 256,
         max_version_stderr_bytes: int = 1_024,
+        max_thinking_tokens: int | None = 0,
     ) -> None:
+        # The overview is schema-constrained extraction whose evidence refs are re-validated after
+        # generation, so hidden extended thinking only adds latency: measured ~50% of output tokens
+        # and ~2x wall time (287s vs 146s) for identical output. None keeps the CLI default.
+        self.max_thinking_tokens = max_thinking_tokens
         self.model = model
         self.executable = executable
         self.timeout_seconds = timeout_seconds
@@ -119,6 +124,12 @@ class ClaudeCanonicalStateExecutor:
     def version_command(self, executable: str | None = None) -> list[str]:
         """Return the evidence-free runtime preflight command."""
         return [executable or shutil.which(self.executable) or self.executable, "--version"]
+
+    def child_env(self) -> dict[str, str] | None:
+        """Environment for the generation subprocess (None inherits the parent's unchanged)."""
+        if self.max_thinking_tokens is None:
+            return None
+        return {**os.environ, "MAX_THINKING_TOKENS": str(self.max_thinking_tokens)}
 
     def command(self, executable: str | None = None) -> list[str]:
         """Return the command contract audited against Claude Code 2.1.272+, without any evidence."""
@@ -413,6 +424,7 @@ class ClaudeCanonicalStateExecutor:
                 proc = await asyncio.create_subprocess_exec(
                     *self.command(executable),
                     cwd=str(temp_dir),
+                    env=self.child_env(),
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,

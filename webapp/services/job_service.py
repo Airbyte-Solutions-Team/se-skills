@@ -20,7 +20,9 @@ import security
 logger = logging.getLogger(__name__)
 
 _PERSISTENCE_WARNING = "This job will not survive a server restart because state could not be saved."
-_RUN_TIMEOUT_SECONDS = 600
+# Skill runs are multi-turn agent loops; observed medians are 330-490s with a tail past 600s
+# (full-qual/prep-call/post-call), so 600s clipped ~25-50% of runs that would have finished.
+_RUN_TIMEOUT_SECONDS = 1200
 
 
 class ManagedJobError(Exception):
@@ -300,7 +302,7 @@ class JobService:
                 status="error",
                 ok=False,
                 stdout="",
-                stderr=security.redact_sensitive("Skill run timed out after 10 minutes."),
+                stderr=security.redact_sensitive(f"Skill run timed out after {_RUN_TIMEOUT_SECONDS // 60} minutes."),
                 finished_at=datetime.now(timezone.utc).timestamp(),
             )
         except Exception as e:  # noqa: BLE001 — surface any launch failure to the UI
