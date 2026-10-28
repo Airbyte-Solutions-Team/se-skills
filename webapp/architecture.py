@@ -214,6 +214,7 @@ _PREP_CALL = SkillArchitecture(
             "why-airbyte",
             "prior-call-context",
             "open-threads-from-prior-calls",
+            "connector-check",
         ],
         "call-strategy": [
             "point-of-view-to-test",

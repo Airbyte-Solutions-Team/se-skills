@@ -53,6 +53,18 @@ If any of these are unclear from the user's input, ask before generating (one ba
 
 If the user just says "prep for Acme" with no context, ask. Don't guess at exec-readout meeting type when the default is tech discovery.
 
+### Connector check (registry-grounded — only when connectors are named)
+
+If the AE call, notes, or Salesforce name specific systems the customer wants to sync (e.g. "GitHub", "Postgres"), resolve each one against the connector registry **before** writing the prep — never answer "do we have it?" from memory. Skip this step entirely if no specific systems are named; don't invent a connector list.
+
+1. **Cache first.** Read `{airbyte_repos_dir}/{reference_data.registry.cache_dir}/oss_registry.json` and `cloud_registry.json` (default `~/.se-skills/02-repos/registry/`; paths per playbook → Workspace Paths and "Product & Connector Reference Data"). If a file is missing or unreadable, make **one** live fetch from `reference_data.registry.oss_url` / `cloud_url` and save it to the cache dir. Only if the cache is missing **and** the fetch fails, mark the connector rows **unverified** (and say why in Source Coverage) — never fall back to memory silently. A cache older than ~7 days is usable but must be flagged with its date.
+2. **Match** each system by `dockerRepository` suffix (`source-github`, `source-postgres`; `destination-…` for destinations), falling back to a case-insensitive `name` match. Check the `sources` and `destinations` lists. Registry entries expose everything needed: `dockerImageTag`, `supportLevel`, `releaseStage`, `sourceType`, and `documentationUrl`.
+3. **Cloud vs OSS-only:** present in `oss_registry` but absent from `cloud_registry` = self-managed only; flag it, since it bears on the deployment conversation.
+4. **Not in the registry ≠ doesn't exist.** Enterprise connectors (Oracle, NetSuite, SAP HANA, ServiceNow, SharePoint, Workday, DB2) are not in the public registry — say "not in the public registry; may be an enterprise connector — confirm via `connector-feasibility`." If it's genuinely absent (e.g. Backstage has no Airbyte connector), say so plainly and name the nearest path as a suggestion (e.g. Backstage's backing Postgres database, or the Connector Builder) — never imply a connector exists.
+5. **Registry proves availability, not fit.** It doesn't confirm the objects, sync modes, volume, or auth the customer needs. Hand fit questions to `connector-feasibility`.
+
+Emit the result as a `### Connector Check` H3 under `## Account Context` (format in the template below), and add the registry cache date to Source Coverage.
+
 ### Research scope
 
 Web search is **conditional**, not automatic:
@@ -83,7 +95,7 @@ If user signals brief mode (`--brief`, `quick prep`, `1-pager`, `short version`)
 >
 > **H3 subtopics (when used):**
 > - under `Meeting Snapshot`: Date, Time, Duration, Primary Contact, Attendees, Call Objective, Key Unknown
-> - under `Account Context`: Company Snapshot, Why Airbyte, Prior Call Context, Open Threads From Prior Calls
+> - under `Account Context`: Company Snapshot, Why Airbyte, Prior Call Context, Open Threads From Prior Calls, Connector Check
 > - under `Call Strategy`: Point of View to Test, Suggested Opener
 > - under `Discovery Plan`: Must-Ask Questions, Implication-Depth Questions, Persona-Specific Questions
 > - under `Agenda`: Suggested Agenda (30 min)
@@ -150,6 +162,15 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 - Last stated next-step: [what was committed]
 - Topics that went quiet since: [anything from earlier calls that stopped being discussed]
 - Walking-it-back signals to address: [if any stakeholder has been softening commitment]
+
+### Connector Check
+*Only when the AE call/notes/SFDC name specific systems — omit the whole H3 otherwise. Resolved from the cached connector registry per "Connector check" above, never from memory.*
+
+| Customer system | Airbyte connector | Cloud / OSS-only | Support · stage | Version | Docs |
+|---|---|---|---|---|---|
+| [as named, with source tag e.g. `[per AE call]`] | `source-…` / *no connector — [nearest path]* / *unverified — [reason]* | [Cloud + OSS / OSS-only / not in public registry] | [certified · GA] | [x.y.z] | [documentationUrl link] |
+
+*Availability only — fit (objects, sync modes, volume, auth) is not confirmed; run `connector-feasibility` for that.*
 
 ## Call Strategy
 
@@ -386,6 +407,7 @@ Include a final Source Coverage section of the output stating:
 - Local notes consulted: file names
 - Memory: file names
 - Web research: queries run
+- Connector registry (when a Connector Check was produced): cache file + date, or "unverified — <reason>"
 
 Per `_se-playbook.md` "Source Coverage Transparency" rule.
 
@@ -396,6 +418,7 @@ Read `config_file` (per playbook → Workspace Paths) to populate the `[SE name]
 
 ## Changelog
 
+- **2026-10-28** — Added registry-grounded Connector Check: when the AE call names specific systems, resolve them against the cached connector registry (cache first, one live fetch if missing, "unverified" only if both fail) and emit a `### Connector Check` table under Account Context — connector, Cloud/OSS-only, support level · stage, version, and the connector's `documentationUrl`. Availability only; fit stays with `connector-feasibility`.
 - **2026-10-28** — Gong search method specified: resolve email domain → `search_calls_by_account` → `customerName` variants; cold-prep only after all fail, with the tried domains/names listed in Source Coverage (a name-only search missed a call titled "Artic Wolf" with CRM account `arcticwolf.com`). Auto-save folder is now `outputs/prep-call/` (skill id); legacy `outputs/call-prep/` still recognized by the webapp.
 - **2026-09-04** — Fact-vs-assumption hardening pass (no structural change — canonical sections, order, and save behavior are unchanged): Watch-Outs' competitor line now requires a cited source or "No competitor named — not identified" instead of inviting a guess; "Why Airbyte" is explicitly labeled hypotheses to validate, not the customer's stated position; Implication-Depth Questions' cost/sizing figure is now gated on a sourced input (else "not yet quantified; establish on the call") instead of always producing a number; Must-Ask Questions now asks for 3-5 prioritized questions over exhaustive lists, phrased as neutral asks rather than conclusions wrapped in questions. Added 4 new Style-section rules pointing at `_se-playbook.md` → "Evidence thresholds."
 - **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.

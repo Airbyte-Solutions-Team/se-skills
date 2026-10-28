@@ -2,10 +2,12 @@
 
 A running record of what's been built/changed on the Solutions Team Hub web app, so work can be picked back up after a context reset. Code is all committed + pushed (origin = `Airbyte-Solutions-Team/se-skills`). Feature design lives in `LIVE-TRANSCRIBE.md`; setup in `README.md`.
 
-_Last updated: October 28, 2026 — branch `main` (from `cd402b8`).
+_Last updated: October 28, 2026 — branch `main` (from `fbaeaab`).
 
 
 ## Built this session (newest first — see `git log`)
+
+- **prep-call: registry-grounded Connector Check (October 28).** When the AE call/notes/SFDC name specific systems (e.g. GitHub, Postgres), `skills/prep-call/SKILL.md` now resolves them against the cached connector registry (`~/.se-skills/02-repos/registry/{oss,cloud}_registry.json`) instead of answering from memory, and emits a `### Connector Check` table under Account Context: connector, Cloud vs OSS-only, support level · stage, version, and the registry's `documentationUrl` link. Cache first; one live fetch if the cache is missing; "unverified" only if both fail; cache >7 days is flagged. Not-in-registry is not treated as non-existent (enterprise connectors), and availability is explicitly separated from fit (hand-off to `connector-feasibility`). Written self-contained so it can be lifted into post-call. No webapp code change.
 
 - **prep-call: Gong search by domain + "no output saved" false warning (October 28).** An Arctic Wolf prep ran in cold-prep mode and the UI reported "finished, but no output was saved". Two causes. (1) The skill searched Gong by company name only; the call was titled "Airbyte x Artic Wolf Intro" with CRM account `arcticwolf.com`, so `customerName: "Arctic Wolf"` returned 0 while `search_calls_by_account` on `arcticwolf.com` (or `customerName: "arcticwolf"`) found it. `skills/prep-call/SKILL.md` now specifies the search order: resolve domain, `search_calls_by_account`, `customerName` variants, and only then declare cold-prep, listing the tried domains/names in Source Coverage. (2) `OutputService.has_output_since` only checked `outputs/call-prep/`, but the run saved to `outputs/prep-call/`; it now checks both (`_SKILL_OUTPUT_FOLDERS`), also for the output sidecar. The skill's save path, `next-move`, and the playbook now name `prep-call/` as canonical with `call-prep/` as a legacy alias. New tests in `eval/tests/test_output_service.py`. Not changed: `orchestrator._output_dir` still reads only `outputs/<skill-id>/`, so legacy `call-prep/` files aren't seen by prerequisite checks.
 
