@@ -242,7 +242,7 @@ Skip any source and the consuming skills fall back and report it in Source Cover
 Paths resolve from `workspace_root` (default `~/.se-skills`; see `_se-playbook.md` → "Workspace Paths"):
 ```
 {customers_dir}/<Customer>/
-├── outputs/<skill-name>/      ← auto-saved skill outputs (call-prep/, biz-qual/, etc.)
+├── outputs/<skill-name>/      ← auto-saved skill outputs (prep-call/, biz-qual/, etc.)
 ├── raw/                       ← manual notes, technical docs, AE summaries
 └── (transcripts in {transcripts_dir})
 ```

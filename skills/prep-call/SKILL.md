@@ -32,6 +32,17 @@ Default behavior:
 - **If empty: extend to last 14 days** — covers the "scheduling delay" case
 - **If still empty: declare cold-prep mode explicitly** in the output ("Checked Gong for 14 days, no AE call found — proceeding with cold prep")
 
+### How to search Gong (do NOT rely on the company name alone)
+
+Gong titles are typed by hand and CRM account names are often the bare domain (e.g. the title "Airbyte x **Artic** Wolf Intro" with CRM account `arcticwolf.com`). A `customerName: "Arctic Wolf"` search returns **zero** calls for that call — which previously caused a false cold-prep declaration. Search in this order, stopping at the first hit:
+
+1. **Resolve the email domain(s)** from Salesforce (Account Website / contact emails), local transcripts/notes, or the user's input. If unknown, derive candidates from the account name (e.g. `arcticwolf.com`).
+2. **`search_calls_by_account`** with those `domains` (and `matchCrmAccount: true`) over the lookback window. This matches external participants' email domains, so it is immune to title typos.
+3. **`search_calls` with `customerName`** using variants: the name with no spaces/hyphens (`arcticwolf`), the domain root, and the name as typed. Substring match covers CRM account, email domain, and title.
+4. **Only if all of the above return nothing** declare cold-prep mode — and list the exact domains/name variants tried in Source Coverage so the SE can spot a bad guess.
+
+If a Gong call is found, read the full transcript before generating, and treat it as the primary source (per Default behavior above). Never state "zero calls found" based on a single name-only query.
+
 ### Before generating: clarify
 
 If any of these are unclear from the user's input, ask before generating (one batch of questions, not one-at-a-time):
@@ -362,8 +373,10 @@ Don't end prep with "follow up next week." Write the specific next-step you'll p
 ### Auto-save path
 Per `~/.claude/skills/_se-playbook.md` → Shared Skill Boilerplate → After Generating (saving skills), save the prep doc automatically to:
 ```
-{customers_dir}/<Customer>/outputs/call-prep/call-prep-<YYYY-MM-DD>-<Descriptor>.md
+{customers_dir}/<Customer>/opportunities/<opp-slug>/outputs/prep-call/call-prep-<YYYY-MM-DD>-<Descriptor>.md
 ```
+
+(Use `{customers_dir}/<Customer>/outputs/prep-call/` when there is no opportunity folder.) The folder is `prep-call/` — the skill id. The legacy `call-prep/` folder is still read by the webapp and `next-move`, but new files go to `prep-call/`. The filename keeps the `call-prep-` prefix.
 
 Filename example: `call-prep-2026-05-28-Tech-Discovery.md`.
 
@@ -383,6 +396,7 @@ Read `config_file` (per playbook → Workspace Paths) to populate the `[SE name]
 
 ## Changelog
 
+- **2026-10-28** — Gong search method specified: resolve email domain → `search_calls_by_account` → `customerName` variants; cold-prep only after all fail, with the tried domains/names listed in Source Coverage (a name-only search missed a call titled "Artic Wolf" with CRM account `arcticwolf.com`). Auto-save folder is now `outputs/prep-call/` (skill id); legacy `outputs/call-prep/` still recognized by the webapp.
 - **2026-09-04** — Fact-vs-assumption hardening pass (no structural change — canonical sections, order, and save behavior are unchanged): Watch-Outs' competitor line now requires a cited source or "No competitor named — not identified" instead of inviting a guess; "Why Airbyte" is explicitly labeled hypotheses to validate, not the customer's stated position; Implication-Depth Questions' cost/sizing figure is now gated on a sourced input (else "not yet quantified; establish on the call") instead of always producing a number; Must-Ask Questions now asks for 3-5 prioritized questions over exhaustive lists, phrased as neutral asks rather than conclusions wrapped in questions. Added 4 new Style-section rules pointing at `_se-playbook.md` → "Evidence thresholds."
 - **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
 - **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE" (reads identity from `.se-config.yaml`).

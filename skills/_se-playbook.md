@@ -389,7 +389,7 @@ All customer-specific outputs are saved under (paths resolved per "Workspace Pat
 ```
 
 Standard subfolders (created on first save):
-- `call-prep/` — prep-call outputs
+- `prep-call/` — prep-call outputs (legacy folder `call-prep/` is still read)
 - `post-call/` — post-call summaries
 - `biz-qual/` — MEDDPICC scorecards
 - `tech-qual/` — technical qualification

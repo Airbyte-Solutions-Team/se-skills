@@ -259,16 +259,44 @@ def test_has_output_since_true_for_fresh_file(tmp_path: Path) -> None:
 
 
 def test_has_output_since_true_for_prep_call_legacy_folder(tmp_path: Path) -> None:
-    """`prep-call` saves under `outputs/call-prep/`, not `outputs/prep-call/`,
-    per _se-playbook.md's documented standard subfolders (predates the skill's
-    rename from `call-prep` to `prep-call`). Without the folder-name mapping,
-    this always reports False and the UI falsely warns "no output was saved"
-    even though the skill saved a file."""
+    """Older `prep-call` runs saved under `outputs/call-prep/` (the pre-rename
+    folder name, still in the playbook's standard subfolders). It must still
+    count, or the UI falsely warns "no output was saved"."""
     svc = _svc(tmp_path)
     out_dir = tmp_path / "Acme" / "opportunities" / "op1" / "outputs" / "call-prep"
     out_dir.mkdir(parents=True)
     since = 0.0
     (out_dir / "call-prep-2026-09-04-Tech-Discovery.md").write_text("new", encoding="utf-8")
+    assert svc.has_output_since("Acme", "op1", "prep-call", since) is True
+
+
+def test_has_output_since_true_for_prep_call_canonical_folder(tmp_path: Path) -> None:
+    """Regression: a run that saved to `outputs/prep-call/` (the skill id) was
+    reported as "finished, but no output was saved" because only `call-prep/`
+    was checked."""
+    svc = _svc(tmp_path)
+    out_dir = tmp_path / "Acme" / "opportunities" / "op1" / "outputs" / "prep-call"
+    out_dir.mkdir(parents=True)
+    (out_dir / "call-prep-2026-10-28-Tech-Discovery.md").write_text("new", encoding="utf-8")
+    assert svc.has_output_since("Acme", "op1", "prep-call", 0.0) is True
+
+
+def test_has_output_since_prep_call_ignores_stale_file_in_other_folder(tmp_path: Path) -> None:
+    """A stale file in one prep-call folder doesn't mask or fake a fresh run."""
+    import os
+    svc = _svc(tmp_path)
+    outputs = tmp_path / "Acme" / "opportunities" / "op1" / "outputs"
+    stale_dir = outputs / "call-prep"
+    stale_dir.mkdir(parents=True)
+    stale = stale_dir / "call-prep-2026-01-01-Old.md"
+    stale.write_text("old", encoding="utf-8")
+    old_time = stale.stat().st_mtime - 3600
+    os.utime(stale, (old_time, old_time))
+    since = stale.stat().st_mtime + 60
+    assert svc.has_output_since("Acme", "op1", "prep-call", since) is False
+    fresh_dir = outputs / "prep-call"
+    fresh_dir.mkdir()
+    (fresh_dir / "call-prep-2026-10-28-Tech-Discovery.md").write_text("new", encoding="utf-8")
     assert svc.has_output_since("Acme", "op1", "prep-call", since) is True
 
 

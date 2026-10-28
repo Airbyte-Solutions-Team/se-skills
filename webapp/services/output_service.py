@@ -31,12 +31,12 @@ from .path_utils import resolve_within
 
 logger = logging.getLogger(__name__)
 
-# Skills whose on-disk outputs/ subfolder name doesn't match the skill id used
-# elsewhere in the webapp (job.skill, skill_runtime_service catalog, etc.).
-# `prep-call` saves under `outputs/call-prep/` per _se-playbook.md's documented
-# standard subfolders — kept for backward compatibility with existing customer
-# files predating the skill's rename from `call-prep` to `prep-call`.
-_SKILL_OUTPUT_FOLDER = {"prep-call": "call-prep"}
+# Skills that may save under more than one outputs/ subfolder name. `prep-call`
+# is canonically `outputs/prep-call/` (the skill id), but runs have also written
+# to `outputs/call-prep/` (its pre-rename name, still in the playbook's standard
+# subfolders and in existing customer files). Every listed folder is checked so
+# a run is never reported as "no output saved" because of the folder name.
+_SKILL_OUTPUT_FOLDERS = {"prep-call": ("prep-call", "call-prep")}
 
 
 class OutputError(Exception):
@@ -650,11 +650,12 @@ class OutputService:
         d.mkdir(parents=True, exist_ok=True)
         return d
 
-    def _output_dir(self, account: str, opp_slug: str | None, skill: str) -> Path | None:
+    def _output_dirs(self, account: str, opp_slug: str | None, skill: str) -> list[Path] | None:
+        """Existing-or-not output dirs for `skill`, or None without opportunity context."""
         if not opp_slug:
             return None
-        folder = _SKILL_OUTPUT_FOLDER.get(skill, skill)
-        return self.customers_dir / account / "opportunities" / opp_slug / "outputs" / folder
+        outputs = self.customers_dir / account / "opportunities" / opp_slug / "outputs"
+        return [outputs / folder for folder in _SKILL_OUTPUT_FOLDERS.get(skill, (skill,))]
 
     def has_output_since(
         self, account: str, opp_slug: str | None, skill: str, since_ts: float
@@ -667,17 +668,18 @@ class OutputService:
         Returns `None` when there's no opportunity context to scope the check to (the
         run isn't checkable this way), so callers can fall back to legacy behavior.
         """
-        out_dir = self._output_dir(account, opp_slug, skill)
-        if out_dir is None:
+        out_dirs = self._output_dirs(account, opp_slug, skill)
+        if out_dirs is None:
             return None
-        if not out_dir.exists():
-            return False
-        for f in (*out_dir.glob("*.md"), *out_dir.glob("*.html")):
-            try:
-                if f.is_file() and f.stat().st_mtime >= since_ts:
-                    return True
-            except OSError:
+        for out_dir in out_dirs:
+            if not out_dir.exists():
                 continue
+            for f in (*out_dir.glob("*.md"), *out_dir.glob("*.html")):
+                try:
+                    if f.is_file() and f.stat().st_mtime >= since_ts:
+                        return True
+                except OSError:
+                    continue
         return False
 
     @staticmethod
@@ -687,10 +689,8 @@ class OutputService:
 
     def _write_output_sidecar(self, account: str, opp_slug: str | None, skill: str) -> None:
         """Parse the most recent Markdown output for this run and write its `.json` sidecar."""
-        out_dir = self._output_dir(account, opp_slug, skill)
-        if not out_dir or not out_dir.exists():
-            return
-        md_files = [f for f in out_dir.glob("*.md") if f.is_file()]
+        out_dirs = self._output_dirs(account, opp_slug, skill) or []
+        md_files = [f for d in out_dirs if d.exists() for f in d.glob("*.md") if f.is_file()]
         if not md_files:
             return
         newest = max(md_files, key=lambda p: p.stat().st_mtime)

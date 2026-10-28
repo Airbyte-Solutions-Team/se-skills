@@ -49,7 +49,7 @@ Check the customer's `outputs/` folder (`{customers_dir}/<Customer>/outputs/<ski
 - `outputs/poc-plan/poc-plan-*.md` — POC scoped?
 - `outputs/deal-assessment/deal-assessment-*.md` — recent honest read on health?
 - `outputs/post-call/post-call-*.md` files — post-call digests
-- `outputs/call-prep/call-prep-*.md` files — call prep docs
+- `outputs/prep-call/call-prep-*.md` files (legacy: `outputs/call-prep/`) — call prep docs
 - `outputs/emails/` — sent communications
 - `raw/` — any manual notes
 
