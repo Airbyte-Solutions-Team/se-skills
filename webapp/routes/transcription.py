@@ -35,6 +35,15 @@ class AskLive(BaseModel):
     prior_answer: str | None = Field(default=None, max_length=8_000)
 
 
+class ImportTranscript(BaseModel):
+    """Manual upload/paste: the last-resort transcript source (Gong → Granola → upload)."""
+
+    account: str = Field(max_length=120)
+    text: str = Field(max_length=2_000_000)   # service enforces the tighter, friendlier limit
+    call_date: str | None = Field(default=None, max_length=10)   # YYYY-MM-DD; defaults to today
+    source_filename: str | None = Field(default=None, max_length=200)
+
+
 def _get_transcription_service(request: Request) -> TranscriptionService:
     return request.app.state.transcription_service
 
@@ -90,6 +99,20 @@ def api_transcribe_active(request: Request, account: str, opp_slug: str | None =
 def api_list_transcripts(request: Request, account: str):
     """List saved transcripts for this account, newest first."""
     return _get_transcription_service(request).list_transcripts(account=account)
+
+
+@router.post("/api/transcripts/import")
+def api_import_transcript(body: ImportTranscript, request: Request):
+    """Save an uploaded or pasted transcript to `_transcripts/` for this account."""
+    try:
+        return _get_transcription_service(request).import_transcript(
+            account=body.account,
+            text=body.text,
+            call_date=body.call_date,
+            source_filename=body.source_filename,
+        )
+    except TranscriptionError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
 
 
 @router.get("/api/transcripts/{name}")

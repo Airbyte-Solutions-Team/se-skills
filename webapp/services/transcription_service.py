@@ -334,6 +334,20 @@ class LiveSession:
         )
 
 
+MAX_IMPORT_CHARS = 1_500_000  # ~1.5 MB of text; a 2h call is typically well under 200k
+
+
+def _plain_text_from_captions(text: str) -> str:
+    """Strip WebVTT/SRT scaffolding (header, cue numbers, timing lines) to plain dialogue."""
+    kept: list[str] = []
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line or line.upper().startswith("WEBVTT") or "-->" in line or line.isdigit():
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
 def _parse_saved_transcript(text: str) -> dict[str, Any]:
     """Parse a saved transcript file back into segments and speaker labels.
 
@@ -774,6 +788,50 @@ class TranscriptionService:
                 pass
         items.sort(key=lambda x: (x["name"], x["mtime"]), reverse=True)
         return {"transcripts": items}
+
+    def import_transcript(
+        self,
+        account: str,
+        text: str,
+        call_date: str | None = None,
+        source_filename: str | None = None,
+    ) -> dict[str, Any]:
+        """Save an uploaded/pasted transcript as `_transcripts/<Customer>-MM.DD.YY.txt`.
+
+        The manual-upload source of last resort (Gong → Granola → upload): used when a
+        call was never recorded in Gong or Granola, or those are unavailable. Same
+        filename convention as live transcription, so skills treat it as a local
+        transcript. A leading `# Source: manual upload` header records provenance and
+        is skipped by `_parse_saved_transcript`.
+        """
+        cust = self.titlecase(self.safe_name(account))
+        if source_filename and source_filename.lower().endswith((".vtt", ".srt")):
+            text = _plain_text_from_captions(text)
+        body = (text or "").strip()
+        if not body:
+            raise TranscriptionError(400, "Transcript is empty")
+        if len(body) > MAX_IMPORT_CHARS:
+            raise TranscriptionError(413, f"Transcript is too large (limit {MAX_IMPORT_CHARS:,} characters)")
+        if call_date:
+            try:
+                when = datetime.strptime(call_date, "%Y-%m-%d")
+            except ValueError as exc:
+                raise TranscriptionError(400, "Call date must be YYYY-MM-DD") from exc
+        else:
+            when = datetime.now()
+        transcripts_dir = self.customers_dir / "_transcripts"
+        transcripts_dir.mkdir(parents=True, exist_ok=True)
+        base = f"{cust}-{when.strftime('%m.%d.%y')}"
+        path = transcripts_dir / f"{base}.txt"
+        n = 2
+        while path.exists():
+            path = transcripts_dir / f"{base}-v{n}.txt"
+            n += 1
+        # Header values come from the client: keep them to one printable line.
+        label = " ".join((source_filename or "").split())[:120]
+        header = "# Source: manual upload" + (f" | {label}" if label else "")
+        path.write_text(f"{header}\n\n{body}\n", encoding="utf-8")
+        return {"name": path.name, "saved_to": str(path), "chars": len(body)}
 
     def _transcript_path(self, account: str, name: str) -> Path:
         """Resolve a saved-transcript filename safely under _transcripts/, scoped to

@@ -53,10 +53,87 @@ function normalizeOutputMeta(o) {
   };
 }
 
+// Manual-upload gate: shown when a transcript-reading skill has no local transcript.
+// Gong/Granola availability can't be known before the run, so this offers the last-resort
+// source (upload/paste) while still letting the skill try Gong then Granola.
+// Resolves "added" (transcript saved), "run" (run without one), or "cancel".
+const TRANSCRIPT_IMPORT_MAX_CHARS = 1_500_000;
+
+function openTranscriptGateModal(account, plan) {
+  return new Promise((resolve) => {
+    const today = new Date();
+    const isoToday = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    const reason = (plan.warnings && plan.warnings[0]) || "This skill reads call transcripts.";
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.innerHTML = `
+      <div class="modal transcript-gate-modal" role="dialog" aria-modal="true" aria-labelledby="tg-title">
+        <div class="modal-head"><h2 id="tg-title">No transcript saved for ${esc(account)}</h2><button class="modal-close" aria-label="Close">✕</button></div>
+        <div class="tg-body">
+          <p class="tg-reason">${esc(reason)}</p>
+          <p class="muted tg-hint">If the call wasn't recorded in Gong or Granola — customer declined recording, a customer-hosted Zoom/Meet/Teams call, or those tools are down — add the transcript here. It's saved to this account's transcripts and used first.</p>
+          <label class="tg-field">Upload a file (.txt, .md, .vtt, .srt)
+            <input type="file" id="tg-file" accept=".txt,.md,.vtt,.srt,text/plain" />
+          </label>
+          <label class="tg-field">…or paste the transcript
+            <textarea id="tg-text" rows="7" placeholder="Paste the call transcript"></textarea>
+          </label>
+          <label class="tg-field tg-date">Call date
+            <input type="date" id="tg-date" value="${isoToday}" max="${isoToday}" />
+          </label>
+          <div class="status err hidden" id="tg-error" role="alert"></div>
+        </div>
+        <div class="modal-foot">
+          <button class="ghost small modal-cancel">Cancel</button>
+          <button class="ghost small" id="tg-run">Run without — check Gong/Granola</button>
+          <button class="primary small" id="tg-add">Add transcript &amp; run</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const finish = (result) => { overlay.remove(); resolve(result); };
+    overlay.querySelector(".modal-close").onclick = () => finish("cancel");
+    overlay.querySelector(".modal-cancel").onclick = () => finish("cancel");
+    overlay.querySelector("#tg-run").onclick = () => finish("run");
+    overlay.onclick = (e) => { if (e.target === overlay) finish("cancel"); };
+    overlay.addEventListener("keydown", (e) => { if (e.key === "Escape") finish("cancel"); });
+
+    const errEl = overlay.querySelector("#tg-error");
+    const showError = (msg) => { errEl.textContent = msg; errEl.classList.remove("hidden"); };
+    const addBtn = overlay.querySelector("#tg-add");
+    addBtn.onclick = async () => {
+      errEl.classList.add("hidden");
+      const file = overlay.querySelector("#tg-file").files[0];
+      let text = overlay.querySelector("#tg-text").value;
+      try {
+        if (file) text = await file.text();
+        if (!text.trim()) return showError("Choose a file or paste the transcript first.");
+        if (text.length > TRANSCRIPT_IMPORT_MAX_CHARS) return showError("That transcript is too large to import.");
+        addBtn.disabled = true;
+        const saved = await api("/api/transcripts/import", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            account,
+            text,
+            call_date: overlay.querySelector("#tg-date").value || null,
+            source_filename: file ? file.name : null,
+          }),
+        });
+        showToast(`Saved transcript ${saved.name}`, "ok");
+        finish("added");
+      } catch (e) {
+        addBtn.disabled = false;
+        showError(e.message || "Could not save the transcript.");
+      }
+    };
+    overlay.querySelector("#tg-file").focus();
+  });
+}
+
 // Ask the planner whether a skill invocation is ready. If it is not, show a
 // browser confirm dialog with the missing prerequisites and a "Run anyway" path.
-// Free-form instructions bypass the planner entirely.
-async function invokeWithPlan(payload, alreadyConfirmed = false) {
+// If a transcript-reading skill has no local transcript, offer Add transcript
+// (manual upload) before running. Free-form instructions bypass the planner entirely.
+async function invokeWithPlan(payload, alreadyConfirmed = false, skipTranscriptGate = false) {
   if (!payload.freeform && !alreadyConfirmed && payload.skill) {
     try {
       const qs = new URLSearchParams({ account: payload.account, skill: payload.skill });
@@ -69,7 +146,15 @@ async function invokeWithPlan(payload, alreadyConfirmed = false) {
         }
         return invokeWithPlan({ ...payload, override_prerequisites: true }, true);
       }
-      if (plan.warnings && plan.warnings.length) {
+      let gateShown = false;
+      if (plan.transcript_missing && !skipTranscriptGate) {
+        gateShown = true;
+        const choice = await openTranscriptGateModal(payload.account, plan);
+        if (choice === "cancel") throw new Error("Cancelled");
+        // A saved transcript changes the plan (and its warnings), so re-plan once.
+        if (choice === "added") return invokeWithPlan(payload, false, true);
+      }
+      if (!gateShown && plan.warnings && plan.warnings.length) {
         plan.warnings.forEach((w) => showToast(w, "warn"));
       }
       const acknowledged = new Set(payload.acknowledged_choices || []);
@@ -4328,80 +4413,223 @@ function initTheme() {
   };
 }
 
-// ---- Salesforce connection-health badge (header) --------------------------
-let sfdcHealthMenuOpen = false;
-let sfdcHealthRaw = null;
+// ---- Status button (header): Salesforce CLI + MCP connections -------------
+// One place to see — and fix — every connection the app and its skills rely on.
+//  * Salesforce CLI: what this app itself uses (account sync, stage/amount) — the `sf` command.
+//  * MCP servers: what skills use (Gong, Granola, Notion, Salesforce MCP), checked from the
+//    workspace folder skill runs start in, so it matches what a skill run actually sees.
+// Fixes: "Reauthenticate now" (Salesforce CLI), "Connect for all folders" (user-scope MCP
+// registration) and "Sign in…" (opens Claude Code so the user can finish OAuth with /mcp).
+let statusSfdc = null;      // /api/sfdc/status payload, or null if unavailable
+let statusMcp = null;       // /api/mcp/status payload, or null if unavailable
+let statusLoaded = false;
+let statusLoading = false;
+let statusMenuOpen = false;
 
-async function initSfdcHealth() {
-  if (location.hash.startsWith("#/command-center")) return;
+const STATUS_ACTION_LABEL = {
+  register: "Connect for all folders",
+  signin: "Sign in…",
+  recheck: "Recheck",
+  "sfdc-reauth": "Reauthenticate now",
+};
+
+// Both sources normalised to one row shape: {key, label, purpose, level: ok|warn|bad, message,
+// action, command, hint}.
+function statusRows() {
+  const rows = [];
+  if (statusSfdc) {
+    const d = window.sfdcStatus(statusSfdc);
+    if (d.visible) {
+      rows.push({
+        key: "sfdc",
+        label: "Salesforce CLI",
+        purpose: "Account sync and stage/amount in this app",
+        level: d.severity === "ok" ? "ok" : d.severity === "error" ? "bad" : "warn",
+        message: d.message,
+        action: d.severity === "ok" ? null : (d.reauthCommand ? "sfdc-reauth" : "recheck"),
+        command: d.reauthCommand,
+        hint: d.reauthCommand ? "Opens a browser window to log in to Salesforce. If nothing opens, run this yourself:" : null,
+      });
+    }
+  }
+  if (statusMcp && statusMcp.available) {
+    for (const s of statusMcp.servers || []) {
+      rows.push({
+        key: s.name,
+        label: s.label,
+        purpose: s.purpose || "",
+        level: s.state === "ok" ? "ok" : (s.state === "failed" || s.state === "needs_auth") ? "bad" : "warn",
+        message: s.message,
+        action: s.action,
+        command: s.command,
+        hint: null,
+      });
+    }
+  } else if (statusMcp) {
+    rows.push({
+      key: "mcp",
+      label: "MCP connections",
+      purpose: "Gong, Granola, Notion and Salesforce for skills",
+      level: "warn",
+      message: statusMcp.message || "Couldn't check MCP connections.",
+      action: "recheck",
+      command: null,
+      hint: null,
+    });
+  }
+  return rows;
+}
+
+function statusLevel(rows) {
+  if (rows.some((r) => r.level === "bad")) return "bad";
+  return rows.some((r) => r.level === "warn") ? "warn" : "ok";
+}
+
+async function fetchStatus(force, only) {
+  const q = force ? "?force=true" : "";
+  const jobs = [];
+  if (only !== "mcp") {
+    jobs.push(api(`/api/sfdc/status${q}`).then((v) => { statusSfdc = v; }).catch(() => { statusSfdc = null; }));
+  }
+  if (only !== "sfdc") {
+    jobs.push(api(`/api/mcp/status${q}`).then((v) => { statusMcp = v; }).catch(() => { statusMcp = null; }));
+  }
+  await Promise.all(jobs);
+  statusLoaded = true;
+}
+
+async function initStatus() {
+  if (statusLoading) return;
+  statusLoading = true;
+  renderStatus();
   try {
-    sfdcHealthRaw = await api("/api/sfdc/status");
-    renderSfdcHealth(sfdcHealthRaw);
-  } catch {
-    // Best-effort: never let this block or break the app shell.
+    await fetchStatus(false);
+  } finally {
+    statusLoading = false;
+    renderStatus();
   }
 }
 
-function renderSfdcHealth(raw) {
-  const el = document.getElementById("sfdc-health");
-  if (!el) return;
-  if (location.hash.startsWith("#/command-center")) {
-    el.classList.add("hidden");
+function renderStatus() {
+  const wrap = document.getElementById("status-wrap");
+  const btn = document.getElementById("status-health");
+  if (!wrap || !btn) return;
+  if (HOSTED || location.hash.startsWith("#/command-center")) {
+    wrap.classList.add("hidden");
+    btn.onclick = null;
     return;
   }
-  const decision = window.sfdcStatus(raw);
-  if (!decision.visible) {
-    el.className = "sfdc-health hidden";
-    el.onclick = null;
+  wrap.classList.remove("hidden");
+  if (!statusLoaded) {                        // first check still running
+    btn.className = "help-link status-health";
+    btn.innerHTML = '<span class="status-dot status-dot--idle"></span>Status…';
+    btn.onclick = null;
     return;
   }
-  el.className = `sfdc-health sfdc-health--${decision.severity}`;
-  el.innerHTML = `☁ ${esc(decision.label)}`;
-  el.onclick = (e) => { e.stopPropagation(); toggleSfdcHealthMenu(el, decision); };
+  const rows = statusRows();
+  const issues = rows.filter((r) => r.level !== "ok").length;
+  const level = rows.length ? statusLevel(rows) : "idle";
+  btn.className = `help-link status-health${level === "warn" || level === "bad" ? ` status-health--${level}` : ""}`;
+  btn.innerHTML = `<span class="status-dot status-dot--${level}"></span>Status`
+    + (issues ? ` · ${issues} need${issues === 1 ? "s" : ""} attention` : "");
+  btn.onclick = (e) => { e.stopPropagation(); toggleStatusMenu(wrap); };
 }
 
-function toggleSfdcHealthMenu(anchor, decision) {
-  document.getElementById("sfdc-health-menu")?.remove();
-  if (sfdcHealthMenuOpen) { sfdcHealthMenuOpen = false; return; }
-  sfdcHealthMenuOpen = true;
+async function refreshStatus() {
+  await fetchStatus(true);
+  renderStatus();
+  // Called from inside the open menu, so show the fresh result in a re-opened menu.
+  const wrap = document.getElementById("status-wrap");
+  if (wrap && document.getElementById("status-menu")) {
+    statusMenuOpen = false;
+    openStatusMenu(wrap);
+  }
+}
+
+function toggleStatusMenu(wrap) {
+  document.getElementById("status-menu")?.remove();
+  if (statusMenuOpen) { statusMenuOpen = false; return; }
+  openStatusMenu(wrap);
+}
+
+function openStatusMenu(wrap) {
+  document.getElementById("status-menu")?.remove();
+  statusMenuOpen = true;
+  const rows = statusRows();
+  const issues = rows.filter((r) => r.level !== "ok").length;
+  const intro = !rows.length
+    ? "Couldn't check connections right now."
+    : issues ? "Some connections need attention:" : "Everything is connected.";
   const menu = document.createElement("div");
-  menu.id = "sfdc-health-menu";
-  menu.className = "dropdown-menu sfdc-health-menu";
-  menu.innerHTML = `
-    <p class="sfdc-health-msg">${esc(decision.message)}</p>
-    ${decision.reauthCommand
-      ? `<button class="primary small" id="sfdc-health-reauth">Reauthenticate now</button>
-         <p class="sfdc-health-hint">Opens a browser window to log in to Salesforce. If nothing
-           opens, run this yourself:</p>
-         <code class="sfdc-health-cmd">${esc(decision.reauthCommand)}</code>`
-      : `<button class="small" id="sfdc-health-recheck">Recheck now</button>`}`;
-  anchor.appendChild(menu);
+  menu.id = "status-menu";
+  menu.className = "dropdown-menu sfdc-health-menu status-menu";
+  menu.innerHTML = `<p class="sfdc-health-msg">${esc(intro)}</p>`
+    + rows.map((r) => {
+      const ok = r.level === "ok";
+      const label = STATUS_ACTION_LABEL[r.action];
+      return `
+        <div class="status-row" data-key="${esc(r.key)}">
+          <div class="status-row-head"><span class="status-dot status-dot--${r.level}"></span><strong>${esc(r.label)}</strong>${ok ? '<span class="status-ok">Connected</span>' : ""}</div>
+          ${r.purpose ? `<div class="status-purpose">${esc(r.purpose)}</div>` : ""}
+          ${ok ? "" : `<p class="sfdc-health-hint status-msg">${esc(r.message)}</p>
+            ${label ? `<button class="primary small" data-action="${esc(r.action)}">${esc(label)}</button>` : ""}
+            ${r.hint ? `<p class="sfdc-health-hint">${esc(r.hint)}</p>` : ""}
+            ${r.command ? `<code class="sfdc-health-cmd">${esc(r.command)}</code>` : ""}`}
+        </div>`;
+    }).join("")
+    + '<button class="small status-recheck-all" data-action="recheck-all">Recheck all</button>';
+  wrap.appendChild(menu);
 
-  const closeMenu = () => { menu.remove(); sfdcHealthMenuOpen = false; };
-
-  menu.querySelector("#sfdc-health-recheck")?.addEventListener("click", async (e) => {
-    e.stopPropagation();
-    closeMenu();
-    try { renderSfdcHealth(await api("/api/sfdc/status?force=true")); } catch {}
-  });
-
-  menu.querySelector("#sfdc-health-reauth")?.addEventListener("click", async (e) => {
-    e.stopPropagation();
-    const btn = e.currentTarget;
+  const closeMenu = () => { menu.remove(); statusMenuOpen = false; };
+  menu.addEventListener("click", async (e) => {
+    e.stopPropagation();           // keep the menu open for in-menu clicks
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    const action = btn.dataset.action;
+    const row = btn.closest(".status-row");
+    const msg = row && row.querySelector(".status-msg");
+    const key = row && row.dataset.key;
     btn.disabled = true;
-    btn.textContent = "Opening browser…";
-    let res;
     try {
-      res = await api("/api/sfdc/reauthenticate", { method: "POST" });
-    } catch {
-      res = { started: false, message: "Couldn't reach the app to start reauthentication." };
+      if (action === "recheck" || action === "recheck-all") {
+        btn.textContent = "Checking…";
+        await refreshStatus();
+      } else if (action === "register") {
+        btn.textContent = "Connecting…";
+        const res = await api(`/api/mcp/${encodeURIComponent(key)}/register`, { method: "POST" });
+        if (msg) msg.textContent = res.message;
+        if (!res.ok) { btn.disabled = false; btn.textContent = STATUS_ACTION_LABEL.register; return; }
+        await refreshStatus();
+      } else if (action === "signin") {
+        btn.textContent = "Opening Claude Code…";
+        const res = await api(`/api/mcp/${encodeURIComponent(key)}/signin`, { method: "POST" });
+        if (msg) {
+          msg.textContent = res.message + (res.steps ? " " + res.steps.map((s, i) => `${i + 1}. ${s}.`).join(" ") : "");
+        }
+        if (!res.started) { btn.disabled = false; btn.textContent = STATUS_ACTION_LABEL.signin; return; }
+        btn.textContent = "Waiting for sign-in…";
+        pollStatusRecovery(menu, wrap, key);
+      } else if (action === "sfdc-reauth") {
+        btn.textContent = "Opening browser…";
+        let res;
+        try {
+          res = await api("/api/sfdc/reauthenticate", { method: "POST" });
+        } catch {
+          res = { started: false, message: "Couldn't reach the app to start reauthentication." };
+        }
+        if (!res.started) {
+          if (msg) msg.textContent = res.message || "Couldn't start reauthentication.";
+          btn.disabled = false;
+          btn.textContent = STATUS_ACTION_LABEL["sfdc-reauth"];
+          return;
+        }
+        btn.textContent = "Waiting for login in your browser…";
+        pollStatusRecovery(menu, wrap, "sfdc");
+      }
+    } catch (err) {
+      btn.disabled = false;
+      if (msg) msg.textContent = err.message || "That didn't work — try again, or use the command shown.";
     }
-    if (!res.started) {
-      btn.textContent = res.message || "Couldn't start reauthentication.";
-      return;
-    }
-    btn.textContent = "Waiting for login in your browser…";
-    pollSfdcReauth(anchor, menu, btn);
   });
 
   document.addEventListener("click", function closeOnce() {
@@ -4410,31 +4638,29 @@ function toggleSfdcHealthMenu(anchor, decision) {
   }, { once: true });
 }
 
-async function pollSfdcReauth(anchor, menu, btn) {
-  const maxAttempts = 20; // ~60s at 3s intervals — a user completing a browser login
-  for (let i = 0; i < maxAttempts; i++) {
-    await new Promise((r) => setTimeout(r, 3000));
-    if (!document.body.contains(menu)) return; // popover was closed; stop polling
-    let raw;
-    try {
-      raw = await api("/api/sfdc/status?force=true");
-    } catch {
-      continue;
-    }
-    if (raw.state === "ok") {
-      btn.textContent = "Connected!";
-      const msg = menu.querySelector(".sfdc-health-msg");
-      if (msg) msg.textContent = raw.message || "Connected to Salesforce.";
-      setTimeout(() => {
-        menu.remove();
-        sfdcHealthMenuOpen = false;
-        renderSfdcHealth(raw);
-      }, 1200);
+// After Sign in / Reauthenticate: re-check just that source until the row turns green.
+async function pollStatusRecovery(menu, wrap, key) {
+  const isSfdc = key === "sfdc";
+  const intervalMs = isSfdc ? 3000 : 5000;      // a user completing a browser login
+  const attempts = isSfdc ? 20 : 36;            // ~60s for Salesforce, ~3 min for MCP sign-in
+  for (let i = 0; i < attempts; i++) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    if (!document.body.contains(menu)) return; // menu was closed; stop polling
+    await fetchStatus(true, isSfdc ? "sfdc" : "mcp");
+    const row = statusRows().find((r) => r.key === key);
+    if (row && row.level === "ok") {
+      renderStatus();
+      statusMenuOpen = false;
+      openStatusMenu(wrap);
+      showToast(`${row.label} is connected`, "ok");
       return;
     }
   }
-  btn.disabled = false;
-  btn.textContent = "Reauthenticate now";
+  const btn = menu.querySelector(`.status-row[data-key="${key}"] button[data-action]`);
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = STATUS_ACTION_LABEL[btn.dataset.action] || "Recheck";
+  }
 }
 
 // ---- Router ---------------------------------------------------------------
@@ -4442,13 +4668,13 @@ async function route() {
   const h = location.hash.slice(1) || "/";
   if (!HOSTED) {
     if (h.startsWith("/command-center")) {
-      document.getElementById("sfdc-health-menu")?.remove();
-      sfdcHealthMenuOpen = false;
-      document.getElementById("sfdc-health")?.classList.add("hidden");
-    } else if (sfdcHealthRaw) {
-      renderSfdcHealth(sfdcHealthRaw);
+      document.getElementById("status-menu")?.remove();
+      statusMenuOpen = false;
+      document.getElementById("status-wrap")?.classList.add("hidden");
+    } else if (statusLoaded) {
+      renderStatus();
     } else {
-      initSfdcHealth();
+      initStatus();
     }
   }
   try {

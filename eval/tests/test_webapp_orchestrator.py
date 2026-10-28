@@ -105,6 +105,29 @@ def test_check_prerequisites_prep_call_ready_without_data(tmp_path: Path) -> Non
     assert plan.ready is True
     assert plan.can_override is True
     assert not plan.missing
+    assert plan.transcript_missing is True
+    assert plan.warnings == [
+        "No local transcript found. Prep Call will check Gong, then Granola, for the AE's discovery call; if neither has it, it runs in cold-prep mode."
+    ]
+
+
+@pytest.mark.parametrize(
+    "skill",
+    ["prep-call", "post-call", "biz-qual", "tech-qual", "deployment-model-qual", "poc-plan",
+     "full-qual", "roi-business-case", "mutual-close-plan", "deal-assessment"],
+)
+def test_transcript_missing_flag_offers_manual_upload(tmp_path: Path, skill: str) -> None:
+    """Transcript-reading skills flag a missing local transcript so the UI can offer upload."""
+    customers = tmp_path / "customers"
+    assert orchestrator.check_prerequisites(skill, "Acme", None, customers).transcript_missing is True
+    _write_transcript(customers, "Acme", "Acme-07.14.26.txt", "call")
+    assert orchestrator.check_prerequisites(skill, "Acme", None, customers).transcript_missing is False
+
+
+@pytest.mark.parametrize("skill", ["connector-feasibility", "follow-up-email", "next-move", "account-refresher"])
+def test_transcript_missing_flag_off_for_skills_without_transcript_rule(tmp_path: Path, skill: str) -> None:
+    plan = orchestrator.check_prerequisites(skill, "Acme", None, tmp_path / "customers")
+    assert plan.transcript_missing is False
 
 
 @pytest.mark.parametrize(
@@ -112,19 +135,19 @@ def test_check_prerequisites_prep_call_ready_without_data(tmp_path: Path) -> Non
     [
         (
             "biz-qual",
-            "No local transcript found. Biz Qual will check Gong for customer calls before qualification and will stop if no customer voice is available.",
+            "No local transcript found. Biz Qual will check Gong, then Granola, for customer calls before qualification and will stop if no customer voice is available.",
         ),
         (
             "deployment-model-qual",
-            "No local transcript found. Deployment Model Qual will check Gong for customer calls; it needs customer answers to the 5 deployment questions (or answers you provide directly) and will stop if none are available.",
+            "No local transcript found. Deployment Model Qual will check Gong, then Granola, for customer calls; it needs customer answers to the 5 deployment questions (or answers you provide directly) and will stop if none are available.",
         ),
         (
             "tech-qual",
-            "No local transcript found. Tech Qual will check Gong for calls with technical discovery and will stop if no technical discovery is available.",
+            "No local transcript found. Tech Qual will check Gong, then Granola, for calls with technical discovery and will stop if no technical discovery is available.",
         ),
         (
             "full-qual",
-            "No local transcript found. Full Qual will check Gong; biz-qual and tech-qual each apply their own source requirements and report partial completion if one refuses.",
+            "No local transcript found. Full Qual will check Gong, then Granola; biz-qual and tech-qual each apply their own source requirements and report partial completion if one refuses.",
         ),
     ],
 )
@@ -144,7 +167,7 @@ def test_check_prerequisites_post_call_without_transcript_warns_about_gong(tmp_p
     assert plan.ready is True
     assert not plan.missing
     assert plan.warnings == [
-        "No local transcript found for this account — post-call will search Gong for the most recent completed call and save it to _transcripts/ before analysis."
+        "No local transcript found for this account — post-call will search Gong, then Granola, for the most recent completed call and save it to _transcripts/ before analysis."
     ]
 
 
@@ -231,7 +254,7 @@ def test_check_prerequisites_deal_assessment_without_local_evidence_is_advisory(
     assert plan.ready is True
     assert plan.missing == []
     assert plan.warnings == [
-        "No local transcript or qualification doc found. Deal Assessment will check Gong for customer calls before assessing and will stop if no customer evidence is available."
+        "No local transcript or qualification doc found. Deal Assessment will check Gong, then Granola, for customer calls before assessing and will stop if no customer evidence is available."
     ]
 
 
@@ -250,7 +273,7 @@ def test_check_prerequisites_roi_and_close_are_source_resolvable(tmp_path: Path)
     assert roi.ready is True
     assert roi.missing == []
     assert roi.warnings == [
-        "No local transcript found. ROI Business Case will check Gong; it requires customer-stated inputs and will stop if none exist.",
+        "No local transcript found. ROI Business Case will check Gong, then Granola; it requires customer-stated inputs and will stop if none exist.",
     ]
     assert roi.choices == [{
         "id": "run-quals:biz-qual",
@@ -260,7 +283,7 @@ def test_check_prerequisites_roi_and_close_are_source_resolvable(tmp_path: Path)
     assert close.ready is True
     assert close.missing == []
     assert close.warnings == [
-        "No local transcript found. Mutual Close Plan will check Gong; it requires the customer's actual buying process and will stop if no customer voice exists.",
+        "No local transcript found. Mutual Close Plan will check Gong, then Granola; it requires the customer's actual buying process and will stop if no customer voice exists.",
     ]
     assert close.choices == [{
         "id": "run-quals:biz-qual",
@@ -407,7 +430,7 @@ def test_api_plan_advises_poc_plan_without_upstream(monkeypatch, tmp_path: Path)
     assert data["ready"] is True
     assert data["missing"] == []
     assert data["warnings"] == [
-        "No local transcript found. POC Plan will check Gong; it refuses only if no customer voice exists in any source.",
+        "No local transcript found. POC Plan will check Gong, then Granola; it refuses only if no customer voice exists in any source.",
     ]
     assert data["choices"] == [{
         "id": "run-quals:biz-qual,tech-qual",

@@ -203,6 +203,7 @@ async def test_hosted_mode_does_not_expose_local_routes(app_client: TestClient) 
         "/api/jobs",
         "/api/overview",
         "/api/sfdc/stage-amount",
+        "/api/mcp/status",
         "/api/ask",
         "/api/transcribe/start",
         "/api/invoke",

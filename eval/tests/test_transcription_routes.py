@@ -82,6 +82,65 @@ def test_load_transcript_rejects_cross_account(client, tmp_path):
     assert resp.status_code == 403
 
 
+def test_import_transcript_saves_with_convention_and_provenance(client, tmp_path):
+    resp = client.post("/api/transcripts/import", json={
+        "account": "Acme", "text": "Customer: we run Postgres.\nSE: ok", "call_date": "2026-10-14",
+        "source_filename": "zoom export.txt",
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["name"] == "Acme-10.14.26.txt"
+    saved = (tmp_path / "customers" / "_transcripts" / "Acme-10.14.26.txt").read_text(encoding="utf-8")
+    assert saved.startswith("# Source: manual upload | zoom export.txt\n")
+    assert "we run Postgres" in saved
+    # Shows up in the account's transcript list and loads back (header is skipped by the parser).
+    assert [t["name"] for t in client.get("/api/transcripts?account=Acme").json()["transcripts"]] == [data["name"]]
+    assert client.get(f"/api/transcripts/{data['name']}?account=Acme").status_code == 200
+
+
+def test_import_transcript_never_overwrites_same_day(client, tmp_path):
+    body = {"account": "Acme", "text": "first", "call_date": "2026-10-14"}
+    first = client.post("/api/transcripts/import", json=body).json()["name"]
+    second = client.post("/api/transcripts/import", json={**body, "text": "second"}).json()["name"]
+    assert (first, second) == ("Acme-10.14.26.txt", "Acme-10.14.26-v2.txt")
+    assert "first" in (tmp_path / "customers" / "_transcripts" / first).read_text(encoding="utf-8")
+
+
+def test_import_transcript_strips_caption_scaffolding(client, tmp_path):
+    vtt = "WEBVTT\n\n1\n00:00:01.000 --> 00:00:03.000\nCustomer: hello\n\n2\n00:00:04.000 --> 00:00:06.000\nSE: hi\n"
+    resp = client.post("/api/transcripts/import", json={
+        "account": "Acme", "text": vtt, "call_date": "2026-10-14", "source_filename": "call.vtt",
+    })
+    assert resp.status_code == 200
+    saved = (tmp_path / "customers" / "_transcripts" / resp.json()["name"]).read_text(encoding="utf-8")
+    assert "WEBVTT" not in saved and "-->" not in saved
+    assert "Customer: hello\nSE: hi" in saved
+
+
+@pytest.mark.parametrize(
+    ("payload", "status"),
+    [
+        ({"account": "Acme", "text": "   \n "}, 400),
+        ({"account": "Acme", "text": "x", "call_date": "10/14/2026"}, 400),
+        ({"account": "Acme", "text": "x" * 1_500_001}, 413),
+    ],
+)
+def test_import_transcript_rejects_bad_input(client, tmp_path, payload, status):
+    assert client.post("/api/transcripts/import", json=payload).status_code == status
+    assert not (tmp_path / "customers" / "_transcripts").exists() or not list(
+        (tmp_path / "customers" / "_transcripts").iterdir()
+    )
+
+
+def test_import_transcript_header_is_single_line(client, tmp_path):
+    resp = client.post("/api/transcripts/import", json={
+        "account": "Acme", "text": "hello", "call_date": "2026-10-14",
+        "source_filename": "a.txt\n# injected: yes",
+    })
+    saved = (tmp_path / "customers" / "_transcripts" / resp.json()["name"]).read_text(encoding="utf-8")
+    assert saved.splitlines()[0] == "# Source: manual upload | a.txt # injected: yes"
+
+
 def test_load_transcript_not_found(client):
     resp = client.get("/api/transcripts/Acme-99.99.99.txt?account=Acme")
     assert resp.status_code == 404

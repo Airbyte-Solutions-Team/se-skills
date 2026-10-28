@@ -49,6 +49,10 @@ class PlanResult(BaseModel):
     choices: list[dict[str, Any]] = Field(default_factory=list)
     upstream: dict[str, UpstreamStatus] = Field(default_factory=dict)
     modes: dict[str, Any] | None = None
+    # True when the skill reads call transcripts and none exists locally. Gong/Granola
+    # availability can't be known before the run, so the UI uses this to offer
+    # "Add transcript" (manual upload/paste) as the last-resort source.
+    transcript_missing: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -67,12 +71,18 @@ class PlanResult(BaseModel):
 #   only needs a transcript (it produces the upstream docs itself).
 # ---------------------------------------------------------------------------
 SKILL_PREREQUISITES: dict[str, list[dict]] = {
-    "prep-call": [],
+    "prep-call": [{
+        "kind": "transcript",
+        "warning": (
+            "No local transcript found. Prep Call will check Gong, then Granola, for "
+            "the AE's discovery call; if neither has it, it runs in cold-prep mode."
+        ),
+    }],
     "post-call": [{"kind": "transcript", "fallback": "gong"}],
     "deployment-model-qual": [{
         "kind": "transcript",
         "warning": (
-            "No local transcript found. Deployment Model Qual will check Gong for "
+            "No local transcript found. Deployment Model Qual will check Gong, then Granola, for "
             "customer calls; it needs customer answers to the 5 deployment "
             "questions (or answers you provide directly) and will stop if none are available."
         ),
@@ -80,7 +90,7 @@ SKILL_PREREQUISITES: dict[str, list[dict]] = {
     "biz-qual": [{
         "kind": "transcript",
         "warning": (
-            "No local transcript found. Biz Qual will check Gong for customer "
+            "No local transcript found. Biz Qual will check Gong, then Granola, for customer "
             "calls before qualification and will stop if no customer voice is available."
         ),
     }],
@@ -88,7 +98,7 @@ SKILL_PREREQUISITES: dict[str, list[dict]] = {
     "tech-qual": [{
         "kind": "transcript",
         "warning": (
-            "No local transcript found. Tech Qual will check Gong for calls with "
+            "No local transcript found. Tech Qual will check Gong, then Granola, for calls with "
             "technical discovery and will stop if no technical discovery is available."
         ),
     }],
@@ -97,7 +107,7 @@ SKILL_PREREQUISITES: dict[str, list[dict]] = {
         {
             "kind": "transcript",
             "warning": (
-                "No local transcript found. POC Plan will check Gong; it refuses "
+                "No local transcript found. POC Plan will check Gong, then Granola; it refuses "
                 "only if no customer voice exists in any source."
             ),
         },
@@ -115,7 +125,7 @@ SKILL_PREREQUISITES: dict[str, list[dict]] = {
     "full-qual": [{
         "kind": "transcript",
         "warning": (
-            "No local transcript found. Full Qual will check Gong; biz-qual and "
+            "No local transcript found. Full Qual will check Gong, then Granola; biz-qual and "
             "tech-qual each apply their own source requirements and report partial "
             "completion if one refuses."
         ),
@@ -124,7 +134,7 @@ SKILL_PREREQUISITES: dict[str, list[dict]] = {
         {
             "kind": "transcript",
             "warning": (
-                "No local transcript found. ROI Business Case will check Gong; it "
+                "No local transcript found. ROI Business Case will check Gong, then Granola; it "
                 "requires customer-stated inputs and will stop if none exist."
             ),
         },
@@ -142,7 +152,7 @@ SKILL_PREREQUISITES: dict[str, list[dict]] = {
         {
             "kind": "transcript",
             "warning": (
-                "No local transcript found. Mutual Close Plan will check Gong; it "
+                "No local transcript found. Mutual Close Plan will check Gong, then Granola; it "
                 "requires the customer's actual buying process and will stop if no "
                 "customer voice exists."
             ),
@@ -386,15 +396,17 @@ def check_prerequisites(
     upstream: dict[str, UpstreamStatus] = {}
 
     modes: dict[str, Any] | None = None
+    transcript_missing = False
     for rule in rules:
         kind = rule["kind"]
         if kind == "transcript":
             if not _has_transcript(customers_dir, account):
+                transcript_missing = True
                 if rule.get("warning"):
                     warnings.append(rule["warning"])
                 elif rule.get("fallback") == "gong":
                     warnings.append(
-                        "No local transcript found for this account — post-call will search Gong "
+                        "No local transcript found for this account — post-call will search Gong, then Granola, "
                         "for the most recent completed call and save it to _transcripts/ before analysis."
                     )
                 else:
@@ -403,13 +415,14 @@ def check_prerequisites(
             has_transcript = _has_transcript(customers_dir, account)
             has_qualification_doc = _has_qualification_doc(customers_dir, account, opp_slug)
             if not has_transcript:
+                transcript_missing = True
                 warnings.append(
                     "No local transcript found; using prior qualification doc(s) as source. "
                     "Deal Assessment will flag thin sources."
                     if has_qualification_doc
                     else (
                         "No local transcript or qualification doc found. Deal Assessment will "
-                        "check Gong for customer calls before assessing and will stop if no "
+                        "check Gong, then Granola, for customer calls before assessing and will stop if no "
                         "customer evidence is available."
                     )
                 )
@@ -471,4 +484,5 @@ def check_prerequisites(
         choices=choices,
         upstream=upstream,
         modes=modes,
+        transcript_missing=transcript_missing,
     )

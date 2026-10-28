@@ -84,6 +84,7 @@ def _build_local_services(app: FastAPI) -> None:
         ClaudeCodeMcpRelay,
         scoped_server_definition,
     )
+    from integrations.mcp_health import McpHealthService
     from integrations.salesforce import SalesforceIntegration
     from routes.accounts import router as accounts_router
     from routes.ask import router as ask_router
@@ -91,6 +92,7 @@ def _build_local_services(app: FastAPI) -> None:
     from routes.feedback import router as feedback_router
     from routes.gallery import router as gallery_router
     from routes.jobs import router as jobs_router
+    from routes.mcp import router as mcp_router
     from routes.opportunity_state import router as opportunity_state_router
     from routes.outputs import router as outputs_router
     from routes.overview import router as overview_router
@@ -308,6 +310,10 @@ def _build_local_services(app: FastAPI) -> None:
     app.state.feedback_service = feedback_service
     app.state.job_service = job_service
     app.state.salesforce_integration = salesforce_integration
+    app.state.mcp_health_service = McpHealthService(
+        workspace=config.WORKSPACE,
+        repo_root=config.WEBAPP_DIR.parent,
+    )
     app.state.account_service = account_service
     app.state.opportunity_workspace_service = opportunity_workspace_service
     app.state.opportunity_state_service = opportunity_state_service
@@ -339,6 +345,7 @@ def _build_local_services(app: FastAPI) -> None:
     app.include_router(feedback_router)
     app.include_router(overview_router)
     app.include_router(salesforce_router)
+    app.include_router(mcp_router)
     app.include_router(ask_router)
     app.include_router(transcription_router)
     app.include_router(command_center_router)
