@@ -1,6 +1,6 @@
 ---
 name: prep-call
-description: Prepares an SE call brief — defaults to a tech-discovery call AFTER the AE has already done business discovery (the 90% case). Aggressively checks Gong (7-day lookback, extends to 14) for the AE call, reads it in full, and produces a prep doc that inherits the AE's discovery, goes deeper on technical implications, and includes a Point of View to Test, Suggested Opener, implication-depth questions, persona-specific questions, and a concrete next-step. Cold-prep mode (no AE call found) is the explicit exception. Use when the user says "prep call", "prep for", "call prep", or provides a company name before a meeting.
+description: Prepares an SE call brief — defaults to a tech-discovery call AFTER the AE has already done business discovery (the 90% case). Aggressively checks Gong (7-day lookback, extends to 14) for the AE call — and Granola for calls that weren't recorded in Gong — reads it in full, and produces a prep doc that inherits the AE's discovery, goes deeper on technical implications, and includes a Point of View to Test, Suggested Opener, implication-depth questions, persona-specific questions, and a concrete next-step. Cold-prep mode (no AE call found) is the explicit exception. Use when the user says "prep call", "prep for", "call prep", or provides a company name before a meeting.
 ---
 
 # Call Prep Skill
@@ -16,10 +16,10 @@ The user will provide one or more of:
 
 ## Default Use Case: Tech Call After AE Discovery
 
-**The most common SE invocation of this skill (~90%) is prepping for a technical/discovery call where the AE already did a business discovery call 1-14 days ago.** That AE call is in Gong and is the single most important input — the SE inherits the AE's discovery rather than re-running it.
+**The most common SE invocation of this skill (~90%) is prepping for a technical/discovery call where the AE already did a business discovery call 1-14 days ago.** That AE call is usually in Gong (or in Granola, if the customer declined recording or hosted the call on their own Zoom/Meet/Teams) and is the single most important input — the SE inherits the AE's discovery rather than re-running it.
 
 Default behavior:
-1. **Aggressively check Gong** for a prior call on this account (see Gong lookback below)
+1. **Aggressively check Gong, then Granola** for a prior call on this account (see Gong lookback and Granola step below; source order and duplicate rules per `_se-playbook.md` "Source Freshness Check")
 2. **Read the AE's transcript in full** before generating prep
 3. **Treat the AE call as the primary source** — research is supplementary
 4. **Skip AE-level basics in discovery questions** — go deeper on technical implications
@@ -30,7 +30,8 @@ Default behavior:
 
 - **Primary search: last 7 days** — covers the typical AE→SE handoff
 - **If empty: extend to last 14 days** — covers the "scheduling delay" case
-- **If still empty: declare cold-prep mode explicitly** in the output ("Checked Gong for 14 days, no AE call found — proceeding with cold prep")
+- **If still empty in Gong: check Granola over the same window** (see Granola step below) before concluding anything
+- **If still empty in both: declare cold-prep mode explicitly** in the output ("Checked Gong and Granola for 14 days, no AE call found — proceeding with cold prep"). Name any source that was disabled or unreachable instead of implying it was checked.
 
 ### How to search Gong (do NOT rely on the company name alone)
 
@@ -39,9 +40,11 @@ Gong titles are typed by hand and CRM account names are often the bare domain (e
 1. **Resolve the email domain(s)** from Salesforce (Account Website / contact emails), local transcripts/notes, or the user's input. If unknown, derive candidates from the account name (e.g. `arcticwolf.com`).
 2. **`search_calls_by_account`** with those `domains` (and `matchCrmAccount: true`) over the lookback window. This matches external participants' email domains, so it is immune to title typos.
 3. **`search_calls` with `customerName`** using variants: the name with no spaces/hyphens (`arcticwolf`), the domain root, and the name as typed. Substring match covers CRM account, email domain, and title.
-4. **Only if all of the above return nothing** declare cold-prep mode — and list the exact domains/name variants tried in Source Coverage so the SE can spot a bad guess.
+4. **Granola (calls not in Gong).** Run this when `transcript_sources.granola` is on (default) and the Gong search found no call for the meeting — or to catch a newer unrecorded call. Use `search_meetings` with `participant` set to the domain, then the name variants, over the same window with `attended_only: true`; confirm attendees with `get_meetings`; read with `get_meeting_transcript`. Skip internal-only meetings. If the same meeting is in both Gong and Granola, **Gong wins** and the Granola copy is not pulled; a Granola-only meeting counts, and the most recent call across both sources is the AE call. Procedure, speaker-label caveats, and the save/provenance header are in `_se-playbook.md` "Source Freshness Check".
+5. **Manual upload.** If the user says they'll upload/paste the transcript, or none of the above finds the call but the user says it happened, ask for it — don't proceed in cold-prep silently.
+6. **Only if all of the above return nothing** declare cold-prep mode — and list the exact domains/name variants tried (for Gong and Granola) in Source Coverage so the SE can spot a bad guess.
 
-If a Gong call is found, read the full transcript before generating, and treat it as the primary source (per Default behavior above). Never state "zero calls found" based on a single name-only query.
+If a call is found in either source, read the full transcript before generating, and treat it as the primary source (per Default behavior above). Never state "zero calls found" based on a single name-only query.
 
 ### Before generating: clarify
 
@@ -68,7 +71,7 @@ Emit the result as a `### Connector Check` H3 under `## Account Context` (format
 ### Research scope
 
 Web search is **conditional**, not automatic:
-- If a Gong AE call exists, web research is supplementary at best — the AE already learned the relevant context
+- If an AE call exists (Gong or Granola), web research is supplementary at best — the AE already learned the relevant context
 - If cold-prep mode (no AE call found), do focused web research (industry, recent news, tech stack signals)
 - Don't burn cycles re-researching a company we already know well
 
@@ -144,7 +147,7 @@ Document structure follows `~/.claude/skills/_se-playbook.md` → Shared Skill B
 *Only present if a prior AE call exists. The SE inherits the AE's discovery and goes deeper from there. In cold-prep mode, skip the bullets below and emit the cold-prep risk callout instead.*
 
 > [!risk] Cold-prep mode — no AE call found
-> *(Include this callout ONLY in cold-prep mode.)* Checked Gong for 14 days, no AE business-discovery call found — proceeding with cold prep on pure research. The AE→SE handoff hasn't happened; treat all customer context below as hypothesis, not confirmed.
+> *(Include this callout ONLY in cold-prep mode.)* Checked Gong and Granola for 14 days, no AE business-discovery call found — proceeding with cold prep on pure research. The AE→SE handoff hasn't happened; treat all customer context below as hypothesis, not confirmed.
 
 - **AE call date + duration:** [date, length]
 - **Attendees on AE call:** [names + roles surfaced]
@@ -319,7 +322,7 @@ Name the specific calendar-able mutual commitment to ask for at the end of the c
 ## Source Coverage
 
 
-*Audit trail — last content section (progressive disclosure per `_se-playbook.md`).* [AE Gong transcript path + line count, local notes, memory files, web queries — see After Generating. In cold-prep mode, state that explicitly here.]
+*Audit trail — last content section (progressive disclosure per `_se-playbook.md`).* [Transcript source used + AE call transcript path + line count, local notes, memory files, web queries — see After Generating. In cold-prep mode, state that explicitly here.]
 
 ---
 <!-- output-template:end -->
@@ -345,8 +348,8 @@ Read `~/.claude/skills/_se-playbook.md` for full framework details. Apply specif
 ### Memory Check
 Read `memory_dir` (per playbook → Workspace Paths) `MEMORY.md` and any customer-specific memory files before generating prep (skip gracefully if `memory_dir` is unset). Active blockers, pending Airbyte-side actions, and stakeholder dynamics often live here and don't appear in transcripts. Per `_se-playbook.md` ("Memory Check").
 
-### Source Freshness Check — Always Check Gong First
-**Always check Gong for the most recent call on this account before generating prep.** Per `_se-playbook.md` ("Source Freshness Check"):
+### Source Freshness Check — Always Check Gong First, Then Granola
+**Always check Gong — then Granola for anything Gong doesn't have — for the most recent call on this account before generating prep.** Gong wins when both have the same meeting. Per `_se-playbook.md` ("Source Freshness Check"):
 
 **Lookback window — match the prospect state:**
 - **NEW prospect** (no local customer folder, no transcripts, no notes): lookback ≤ **7 days**. If an AE intro call happened, it'll be very recent. Don't search the whole history for a deal that doesn't have one.
@@ -354,11 +357,11 @@ Read `memory_dir` (per playbook → Workspace Paths) `MEMORY.md` and any custome
 
 **Workflow:**
 - Check `{transcripts_dir}` first. If a transcript matching this customer was saved in the last 30 min (`mtime`-recent), use it and skip Gong — per `_se-playbook.md` session-dedupe rule.
-- If no local match for a recent call, search Gong with the appropriate lookback
-- Pull the **most recent call only** — do not bulk-pull
-- Save the pulled transcript to `{transcripts_dir}/<Customer-Name>-MM.DD.YY.txt` BEFORE using it (per CLAUDE.md)
+- If no local match for a recent call, search Gong with the appropriate lookback, then Granola for meetings Gong lacks
+- Pull the **most recent call only** (across both sources) — do not bulk-pull
+- Save the pulled transcript to `{transcripts_dir}/<Customer-Name>-MM.DD.YY.txt` BEFORE using it (per CLAUDE.md); Granola/uploaded files carry the provenance header from the playbook
 - Note in the output which sources were freshly pulled
-- If no Gong call exists in the window, say so — don't silently fall back to web research only
+- If no call exists in Gong or Granola in the window, say so — don't silently fall back to web research only
 
 ### Apply Cross-Transcript Analysis (when prior call history exists)
 For follow-up calls with an existing customer, read the "Cross-Transcript Analysis" section in `_se-playbook.md`. Read prior transcripts (recency-weighted but not recency-only). Specifically build:
@@ -403,7 +406,8 @@ Filename example: `call-prep-2026-05-28-Tech-Discovery.md`.
 
 ### Source Coverage Reporting
 Include a final Source Coverage section of the output stating:
-- AE Gong transcript: file path + line count read (if applicable)
+- **Transcript source:** which source supplied the AE call and why — `Gong (Granola also had this meeting — not used)` / `Granola (no Gong recording found; checked <domains/names/window>)` / `Manual upload` / `Local`; or cold-prep with every source tried
+- AE call transcript (Gong/Granola/upload): file path + line count read (if applicable)
 - Local notes consulted: file names
 - Memory: file names
 - Web research: queries run
@@ -418,6 +422,7 @@ Read `config_file` (per playbook → Workspace Paths) to populate the `[SE name]
 
 ## Changelog
 
+- **2026-10-28** — Granola + manual upload as transcript sources behind Gong: the AE call may come from Gong, then Granola (customer declined recording / customer-hosted Zoom, Meet, Teams), then a user upload. Gong wins when both have the same meeting; a Granola-only meeting still counts as the most recent call. Cold-prep is declared only after Gong **and** Granola are checked, and Source Coverage now states the transcript source used. Rules live in `_se-playbook.md` "Source Freshness Check".
 - **2026-10-28** — Added registry-grounded Connector Check: when the AE call names specific systems, resolve them against the cached connector registry (cache first, one live fetch if missing, "unverified" only if both fail) and emit a `### Connector Check` table under Account Context — connector, Cloud/OSS-only, support level · stage, version, and the connector's `documentationUrl`. Availability only; fit stays with `connector-feasibility`.
 - **2026-10-28** — Gong search method specified: resolve email domain → `search_calls_by_account` → `customerName` variants; cold-prep only after all fail, with the tried domains/names listed in Source Coverage (a name-only search missed a call titled "Artic Wolf" with CRM account `arcticwolf.com`). Auto-save folder is now `outputs/prep-call/` (skill id); legacy `outputs/call-prep/` still recognized by the webapp.
 - **2026-09-04** — Fact-vs-assumption hardening pass (no structural change — canonical sections, order, and save behavior are unchanged): Watch-Outs' competitor line now requires a cited source or "No competitor named — not identified" instead of inviting a guess; "Why Airbyte" is explicitly labeled hypotheses to validate, not the customer's stated position; Implication-Depth Questions' cost/sizing figure is now gated on a sourced input (else "not yet quantified; establish on the call") instead of always producing a number; Must-Ask Questions now asks for 3-5 prioritized questions over exhaustive lists, phrased as neutral asks rather than conclusions wrapped in questions. Added 4 new Style-section rules pointing at `_se-playbook.md` → "Evidence thresholds."

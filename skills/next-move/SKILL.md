@@ -83,10 +83,10 @@ Check `memory_dir` for any project memory files matching the customer (skip grac
 ### 4. Notion (optional)
 Don't auto-query Notion. If the user explicitly asks for "deeper context" or if local artifacts are very thin, use `Notion:search` to find the customer's parent page.
 
-### 5. Gong (optional, conditional)
+### 5. Gong / Granola (optional, conditional)
 Apply the Source Freshness Check from `_se-playbook.md`:
-- If most recent local transcript is >14 days old, check Gong for newer activity
-- A Gong-confirmed silence (no calls in 30+ days) is itself a routing signal — likely route to `deal-assessment` to diagnose decay
+- If most recent local transcript is >14 days old, check Gong, then Granola for meetings Gong doesn't have, for newer activity
+- Confirmed silence across Gong **and** Granola (no calls in 30+ days) is itself a routing signal — likely route to `deal-assessment` to diagnose decay. Gong-only silence isn't enough when Granola is enabled; say which sources were checked
 
 ### 6. Salesforce (active opp only — light snapshot)
 Per `_se-playbook.md` "Salesforce Enrichment." Pull the **active opportunity** (matching rule: most recent open, exclude renewals unless only-open) — not the full account arc (router stays fast). Fields:

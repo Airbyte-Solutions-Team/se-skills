@@ -142,6 +142,7 @@ Skills read this for the workspace paths, `[SE name]` placeholder, call attribut
 #### 3. MCP servers
 The suite assumes these MCPs are configured in `~/.claude.json`:
 - **Gong** (transcripts) — skills pull AE call transcripts automatically. Configured if you use the team Gong MCP.
+- **Granola** (optional) — fallback for calls Gong doesn't have (customer declined recording, customer-hosted Zoom/Meet/Teams). Skills check Gong first and Granola second, and Gong wins if both have the same meeting. Turn it off with `transcript_sources: {granola: false}` in `.se-config.yaml`, or say "I'll upload the transcript" to use a manual upload instead.
 - **Notion** (optional) — `post-call` and `objection-handler` write to customer Notion pages.
 - **Salesforce** (optional, high-value) — CRM enrichment (SOQL via MCP or the `sf` CLI fallback):
   ```bash

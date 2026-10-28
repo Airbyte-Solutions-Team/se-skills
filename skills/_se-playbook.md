@@ -301,7 +301,6 @@ Resolve `.se-config.yaml` itself the same way: `$SE_WORKSPACE/.se-config.yaml`, 
 | `config_file`     | `{workspace_root}/.se-config.yaml`          | — |
 | `memory_dir`      | *(no portable default — read from config)*  | `memory_dir` (required for memory features) |
 | `airbyte_repos_dir` | *(unset → skill degrades)*                | `airbyte_repos_dir` (optional) |
-
 **Per-customer output convention (unchanged, now root-relative):**
 ```
 {customers_dir}/<Customer>/outputs/<skill>/<skill>-<YYYY-MM-DD>-<Descriptor>.md
@@ -316,6 +315,10 @@ The default drops numeric folder prefixes (`customers/`, `notes/`) for a clean s
 ### `memory_dir` (per-user, no safe default)
 
 Claude Code's project-memory directory is derived from the OS username and workspace path (e.g. `~/.claude/projects/-Users-<you>-<workspace-slug>/memory/`), so it is **not** portable and has no sensible default. Read it from `.se-config.yaml: memory_dir`. If it's unset, skip memory features gracefully and note "memory not configured" — do NOT guess a path with someone else's username in it.
+
+### `transcript_sources` (optional, not a path)
+
+`.se-config.yaml` may carry `transcript_sources: {gong: true, granola: true}` to choose which systems skills query for call transcripts. Both default to on; manual upload is always available. Full rules in "Source Freshness Check (Gong → Granola → Upload)".
 
 ### `airbyte_repos_dir` (optional, graceful degradation)
 
@@ -698,15 +701,50 @@ When a memory contains a critical claim that affects the skill's output (e.g., "
 
 ---
 
-## Source Freshness Check (Gong Fallback)
+## Source Freshness Check (Gong → Granola → Upload)
 
-Before synthesizing across transcripts and notes, confirm the local sources are current. The default behavior depends on the skill — see table below. Always follow the workspace CLAUDE.md Gong workflow when pulling:
+Before synthesizing across transcripts and notes, confirm the local sources are current. The default behavior depends on the skill — see table below. Always follow the workspace CLAUDE.md Gong workflow when pulling from Gong:
 
-1. Check `{transcripts_dir}` first — never call Gong if the call is already local
+1. Check `{transcripts_dir}` first — never call Gong (or Granola) if the call is already local
 2. Use `search_calls` with date + account filters — never bulk-pull
 3. Fetch via `gong://calls/{callId}/transcript`
 4. **Save the pulled transcript immediately** to `_transcripts/<Customer-Name>-MM.DD.YY.txt` before using it
 5. Note in the output which sources were freshly pulled vs. pre-existing — the SE should know what's new
+
+### Transcript source priority (Gong → Granola → upload)
+
+Not every customer call reaches Gong: customers sometimes ask not to be recorded, or the customer sent the invite and the call ran on their own Zoom, Google Meet, or Teams. The SE still captures those in Granola. So transcripts are resolved in this fixed order:
+
+1. **Local** `{transcripts_dir}` — already saved
+2. **Gong** — the system of record for recorded calls
+3. **Granola** (MCP) — covers meetings Gong doesn't have
+4. **Manual upload / paste** — ask the user when none of the above yields the call
+
+**Gong wins on duplicates.** Candidates are gathered per meeting from Gong and Granola over the skill's lookback window. If the same meeting is in both, use the Gong transcript and do not pull the Granola copy. Treat a Granola meeting as the same as a Gong call when the start times are within 2 hours **and** they share an external attendee or email domain; otherwise treat them as distinct meetings and say so. A meeting that exists only in Granola still counts — if it is the most recent call across both sources, it is the one to use (still "most recent call only", no bulk-pull).
+
+**Choosing sources.** The default lives in `config_file` (per "Workspace Paths"):
+
+```yaml
+transcript_sources:
+  gong: true      # default true
+  granola: true   # default true; set false to never call Granola (e.g. no Granola MCP)
+```
+
+Manual upload is always available and needs no config. A per-run instruction in the user's prompt overrides the config for that run — "use Granola", "skip Gong", "Granola only", or "I'll upload the transcript". If the user supplies a transcript (upload or paste) for a call, that is an explicit choice: use it and don't query Gong or Granola for that call. If a source is disabled or its MCP isn't connected, skip it and say so in Source Coverage — never silently.
+
+**Granola procedure** (only for meetings Gong doesn't have, and only when `granola` is enabled):
+1. `search_meetings` with `participant` = the customer's email domain (then the account name), the skill's date window, and `attended_only: true`
+2. `get_meetings` to confirm the date and attendees; skip internal-only meetings (no customer-domain attendee)
+3. `get_meeting_transcript` for the one chosen meeting only — never bulk-pull
+4. **Save immediately** to `{transcripts_dir}/<Customer-Name>-MM.DD.YY.txt` (same naming as Gong pulls) with a first-line provenance header: `# Source: Granola | <meeting id> | <title> | <date>`. Manually uploaded transcripts (the webapp's **Add transcript** dialog, or a paste) get `# Source: manual upload`. The `# ` prefix matches the saved-transcript header convention, so the webapp's transcript parser skips the line.
+
+**Granola caveats:**
+- Speakers are often labelled by audio channel (`Microphone` / `System audio`) or `Speaker A/B`, not by name. Don't present a quote as `[stated]` by a named customer individual unless the attendee roster or the notes support it — label it `[inferred]`. The recorder (the SE) was on the call, so Call Attribution treats the SE as present.
+- If the transcript is unavailable (`transcript_pending`, no access, deleted), do **not** silently substitute the AI summary. Say the transcript is unavailable; if Granola notes are used as a fallback, label them "Granola notes (no transcript)" and ask for an upload when the skill needs verbatim depth.
+
+**Required: state the transcript source.** Every skill that resolves a transcript must say, in its Source Coverage section, which source was used and why:
+
+> **Transcript source:** Gong (Granola also had this meeting — not used) / Granola (no Gong recording found; checked domains `x.com`, names `x`, window 14d) / Manual upload / Local (saved <date>)
 
 ### Per-skill defaults
 
@@ -714,26 +752,26 @@ The most recent call is crucial context for almost every SE skill. The defaults 
 
 | Skill | Default behavior |
 |---|---|
-| `prep-call` | **Always check Gong for the most recent call on this account.** The typical SE invocation is prepping for a tech call AFTER the AE did business discovery 1-14 days ago — that AE call is in Gong and is the primary input. **Lookback: 7 days first, expand to 14 days if empty.** If still no AE call found, declare "cold-prep mode" explicitly in output. For existing customers with local folders, also check local `_transcripts/` first. Pull the *most recent* call only, save it, and read it before generating prep. |
-| `post-call` | If no local transcript matches, check Gong for the most recent completed call on the account; also check Gong when the user references a non-local call. An explicit user date/call always wins. Search narrowly, persist the selected transcript before analysis, and report which call was used. Ambiguous candidates require disambiguation. If Gong is unavailable or misconfigured, fail clearly and actionably — never treat partial data as valid. |
-| `deal-assessment`, `biz-qual`, `tech-qual`, `deployment-model-qual`, `poc-plan`, `connector-feasibility`, `follow-up-email` | Check Gong if the most-recent local transcript is more than **14 days old**, OR if the user signals "check for new activity." Pull the most recent call only. |
-| `objection-handler` | If the user provides a customer name (not just an abstract objection), check both local transcripts and Gong (14-day rule). Otherwise skip — abstract objections don't need customer call history. |
+| `prep-call` | **Always check Gong, then Granola, for the most recent call on this account.** The typical SE invocation is prepping for a tech call AFTER the AE did business discovery 1-14 days ago — that AE call is usually in Gong (or in Granola if it wasn't recorded there) and is the primary input. **Lookback: 7 days first, expand to 14 days if empty.** If still no AE call found in either source, declare "cold-prep mode" explicitly in output. For existing customers with local folders, also check local `_transcripts/` first. Pull the *most recent* call only, save it, and read it before generating prep. |
+| `post-call` | If no local transcript matches, check Gong for the most recent completed call on the account, then Granola for a meeting Gong doesn't have; also check both when the user references a non-local call. An explicit user date/call/upload always wins. Search narrowly, persist the selected transcript before analysis, and report which call and which source was used. Ambiguous candidates require disambiguation. If a source is unavailable or misconfigured, fail clearly and actionably — never treat partial data as valid. |
+| `deal-assessment`, `biz-qual`, `tech-qual`, `deployment-model-qual`, `poc-plan`, `connector-feasibility`, `follow-up-email` | Check Gong, then Granola, if the most-recent local transcript is more than **14 days old**, OR if the user signals "check for new activity." Pull the most recent call only (across both sources). |
+| `objection-handler` | If the user provides a customer name (not just an abstract objection), check both local transcripts and Gong/Granola (14-day rule). Otherwise skip — abstract objections don't need customer call history. |
 
 ### When you don't find a match
-If you can't find a Gong call for the customer, say so explicitly in the output — don't silently fall back to stale local data. "Checked Gong, no calls found in the last X days" is a finding worth reporting.
+If you can't find a call for the customer in Gong **or** Granola, say so explicitly in the output — don't silently fall back to stale local data. "Checked Gong and Granola, no calls found in the last X days" is a finding worth reporting (name any source that was disabled or unreachable instead of implying it was checked).
 
 ### Don't re-pull Gong if a recent pull happened (session dedupe)
 
-Within a single workflow session, multiple skills may each independently want to check Gong for the same customer. To avoid redundant API calls:
+Within a single workflow session, multiple skills may each independently want to check Gong (or Granola) for the same customer. To avoid redundant API calls:
 
-**Before calling Gong, run this exact check and report the result in the output** (`{transcripts_dir}` resolved per "Workspace Paths"):
+**Before calling Gong or Granola, run this exact check and report the result in the output** (`{transcripts_dir}` resolved per "Workspace Paths"):
 ```bash
 find "{transcripts_dir}" -iname "<Customer>*" -mmin -30
 ```
 
 ### Required: log the dedupe check result
 
-Every skill that hits Gong must include this line in its output (in the Source Coverage section):
+Every skill that hits Gong or Granola must include this line in its output (in the Source Coverage section):
 
 > **Session dedupe check:** Ran `find _transcripts/ -iname "Contoso*" -mmin -30` → [found `Contoso-2026-05-28.txt` saved 4 min ago, using it / no recent files, proceeding with Gong query]
 
@@ -741,8 +779,8 @@ This makes the dedupe visible and lets the user verify it's working.
 
 ### Decision logic
 
-- **If recent file found** (≤ 30 min old): use it as the Gong result, skip the API call. Log "Skipping Gong — using transcript saved X min ago."
-- **If no recent file**: proceed with the normal Gong check per the skill's lookback rule.
+- **If recent file found** (≤ 30 min old): use it as the Gong/Granola result, skip the API call. Log "Skipping Gong/Granola — using transcript saved X min ago."
+- **If no recent file**: proceed with the normal Gong → Granola check per the skill's lookback rule.
 
 ### Why mtime, not filename date
 
@@ -1003,6 +1041,7 @@ If/when built, this should be a separate skill (not a mode flag on biz-qual/deal
 
 ## Changelog
 
+- **2026-10-28** — **Granola + manual upload as transcript sources behind Gong.** "Source Freshness Check" is now Gong → Granola → Upload: calls that never reach Gong (customer declined recording, customer-hosted Zoom/Meet/Teams invite) are pulled from Granola, merged per meeting with **Gong winning duplicates** and Granola-only meetings still eligible as the most recent call. Added a `transcript_sources` config block (`gong`/`granola`, default on) with per-run override ("use Granola", "skip Gong", "I'll upload it"), a Granola procedure + speaker-label/unavailable-transcript caveats, a provenance header on saved Granola/upload files, and a required **"Transcript source"** line in Source Coverage naming which source was used and why. Per-skill defaults table, no-match wording, and session-dedupe updated to cover both sources.
 - **2026-09-04** — Added **"Evidence thresholds"** to "Confidence & Assumptions (all skills)" — ten specific don't-over-infer rules (question ≠ objection, title ≠ EB/champion, no invented competitors, no unsupported budget/timeline/urgency/sizing/ROI, absent-topic ≠ negative finding, recommendation ≠ agreed step, no invented owner/date, surface source conflicts, proportional inference). Requested as a focused fact-vs-assumption hardening pass on `prep-call`/`post-call`; placed here (not duplicated in either skill) because every rule generalizes past those two skills and the shared section is what all skills already inherit `[stated]`/`[inferred]` from.
 - **2026-09-03** — Hardened "Confidence & Assumptions" against a real misattribution (found in a post-call output): a `[stated]` bullet merged two different speakers' statements about two different subjects into one fabricated customer requirement, and its citation didn't actually support the claim. Added **"Citation precision"** (a `[stated]` tag must be a defensible, single-speaker/single-subject paraphrase of its literal cited line — split or downgrade to `[inferred]` rather than synthesize across speakers) and **"Product/architecture facts must be verified, not just transcribed"** (a call participant's belief about Airbyte's product isn't ground truth — cross-check against reference data/current knowledge and add a `[correction]` if the transcript's framing is wrong, rather than laundering it into the output). Applies to every skill that cites `[stated]`/`[inferred]` from this shared section, not just the skill that surfaced it.
 - **2026-07-10** — **SME retirement across the deployment guidance.** Self-Managed Enterprise is now framed as retired / not currently offered (may return), never as a live motion. Edition mapping in the entitlement→edition reasoning is now Cloud vs Flex (SME noted historical). The "Deployment-model qualification first" application note now names the two live shapes (Cloud Pro / Enterprise Flex), routes data-residency + VPC-isolation to Flex, and treats BYOK / control-plane-in-VPC / true air-gap with no Flex path as an honest park/no-fit — **not** a requalify-to-SME. Kept the SME concept as retired-may-return; did not delete it.

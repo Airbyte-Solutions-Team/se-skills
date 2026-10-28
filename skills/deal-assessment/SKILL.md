@@ -272,10 +272,10 @@ Read `~/.claude/skills/_se-playbook.md` for full framework details.
 
 ### Source Freshness Check (Gong Fallback)
 Before synthesizing, check whether local transcripts are current. Per `_se-playbook.md` ("Source Freshness Check"):
-- If the most-recent local transcript is more than **14 days old**, OR the user signals "check for new activity," search Gong for newer calls
+- If the most-recent local transcript is more than **14 days old**, OR the user signals "check for new activity," search Gong for newer calls, then Granola for meetings Gong doesn't have (Gong wins when both have the same meeting)
 - Pull the **most recent call only** — do not bulk-pull
 - Save any pulled transcript to `_transcripts/<Customer-Name>-MM.DD.YY.txt` BEFORE using it (workspace transcript convention)
-- If no newer Gong call exists, say so explicitly — silence on Gong is itself a signal (often a deal-decay flag worth noting in the assessment)
+- If no newer call exists in Gong **or** Granola, say so explicitly — silence across both is itself a signal (often a deal-decay flag worth noting in the assessment). Silence on Gong alone is not: unrecorded customer-hosted calls show up only in Granola, so name which sources were checked before reading silence as decay
 
 ### Salesforce Enrichment (full account arc — deepest SFDC read)
 Per `_se-playbook.md` "Salesforce Enrichment." This skill reads the **full account arc**, not just the active opp. Pull:
