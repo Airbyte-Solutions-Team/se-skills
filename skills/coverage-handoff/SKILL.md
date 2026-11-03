@@ -28,7 +28,7 @@ Read and weave together — per `~/.claude/skills/_se-playbook.md`:
 2. **Transcripts** — `{transcripts_dir}/<Customer>-*` — most recent in full; older skimmed for the arc and for **promises/commitments** made to the customer.
 3. **Memory** — `memory_dir` (skip if unset) for active blockers / project context (often records live technical threads and access details).
 4. **Salesforce** — per `_se-playbook.md` "Salesforce Enrichment": pull the opportunity (matching rule) + account arc. Fields to pull and **inject verbatim** (see below).
-5. **Source Freshness** — apply the Gong session-dedupe + 14-day rule. If the most recent local transcript is stale, check Gong.
+5. **Source Freshness** — apply the session-dedupe + 14-day rule. If the most recent local transcript is stale, check Gong, then Granola (for meetings Gong doesn't have), and save any transcript you pull (Gong **or** Granola) to `{transcripts_dir}` before using it (`_se-playbook.md` → "Every pulled transcript is saved").
 
 Apply **Source Coverage transparency** and **assertive SFDC-vs-reality flagging** (per playbook). Graceful degradation if SFDC/Gong unavailable — mark missing facts "Unknown", never fabricate.
 
@@ -116,6 +116,7 @@ Read `~/.claude/skills/_se-playbook.md` for the source-reading pattern, SFDC fie
 
 ## Changelog
 
+- **2026-11-03** — Source freshness now checks Gong, then Granola, and saves any pulled transcript (Gong **or** Granola) before use, per `_se-playbook.md` → "Every pulled transcript is saved". Previously this step named only Gong, so a Granola transcript could be read without being saved locally.
 - **2026-07-10** — "Current State" now surfaces the deployment shape at a glance for the covering SE: displays the current deployment verdict (Cloud / Flex / park) from the deployment-qual doc and any `self_managed_only`/enterprise-connector flags from connector-feasibility's Availability column. Display-only — reads the derived verdicts from saved `outputs/`, does NOT pull the registry/repos to re-derive; "not yet assessed" if the docs are absent (no gate). Fits the existing section 6 — no new HTML template section.
 - **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`memory_dir`/`config_file`) per playbook → Workspace Paths; the `template.html` reference is now skill-relative (`~/.claude/skills/coverage-handoff/template.html`) instead of assuming the repo lives at `~/airbyte-work/02-repos/se-skills`. Portable across SE machines.
 - **2026-07-09** — Added an "If you get stuck" internal-escalation sub-block to Access & Escalation (owner SE return date, AE, internal Slack channel, one eng/PS contact — names or TBD, never invented) so a covering SE has a routing map when blocked; added a template-version note (Source Coverage records which `template.html` version was used; template now carries a `TEMPLATE VERSION` stamp) so an rs-group design-system change triggers re-generation instead of hand-editing.

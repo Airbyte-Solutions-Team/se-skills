@@ -12,7 +12,10 @@ output; the model is used only as the OAuth-holding MCP client.
 
 Boundary, stated plainly:
 
-* Every call is one bounded subprocess started by an explicit user action.
+* Every call is one bounded subprocess started by an explicit user action:
+  a Command Center step, or the post-run transcript backstop of a skill run
+  the user started (`services/granola_transcript_backstop.py`), which fetches
+  only meetings that run cited and didn't save.
   There is no scheduler, no polling loop, no webhook and no cached listing.
 * **Pre-execution restriction** (Claude Code CLI reference, checked 2026-09-25):
 

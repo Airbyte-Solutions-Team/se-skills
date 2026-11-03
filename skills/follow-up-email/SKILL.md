@@ -159,10 +159,10 @@ Default: chat output only. Never send without explicit instruction.
 
 Read `~/.claude/skills/_se-playbook.md` for full framework details.
 
-### Source Freshness Check (Gong Fallback)
-Per `_se-playbook.md` ("Source Freshness Check"): if the most-recent local transcript is more than **14 days old**, search Gong for newer calls before drafting. A recap or nudge based on stale context will sound disconnected from the customer's current state. For Nudge emails especially, recent silence is the substance of the email — knowing whether Gong has anything new is essential.
+### Source Freshness Check (Gong → Granola)
+Per `_se-playbook.md` ("Source Freshness Check"): if the most-recent local transcript is more than **14 days old**, or the email is a recap of a call that isn't saved locally yet, search Gong, then Granola (for meetings Gong doesn't have), for newer calls before drafting. A recap or nudge based on stale context will sound disconnected from the customer's current state. For Nudge emails especially, recent silence is the substance of the email — knowing whether Gong or Granola has anything new is essential.
 - Pull the **most recent call only** — do not bulk-pull
-- Save to `{transcripts_dir}/<Customer-Name>-MM.DD.YY.txt` BEFORE using it (workspace transcript convention)
+- Save any transcript you pull — from Gong **or** Granola — to `{transcripts_dir}/<Customer-Name>-MM.DD.YY.txt` BEFORE using it; Granola files start with the provenance header and Source Coverage gives the Granola meeting ID (`_se-playbook.md` → "Every pulled transcript is saved"). This applies even though this skill prefers call summaries: a recap drafted from a transcript you didn't save leaves the call invisible to `post-call` and every later skill
 
 ### Every email must end with a concrete next step
 "Weak next-step setting" is a top SE anti-pattern. Bad: "I'll follow up next week." Good: "Tuesday 2pm, 30 min, you + your security lead + me, agenda: encryption-at-rest and network egress." Reject any draft that doesn't have date + attendees + agenda in the next step.
@@ -282,6 +282,7 @@ We hope this email finds you well. We wanted to reach out regarding an issue we'
 
 ## Changelog
 
+- **2026-11-03** — Source freshness now checks Gong, then Granola (also when recapping a call that isn't saved locally yet), and saves any pulled transcript (Gong **or** Granola) before use, per `_se-playbook.md` → "Every pulled transcript is saved". Found when a recap run read a same-day Granola transcript without saving it, so the next `post-call` run couldn't see that call.
 - **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
 - **2026-07-09** — Fixed the "prefer call summaries" read path: checks `outputs/post-call/post-call-*.md` (was `call-summary-*.md`, which post-call never produces — so the skill always fell back to raw transcripts, defeating the optimization).
 - **2026-07-09** — Single canonical save path (`outputs/emails/email-<YYYY-MM-DD>-<purpose>.md` — reconciled the After-Drafting manual path with the Auto-save default); sign-off sourced from `.se-config.yaml` (removed hardcoded "Gary" in the three template sign-offs + the "ask Gary"/"Gary's voice" refs + the description); added a pre-send self-check (concrete next step, grounded claims, no invented commitments — internal-only, keeps the email human).

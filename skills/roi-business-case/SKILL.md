@@ -198,8 +198,9 @@ Read `~/.claude/skills/_se-playbook.md`.
 - **Compelling event (D2) sharpens payback.** If there's a dated forcing function, frame payback against it ("pays back before your Fivetran renewal").
 - **Capacity-vs-consumption is the Challenger reframe.** The predictable-spend-at-scale story is the teach; model growth to make it land.
 
-### Source Freshness Check (Gong Fallback)
-Per `_se-playbook.md`: if the most-recent local transcript is >14 days old, check Gong for a newer call before pulling cost/volume inputs — these numbers often firm up in the latest call.
+### Source Freshness Check (Gong → Granola)
+Per `_se-playbook.md`: if the most-recent local transcript is >14 days old, check Gong, then Granola (for meetings Gong doesn't have), for a newer call before pulling cost/volume inputs — these numbers often firm up in the latest call.
+- Save any transcript you pull — from Gong **or** Granola — to `{transcripts_dir}/<Customer-Name>-MM.DD.YY.txt` BEFORE using it; Granola files start with the provenance header and Source Coverage gives the Granola meeting ID (`_se-playbook.md` → "Every pulled transcript is saved")
 
 ### Anti-patterns to avoid in this skill
 - Inventing inputs to fill the table (the cardinal sin — mark [confirm] instead)
@@ -234,6 +235,7 @@ Include a Source Coverage section reporting: biz-qual Metrics read, transcripts 
 
 ## Changelog
 
+- **2026-11-03** — Source freshness now checks Gong, then Granola, and saves any pulled transcript (Gong **or** Granola) before use, per `_se-playbook.md` → "Every pulled transcript is saved". Previously this section named only Gong, so a Granola transcript could be read without being saved locally.
 - **2026-07-14** — **Phase 3 guardrails: primary scenario discipline and explicit missing-input impact.** Added a "Primary scenario discipline" rule that the customer's stated operating model is the baseline; sync frequency, scope, and concurrency may not be lowered in the primary estimate without explicit approval, and optimization alternatives must be clearly labeled. Added a "Missing inputs that materially affect the result" line to Assumptions & Confirms plus an explicit "Avoid false precision" callout.
 - **2026-07-14** — **SKILL-004: expanded customer-constraint preservation.** Primary scenario discipline now explicitly calls out capacity sizing, sync frequency, concurrency, throughput, and volume, and references Operating Discipline D5 in `_se-playbook.md`. Anti-patterns updated to cover assuming a lower number because the real value is unconfirmed.
 - **2026-07-10** — Dropped SME from the cost model. Self-Managed Enterprise's licensed pricing lane is retired / not currently offered (may return) — removed as a live option from the deployment-qual read, the pricing-model spine, and the At-a-Glance "Deployment model priced" line; cost model is now Cloud Pro / Flex (both capacity-based). SME kept as a historical note, not deleted.

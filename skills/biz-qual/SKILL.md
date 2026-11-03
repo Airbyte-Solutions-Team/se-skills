@@ -327,10 +327,10 @@ Per `_se-playbook.md` "Salesforce Enrichment." Pull the **active opp** MEDDPICC 
 
 If SFDC unavailable, skip per graceful-degradation and score from transcripts only.
 
-### Source Freshness Check (Gong Fallback)
-Per `_se-playbook.md` ("Source Freshness Check"): if the most-recent local transcript is more than **14 days old**, search Gong for newer calls before scoring MEDDPICC.
+### Source Freshness Check (Gong → Granola)
+Per `_se-playbook.md` ("Source Freshness Check"): if the most-recent local transcript is more than **14 days old**, search Gong, then Granola (for meetings Gong doesn't have), for newer calls before scoring MEDDPICC.
 - Pull the **most recent call only** — do not bulk-pull
-- Save to `_transcripts/<Customer-Name>-MM.DD.YY.txt` BEFORE using it (per CLAUDE.md)
+- Save any transcript you pull — from Gong **or** Granola — to `{transcripts_dir}/<Customer-Name>-MM.DD.YY.txt` BEFORE using it; Granola files start with the provenance header and Source Coverage gives the Granola meeting ID (`_se-playbook.md` → "Every pulled transcript is saved")
 - A MEDDPICC scorecard based on stale data is worse than no scorecard
 
 ### Apply Cross-Transcript Analysis
@@ -395,6 +395,7 @@ Wait for explicit yes/no on Notion / memory before doing those.
 
 ## Changelog
 
+- **2026-11-03** — Source freshness now checks Gong, then Granola, and saves any pulled transcript (Gong **or** Granola) before use, per `_se-playbook.md` → "Every pulled transcript is saved". Previously this section named only Gong, so a Granola transcript could be read without being saved locally.
 - **2026-07-10** — Metrics section may now do a light **derived-read** of connector-feasibility's Availability column + deployment verdict (from `outputs/connector-feasibility/`) to inform pricing-tier / ROI reasoning — enterprise/gated connectors imply a higher edition/capacity tier. Reference-only (reads another skill's output, no registry/repo pull), no gate — proceeds unchanged if the doc isn't there.
 - **2026-07-10** — Added qual-craft disciplines (per playbook → Operating Disciplines): compelling-event + backward-timeline probe in Decision Process (D2); coach-vs-champion + multi-threading in Champion (D3/D4); a new **Stakeholder Map** section (the reusable artifact); and a **Reasons to walk / deprioritize** read in Deal Risks (D1 — qualifying out as a win).
 - **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.

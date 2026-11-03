@@ -572,6 +572,25 @@ function warnPersistence(id, message) {
   showToast(message, "warn");
 }
 
+// After a skill run, the server saves any Granola transcript the run read but
+// didn't save to _transcripts/ (services/granola_transcript_backstop.py). Say so
+// once per job, and say plainly when it couldn't, so a missing call isn't silent.
+const _backstopShown = new Set();
+
+function notifyTranscriptBackstop(jobId, backstop) {
+  if (!backstop || !Array.isArray(backstop.results) || _backstopShown.has(jobId)) return;
+  _backstopShown.add(jobId);
+  const saved = backstop.results.filter((r) => r.outcome === "saved");
+  const unsaved = backstop.results.filter((r) => !["saved", "already_saved", "same_day_exists"].includes(r.outcome));
+  if (saved.length) {
+    showToast(`Saved the Granola transcript this run read but didn't save: ${saved.map((r) => r.name).join(", ")}`, "ok");
+  }
+  if (unsaved.length) {
+    const why = unsaved.map((r) => r.error_code || r.outcome).join(", ");
+    showToast(`This run read a Granola transcript that couldn't be saved to _transcripts/ (${why}). Check Status → Granola and re-run, or add the transcript by hand.`, "warn");
+  }
+}
+
 // Poll a background job until it finishes. `onTick` gets the job snapshot each
 // poll; resolves with the final job. Polling is independent of any page — if
 // you navigate away and the element is gone, onTick simply no-ops.
@@ -580,6 +599,7 @@ async function pollJob(jobId, onTick) {
     const job = await api(`/api/jobs/${encodeURIComponent(jobId)}`).catch(() => null);
     if (!job) return null;
     if (job.persistence_warning) warnPersistence(`job:${jobId}`, job.persistence_warning);
+    if (job.status !== "running") notifyTranscriptBackstop(jobId, job.transcript_backstop);
     if (onTick) await onTick(job);
     if (job.status !== "running") return job;
     await new Promise((r) => setTimeout(r, 2000));

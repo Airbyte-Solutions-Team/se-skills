@@ -682,6 +682,26 @@ class OutputService:
                     continue
         return False
 
+    def markdown_outputs_since(
+        self, account: str, opp_slug: str | None, skill: str, since_ts: float
+    ) -> list[Path]:
+        """`.md` outputs `skill` wrote at/after `since_ts` (opportunity folders, else account folder)."""
+        out_dirs = self._output_dirs(account, opp_slug, skill)
+        if out_dirs is None:
+            outputs = self.customers_dir / account / "outputs"
+            out_dirs = [outputs / folder for folder in _SKILL_OUTPUT_FOLDERS.get(skill, (skill,))]
+        found: list[Path] = []
+        for out_dir in out_dirs:
+            if not out_dir.is_dir():
+                continue
+            for f in out_dir.glob("*.md"):
+                try:
+                    if f.is_file() and not f.is_symlink() and f.stat().st_mtime >= since_ts:
+                        found.append(f)
+                except OSError:
+                    continue
+        return found
+
     @staticmethod
     def _sidecar_for_md(md_path: Path) -> Path:
         """Sidecar JSON path for a Markdown output file."""

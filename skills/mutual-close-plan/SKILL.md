@@ -171,8 +171,9 @@ Read `~/.claude/skills/_se-playbook.md`.
 - **Sandler upfront contract, applied to close.** The two-sided responsibilities + the agreement ask are an upfront contract for the back half of the deal.
 - **Stakeholder map (D3/D4).** Owners come from the map. If a step's owner is a coach not a champion, or you're single-threaded on the whole close, that's a risk.
 
-### Source Freshness Check (Gong Fallback)
-Per `_se-playbook.md`: if the most-recent local transcript is >14 days old, check Gong for a newer call before mapping the close — procurement/security steps often surface late, once the deal gets real.
+### Source Freshness Check (Gong → Granola)
+Per `_se-playbook.md`: if the most-recent local transcript is >14 days old, check Gong, then Granola (for meetings Gong doesn't have), for a newer call before mapping the close — procurement/security steps often surface late, once the deal gets real.
+- Save any transcript you pull — from Gong **or** Granola — to `{transcripts_dir}/<Customer-Name>-MM.DD.YY.txt` BEFORE using it; Granola files start with the provenance header and Source Coverage gives the Granola meeting ID (`_se-playbook.md` → "Every pulled transcript is saved")
 
 ### Anti-patterns to avoid in this skill
 - A plan the customer has never seen, presented as "the close plan" (it's a draft until they agree)
@@ -204,4 +205,5 @@ Include a Source Coverage section reporting: biz-qual Paper Process / EB read, p
 
 ## Changelog
 
+- **2026-11-03** — Source freshness now checks Gong, then Granola, and saves any pulled transcript (Gong **or** Granola) before use, per `_se-playbook.md` → "Every pulled transcript is saved". Previously this section named only Gong, so a Granola transcript could be read without being saved locally.
 - **2026-07-10** — Initial creation. Backward-planned path from POC-success to signature with owners + dates on both sides; anchored to the compelling event (D2); two-sided responsibilities as a close-phase Sandler upfront contract; critical-path/risk read (security review as the usual gate); explicit "not mutual until agreed" state. Distinct from poc-plan (tech proof) — this is the path to a signed contract. Per playbook → Operating Disciplines.

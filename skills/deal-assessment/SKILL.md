@@ -270,11 +270,11 @@ Wait for explicit yes/no on Notion / memory before doing those.
 
 Read `~/.claude/skills/_se-playbook.md` for full framework details.
 
-### Source Freshness Check (Gong Fallback)
+### Source Freshness Check (Gong → Granola)
 Before synthesizing, check whether local transcripts are current. Per `_se-playbook.md` ("Source Freshness Check"):
 - If the most-recent local transcript is more than **14 days old**, OR the user signals "check for new activity," search Gong for newer calls, then Granola for meetings Gong doesn't have (Gong wins when both have the same meeting)
 - Pull the **most recent call only** — do not bulk-pull
-- Save any pulled transcript to `_transcripts/<Customer-Name>-MM.DD.YY.txt` BEFORE using it (workspace transcript convention)
+- Save any transcript you pull — from Gong **or** Granola — to `{transcripts_dir}/<Customer-Name>-MM.DD.YY.txt` BEFORE using it; Granola files start with the provenance header and Source Coverage gives the Granola meeting ID (`_se-playbook.md` → "Every pulled transcript is saved")
 - If no newer call exists in Gong **or** Granola, say so explicitly — silence across both is itself a signal (often a deal-decay flag worth noting in the assessment). Silence on Gong alone is not: unrecorded customer-hosted calls show up only in Granola, so name which sources were checked before reading silence as decay
 
 ### Salesforce Enrichment (full account arc — deepest SFDC read)
@@ -345,6 +345,7 @@ If a prior `outputs/deal-assessment/deal-assessment-*.md` already exists for thi
 
 ## Changelog
 
+- **2026-11-03** — The transcript save rule now names Granola explicitly (Gong **or** Granola pulls are saved before use, with the Granola meeting ID in Source Coverage), per `_se-playbook.md` → "Every pulled transcript is saved".
 - **2026-07-10** — Sharpened Urgency into an explicit compelling-event + backward-timeline read (D2), and added a Stakeholder read (multi-threading / coach-vs-champion, D3/D4) that pulls the biz-qual stakeholder map. Per playbook → Operating Disciplines.
 - **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
 - **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE" (Coaching Observations section + description) so the skill isn't tied to one operator.

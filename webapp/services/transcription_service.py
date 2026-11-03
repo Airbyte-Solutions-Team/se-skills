@@ -23,7 +23,7 @@ import threading
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -335,6 +335,12 @@ class LiveSession:
 
 
 MAX_IMPORT_CHARS = 1_500_000  # ~1.5 MB of text; a 2h call is typically well under 200k
+# First line of a saved Granola transcript (playbook → Source Freshness Check):
+# `# Source: Granola | <meeting id> | <title> | <YYYY-MM-DD>`.
+GRANOLA_SOURCE_HEADER = re.compile(
+    r"^#\s*Source:\s*Granola\s*\|\s*([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\b",
+    re.IGNORECASE,
+)
 
 
 def _plain_text_from_captions(text: str) -> str:
@@ -819,19 +825,82 @@ class TranscriptionService:
                 raise TranscriptionError(400, "Call date must be YYYY-MM-DD") from exc
         else:
             when = datetime.now()
-        transcripts_dir = self.customers_dir / "_transcripts"
-        transcripts_dir.mkdir(parents=True, exist_ok=True)
-        base = f"{cust}-{when.strftime('%m.%d.%y')}"
-        path = transcripts_dir / f"{base}.txt"
-        n = 2
-        while path.exists():
-            path = transcripts_dir / f"{base}-v{n}.txt"
-            n += 1
         # Header values come from the client: keep them to one printable line.
         label = " ".join((source_filename or "").split())[:120]
         header = "# Source: manual upload" + (f" | {label}" if label else "")
-        path.write_text(f"{header}\n\n{body}\n", encoding="utf-8")
+        path = self._write_new_transcript(cust, when.date(), f"{header}\n\n{body}\n")
         return {"name": path.name, "saved_to": str(path), "chars": len(body)}
+
+    def save_granola_transcript(
+        self,
+        account: str,
+        *,
+        meeting_id: str,
+        title: str | None,
+        call_date: date,
+        text: str,
+    ) -> dict[str, Any]:
+        """Save a Granola transcript as `_transcripts/<Customer>-MM.DD.YY.txt`.
+
+        Same naming as Gong pulls and uploads (never overwrites; same-day files get
+        `-vN`), with the playbook's first-line provenance header so later runs and
+        `saved_granola_meeting_ids` can tell the meeting is already saved.
+        """
+        cust = self.titlecase(self.safe_name(account))
+        body = (text or "").strip()
+        if not body:
+            raise TranscriptionError(400, "Transcript is empty")
+        if len(body) > MAX_IMPORT_CHARS:
+            raise TranscriptionError(413, f"Transcript is too large (limit {MAX_IMPORT_CHARS:,} characters)")
+        # Provider text: one printable line, and no `|` so the header stays parseable.
+        label = " ".join((title or "").split()).replace("|", "/")[:120] or "Untitled meeting"
+        header = f"# Source: Granola | {meeting_id.lower()} | {label} | {call_date.isoformat()}"
+        path = self._write_new_transcript(cust, call_date, f"{header}\n\n{body}\n")
+        return {"name": path.name, "saved_to": str(path), "chars": len(body)}
+
+    def transcripts_for_call_date(self, account: str, call_date: date) -> list[str]:
+        """Saved transcript names for this account's call date (`<Customer>-MM.DD.YY[-vN]`)."""
+        cust = self.titlecase(self.safe_name(account))
+        tdir = self.customers_dir / "_transcripts"
+        if not tdir.is_dir():
+            return []
+        stem = re.compile(re.escape(f"{cust}-{call_date.strftime('%m.%d.%y')}") + r"(?:-v\d+)?")
+        return sorted(
+            path.name for path in tdir.iterdir()
+            if path.is_file() and path.suffix in (".txt", ".md", ".rtf") and stem.fullmatch(path.stem)
+        )
+
+    def saved_granola_meeting_ids(self) -> set[str]:
+        """Meeting ids of every saved Granola transcript, read from first-line headers."""
+        tdir = self.customers_dir / "_transcripts"
+        ids: set[str] = set()
+        if not tdir.is_dir():
+            return ids
+        for path in tdir.glob("*.txt"):
+            try:
+                with path.open("r", encoding="utf-8", errors="replace") as handle:
+                    first = handle.readline(512)
+            except OSError:
+                continue
+            match = GRANOLA_SOURCE_HEADER.match(first.strip())
+            if match:
+                ids.add(match.group(1).lower())
+        return ids
+
+    def _write_new_transcript(self, cust: str, when: date, content: str) -> Path:
+        """Write `_transcripts/<cust>-MM.DD.YY[-vN].txt`, never replacing an existing file."""
+        transcripts_dir = self.customers_dir / "_transcripts"
+        transcripts_dir.mkdir(parents=True, exist_ok=True)
+        base = f"{cust}-{when.strftime('%m.%d.%y')}"
+        n = 1
+        while True:
+            path = transcripts_dir / (f"{base}.txt" if n == 1 else f"{base}-v{n}.txt")
+            try:
+                with path.open("x", encoding="utf-8") as handle:
+                    handle.write(content)
+                return path
+            except FileExistsError:
+                n += 1
 
     def _transcript_path(self, account: str, name: str) -> Path:
         """Resolve a saved-transcript filename safely under _transcripts/, scoped to

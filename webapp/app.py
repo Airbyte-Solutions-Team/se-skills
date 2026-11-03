@@ -115,6 +115,7 @@ def _build_local_services(app: FastAPI) -> None:
     from services.gmail_intake_service import GmailIntakeService
     from services.gmail_forget_service import GmailForgetService
     from services.granola_retrieval_service import GranolaRetrievalService
+    from services.granola_transcript_backstop import GranolaTranscriptBackstop
     from services.job_service import JobService
     from services.opportunity_workspace_service import OpportunityWorkspaceService
     from services.opportunity_state_create_service import OpportunityStateCreateService
@@ -232,6 +233,20 @@ def _build_local_services(app: FastAPI) -> None:
         ledger=evidence_ledger_service,
         job_service=job_service,
     )
+    # After each successful skill run, save any Granola transcript the run cited but
+    # didn't save (skills are told to; this makes it hold). Same restricted relay;
+    # off when `.se-config.yaml` sets `transcript_sources.granola: false`.
+    def _granola_transcripts_enabled() -> bool:
+        sources = config._se_config().get("transcript_sources") or {}
+        return not (isinstance(sources, dict) and sources.get("granola") is False)
+
+    granola_transcript_backstop = GranolaTranscriptBackstop(
+        transport=granola_relay,
+        transcripts=transcription_service,
+        outputs_since=output_service.markdown_outputs_since,
+        enabled=_granola_transcripts_enabled,
+    )
+    job_service.after_run = granola_transcript_backstop.after_run
     # Reconciliation reuses the same local overview runtime/provider as Opportunity Overview.
     command_center_operations_service = CommandCenterOperationsService(
         ledger=evidence_ledger_service,

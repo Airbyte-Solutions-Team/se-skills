@@ -86,6 +86,7 @@ Don't auto-query Notion. If the user explicitly asks for "deeper context" or if 
 ### 5. Gong / Granola (optional, conditional)
 Apply the Source Freshness Check from `_se-playbook.md`:
 - If most recent local transcript is >14 days old, check Gong, then Granola for meetings Gong doesn't have, for newer activity
+- If you read a transcript from either source, save it to `{transcripts_dir}` before using it (`_se-playbook.md` → "Every pulled transcript is saved") so the skill you route to can read it
 - Confirmed silence across Gong **and** Granola (no calls in 30+ days) is itself a routing signal — likely route to `deal-assessment` to diagnose decay. Gong-only silence isn't enough when Granola is enabled; say which sources were checked
 
 ### 6. Salesforce (active opp only — light snapshot)
@@ -375,6 +376,7 @@ Avoid "run follow-up-email because it's been a while" without a substantive trig
 
 ## Changelog
 
+- **2026-11-03** — Any transcript read from Gong or Granola during the freshness check is saved to `{transcripts_dir}` before use, so the skill next-move routes to can read it (`_se-playbook.md` → "Every pulled transcript is saved").
 - **2026-07-14** — **Missing-prerequisite flag.** When a deliverable skill (`poc-plan`, `roi-business-case`, `mutual-close-plan`, `coverage-handoff`) is recommended while hard prerequisites are missing, the `At-a-Glance` confidence line, `Why This Move` rationale, and `Don't do yet` section must explicitly flag the missing artifact(s). Defaults to evidence-gathering when confidence is actually low.
 - **2026-07-14** — **Phase 3 guardrails: no repeat recommendations; low-confidence → gather evidence.** Added an "Already-completed action guard" so the router does not recommend a qualification skill whose fresh artifact already exists without a new trigger. Added a "Low-confidence default" that prefers evidence-gathering actions over deliverable skills when the artifact chain is thin or signals conflict.
 - **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.

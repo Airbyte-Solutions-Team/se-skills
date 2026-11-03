@@ -7,6 +7,8 @@ invocation methods that expose it.
 from __future__ import annotations
 
 import asyncio
+import os
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -177,9 +179,55 @@ def test_check_prerequisites_post_call_accepts_local_transcript_extensions(
 ) -> None:
     customers = tmp_path / "customers"
     _write_transcript(customers, "Acme", f"Acme-07.14.26{extension}", "call")
-    plan = orchestrator.check_prerequisites("post-call", "Acme", None, customers)
+    plan = orchestrator.check_prerequisites("post-call", "Acme", None, customers, today=date(2026, 7, 14))
     assert plan.ready is True
+    assert plan.transcript_missing is False
     assert not plan.warnings
+
+
+def test_post_call_notes_newest_saved_transcript_when_older_than_today(tmp_path: Path) -> None:
+    """A saved transcript is usually the previous call: say which one, and that a newer one is checked."""
+    customers = tmp_path / "customers"
+    _write_transcript(customers, "Acme", "Acme-10.08.26.txt", "older call")
+    _write_transcript(customers, "Acme", "Acme-10.27.26.txt", "newest saved call")
+    plan = orchestrator.check_prerequisites("post-call", "Acme", None, customers, today=date(2026, 11, 3))
+    assert plan.ready is True
+    assert plan.missing == []
+    assert plan.transcript_missing is False
+    assert plan.warnings == [
+        "Newest saved transcript for this account is from Oct 27, 2026. Post-call will first check Gong, "
+        "then Granola, for a newer completed call and save it to _transcripts/ before writing it up. "
+        "To write up a specific call, name it in Optional context."
+    ]
+
+
+def test_post_call_newest_transcript_uses_filename_date_and_version_suffix(tmp_path: Path) -> None:
+    """Filename date wins over mtime, `-v2` same-day files count, and undated names are ignored."""
+    customers = tmp_path / "customers"
+    newest = _write_transcript(customers, "Acme", "Acme-10.27.26-v2.txt", "second file same day")
+    older = _write_transcript(customers, "Acme", "Acme-09.01.26.txt", "older call, touched last")
+    _write_transcript(customers, "Acme", "Acme-notes.txt", "no date in name")
+    _write_transcript(customers, "Acme", "Acme-13.45.26.txt", "impossible date")
+    _write_transcript(customers, "Other", "Other-12.01.26.txt", "different account")
+    os.utime(newest, (1_000_000, 1_000_000))
+    os.utime(older, (2_000_000_000, 2_000_000_000))
+    assert orchestrator._latest_transcript_date(customers, "Acme") == date(2026, 10, 27)
+    assert orchestrator._latest_transcript_date(customers, "Nobody") is None
+
+
+def test_post_call_no_newer_call_note_when_newest_transcript_is_today(tmp_path: Path) -> None:
+    customers = tmp_path / "customers"
+    _write_transcript(customers, "Acme", "Acme-11.03.26.txt", "today's call")
+    plan = orchestrator.check_prerequisites("post-call", "Acme", None, customers, today=date(2026, 11, 3))
+    assert plan.warnings == []
+
+
+@pytest.mark.parametrize("skill", ["prep-call", "biz-qual", "tech-qual", "poc-plan"])
+def test_newer_call_note_is_post_call_only(tmp_path: Path, skill: str) -> None:
+    customers = tmp_path / "customers"
+    _write_transcript(customers, "Acme", "Acme-10.27.26.txt", "call")
+    plan = orchestrator.check_prerequisites(skill, "Acme", None, customers, today=date(2026, 11, 3))
+    assert not any("Newest saved transcript" in warning for warning in plan.warnings)
 
 
 def test_check_prerequisites_biz_qual_ready_with_transcript(tmp_path: Path) -> None:

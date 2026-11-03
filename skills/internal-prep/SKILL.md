@@ -32,7 +32,7 @@ This skill requires customer source material for any customer being discussed. F
 - `{customers_dir}/<Customer>/` — qual docs, deal assessments, call summaries (paths per playbook → Workspace Paths)
 - `{transcripts_dir}/<Customer>-*.txt` — recent transcripts
 - `memory_dir` — customer-specific memory (skip if unset)
-- Apply Source Freshness Check per `_se-playbook.md` — pull from Gong if local is stale (14-day rule), respecting session-dedupe
+- Apply Source Freshness Check per `_se-playbook.md` — pull from Gong, then Granola (for meetings Gong doesn't have), if local is stale (14-day rule), respecting session-dedupe; save any transcript you pull (Gong **or** Granola) to `{transcripts_dir}` before using it (`_se-playbook.md` → "Every pulled transcript is saved")
 
 **If a customer has zero artifacts and zero transcripts: flag it explicitly in the prep doc — the SE shouldn't enter an internal meeting unable to speak about a deal.**
 
@@ -332,6 +332,7 @@ Include a Source Coverage section reporting which customer folders, qual docs, t
 
 ## Changelog
 
+- **2026-11-03** — Source freshness now checks Gong, then Granola, and saves any pulled transcript (Gong **or** Granola) before use, per `_se-playbook.md` → "Every pulled transcript is saved". Previously this step named only Gong, so a Granola transcript could be read without being saved locally.
 - **2026-07-10** — Single-customer modes (ae-sync / exec-readout / deal-review) now display the deployment shape at a glance for the AE/exec: the current deployment verdict (Cloud / Flex / park) from the deployment-qual doc and any `self_managed_only`/enterprise-connector flags from connector-feasibility's Availability column, when present. Display-only — reads derived verdicts from saved `outputs/`, does NOT pull the registry/repos to re-derive; "not yet assessed" if the docs are absent (no gate).
 - **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`{notes_dir}`/`config_file`/`memory_dir`) per playbook → Workspace Paths. Portable across SE machines.
 - **2026-07-09** — Genericized hardcoded "Gary" SE-identity prose → "the SE"; fixed the corrupted template placeholder `[SE Gary]` → `[SE name]` (header + config-read instruction).

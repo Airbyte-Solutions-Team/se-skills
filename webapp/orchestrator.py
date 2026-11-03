@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -217,16 +218,54 @@ def _latest_output(
         return latest, None
 
 
-def _has_transcript(customers_dir: Path, account: str) -> bool:
-    """True if at least one transcript exists for this account."""
+def _account_transcripts(customers_dir: Path, account: str) -> list[Path]:
+    """Saved transcript files for this account (`_transcripts/<Customer>-*`)."""
     tdir = customers_dir / "_transcripts"
     if not tdir.exists():
-        return False
+        return []
     cust = _titlecase_folder(account)
-    for f in tdir.iterdir():
-        if f.is_file() and f.suffix in (".txt", ".md", ".rtf") and f.name.startswith(f"{cust}-"):
-            return True
-    return False
+    return [
+        f for f in tdir.iterdir()
+        if f.is_file() and f.suffix in (".txt", ".md", ".rtf") and f.name.startswith(f"{cust}-")
+    ]
+
+
+def _has_transcript(customers_dir: Path, account: str) -> bool:
+    """True if at least one transcript exists for this account."""
+    return bool(_account_transcripts(customers_dir, account))
+
+
+# `<Customer>-MM.DD.YY` with an optional same-day `-vN` suffix (see TranscriptionService).
+_TRANSCRIPT_CALL_DATE = re.compile(r"-(\d{2})\.(\d{2})\.(\d{2})(?:-v\d+)?$")
+
+
+def _latest_transcript_date(customers_dir: Path, account: str) -> date | None:
+    """The newest call date encoded in this account's transcript filenames.
+
+    Filename date, not mtime: a transcript pulled today for last week's call has
+    today's mtime. Files without a parseable date are ignored.
+    """
+    latest: date | None = None
+    for path in _account_transcripts(customers_dir, account):
+        match = _TRANSCRIPT_CALL_DATE.search(path.stem)
+        if not match:
+            continue
+        month, day, year = (int(part) for part in match.groups())
+        try:
+            call_date = date(2000 + year, month, day)
+        except ValueError:
+            continue
+        if latest is None or call_date > latest:
+            latest = call_date
+    return latest
+
+
+def _post_call_newer_call_note(latest: date) -> str:
+    return (
+        f"Newest saved transcript for this account is from {latest:%b} {latest.day}, {latest.year}. "
+        "Post-call will first check Gong, then Granola, for a newer completed call and save it to "
+        "_transcripts/ before writing it up. To write up a specific call, name it in Optional context."
+    )
 
 
 def _has_qualification_doc(
@@ -382,13 +421,16 @@ def check_prerequisites(
     account: str,
     opp_slug: str | None,
     customers_dir: Path,
+    *,
+    today: date | None = None,
 ) -> PlanResult:
     """Return a plan result for running `skill` against `account`/`opp_slug`.
 
     Unknown skills are treated as having no prerequisites (they may be free-form
     or newly added). The result always sets `can_override=True` so the UI can
-    present a "Run anyway" option.
+    present a "Run anyway" option. `today` is injectable for tests.
     """
+    today = today or date.today()
     rules = SKILL_PREREQUISITES.get(skill, [])
     missing: list[str] = []
     warnings: list[str] = []
@@ -411,6 +453,12 @@ def check_prerequisites(
                     )
                 else:
                     missing.append("At least one customer transcript is required.")
+            elif rule.get("fallback") == "gong":
+                # post-call writes up the call that just happened, which usually isn't
+                # saved yet: say which saved call is newest so a stale pick is visible.
+                latest = _latest_transcript_date(customers_dir, account)
+                if latest is not None and latest < today:
+                    warnings.append(_post_call_newer_call_note(latest))
         elif kind == "local_evidence":
             has_transcript = _has_transcript(customers_dir, account)
             has_qualification_doc = _has_qualification_doc(customers_dir, account, opp_slug)

@@ -310,10 +310,10 @@ Pre-stage 2-3 narrative beats you'll be able to tell if the POC succeeds:
 
 Read `~/.claude/skills/_se-playbook.md` for full framework details.
 
-### Source Freshness Check (Gong Fallback)
-Per `_se-playbook.md` ("Source Freshness Check"): if the most-recent local transcript is more than **14 days old**, search Gong for newer calls before scoping the POC. The most recent call usually contains the freshest version of success criteria, scope, and stakeholder commitments — using stale data risks scoping a POC the customer has already moved past.
+### Source Freshness Check (Gong → Granola)
+Per `_se-playbook.md` ("Source Freshness Check"): if the most-recent local transcript is more than **14 days old**, search Gong, then Granola (for meetings Gong doesn't have), for newer calls before scoping the POC. The most recent call usually contains the freshest version of success criteria, scope, and stakeholder commitments — using stale data risks scoping a POC the customer has already moved past.
 - Pull the **most recent call only** — do not bulk-pull
-- Save to `_transcripts/<Customer-Name>-MM.DD.YY.txt` BEFORE using it (per CLAUDE.md)
+- Save any transcript you pull — from Gong **or** Granola — to `{transcripts_dir}/<Customer-Name>-MM.DD.YY.txt` BEFORE using it; Granola files start with the provenance header and Source Coverage gives the Granola meeting ID (`_se-playbook.md` → "Every pulled transcript is saved")
 
 ### Set the kickoff agreement (Sandler)
 A POC without a written upfront contract = a POC that drifts. Capture the resulting agreement under the existing `### Mutual Commitments` subsection:
@@ -362,6 +362,7 @@ Read `config_file` (per playbook → Workspace Paths) for the `[SE name]` field 
 
 ## Changelog
 
+- **2026-11-03** — Source freshness now checks Gong, then Granola, and saves any pulled transcript (Gong **or** Granola) before use, per `_se-playbook.md` → "Every pulled transcript is saved". Previously this section named only Gong, so a Granola transcript could be read without being saved locally.
 - **2026-07-14** — **Phase 3 guardrails: preserve success criteria and separate POC scope tiers.** Added an explicit rule that the customer's stated success criteria must be preserved — a difficult criterion cannot be silently removed to make the POC easier. Added a "Scope tiers" subsection separating minimum viable POC scope, optional stretch scope, production requirements, and POC-specific simplifications so the customer sees what is proven now vs. deferred.
 - **2026-07-14** — **SKILL-004: explicit customer-constraint preservation.** Expanded the success-criteria preservation rule and anti-patterns to call out capacity sizing, sync frequency, concurrency, throughput, and POC schedule. References Operating Discipline D5 in `_se-playbook.md`.
 - **2026-07-10** — **Light DS1/DS3 connector-availability validation of POC scope (secondary consumer of "Product & Connector Reference Data").** When the POC names connectors, validate each against the registry — existence, `supportLevel` tier, and Cloud-vs-Self-Managed availability (the OSS-minus-Cloud set difference) + enterprise-variant detection (private `airbyte-enterprise` `connector_stubs.json`) — so a POC isn't scoped on a community-tier or non-Cloud connector by surprise. A `self_managed_only` or enterprise-variant connector now flags a POC-shape risk: it forces Enterprise Flex (hybrid) or self-hosted OSS rather than a Cloud trial, changing prerequisites/timeline. Prefers to reuse connector-feasibility's already-computed Availability column (no re-derive); hits the registry directly only if no connector-feasibility doc exists; degrades loud ("availability not verified against registry") when the cache/enterprise repo is unreachable. Surfaced as a Scope bullet + a Risks-table row + a Source Coverage note — no new section, refusal rules unchanged.

@@ -49,6 +49,9 @@ class JobService:
         self.model_for = model_for
         self.persist_run = persist_run
         self.has_output_since = has_output_since
+        # Optional async post-run step for successful skill runs (the Granola transcript
+        # backstop). Set after construction because it depends on later-built services.
+        self.after_run: Callable[[dict[str, Any], float, str], Awaitable[dict[str, Any] | None]] | None = None
         self.jobs: dict[str, dict] = persistence.load_jobs(workspace)
         # Create and update orchestration share this lock so their conflict
         # checks and managed-job registration are one event-loop transaction.
@@ -281,6 +284,14 @@ class JobService:
                     )
                 except Exception:
                     logger.exception("has_output_since check failed for job %s", job_id)
+            if ok and self.after_run is not None:
+                try:
+                    post_run = await self.after_run(meta, job["started_at"], stdout)
+                except Exception:
+                    logger.exception("post-run step failed for job %s", job_id)
+                    post_run = None
+                if post_run is not None:
+                    job["transcript_backstop"] = post_run
             job.update(
                 status="done",
                 ok=ok,
@@ -316,21 +327,19 @@ class JobService:
 
         # Persist the finished result to disk (one file per skill, overwritten).
         try:
-            self.persist_run(
-                meta["account"],
-                meta.get("opp_slug"),
-                meta["skill"],
-                {
-                    "skill": meta["skill"],
-                    "opportunity": meta.get("opportunity"),
-                    "acknowledged_choices": meta.get("acknowledged_choices", []),
-                    "ok": job.get("ok"),
-                    "produced_output": job.get("produced_output"),
-                    "stdout": job.get("stdout", ""),
-                    "stderr": job.get("stderr", ""),
-                    "finished_at": datetime.now(timezone.utc).timestamp(),
-                },
-            )
+            record = {
+                "skill": meta["skill"],
+                "opportunity": meta.get("opportunity"),
+                "acknowledged_choices": meta.get("acknowledged_choices", []),
+                "ok": job.get("ok"),
+                "produced_output": job.get("produced_output"),
+                "stdout": job.get("stdout", ""),
+                "stderr": job.get("stderr", ""),
+                "finished_at": datetime.now(timezone.utc).timestamp(),
+            }
+            if job.get("transcript_backstop") is not None:
+                record["transcript_backstop"] = job["transcript_backstop"]
+            self.persist_run(meta["account"], meta.get("opp_slug"), meta["skill"], record)
         except Exception:
             pass  # persistence is best-effort; the in-memory job still works
 
