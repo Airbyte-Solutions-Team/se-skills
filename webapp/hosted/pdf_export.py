@@ -53,6 +53,7 @@ table-column ceiling that switches a wide table to a stacked layout.
 from __future__ import annotations
 
 import html
+import re
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from io import BytesIO
@@ -75,6 +76,7 @@ from reportlab.platypus import (
 )
 
 import md_render
+import pdf_theme as theme
 
 # Bounded work: the same ceiling the correction editor enforces, plus a node
 # ceiling so a pathological document cannot turn into unbounded rendering work.
@@ -357,7 +359,7 @@ def _inline(node: _Node, face: _Face = _BODY_FACE, depth: int = 0) -> str:
             inner = _inline(child, face, depth + 1)
             href = child.attrs.get("href", "").strip()
             if href.lower().startswith(_ALLOWED_LINK_SCHEMES):
-                parts.append(f'<link href="{_escape(href, face)}" color="#1558b0">{inner}</link>')
+                parts.append(f'<link href="{_escape(href, face)}" color="{theme.LINK}">{inner}</link>')
             else:
                 parts.append(inner)
             continue
@@ -384,48 +386,123 @@ def _plain_text(node: _Node, depth: int = 0) -> str:
     return "".join(parts)
 
 
+def _hex(value: str) -> colors.Color:
+    return colors.HexColor(value)
+
+
 def _styles() -> dict[str, ParagraphStyle]:
     body = ParagraphStyle(
         "body",
         fontName=_BODY_FONT,
         fontSize=9.5,
-        leading=13.5,
+        leading=14,
         spaceAfter=6,
-        textColor=colors.HexColor("#1a1a1a"),
+        textColor=_hex(theme.TEXT),
+        bulletColor=_hex(theme.ACCENT),
     )
+    heading = dict(parent=body, fontName=_BOLD_FONT, keepWithNext=1)
     styles = {
         "body": body,
         "h1": ParagraphStyle(
-            "h1", parent=body, fontName=_BOLD_FONT, fontSize=18, leading=22,
-            spaceBefore=0, spaceAfter=10, textColor=colors.HexColor("#111111"),
+            "h1", fontSize=18, leading=22, spaceBefore=0, spaceAfter=10,
+            textColor=_hex(theme.PRIMARY), **heading,
         ),
+        # Section heading: a numbered accent badge (inline backColor span), then a
+        # hairline rule drawn by `_section_rule`.
         "h2": ParagraphStyle(
-            "h2", parent=body, fontName=_BOLD_FONT, fontSize=13.5, leading=17,
-            spaceBefore=14, spaceAfter=6, textColor=colors.HexColor("#111111"),
+            "h2", fontSize=13.5, leading=18, spaceBefore=16, spaceAfter=2,
+            textColor=_hex(theme.PRIMARY), **heading,
         ),
         "h3": ParagraphStyle(
-            "h3", parent=body, fontName=_BOLD_FONT, fontSize=11.5, leading=15,
-            spaceBefore=10, spaceAfter=4,
+            "h3", fontSize=11.5, leading=15, spaceBefore=11, spaceAfter=4,
+            textColor=_hex(theme.PRIMARY_MID), **heading,
         ),
         "h4": ParagraphStyle(
-            "h4", parent=body, fontName=_BOLD_FONT, fontSize=10, leading=13.5,
-            spaceBefore=8, spaceAfter=3,
+            "h4", fontSize=9, leading=12, spaceBefore=8, spaceAfter=3,
+            textColor=_hex(theme.MUTED), **heading,
         ),
         "quote": ParagraphStyle(
-            "quote", parent=body, leftIndent=10, textColor=colors.HexColor("#333333"),
+            "quote", parent=body, leftIndent=10, textColor=_hex("#334155"),
         ),
         "code": ParagraphStyle(
             "code", parent=body, fontName=_MONO_FONT, fontSize=8.5, leading=11,
+            backColor=_hex("#f1f5f9"), borderPadding=6, spaceBefore=4,
+            textColor=_hex(theme.PRIMARY),
         ),
         "th": ParagraphStyle(
-            "th", parent=body, fontName=_BOLD_FONT, fontSize=8.5, leading=11,
+            "th", parent=body, fontName=_BOLD_FONT, fontSize=8, leading=10.5,
             spaceAfter=0, textColor=colors.white,
         ),
-        "td": ParagraphStyle("td", parent=body, fontSize=8.5, leading=11, spaceAfter=0),
+        "td": ParagraphStyle("td", parent=body, fontSize=8.5, leading=11.5, spaceAfter=0),
+        # Hero block (the document H1): brand line, kicker, headline, metadata.
+        "hero_brand": ParagraphStyle(
+            "hero_brand", parent=body, fontName=_BOLD_FONT, fontSize=7.5, leading=10,
+            spaceAfter=0, textColor=_hex("#c7d2fe"),
+        ),
+        "hero_kicker": ParagraphStyle(
+            "hero_kicker", parent=body, fontName=_BOLD_FONT, fontSize=8.5, leading=11,
+            spaceAfter=0, textColor=_hex(theme.ACCENT_LIGHT),
+        ),
+        "hero_title": ParagraphStyle(
+            "hero_title", parent=body, fontName=_BOLD_FONT, fontSize=22, leading=26,
+            spaceAfter=0, textColor=colors.white,
+        ),
+        "hero_meta": ParagraphStyle(
+            "hero_meta", parent=body, fontSize=8.5, leading=12, spaceAfter=0,
+            textColor=_hex("#e0e7ff"),
+        ),
     }
     styles["h5"] = styles["h4"]
     styles["h6"] = styles["h4"]
     return styles
+
+
+def _hero_flowables(title_html: str, meta_html: str, styles: dict[str, ParagraphStyle]) -> list:
+    """Render the document H1 (and its "**Key:** value · ..." line) as a navy hero
+    block. All text is the reviewed text, already escaped and coverage-checked by
+    `_inline`; the only added text is the fixed brand label."""
+    kicker, headline = theme.split_title(_plain_from_markup(title_html))
+    if kicker:
+        # Both halves are subsets of text `_inline` already coverage-checked. The
+        # kicker is deliberately not upper-cased: case mapping can produce
+        # characters the face cannot draw, and the renderer never rewrites text.
+        title_html = html.escape(headline, quote=True)
+    rows = [[Paragraph(html.escape(theme.BRAND_LABEL.upper()) + "&nbsp;&nbsp;·&nbsp;&nbsp;" + html.escape(theme.CONFIDENTIAL_LABEL.upper()), styles["hero_brand"])]]
+    if kicker:
+        rows.append([Paragraph(html.escape(kicker, quote=True), styles["hero_kicker"])])
+    rows.append([Paragraph(title_html, styles["hero_title"])])
+    if meta_html:
+        rows.append([Paragraph(meta_html.replace("·", "&nbsp;&nbsp;·&nbsp;&nbsp;"), styles["hero_meta"])])
+    table = Table(rows, colWidths=[_FRAME_WIDTH])
+    commands = [
+        ("ROUNDEDCORNERS", [8, 8, 8, 8]),
+        ("BACKGROUND", (0, 0), (-1, -1), _hex(theme.PRIMARY)),
+        ("LEFTPADDING", (0, 0), (-1, -1), 16),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 16),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ("TOPPADDING", (0, 0), (-1, 0), 14),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 12),
+        ("BOTTOMPADDING", (0, -1), (-1, -1), 16),
+        ("TOPPADDING", (0, -1), (-1, -1), 8 if meta_html else 2),
+    ]
+    table.setStyle(TableStyle(commands))
+    return [table, Spacer(1, 14)]
+
+
+def _plain_from_markup(markup: str) -> str:
+    return html.unescape(re.sub(r"<[^>]+>", "", markup))
+
+
+def _section_heading(markup: str, number: int, styles: dict[str, ParagraphStyle]) -> list:
+    """Numbered H2: accent badge + title, then a hairline rule kept with the next block."""
+    badge = (
+        f'<font name="{_BOLD_FONT}" color="#ffffff" backColor="{theme.ACCENT}" size="8.5">'
+        f"&nbsp;{number:02d}&nbsp;</font>&nbsp;&nbsp;"
+    )
+    rule = HRFlowable(width="100%", thickness=1, color=_hex(theme.BORDER), spaceBefore=2, spaceAfter=7)
+    rule.keepWithNext = 1
+    return [Paragraph(badge + markup, styles["h2"]), rule]
 
 
 def _caption_flowables(table: _Node, styles: dict[str, ParagraphStyle]) -> list:
@@ -518,15 +595,17 @@ def _table_flowable(node: _Node, styles: dict[str, ParagraphStyle]) -> list:
             row.append(Paragraph("&nbsp;", styles["td"]))
     width = _FRAME_WIDTH / columns
     style_commands = [
-        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d8dbe0")),
+        ("LINEBELOW", (0, 0), (-1, -1), 0.5, _hex(theme.BORDER)),
+        ("BOX", (0, 0), (-1, -1), 0.5, _hex(theme.BORDER)),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 4),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-        ("TOPPADDING", (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("ROWBACKGROUNDS", (0, 1 if header else 0), (-1, -1), [colors.white, _hex(theme.ZEBRA)]),
     ]
     if header:
-        style_commands.append(("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2a2f36")))
+        style_commands.append(("BACKGROUND", (0, 0), (-1, 0), _hex(theme.PRIMARY)))
     flowable = Table(data, colWidths=[width] * columns, repeatRows=1 if header else 0)
     flowable.setStyle(TableStyle(style_commands))
     return caption + [flowable, Spacer(1, 8)]
@@ -567,20 +646,59 @@ def _list_flowables(
     return flow
 
 
-def _blocks(node: _Node, styles: dict[str, ParagraphStyle], depth: int = 0) -> list:
+def _is_meta_line(node: "_Node | str | None") -> bool:
+    """A paragraph like "**Date:** ... · **Account:** ..." under the H1."""
+    if not isinstance(node, _Node) or node.tag != "p":
+        return False
+    has_strong = any(isinstance(c, _Node) and c.tag in ("strong", "b") for c in node.children)
+    has_dot = any(isinstance(c, str) and "·" in c for c in node.children)
+    return has_strong and has_dot
+
+
+def _blocks(
+    node: _Node,
+    styles: dict[str, ParagraphStyle],
+    depth: int = 0,
+    counter: list[int] | None = None,
+) -> list:
     if depth > _MAX_DEPTH:
         raise PdfRenderError("document nests too deeply to render")
+    if counter is None:
+        counter = [0]
     flow: list = []
-    for child in node.children:
+    skip_until = -1
+    for position, child in enumerate(node.children):
+        if position <= skip_until:
+            continue
         if isinstance(child, str):
             if child.strip():
                 flow.append(Paragraph(_escape(child.strip(), _BODY_FACE), styles["body"]))
             continue
         tag = child.tag
-        if tag in _HEADINGS:
+        if tag == "h1" and depth == 0 and position == 0:
+            # The document title leads as a hero block; the metadata line under it
+            # (if any) moves inside the block instead of being dropped.
+            title = _inline(child, _BOLD_FACE).strip()
+            meta = ""
+            for offset in range(position + 1, len(node.children)):
+                following = node.children[offset]
+                if isinstance(following, str) and not following.strip():
+                    continue
+                if _is_meta_line(following):
+                    meta = _inline(following).strip()
+                    skip_until = offset
+                break
+            if title:
+                flow.extend(_hero_flowables(title, meta, styles))
+            elif meta:
+                flow.append(Paragraph(meta, styles["body"]))
+        elif tag in _HEADINGS:
             # Headings draw with the bold face, so their runs are checked there.
             text = _inline(child, _BOLD_FACE).strip()
-            if text:
+            if text and tag == "h2":
+                counter[0] += 1
+                flow.extend(_section_heading(text, counter[0], styles))
+            elif text:
                 flow.append(Paragraph(text, styles[tag]))
         elif tag == "p":
             text = _inline(child).strip()
@@ -591,7 +709,7 @@ def _blocks(node: _Node, styles: dict[str, ParagraphStyle], depth: int = 0) -> l
         elif tag == "table":
             flow.extend(_table_flowable(child, styles))
         elif tag == "hr":
-            flow.append(HRFlowable(width="100%", color=colors.HexColor("#dddddd"), spaceAfter=8))
+            flow.append(HRFlowable(width="100%", color=_hex(theme.BORDER), spaceAfter=8))
         elif tag == "img":
             flow.append(Paragraph(_escape(_image_text(child), _BODY_FACE), styles["body"]))
         elif tag == "pre":
@@ -600,10 +718,10 @@ def _blocks(node: _Node, styles: dict[str, ParagraphStyle], depth: int = 0) -> l
                 flow.append(Preformatted(text, styles["code"]))
                 flow.append(Spacer(1, 6))
         elif tag == "blockquote":
-            for quoted in _blocks(child, styles, depth + 1):
+            for quoted in _blocks(child, styles, depth + 1, counter):
                 flow.append(quoted)
         elif tag in _BLOCK_CONTAINERS:
-            flow.extend(_blocks(child, styles, depth + 1))
+            flow.extend(_blocks(child, styles, depth + 1, counter))
         elif tag in _VOID_TAGS:
             continue
         else:
@@ -613,12 +731,41 @@ def _blocks(node: _Node, styles: dict[str, ParagraphStyle], depth: int = 0) -> l
     return flow
 
 
-def _footer(canvas, doc) -> None:
-    canvas.saveState()
-    canvas.setFont(_BODY_FONT, 8)
-    canvas.setFillColor(colors.HexColor("#666666"))
-    canvas.drawRightString(_PAGE_WIDTH - _MARGIN, _MARGIN * 0.6, str(canvas.getPageNumber()))
-    canvas.restoreState()
+def _footer_label(title: str) -> str:
+    """Running-footer text: the document title and brand, when the body face can
+    draw the title. A title it cannot draw falls back to the brand alone rather
+    than putting a missing glyph on every page."""
+    brand = theme.BRAND_LABEL
+    short = theme.short_title(title)
+    if short and not _unrepresentable(short, _FONT_COVERAGE.get(_BODY_FONT)):
+        return f"{short}  ·  {brand}"
+    return brand
+
+
+def _make_footer(label: str):
+    def _footer(canvas, doc) -> None:
+        canvas.saveState()
+        left, right, y = _MARGIN, _PAGE_WIDTH - _MARGIN, _MARGIN * 0.62
+        canvas.setStrokeColor(_hex(theme.BORDER))
+        canvas.setLineWidth(0.5)
+        canvas.line(left, y + 11, right, y + 11)
+        canvas.setFont(_BODY_FONT, 7.5)
+        canvas.setFillColor(_hex(theme.MUTED))
+        canvas.drawString(left, y, label)
+        canvas.drawRightString(right, y, f"Page {canvas.getPageNumber()}")
+        canvas.restoreState()
+
+    return _footer
+
+
+def _document_title(root: _Node) -> str:
+    """The leading H1's plain text, for the running footer only."""
+    for child in root.children:
+        if isinstance(child, _Node) and child.tag == "h1":
+            return " ".join(_plain_text(child).split())
+        if isinstance(child, _Node) or child.strip():
+            break
+    return ""
 
 
 def render_markdown_pdf(md_text: str) -> bytes:
@@ -658,7 +805,8 @@ def render_markdown_pdf(md_text: str) -> bytes:
         creator=_PRODUCER,
     )
     try:
-        doc.build(flow, onFirstPage=_footer, onLaterPages=_footer)
+        footer = _make_footer(_footer_label(_document_title(parser.root)))
+        doc.build(flow, onFirstPage=footer, onLaterPages=footer)
     except PdfRenderError:
         raise
     except Exception as exc:  # noqa: BLE001 - ReportLab layout failure
