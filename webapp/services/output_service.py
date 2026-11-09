@@ -610,16 +610,18 @@ class OutputService:
 
     @staticmethod
     def _build_card_meta(stats: dict) -> str:
-        """Assemble the card meta line from parsed stats."""
+        """Assemble the card meta line from parsed stats as PLAIN text — the card
+        upsert HTML-escapes it, so entities here would be shown literally."""
         parts = []
+        u = lambda v: _html.unescape(v).strip()  # stats values are raw HTML from the page
         if stats.get("deal size"):
-            parts.append(stats["deal size"])
+            parts.append(u(stats["deal size"]))
         if stats.get("stage"):
-            parts.append(f"Stage {stats['stage']}")
-        cv = stats.get("cv:coverage window")
-        if cv:
+            parts.append(f"Stage {u(stats['stage'])}")
+        cv = u(stats.get("cv:coverage window", ""))
+        if cv and re.search(r"[A-Za-z0-9]", cv):  # skip an unspecified "? – ?" window
             parts.append(f"Coverage {cv}")
-        return " &middot; ".join(parts)
+        return " · ".join(parts)
 
     def _upsert_handover_card(self, handover_html: str, account: str, account_slug: str,
                               description: str, meta: str) -> str:

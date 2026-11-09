@@ -284,3 +284,18 @@ def test_symlink_escape_is_refused(env, tmp_path) -> None:
 
 def test_old_unfenced_push_methods_are_gone(env) -> None:
     assert not hasattr(env.svc, "push_to_repo") and not hasattr(env.svc, "push_status")
+
+
+def test_card_meta_is_plain_text_and_renders_without_literal_entities(env) -> None:
+    svc = env.svc
+    stats = {"deal size": "$55K", "stage": "4 &mdash; Proposal",
+             "cv:coverage window": "July 17 &ndash; July 28, 2026"}
+    meta = svc._build_card_meta(stats)
+    assert meta == "$55K · Stage 4 — Proposal · Coverage July 17 – July 28, 2026"
+    card = svc._upsert_handover_card(HANDOVER, "Acme", "acme", "", meta)
+    assert "&amp;mdash;" not in card and "&amp;middot;" not in card and "&amp;ndash;" not in card
+
+
+def test_card_meta_omits_unspecified_coverage_window(env) -> None:
+    stats = {"deal size": "$55K", "stage": "2", "cv:coverage window": "? &ndash; ?"}
+    assert env.svc._build_card_meta(stats) == "$55K · Stage 2"
