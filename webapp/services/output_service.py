@@ -1,13 +1,14 @@
 """Output lifecycle service for the SE Skills webapp.
 
 Owns output resolution, listing, reading, metadata, sidecars, reference freshness,
-PDF/internal HTML export, delete, diff, golden promotion, push-to-repo handoff,
+PDF/internal HTML export, delete, diff, golden promotion, publish-to-hub,
 run persistence, and overview output summaries. This module intentionally stays
 free of FastAPI request parsing and route formatting.
 """
 from __future__ import annotations
 
 import asyncio
+import html as _html
 import json
 import logging
 import re
@@ -71,6 +72,7 @@ class OutputService:
         self._slug = slug
         self._run_cmd = run_cmd
         self._internal_repo = internal_repo
+        self._hub_lock = asyncio.Lock()  # serialise publishes through the shared clone
 
     # -----------------------------------------------------------------------
     # Path safety
@@ -342,125 +344,248 @@ class OutputService:
         full = f"src/solutions-team/members/{member_slug}/{rel}"
         return {"relative": rel, "full": full, "account_slug": account_slug, "member_slug": member_slug}
 
-    async def push_to_repo(self, body) -> dict:
+    # -----------------------------------------------------------------------
+    # Publish to the member's hub (internal.airbyte.ai) — auto-merging PR
+    #
+    # `main` on internal.airbyte.ai is ruleset-protected (PR + required checks,
+    # no bypass), so "publish" = branch → PR → `gh pr merge --auto --squash`.
+    # Writes are fenced to ONE member folder; anything staged outside it aborts.
+    # -----------------------------------------------------------------------
+    HUB_REPO = "airbytehq/internal.airbyte.ai"
+    HUB_MEMBERS_ROOT = "src/solutions-team/members"
+    HUB_DEFAULT_MEMBER = "gary-yang"  # the one writable member folder
+    _SKILL_ALIASES = {"call-prep": "prep-call"}
+
+    def _hub_member(self) -> str:
+        """The ONLY member folder publishing may touch. Deliberately a constant:
+        no config key or request field can change it."""
+        return self.HUB_DEFAULT_MEMBER
+
+    def _hub_plan(self, path: str, account: str, member: str = "") -> dict:
+        """Work out what publishing `path` would write — no side effects."""
+        src = self._resolve_output(path)
+        if src.suffix not in (".md", ".html"):
+            raise OutputError(400, "Only .md and .html outputs can be published")
+        allowed = self._hub_member()
+        if member and self._slug(member.replace("-", " ")).lower() != allowed:
+            raise OutputError(
+                403, f"Publishing is limited to the '{allowed}' folder; selected member is '{member}'"
+            )
+        account = self._safe_name(account)
+        account_slug = self._slug(account.replace("-", " ")).lower()
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,80}", account_slug):
+            raise OutputError(400, f"Cannot derive a safe page slug from account '{account}'")
+        skill = self._SKILL_ALIASES.get(src.parent.name, src.parent.name)
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,60}", skill):
+            raise OutputError(400, f"Cannot derive a safe page name from output folder '{src.parent.name}'")
+        is_handoff = skill == "coverage-handoff" and src.suffix == ".html"
+        rel = f"accounts/{account_slug}/index.html" if is_handoff else f"accounts/{account_slug}/{skill}.html"
+        base = f"{self.HUB_MEMBERS_ROOT}/{allowed}"
+        targets = [f"{base}/{rel}"]
+        if is_handoff:
+            targets.append(f"{base}/handover.html")
+        targets.append(f"{base}/accounts/index.html")
+        return {
+            "src": src, "member": allowed, "account": account, "account_slug": account_slug,
+            "skill": skill, "is_handoff": is_handoff, "rel": rel, "targets": targets,
+        }
+
+    def hub_plan(self, path: str, account: str, member: str = "") -> dict:
+        plan = self._hub_plan(path, account, member)
+        return {k: plan[k] for k in ("member", "account_slug", "skill", "is_handoff", "targets")}
+
+    @staticmethod
+    def _pretty_slug(slug: str) -> str:
+        return " ".join(w.capitalize() for w in slug.split("-"))
+
+    @staticmethod
+    def _page_title(doc: str, fallback: str) -> str:
+        m = re.search(r"<title>(.*?)</title>", doc, re.DOTALL)
+        if not m:
+            return fallback
+        t = re.sub(r"\s*(?:—|&mdash;|-)\s*(?:Airbyte Internal|Gary Yang)\s*$", "", m.group(1).strip())
+        return t or fallback
+
+    def _render_accounts_index(self, member_dir: Path, overrides: dict[str, str] | None = None) -> str:
+        """Regenerate `accounts/index.html` from what's on disk.
+
+        Derived from the member's own `handover.html` so it inherits the live hub
+        styling; the cards (one per account, linking each published document) are
+        the only thing generated."""
+        handover = (member_dir / "handover.html").read_text(encoding="utf-8")
+        grid = re.search(r'<div class="nav-grid">[^\n]*\n', handover)
+        if not grid:
+            raise OutputError(500, 'Could not find `<div class="nav-grid">` in handover.html')
+        accounts_dir = member_dir / "accounts"
+        index_path = accounts_dir / "index.html"
+
+        # Display names: handover cards, then the previous index, then explicit overrides.
+        names: dict[str, str] = {}
+        for slug, name in re.findall(r'<a href="accounts/([^/"]+)/"[^>]*>.*?<h2>(.*?)</h2>', handover, re.DOTALL):
+            names[slug] = _html.unescape(name)
+        if index_path.is_file():
+            for slug, name in re.findall(
+                r'data-account="([^"]+)".*?<h2>(.*?)</h2>', index_path.read_text(encoding="utf-8"), re.DOTALL
+            ):
+                names[slug] = _html.unescape(name)
+        names.update(overrides or {})
+
+        cards = []
+        if accounts_dir.is_dir():
+            for acct in sorted((d for d in accounts_dir.iterdir() if d.is_dir()), key=lambda d: d.name):
+                pages = sorted(p for p in acct.glob("*.html"))
+                if not pages:
+                    continue
+                links = []
+                for p in sorted(pages, key=lambda p: (p.name != "index.html", p.name)):
+                    label = (
+                        "Coverage handoff" if p.name == "index.html"
+                        else self._pretty_slug(p.stem)
+                    )
+                    href = f"{acct.name}/" if p.name == "index.html" else f"{acct.name}/{p.name}"
+                    links.append(f'<a href="{href}">{self._html_escape(label)}</a>')
+                n = len(pages)
+                name = self._html_escape(names.get(acct.name) or self._pretty_slug(acct.name))
+                cards.append(
+                    f'    <div class="nav-card" data-account="{acct.name}">\n'
+                    f'      <div class="accent-bar"></div>\n'
+                    f'      <h2>{name}</h2>\n'
+                    f'      <p class="doc-links">{" ".join(links)}</p>\n'
+                    f'      <div class="meta"><span class="badge">{n} document{"s" if n != 1 else ""}</span></div>\n'
+                    f'    </div>\n'
+                )
+        if not cards:
+            cards.append('    <p class="muted">No account documents published yet.</p>\n')
+
+        # Start from the handover page, drop its cards, then swap in ours.
+        base = re.sub(r'[ \t]*<a href="accounts/[^"]*"[^>]*class="nav-card">.*?</a>\n?', "", handover, flags=re.DOTALL)
+        grid = re.search(r'<div class="nav-grid">[^\n]*\n', base)
+        base = base[: grid.end()] + "".join(cards) + base[grid.end():]
+        base = base.replace("Handover Documents &mdash;", "Accounts &mdash;")
+        base = base.replace("<h1>Handover Documents</h1>", "<h1>Accounts</h1>")
+        base = re.sub(
+            r'(<h1>Accounts</h1>\s*<div class="subtitle">).*?(</div>)',
+            r"\1Documents published from SE-skills\2", base, count=1, flags=re.DOTALL,
+        )
+        base = base.replace('href="./"', 'href="../"')
+        base = base.replace(
+            "</style>",
+            "  .doc-links a { color: var(--accent); text-decoration: none; margin-right: 14px; font-size: 13px; font-weight: 500; }\n"
+            "  .doc-links a:hover { text-decoration: underline; }\n</style>",
+            1,
+        )
+        return base
+
+    async def _hub_git(self, args: list[str], repo: Path) -> str:
+        try:
+            _, out, _ = await self._run_cmd(args, repo)
+        except Exception as e:  # _run_cmd raises on nonzero exit
+            raise OutputError(500, security.redact_sensitive(f"{' '.join(args[:3])}: {e}"))
+        return out
+
+    async def publish_to_hub(self, body) -> dict:
+        """Render an output into the member's hub folder and auto-merge a PR."""
         if self._internal_repo is None or self._run_cmd is None:
-            raise OutputError(500, "Push-to-repo dependencies are not configured")
+            raise OutputError(500, "Publish dependencies are not configured")
+        plan = self._hub_plan(body.path, body.account, body.member)
+        src, account, account_slug = plan["src"], plan["account"], plan["account_slug"]
+        member, skill = plan["member"], plan["skill"]
 
-        # 1. Resolve + validate the source handoff HTML.
-        src = self._resolve_output(body.path)
-        if src.suffix != ".html":
-            raise OutputError(400, "Only .html outputs can be pushed to the internal repo")
-        handoff_html = src.read_text(encoding="utf-8")
-
-        # 2. Compute the target path inside the internal repo.
         repo = self._internal_repo()
         if not (repo / ".git").exists():
             raise OutputError(400, f"internal repo not cloned at {repo}")
-        account = self._safe_name(body.account)
-        member_slug = self._slug(body.member).lower() if body.member else ""
-        if not member_slug:
-            raise OutputError(400, "member (owner) is required to place the account page")
-        account_slug = self._slug(account.replace("-", " ")).lower()
-        member_dir = repo / "src" / "solutions-team" / "members" / member_slug
-        handover_path = member_dir / "handover.html"
-        if not handover_path.is_file():
-            raise OutputError(400, f"No handover.html for member '{member_slug}' — expected {handover_path}")
-        account_dir = member_dir / "accounts" / account_slug
-        index_path = account_dir / "index.html"
+        member_dir = repo / self.HUB_MEMBERS_ROOT / member
+        prefix = f"{self.HUB_MEMBERS_ROOT}/{member}/"
 
-        # 3. Sync clone: fetch origin/main and branch fresh off it.
-        try:
-            await self._run_cmd(["git", "fetch", "origin", "main"], repo)
-        except Exception as e:
-            raise OutputError(500, security.redact_sensitive(str(e)))
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        branch = f"se/coverage-handoff-{account_slug}-{ts}"
-        try:
-            await self._run_cmd(["git", "checkout", "-B", branch, "origin/main"], repo)
-        except Exception as e:
-            raise OutputError(500, security.redact_sensitive(str(e)))
+        # Content to publish.
+        text = src.read_text(encoding="utf-8")
+        if src.suffix == ".md":
+            try:
+                page = internal_html.render_internal_html(text, customer=account)
+            except Exception as e:
+                raise OutputError(500, security.redact_sensitive(f"Internal HTML render failed: {e}"))
+        else:
+            page = text
 
-        # 4. Write the account page.
-        account_dir.mkdir(parents=True, exist_ok=True)
-        index_path.write_text(handoff_html, encoding="utf-8")
+        async with self._hub_lock:
+            status = await self._hub_git(["git", "status", "--porcelain"], repo)
+            if status.strip():
+                raise OutputError(409, f"The internal repo clone at {repo} has uncommitted changes; clean it first")
+            await self._hub_git(["git", "fetch", "origin", "main"], repo)
+            ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+            branch = f"se/hub-{account_slug}-{skill}-{ts}"
+            await self._hub_git(["git", "checkout", "-B", branch, "origin/main"], repo)
+            try:
+                if not (member_dir / "handover.html").is_file():
+                    raise OutputError(400, f"No handover.html for member '{member}' — expected {member_dir / 'handover.html'}")
+                page_path = member_dir / plan["rel"]
+                page_path.parent.mkdir(parents=True, exist_ok=True)
+                real_member = member_dir.resolve()
+                for w in (page_path, member_dir / "handover.html", member_dir / "accounts" / "index.html"):
+                    try:
+                        w.resolve().relative_to(real_member)
+                    except ValueError:
+                        raise OutputError(500, f"Refusing to write outside {prefix}: {w}")
+                page_path.write_text(page, encoding="utf-8")
+                if plan["is_handoff"]:
+                    stats = self._parse_handoff_stats(page)
+                    handover_path = member_dir / "handover.html"
+                    handover_path.write_text(
+                        self._upsert_handover_card(
+                            handover_path.read_text(encoding="utf-8"), account, account_slug,
+                            body.description.strip(), body.meta.strip() or self._build_card_meta(stats),
+                        ),
+                        encoding="utf-8",
+                    )
+                (member_dir / "accounts" / "index.html").write_text(
+                    self._render_accounts_index(member_dir, {account_slug: account}), encoding="utf-8"
+                )
 
-        # 5. Update the member's handover.html card.
-        stats = self._parse_handoff_stats(handoff_html)
-        meta = body.meta.strip() or self._build_card_meta(stats)
-        description = body.description.strip()
-        handover_path.write_text(
-            self._upsert_handover_card(
-                handover_path.read_text(encoding="utf-8"), account, account_slug, description, meta
-            ),
-            encoding="utf-8",
-        )
-
-        # 6. Commit, push, open a PR.
-        rel_index = str(index_path.relative_to(repo))
-        rel_handover = str(handover_path.relative_to(repo))
-        try:
-            await self._run_cmd(["git", "add", rel_index, rel_handover], repo)
-        except Exception as e:
-            raise OutputError(500, security.redact_sensitive(str(e)))
-        commit_msg = (
-            f"docs(solutions-team): add {account} coverage handoff ({account_slug})\n\n"
-            "Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
-        )
-        try:
-            await self._run_cmd(["git", "commit", "-m", commit_msg], repo)
-            await self._run_cmd(["git", "push", "-u", "origin", branch], repo)
-        except Exception as e:
-            raise OutputError(500, security.redact_sensitive(str(e)))
-        pr_body = (
-            f"Auto-generated coverage handoff for **{account}**, added under "
-            f"`members/{member_slug}/accounts/{account_slug}/` with a card in "
-            f"`{member_slug}/handover.html`.\n\n"
-            "Generated from the SE-skills webapp coverage-handoff skill.\n\n"
-            "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
-        )
-        try:
-            _, pr_out, _ = await self._run_cmd([
-                "gh", "pr", "create", "--repo", "airbytehq/internal.airbyte.ai",
-                "--head", branch, "--base", "main",
-                "--title", f"docs(solutions-team): add {account} coverage handoff",
-                "--body", pr_body,
-            ], repo)
-        except Exception as e:
-            raise OutputError(500, security.redact_sensitive(str(e)))
-        pr_url = pr_out.strip().splitlines()[-1] if pr_out.strip() else ""
-        return {"pr_url": pr_url, "branch": branch, "target": rel_index}
-
-    async def push_status(self, account: str) -> dict:
-        if self._internal_repo is None:
-            return {"open_pr": None}
-        repo = self._internal_repo()
-        if not (repo / ".git").exists():
-            return {"open_pr": None}
-        try:
-            account_slug = self._slug(self._safe_name(account).replace("-", " ")).lower()
-        except Exception:
-            return {"open_pr": None}
-        branch_base = f"se/coverage-handoff-{account_slug}"
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "gh", "pr", "list", "--repo", "airbytehq/internal.airbyte.ai",
-                "--state", "open", "--search", f"head:{branch_base}",
-                "--json", "number,url,headRefName", "--limit", "20",
-                cwd=str(repo),
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            )
-            out, _ = await asyncio.wait_for(proc.communicate(), timeout=25)
-            if proc.returncode != 0:
-                return {"open_pr": None}
-            prs = json.loads(out or "[]")
-        except Exception:
-            return {"open_pr": None}
-        ts_suffix = re.compile(re.escape(branch_base) + r"-\d{8}-\d{6}$")
-        for pr in prs:
-            ref = pr.get("headRefName") or ""
-            if ref == branch_base or ts_suffix.match(ref):
-                return {"open_pr": {"number": pr.get("number"), "url": pr.get("url")}}
-        return {"open_pr": None}
+                await self._hub_git(["git", "add", "-A", "--", prefix], repo)
+                staged = [l for l in (await self._hub_git(["git", "diff", "--cached", "--name-only"], repo)).splitlines() if l]
+                outside = [p for p in staged if not p.startswith(prefix)]
+                if outside:  # defence in depth: never publish outside the member folder
+                    raise OutputError(500, f"Refusing to publish: staged paths outside {prefix}: {outside}")
+                if not staged:
+                    return {"status": "unchanged", "pr_url": "", "branch": "", "targets": plan["targets"],
+                            "auto_merge": False}
+                await self._hub_git(
+                    ["git", "commit", "-m",
+                     f"docs(solutions-team): publish {account} {skill} ({member})\n\n"
+                     "Published from the SE-skills webapp."], repo)
+                diffed = [l for l in (await self._hub_git(
+                    ["git", "diff", "--name-only", "origin/main", "HEAD"], repo)).splitlines() if l]
+                if not diffed or any(not p.startswith(prefix) for p in diffed):
+                    raise OutputError(500, f"Refusing to push: commit touches paths outside {prefix}: {diffed}")
+                await self._hub_git(["git", "push", "-u", "origin", branch], repo)
+                pr_body = (
+                    f"Auto-published **{skill}** for **{account}** under "
+                    f"`members/{member}/accounts/{account_slug}/` (plus hub index updates).\n\n"
+                    f"Files: {', '.join(f'`{p}`' for p in staged)}\n\n"
+                    "Generated from the SE-skills webapp; set to auto-merge once required checks pass."
+                )
+                pr_out = await self._hub_git([
+                    "gh", "pr", "create", "--repo", self.HUB_REPO, "--head", branch, "--base", "main",
+                    "--title", f"docs(solutions-team): publish {account} {skill}", "--body", pr_body], repo)
+                pr_url = pr_out.strip().splitlines()[-1] if pr_out.strip() else ""
+                result = {"status": "published", "pr_url": pr_url, "branch": branch,
+                          "targets": plan["targets"], "auto_merge": False}
+                try:
+                    await self._hub_git(
+                        ["gh", "pr", "merge", pr_url or branch, "--repo", self.HUB_REPO, "--auto", "--squash"], repo)
+                    result["auto_merge"] = True
+                except OutputError as e:
+                    result["auto_merge_error"] = e.detail
+                return result
+            finally:
+                # Leave the clone on a clean main; the branch lives on the remote/PR.
+                try:
+                    await self._run_cmd(["git", "reset", "--hard", "HEAD"], repo)
+                    await self._run_cmd(["git", "clean", "-fd", "--", prefix], repo)
+                    await self._run_cmd(["git", "checkout", "main"], repo)
+                    await self._run_cmd(["git", "branch", "-D", branch], repo)
+                except Exception:
+                    logger.warning("Could not restore internal repo clone to main", exc_info=True)
 
     @staticmethod
     def _html_escape(s: str) -> str:

@@ -433,8 +433,10 @@ def test_routes_preserve_original_paths() -> None:
     assert ("/api/output/meta", ("GET",)) in output_paths
     assert ("/api/output/html", ("GET",)) in output_paths
     assert ("/api/output/repo-path", ("GET",)) in output_paths
-    assert ("/api/output/push-to-repo", ("POST",)) in output_paths
-    assert ("/api/output/push-status", ("GET",)) in output_paths
+    assert ("/api/output/publish-to-hub", ("POST",)) in output_paths
+    assert ("/api/output/hub-plan", ("GET",)) in output_paths
+    # The old unfenced (any-member) push endpoints must stay gone.
+    assert not any(p in ("/api/output/push-to-repo", "/api/output/push-status") for p, _ in output_paths)
     assert ("/api/output/pdf", ("GET",)) in output_paths
     assert ("/api/output/pdf", ("POST",)) in output_paths
     assert ("/api/output/internal-html", ("GET",)) in output_paths

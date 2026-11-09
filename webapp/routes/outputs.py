@@ -49,6 +49,10 @@ class PushToRepo(BaseModel):
     meta: str = Field(default="", max_length=1_000)
 
 
+class PublishToHub(PushToRepo):
+    """Publish an output into the configured member's hub folder (auto-merging PR)."""
+
+
 @router.get("/api/output", response_class=PlainTextResponse)
 def api_output_content(path: str, request: Request) -> str:
     try:
@@ -81,18 +85,18 @@ def api_output_repo_path(account: str, request: Request, member: str = "") -> di
         raise HTTPException(status_code=e.status_code, detail=e.detail)
 
 
-@router.post("/api/output/push-to-repo")
-async def api_push_to_repo(body: PushToRepo, request: Request) -> dict:
+@router.get("/api/output/hub-plan")
+def api_hub_plan(path: str, account: str, request: Request, member: str = "") -> dict:
     try:
-        return await _get_output_service(request).push_to_repo(body)
+        return _get_output_service(request).hub_plan(path, account, member)
     except OutputError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
 
 
-@router.get("/api/output/push-status")
-async def api_push_status(account: str, request: Request) -> dict:
+@router.post("/api/output/publish-to-hub")
+async def api_publish_to_hub(body: PublishToHub, request: Request) -> dict:
     try:
-        return await _get_output_service(request).push_status(account)
+        return await _get_output_service(request).publish_to_hub(body)
     except OutputError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
 

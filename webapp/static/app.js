@@ -1769,7 +1769,8 @@ function renderOutputGroups(outputs) {
             <div class="out-item-right">
               ${statusBadge}
               <span class="when">${esc((o.modified || "").slice(11))} UTC</span>
-              ${isHtml ? `<button class="ghost small out-view" data-path="${encodeURIComponent(o.path)}">View</button><button class="ghost small out-copy-path" data-path="${encodeURIComponent(o.path)}">Copy repo path</button><button class="ghost small out-push-repo" data-path="${encodeURIComponent(o.path)}">Push to repo</button>` : ""}
+              ${isHtml ? `<button class="ghost small out-view" data-path="${encodeURIComponent(o.path)}">View</button><button class="ghost small out-copy-path" data-path="${encodeURIComponent(o.path)}">Copy repo path</button>` : ""}
+              <button class="ghost small out-push-repo" data-path="${encodeURIComponent(o.path)}" title="Publish to your internal.airbyte.ai hub (auto-merging PR)">Publish to hub</button>
               ${downloadMenuHtml(encodeURIComponent(o.path), "dl-menu-row")}
             </div>
           </div>`; }).join("")}
@@ -1905,28 +1906,28 @@ function wireOutItems(container, ctx) {
   });
   container.querySelectorAll(".out-push-repo").forEach((b) => b.onclick = async (e) => {
     e.stopPropagation();
-    // First: is there already an OPEN PR for this account? (merged/closed don't count)
+    const path = decodeURIComponent(b.dataset.path);
+    const q = `path=${encodeURIComponent(path)}&account=${encodeURIComponent(ctx.account)}&member=${encodeURIComponent(ctx.memberName || "")}`;
     const old = b.textContent; b.disabled = true;
     b.innerHTML = `<span class="spinner"></span> Checking…`;
-    let existing = null;
+    let plan;
     try {
-      const st = await api(`/api/output/push-status?account=${encodeURIComponent(ctx.account)}`);
-      existing = st.open_pr || null;
-    } catch { /* best-effort — fall through to a normal push */ }
+      plan = await api(`/api/output/hub-plan?${q}`);
+    } catch (err) {
+      b.disabled = false; b.textContent = old;
+      showPushError(ctx.account, err.message);
+      return;
+    }
     b.disabled = false; b.textContent = old;
 
-    const ok = await confirmPush(ctx.account, existing);
+    const ok = await confirmPush(ctx.account, plan);
     if (!ok) return;
     b.disabled = true;
-    b.innerHTML = `<span class="spinner"></span> Pushing…`;
+    b.innerHTML = `<span class="spinner"></span> Publishing…`;
     try {
-      const res = await api("/api/output/push-to-repo", {
+      const res = await api("/api/output/publish-to-hub", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          path: decodeURIComponent(b.dataset.path),
-          account: ctx.account,
-          member: ctx.memberName || "",
-        }),
+        body: JSON.stringify({ path, account: ctx.account, member: ctx.memberName || "" }),
       });
       showPushResult(ctx.account, res);
     } catch (err) {
@@ -1937,32 +1938,26 @@ function wireOutItems(container, ctx) {
   });
 }
 
-// Confirm modal before opening a PR against the internal repo. If `existing` is
-// an open PR ({number, url}) for this account, show the warning variant so the
-// user doesn't unknowingly open a duplicate — they can open the existing PR,
-// push anyway (a new PR), or cancel. (Merged/closed PRs aren't passed here, so
-// re-pushing after merge/close falls through to the normal confirm.)
-function confirmPush(account, existing) {
+// Confirm modal before publishing to the member's hub folder. `plan` comes from
+// /api/output/hub-plan and lists every file the publish will write — all inside
+// the member folder. Resolves true if the user confirms.
+function confirmPush(account, plan) {
   return new Promise((resolve) => {
     const overlay = document.createElement("div");
     overlay.className = "modal-overlay";
-    const warn = existing && existing.number;
+    const targets = (plan.targets || []).map((t) => `<li><code>${esc(t)}</code></li>`).join("");
     overlay.innerHTML = `
       <div class="modal push-modal">
-        <div class="modal-head"><h2>${warn ? "PR already open" : "Push handoff to internal.airbyte.ai"}</h2><button class="modal-close">✕</button></div>
+        <div class="modal-head"><h2>Publish to internal.airbyte.ai</h2><button class="modal-close">✕</button></div>
         <div class="push-body">
-          ${warn ? `
-            <p class="push-warn">⚠ <strong>${esc(account)}</strong> already has an open pull request:
-              <a class="push-result" href="${esc(existing.url)}" target="_blank" rel="noopener">PR #${esc(String(existing.number))}</a>.</p>
-            <p>Pushing again opens a <strong>second</strong> PR for the same handoff. Update the existing one instead, or push anyway if you meant to.</p>
-          ` : `
-            <p>Push the <strong>${esc(account)}</strong> coverage handoff to <code>internal.airbyte.ai</code>? This branches off <code>origin/main</code> and opens a pull request.</p>
-          `}
+          <p>Publish <strong>${esc(account)}</strong> — <code>${esc(plan.skill || "")}</code> to the <code>${esc(plan.member || "")}</code> hub?</p>
+          <p>This writes only these files:</p>
+          <ul>${targets}</ul>
+          <p class="muted">Opens a pull request that auto-merges (squash) once the repo's required checks pass — no review step.</p>
         </div>
         <div class="modal-foot">
-          ${warn ? `<a class="ghost small" href="${esc(existing.url)}" target="_blank" rel="noopener" style="margin-right:auto;text-decoration:none;">Open PR #${esc(String(existing.number))}</a>` : ""}
           <button class="ghost small modal-cancel">Cancel</button>
-          <button class="${warn ? "danger" : "primary"} small" id="push-go">${warn ? "Push anyway" : "Push &amp; open PR"}</button>
+          <button class="primary small" id="push-go">Publish</button>
         </div>
       </div>`;
     document.body.appendChild(overlay);
@@ -1977,13 +1972,18 @@ function confirmPush(account, existing) {
 function showPushResult(account, res) {
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
+  const unchanged = res.status === "unchanged";
+  const body = unchanged
+    ? `<p><strong>${esc(account)}</strong> is already up to date on the hub — nothing to publish.</p>`
+    : `<p><strong>${esc(account)}</strong> published.</p>
+       ${res.pr_url ? `<p><a class="push-result" href="${esc(res.pr_url)}" target="_blank" rel="noopener">${esc(res.pr_url)}</a></p>` : ""}
+       ${res.auto_merge
+          ? `<p class="muted">Auto-merge is on — it lands on <code>main</code> once the required checks pass.</p>`
+          : `<p class="push-warn">⚠ Auto-merge could not be enabled${res.auto_merge_error ? ` (${esc(res.auto_merge_error)})` : ""}. Merge the PR manually.</p>`}`;
   overlay.innerHTML = `
     <div class="modal push-modal">
-      <div class="modal-head"><h2>Pushed ✓</h2><button class="modal-close">✕</button></div>
-      <div class="push-body">
-        <p><strong>${esc(account)}</strong> handoff pushed to <code>${esc(res.target || "")}</code>.</p>
-        ${res.pr_url ? `<p><a class="push-result" href="${esc(res.pr_url)}" target="_blank" rel="noopener">${esc(res.pr_url)}</a></p>` : `<p class="muted">Branch <code>${esc(res.branch || "")}</code> pushed (no PR URL returned).</p>`}
-      </div>
+      <div class="modal-head"><h2>${unchanged ? "No changes" : "Published ✓"}</h2><button class="modal-close">✕</button></div>
+      <div class="push-body">${body}</div>
       <div class="modal-foot"><button class="primary small modal-cancel">Done</button></div>
     </div>`;
   document.body.appendChild(overlay);
@@ -1998,9 +1998,9 @@ function showPushError(account, message) {
   overlay.className = "modal-overlay";
   overlay.innerHTML = `
     <div class="modal push-modal">
-      <div class="modal-head"><h2>Push failed</h2><button class="modal-close">✕</button></div>
+      <div class="modal-head"><h2>Publish failed</h2><button class="modal-close">✕</button></div>
       <div class="push-body">
-        <p>Could not push the <strong>${esc(account)}</strong> handoff:</p>
+        <p>Could not publish <strong>${esc(account)}</strong>:</p>
         <pre class="push-err">${esc(message)}</pre>
       </div>
       <div class="modal-foot"><button class="primary small modal-cancel">Close</button></div>
