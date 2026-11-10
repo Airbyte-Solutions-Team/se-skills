@@ -130,9 +130,11 @@ def test_markdown_output_published_as_page_with_index(env) -> None:
     files = _origin_files(env, res["branch"])
     assert f"{BASE}/accounts/acme/deal-assessment.html" in files
     index = _git(env.origin, "show", f"{res['branch']}:{BASE}/accounts/index.html")
-    assert 'href="acme/deal-assessment.html"' in index
+    # no Overview yet -> a typical card that opens the account's outputs page
+    assert 'href="acme/outputs.html"' in index and 'badge">Outputs<' in index
     assert "Existing-Co" in index and 'href="../"' in index
     assert "Handover Documents" not in index
+    assert 'href="deal-assessment.html"' in _show(env, "accounts/acme/outputs.html", res["branch"])
     # gh: PR created then auto-merge requested with squash
     assert env.gh[0][1:3] == ["pr", "create"]
     assert env.gh[1][1:3] == ["pr", "merge"] and "--auto" in env.gh[1] and "--squash" in env.gh[1]
@@ -207,8 +209,9 @@ def test_auto_merge_failure_still_returns_pr(env, monkeypatch) -> None:
 
 def test_hub_plan_lists_targets(env) -> None:
     rel = _out(env, "Acme/outputs/prep-call/p.md", "# A\n")
-    plan = env.svc.hub_plan(rel, "Acme", "Gary Yang")
-    assert plan["targets"] == [f"{BASE}/accounts/acme/prep-call.html", f"{BASE}/accounts/index.html"]
+    plan = asyncio.run(env.svc.hub_plan(rel, "Acme", "Gary Yang"))
+    assert plan["targets"] == [f"{BASE}/accounts/acme/prep-call.html",
+                               f"{BASE}/accounts/acme/outputs.html", f"{BASE}/accounts/index.html"]
 
 
 # --- strict fence: nothing outside members/gary-yang/ is ever written or pushed ----------------
@@ -299,3 +302,148 @@ def test_card_meta_is_plain_text_and_renders_without_literal_entities(env) -> No
 def test_card_meta_omits_unspecified_coverage_window(env) -> None:
     stats = {"deal size": "$55K", "stage": "2", "cv:coverage window": "? &ndash; ?"}
     assert env.svc._build_card_meta(stats) == "$55K · Stage 2"
+
+
+# --- Overview = the account page; outputs live behind its "Opportunity outputs" tile ----------
+
+OVERVIEW_DOC = ('<!doctype html><html><head><title>Acme Pro — Opportunity Overview</title></head>'
+                '<body><div class="opp-workspace"><section class="workspace-hero"><h1>Acme Pro</h1>'
+                '<div class="workspace-facts"><div class="workspace-fact"><span class="workspace-fact-value">2</span>'
+                '<span class="workspace-fact-label">Stage</span></div></div></section>'
+                '<section class="panel">Brief</section></div></body></html>')
+HANDOFF_DOC = ('<html><title>Coverage Handoff — Acme</title><body><div class="stat"><div class="num">$55K</div>'
+               '<div class="label">Deal Size</div></div></body></html>')
+
+
+def _pub_overview(env, account="Acme", member="Gary Yang", doc=None):
+    return asyncio.run(env.svc.publish_overview_to_hub(account, doc or OVERVIEW_DOC, member))
+
+
+def _merge(env, res) -> None:
+    """Pretend the PR merged so the next publish sees it on origin/main."""
+    _git(env.origin, "branch", "-f", "main", res["branch"])
+
+
+def _show(env, path: str, ref: str = "main") -> str:
+    return _git(env.origin, "show", f"{ref}:{BASE}/{path}")
+
+
+def _changed(env, res) -> list[str]:
+    return _git(env.origin, "diff", "--name-only", "main", res["branch"]).splitlines()
+
+
+def test_overview_becomes_account_index_with_outputs_tile(env) -> None:
+    res = _pub_overview(env)
+    assert res["status"] == "published" and res["auto_merge"] is True
+    index = _show(env, "accounts/acme/index.html", res["branch"])
+    assert env.svc.OVERVIEW_MARKER in index and "Acme Pro" in index
+    # outputs are reached through the hero tile, not an inline list
+    assert 'class="workspace-fact hub-tile" href="outputs.html"' in index and "0 &rarr;" in index
+    assert "Published outputs" not in index
+    assert 'href="../"' in index  # back to Accounts
+    assert sorted(_changed(env, res)) == sorted(
+        [f"{BASE}/accounts/acme/index.html", f"{BASE}/accounts/acme/outputs.html", f"{BASE}/accounts/index.html"])
+
+
+def test_overview_lands_in_accounts_not_handover(env) -> None:
+    res = _pub_overview(env)
+    assert f"{BASE}/handover.html" not in _changed(env, res)
+    assert "acme" not in _show(env, "handover.html", res["branch"])
+    cards = _show(env, "accounts/index.html", res["branch"])
+    assert 'href="acme/" class="nav-card"' in cards and 'badge">Overview<' in cards
+
+
+def test_tile_opens_outputs_page_that_lists_published_outputs(env) -> None:
+    _merge(env, _pub_overview(env))
+    rel = _out(env, "Acme/outputs/prep-call/p.md", "# Prep\n\n## Q\n\nx\n")
+    r2 = asyncio.run(env.svc.publish_to_hub(_body(rel, "Acme")))
+    outputs = _show(env, "accounts/acme/outputs.html", r2["branch"])
+    assert 'href="prep-call.html" class="nav-card"' in outputs
+    assert '<a href="index.html"' in outputs and "&larr; Overview" in outputs   # back to the Overview
+    index = _show(env, "accounts/acme/index.html", r2["branch"])
+    assert "1 &rarr;" in index and index.count(env.svc._OUT_START) == 1          # live count, one region
+    assert f"{BASE}/handover.html" not in _changed(env, r2)
+
+
+def test_handoff_after_overview_goes_beside_it_and_card_links_to_it(env) -> None:
+    _merge(env, _pub_overview(env))
+    rel = _out(env, "Acme/outputs/coverage-handoff/h.html", HANDOFF_DOC)
+    res = asyncio.run(env.svc.publish_to_hub(_body(rel, "Acme")))
+    assert f"{BASE}/accounts/acme/coverage-handoff.html" in _origin_files(env, res["branch"])
+    assert env.svc.OVERVIEW_MARKER in _show(env, "accounts/acme/index.html", res["branch"])  # overview intact
+    assert 'href="accounts/acme/coverage-handoff.html"' in _show(env, "handover.html", res["branch"])
+    assert 'href="coverage-handoff.html" class="nav-card"' in _show(env, "accounts/acme/outputs.html", res["branch"])
+
+
+def test_overview_moves_existing_handoff_aside_and_relinks_its_card(env) -> None:
+    rel = _out(env, "Acme/outputs/coverage-handoff/h.html", HANDOFF_DOC)
+    _merge(env, asyncio.run(env.svc.publish_to_hub(_body(rel, "Acme"))))
+    assert 'href="accounts/acme/"' in _show(env, "handover.html")  # legacy: handoff at index.html
+
+    res = _pub_overview(env)
+    assert "Deal Size" in _show(env, "accounts/acme/coverage-handoff.html", res["branch"])  # preserved
+    assert env.svc.OVERVIEW_MARKER in _show(env, "accounts/acme/index.html", res["branch"])
+    handover = _show(env, "handover.html", res["branch"])
+    assert 'href="accounts/acme/coverage-handoff.html"' in handover and 'href="accounts/acme/"' not in handover
+    assert handover.count("<h2>Acme</h2>") == 1  # card re-pointed, not duplicated
+    assert 'href="coverage-handoff.html" class="nav-card"' in _show(env, "accounts/acme/outputs.html", res["branch"])
+    assert "1 &rarr;" in _show(env, "accounts/acme/index.html", res["branch"])
+
+
+def test_handoff_without_overview_still_uses_index_html_and_gets_an_outputs_card(env) -> None:
+    rel = _out(env, "Acme/outputs/coverage-handoff/h.html", HANDOFF_DOC)
+    res = asyncio.run(env.svc.publish_to_hub(_body(rel, "Acme")))
+    files = _origin_files(env, res["branch"])
+    assert f"{BASE}/accounts/acme/index.html" in files
+    assert f"{BASE}/accounts/acme/coverage-handoff.html" not in files
+    assert 'href="index.html" class="nav-card"' in _show(env, "accounts/acme/outputs.html", res["branch"])
+    assert 'href="acme/outputs.html"' in _show(env, "accounts/index.html", res["branch"])
+
+
+def test_unrepublished_legacy_account_card_keeps_working(env) -> None:
+    """existing-co has a page but no outputs.html yet: its card must still open its page."""
+    rel = _out(env, "Acme/outputs/next-move/n.md", "# A\n")
+    res = asyncio.run(env.svc.publish_to_hub(_body(rel, "Acme")))
+    cards = _show(env, "accounts/index.html", res["branch"])
+    assert 'href="existing-co/" class="nav-card"' in cards and 'href="acme/outputs.html" class="nav-card"' in cards
+
+
+def test_overview_publish_is_fenced_to_member_folder(env) -> None:
+    with pytest.raises(OutputError) as e:
+        _pub_overview(env, member="Someone Else")
+    assert e.value.status_code == 403 and env.gh == []
+    res = _pub_overview(env)
+    assert _changed(env, res) and all(p.startswith(BASE + "/") for p in _changed(env, res))
+
+
+def test_overview_republish_updates_in_place_keeping_tile_count(env) -> None:
+    _merge(env, _pub_overview(env))
+    rel = _out(env, "Acme/outputs/prep-call/p.md", "# Prep\n\n## Q\n\nx\n")
+    _merge(env, asyncio.run(env.svc.publish_to_hub(_body(rel, "Acme"))))
+    res = _pub_overview(env, doc=OVERVIEW_DOC.replace("Brief", "Brief v2"))
+    index = _show(env, "accounts/acme/index.html", res["branch"])
+    assert "Brief v2" in index and "1 &rarr;" in index
+    assert index.count(env.svc.OVERVIEW_MARKER) == 1 and index.count(env.svc._OUT_START) == 1
+
+
+def test_malformed_overview_is_rejected_before_any_git_work(env) -> None:
+    with pytest.raises(OutputError):
+        _pub_overview(env, doc="<html><body><section>no facts grid</section></body></html>")
+    assert env.gh == [] and _git(env.origin, "for-each-ref", "--format=%(refname:short)", "refs/heads").split() == ["main"]
+
+
+def test_overview_hub_plan_lists_move_when_handoff_holds_index(env) -> None:
+    rel = _out(env, "Acme/outputs/coverage-handoff/h.html", HANDOFF_DOC)
+    _merge(env, asyncio.run(env.svc.publish_to_hub(_body(rel, "Acme"))))
+    plan = asyncio.run(env.svc.overview_hub_plan("Acme", "Gary Yang"))  # must sync the stale clone itself
+    assert f"{BASE}/accounts/acme/coverage-handoff.html" in plan["targets"]
+    assert f"{BASE}/handover.html" in plan["targets"] and f"{BASE}/accounts/acme/outputs.html" in plan["targets"]
+    assert all(t.startswith(BASE + "/") for t in plan["targets"])
+
+
+def test_plan_reflects_overview_that_only_exists_on_origin(env) -> None:
+    """The clone's local main is stale after a PR merges; the plan must still see the Overview."""
+    _merge(env, _pub_overview(env))
+    rel = _out(env, "Acme/outputs/coverage-handoff/h.html", HANDOFF_DOC)
+    plan = asyncio.run(env.svc.hub_plan(rel, "Acme", "Gary Yang"))
+    assert plan["targets"][0].endswith("/accounts/acme/coverage-handoff.html")

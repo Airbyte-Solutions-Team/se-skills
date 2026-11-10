@@ -340,6 +340,10 @@ body:has(.opp-workspace) .bar { max-width: 1440px; }
 }
 .workspace-fact { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 16px 18px 0 0; }
 .workspace-fact + .workspace-fact { border-left: 1px solid var(--line); padding-left: 18px; }
+/* A fact tile that acts as a link (e.g. "Opportunity outputs" -> jumps to that section). */
+button.workspace-fact-link { background: none; border: 0; border-radius: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.workspace-fact + button.workspace-fact-link { border-left: 1px solid var(--line); }
+button.workspace-fact-link:hover .workspace-fact-value, button.workspace-fact-link:focus-visible .workspace-fact-value { color: var(--accent, #2563eb); }
 .workspace-fact-value {
   color: var(--text); font-size: 15px; font-weight: 700; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis;
@@ -491,6 +495,15 @@ body:has(.opp-workspace) .bar { max-width: 1440px; }
 .opp-workspace button:focus-visible, .overview-create-modal button:focus-visible, .overview-evidence-modal button:focus-visible,
 .overview-history-modal button:focus-visible, .overview-evidence-picker input:focus-visible,
 .tech-eval-fields input:focus-visible, .tech-eval-fields select:focus-visible, .tech-eval-fields textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+/* Delineated containers: durable artifacts (generated outputs) and provenance/audit are each
+   boxed on the nested surface so they read as distinct from the Overview panels above. */
+.workspace-group {
+  display: flex; flex-direction: column; gap: 14px; padding: 20px 22px;
+  background: var(--panel2); border: 1px solid var(--line-strong); border-radius: 14px;
+}
+.workspace-group > :empty { display: none; }  /* e.g. no account-level outputs: no dead gap */
+.workspace-group-head .workspace-eyebrow { margin-bottom: 2px; }
+.workspace-group-head p { margin: 0; font-size: 13px; }
 .workspace-section { display: flex; flex-direction: column; gap: 12px; }
 .workspace-section-head { align-items: center; }
 .workspace-section-head .workspace-eyebrow { margin-bottom: 2px; }
@@ -636,6 +649,7 @@ body:has(.opp-workspace) .bar { max-width: 1440px; }
   }
   .workspace-fact:first-child { border-top: 0; }
   .workspace-panel { padding: 17px; }
+  .workspace-group { padding: 16px; }
   .workspace-panel-head, .workspace-section-head {
     align-items: flex-start; flex-direction: column;
   }

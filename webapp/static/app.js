@@ -2113,8 +2113,13 @@ function renderWorkspaceOutputGroups(scope) {
     </details>`).join("")}</div>`;
 }
 
-function workspaceFact(value, label) {
-  return `<div class="workspace-fact"><span class="workspace-fact-value">${esc(value || "Unknown")}</span><span class="workspace-fact-label">${esc(label)}</span></div>`;
+// `scrollTo` (an element id) turns the tile into a button that jumps to that section.
+// (A plain href="#id" would collide with the app's hash router.)
+function workspaceFact(value, label, scrollTo = "") {
+  const inner = `<span class="workspace-fact-value">${esc(value || "Unknown")}${scrollTo ? " ↓" : ""}</span><span class="workspace-fact-label">${esc(label)}</span>`;
+  return scrollTo
+    ? `<button type="button" class="workspace-fact workspace-fact-link" data-scroll-to="${esc(scrollTo)}" title="Jump to ${esc(label)}">${inner}</button>`
+    : `<div class="workspace-fact">${inner}</div>`;
 }
 
 function opportunityAmount(value) {
@@ -2589,7 +2594,7 @@ function wireTechEvalTracker(root, account, slug, onUpdated) {
 
 // Download the current Overview revision as PDF/HTML. The server renders it from
 // the validated canonical state (same content as the workspace, no transcript text).
-function wireOverviewExport(account, slug) {
+function wireOverviewExport(account, slug, memberName = "") {
   const wrap = document.getElementById("overview-export-menu");
   if (!wrap) return;
   const button = document.getElementById("overview-export-btn");
@@ -2608,6 +2613,31 @@ function wireOverviewExport(account, slug) {
     else setOpen(false);
   };
   document.addEventListener("click", closeOnOutsideClick);
+  const hubBtn = wrap.querySelector("[data-hub-publish]");
+  if (hubBtn) hubBtn.onclick = async (event) => {
+    event.stopPropagation();
+    setOpen(false);
+    const base = `/api/accounts/${encodeURIComponent(account)}/opportunities/${encodeURIComponent(slug)}/overview`;
+    button.disabled = true;
+    button.firstChild.textContent = "Checking… ";
+    try {
+      const plan = await api(`${base}/hub-plan?member=${encodeURIComponent(memberName || "")}`);
+      button.disabled = false; button.firstChild.textContent = "Export ";
+      if (!(await confirmPush(account, plan))) return;
+      button.disabled = true;
+      button.firstChild.textContent = "Publishing… ";
+      const res = await api(`${base}/publish-to-hub`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ member: memberName || "" }),
+      });
+      showPushResult(account, res);
+    } catch (error) {
+      showPushError(account, error.message || "Publish failed.");
+    } finally {
+      button.disabled = false;
+      button.firstChild.textContent = "Export ";
+    }
+  };
   wrap.querySelectorAll("[data-export-format]").forEach((item) => {
     item.onclick = async (event) => {
       event.stopPropagation();
@@ -2664,6 +2694,7 @@ function renderOpportunityWorkspace(workspace) {
           <div class="dropdown-menu hidden" role="menu">
             <button class="menu-item" type="button" role="menuitem" data-export-format="pdf">Download PDF</button>
             <button class="menu-item" type="button" role="menuitem" data-export-format="html">Download HTML</button>
+            <button class="menu-item" type="button" role="menuitem" data-hub-publish title="Publish this Overview as the account page on your internal.airbyte.ai hub, linking to its other published outputs">Publish to internal hub</button>
           </div></span>` : ""}
         <button class="${canonicalCreated ? "primary" : "ghost"}" id="invoke-btn">Generate</button>
       </div>
@@ -2680,7 +2711,7 @@ function renderOpportunityWorkspace(workspace) {
         </div>
         <div class="workspace-facts" aria-label="Known opportunity context">
           ${workspaceFact(stage, "Current stage")}
-          ${workspaceFact(String(opportunityOutputs.total || 0), "Opportunity outputs")}
+          ${workspaceFact(String(opportunityOutputs.total || 0), "Opportunity outputs", "opportunity-outputs-title")}
           ${workspaceFact(latest?.modified || "None yet", "Latest output")}
           ${workspaceFact(account.owner_name || "Unassigned", "Account owner")}
         </div>
@@ -2710,34 +2741,40 @@ function renderOpportunityWorkspace(workspace) {
       ${renderTechEvalTracker(workspace.tech_eval)}
       ${renderStakeholders(current)}
 
-      <section class="workspace-section" aria-labelledby="opportunity-outputs-title">
-        <div class="workspace-section-head">
-          <div>
-            <div class="workspace-eyebrow">Durable artifacts</div>
-            <h2 id="opportunity-outputs-title">Opportunity Outputs</h2>
+      <div class="workspace-group workspace-group--artifacts">
+        <section class="workspace-section" aria-labelledby="opportunity-outputs-title">
+          <div class="workspace-section-head">
+            <div>
+              <div class="workspace-eyebrow">Durable artifacts</div>
+              <h2 id="opportunity-outputs-title">Opportunity Outputs</h2>
+            </div>
+            <span class="workspace-count">${opportunityOutputs.total} total</span>
           </div>
-          <span class="workspace-count">${opportunityOutputs.total} total</span>
-        </div>
-        <div class="outputs" id="outputs">${renderWorkspaceOutputGroups(opportunityOutputs)}</div>
-      </section>
+          <div class="outputs" id="outputs">${renderWorkspaceOutputGroups(opportunityOutputs)}</div>
+        </section>
 
-      <div id="account-outputs-region">
-        ${accountOutputs.total ? `
-          <details class="workspace-disclosure workspace-account-outputs">
-            <summary>
-              <span>
-                <span class="workspace-eyebrow">Separate scope</span>
-                <strong>Account-level outputs</strong>
-                <small>These artifacts belong to ${esc(account.name)} and are not applied to this opportunity.</small>
-              </span>
-              <span class="workspace-count">${accountOutputs.total} total</span>
-            </summary>
-            <div class="workspace-disclosure-body">${renderWorkspaceOutputGroups(accountOutputs)}</div>
-          </details>` : ""}
+        <div id="account-outputs-region">${accountOutputs.total ? `
+            <details class="workspace-disclosure workspace-account-outputs">
+              <summary>
+                <span>
+                  <span class="workspace-eyebrow">Separate scope</span>
+                  <strong>Account-level outputs</strong>
+                  <small>These artifacts belong to ${esc(account.name)} and are not applied to this opportunity.</small>
+                </span>
+                <span class="workspace-count">${accountOutputs.total} total</span>
+              </summary>
+              <div class="workspace-disclosure-body">${renderWorkspaceOutputGroups(accountOutputs)}</div>
+            </details>` : ""}</div>
       </div>
 
-      ${canonicalCreated ? renderOverviewEvidence(current) : ""}
-      ${canonicalCreated ? renderRevisionHistory() : ""}
+      ${canonicalCreated ? `<div class="workspace-group workspace-group--provenance">
+        <div class="workspace-group-head">
+          <div class="workspace-eyebrow">Provenance &amp; audit</div>
+          <p class="muted">What the Overview is built from, and how it has changed over time.</p>
+        </div>
+        ${renderOverviewEvidence(current)}
+        ${renderRevisionHistory()}
+      </div>` : ""}
 
       <details class="workspace-disclosure workspace-command-panel">
         <summary>
@@ -3069,7 +3106,11 @@ async function pageOpportunity(account, slug, routeOppName) {
     void watchUpdate(workspace.canonical_state.update_job.job_id);
   }
   void loadOverviewHistory(account, slug);
-  wireOverviewExport(account, slug);
+  wireOverviewExport(account, slug, _memberName);
+  document.querySelectorAll("[data-scroll-to]").forEach((el) => {
+    el.onclick = () => document.getElementById(el.dataset.scrollTo)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
 
   const wireWorkspace = (root) => {
     wireOutItems(root, outputContext);

@@ -361,11 +361,13 @@ class OutputService:
         no config key or request field can change it."""
         return self.HUB_DEFAULT_MEMBER
 
-    def _hub_plan(self, path: str, account: str, member: str = "") -> dict:
-        """Work out what publishing `path` would write — no side effects."""
-        src = self._resolve_output(path)
-        if src.suffix not in (".md", ".html"):
-            raise OutputError(400, "Only .md and .html outputs can be published")
+    OVERVIEW_MARKER = "<!-- se-skills:overview -->"
+    _OUT_START = "<!-- se-outputs:start -->"
+    _OUT_END = "<!-- se-outputs:end -->"
+    _HANDOFF_PAGE = "coverage-handoff.html"
+
+    def _hub_check(self, account: str, member: str = "") -> tuple[str, str, str]:
+        """Validate member + account. Returns (member, account, account_slug)."""
         allowed = self._hub_member()
         if member and self._slug(member.replace("-", " ")).lower() != allowed:
             raise OutputError(
@@ -375,24 +377,94 @@ class OutputService:
         account_slug = self._slug(account.replace("-", " ")).lower()
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,80}", account_slug):
             raise OutputError(400, f"Cannot derive a safe page slug from account '{account}'")
+        return allowed, account, account_slug
+
+    def _hub_clone_member_dir(self) -> Path | None:
+        """Member folder in the current clone (None if the clone isn't there)."""
+        if self._internal_repo is None:
+            return None
+        d = self._internal_repo() / self.HUB_MEMBERS_ROOT / self._hub_member()
+        return d if d.is_dir() else None
+
+    def _is_overview(self, path: Path) -> bool:
+        try:
+            return path.is_file() and self.OVERVIEW_MARKER in path.read_text(encoding="utf-8")
+        except OSError:
+            return False
+
+    def _handoff_page(self, account_dir: Path) -> str:
+        """The account's index.html is the Overview once one is published; the
+        coverage handoff then lives beside it. Until then it keeps index.html, so
+        links already shared for the handoff keep working."""
+        return self._HANDOFF_PAGE if self._is_overview(account_dir / "index.html") else "index.html"
+
+    async def _hub_sync_clone(self) -> None:
+        """Best effort: fast-forward the clone's main to origin/main so plans describe
+        what is actually live. Skipped if the clone is dirty; failures only log
+        (publishing itself always branches from a fresh origin/main)."""
+        if self._internal_repo is None or self._run_cmd is None:
+            return
+        repo = self._internal_repo()
+        if not (repo / ".git").exists():
+            return
+        async with self._hub_lock:
+            try:
+                if (await self._hub_git(["git", "status", "--porcelain"], repo)).strip():
+                    return
+                await self._hub_git(["git", "fetch", "origin", "main"], repo)
+                await self._hub_git(["git", "checkout", "main"], repo)
+                await self._hub_git(["git", "merge", "--ff-only", "origin/main"], repo)
+            except OutputError:
+                logger.warning("Could not sync internal repo clone for plan", exc_info=True)
+
+    def _hub_plan(self, path: str, account: str, member: str = "") -> dict:
+        """Work out what publishing `path` would write — no side effects."""
+        src = self._resolve_output(path)
+        if src.suffix not in (".md", ".html"):
+            raise OutputError(400, "Only .md and .html outputs can be published")
+        allowed, account, account_slug = self._hub_check(account, member)
         skill = self._SKILL_ALIASES.get(src.parent.name, src.parent.name)
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,60}", skill):
             raise OutputError(400, f"Cannot derive a safe page name from output folder '{src.parent.name}'")
         is_handoff = skill == "coverage-handoff" and src.suffix == ".html"
-        rel = f"accounts/{account_slug}/index.html" if is_handoff else f"accounts/{account_slug}/{skill}.html"
+        md = self._hub_clone_member_dir()
+        acct_dir = (md / "accounts" / account_slug) if md else None
+        if is_handoff:
+            name = self._handoff_page(acct_dir) if acct_dir else "index.html"
+        else:
+            name = f"{skill}.html"
         base = f"{self.HUB_MEMBERS_ROOT}/{allowed}"
-        targets = [f"{base}/{rel}"]
+        targets = [f"{base}/accounts/{account_slug}/{name}"]
         if is_handoff:
             targets.append(f"{base}/handover.html")
+        targets.append(f"{base}/accounts/{account_slug}/outputs.html")
+        if acct_dir and self._is_overview(acct_dir / "index.html") and name != "index.html":
+            targets.append(f"{base}/accounts/{account_slug}/index.html")  # outputs tile count refreshed
         targets.append(f"{base}/accounts/index.html")
         return {
             "src": src, "member": allowed, "account": account, "account_slug": account_slug,
-            "skill": skill, "is_handoff": is_handoff, "rel": rel, "targets": targets,
+            "skill": skill, "is_handoff": is_handoff, "rel": f"accounts/{account_slug}/{name}",
+            "targets": targets,
         }
 
-    def hub_plan(self, path: str, account: str, member: str = "") -> dict:
+    async def hub_plan(self, path: str, account: str, member: str = "") -> dict:
+        await self._hub_sync_clone()
         plan = self._hub_plan(path, account, member)
         return {k: plan[k] for k in ("member", "account_slug", "skill", "is_handoff", "targets")}
+
+    async def overview_hub_plan(self, account: str, member: str = "") -> dict:
+        allowed, account, account_slug = self._hub_check(account, member)
+        await self._hub_sync_clone()
+        base = f"{self.HUB_MEMBERS_ROOT}/{allowed}"
+        md = self._hub_clone_member_dir()
+        acct_dir = (md / "accounts" / account_slug) if md else None
+        targets = [f"{base}/accounts/{account_slug}/index.html"]
+        if acct_dir and (acct_dir / "index.html").is_file() and not self._is_overview(acct_dir / "index.html"):
+            # an existing handoff page moves aside so the Overview can be the account page
+            targets += [f"{base}/accounts/{account_slug}/{self._HANDOFF_PAGE}", f"{base}/handover.html"]
+        targets += [f"{base}/accounts/{account_slug}/outputs.html", f"{base}/accounts/index.html"]
+        return {"member": allowed, "account_slug": account_slug, "skill": "overview",
+                "is_handoff": False, "targets": targets}
 
     @staticmethod
     def _pretty_slug(slug: str) -> str:
@@ -406,22 +478,53 @@ class OutputService:
         t = re.sub(r"\s*(?:—|&mdash;|-)\s*(?:Airbyte Internal|Gary Yang)\s*$", "", m.group(1).strip())
         return t or fallback
 
-    def _render_accounts_index(self, member_dir: Path, overrides: dict[str, str] | None = None) -> str:
-        """Regenerate `accounts/index.html` from what's on disk.
-
-        Derived from the member's own `handover.html` so it inherits the live hub
-        styling; the cards (one per account, linking each published document) are
-        the only thing generated."""
+    def _hub_page(self, member_dir: Path, *, title: str, subtitle: str,
+                  back_href: str, back_label: str, cards: list[str]) -> str:
+        """A card-grid page in the hub's own look: the member's `handover.html` with its
+        cards removed and ours swapped in, so it inherits the live styling."""
         handover = (member_dir / "handover.html").read_text(encoding="utf-8")
-        grid = re.search(r'<div class="nav-grid">[^\n]*\n', handover)
+        base = re.sub(r'[ \t]*<a href="accounts/[^"]*"[^>]*class="nav-card">.*?</a>\n?', "", handover, flags=re.DOTALL)
+        grid = re.search(r'<div class="nav-grid">[^\n]*\n', base)
         if not grid:
             raise OutputError(500, 'Could not find `<div class="nav-grid">` in handover.html')
+        base = base[: grid.end()] + "".join(cards) + base[grid.end():]
+        t = self._html_escape(title)
+        base = base.replace("Handover Documents &mdash;", f"{t} &mdash;", 1)
+        base = base.replace("<h1>Handover Documents</h1>", f"<h1>{t}</h1>", 1)
+        base = re.sub(
+            r'(<h1>' + re.escape(t) + r'</h1>\s*<div class="subtitle">).*?(</div>)',
+            lambda m: m.group(1) + self._html_escape(subtitle) + m.group(2), base, count=1, flags=re.DOTALL,
+        )
+        base = re.sub(
+            r'<a href="\./"([^>]*)>&larr; [^<]*</a>',
+            lambda m: f'<a href="{back_href}"{m.group(1)}>&larr; {self._html_escape(back_label)}</a>', base, count=1,
+        )
+        return base
+
+    def _account_pages(self, account_dir: Path) -> list[dict]:
+        """An account's published output pages (everything but the Overview and the
+        outputs listing itself). A legacy handoff still sitting at index.html counts."""
+        overview = self._is_overview(account_dir / "index.html")
+        pages = []
+        for p in account_dir.glob("*.html"):
+            if p.name == "outputs.html" or (p.name == "index.html" and overview):
+                continue
+            label = "Coverage Handoff" if p.name == "index.html" else self._pretty_slug(p.stem)
+            title = self._page_title(p.read_text(encoding="utf-8"), label)
+            pages.append({"href": p.name, "label": label, "title": title,
+                          "handoff": p.name in ("index.html", self._HANDOFF_PAGE)})
+        return sorted(pages, key=lambda x: (not x["handoff"], x["href"]))
+
+    def _render_accounts_index(self, member_dir: Path, overrides: dict[str, str] | None = None) -> str:
+        """Regenerate `accounts/index.html`: one card per account. A card opens the
+        account's Overview when it has one, otherwise its outputs page."""
+        handover = (member_dir / "handover.html").read_text(encoding="utf-8")
         accounts_dir = member_dir / "accounts"
         index_path = accounts_dir / "index.html"
 
         # Display names: handover cards, then the previous index, then explicit overrides.
         names: dict[str, str] = {}
-        for slug, name in re.findall(r'<a href="accounts/([^/"]+)/"[^>]*>.*?<h2>(.*?)</h2>', handover, re.DOTALL):
+        for slug, name in re.findall(r'<a href="accounts/([^/"]+)/[^"]*"[^>]*>.*?<h2>(.*?)</h2>', handover, re.DOTALL):
             names[slug] = _html.unescape(name)
         if index_path.is_file():
             for slug, name in re.findall(
@@ -433,48 +536,81 @@ class OutputService:
         cards = []
         if accounts_dir.is_dir():
             for acct in sorted((d for d in accounts_dir.iterdir() if d.is_dir()), key=lambda d: d.name):
-                pages = sorted(p for p in acct.glob("*.html"))
-                if not pages:
+                if not any(acct.glob("*.html")):
                     continue
-                links = []
-                for p in sorted(pages, key=lambda p: (p.name != "index.html", p.name)):
-                    label = (
-                        "Coverage handoff" if p.name == "index.html"
-                        else self._pretty_slug(p.stem)
-                    )
-                    href = f"{acct.name}/" if p.name == "index.html" else f"{acct.name}/{p.name}"
-                    links.append(f'<a href="{href}">{self._html_escape(label)}</a>')
-                n = len(pages)
+                overview = self._is_overview(acct / "index.html")
+                n = len(self._account_pages(acct))
+                if overview or not (acct / "outputs.html").is_file():
+                    target = f"{acct.name}/"  # Overview, or a legacy single page nobody has re-published yet
+                else:
+                    target = f"{acct.name}/outputs.html"
                 name = self._html_escape(names.get(acct.name) or self._pretty_slug(acct.name))
+                badge = "Overview" if overview else "Outputs"
+                desc = "Opportunity overview and outputs" if overview else "Published outputs"
                 cards.append(
-                    f'    <div class="nav-card" data-account="{acct.name}">\n'
+                    f'    <a href="{target}" class="nav-card" data-account="{acct.name}">\n'
                     f'      <div class="accent-bar"></div>\n'
+                    f'      <span class="arrow">&rarr;</span>\n'
                     f'      <h2>{name}</h2>\n'
-                    f'      <p class="doc-links">{" ".join(links)}</p>\n'
-                    f'      <div class="meta"><span class="badge">{n} document{"s" if n != 1 else ""}</span></div>\n'
-                    f'    </div>\n'
+                    f'      <p>{desc}</p>\n'
+                    f'      <div class="meta"><span class="badge">{badge}</span> &nbsp; {n} output{"s" if n != 1 else ""}</div>\n'
+                    f'    </a>\n'
                 )
         if not cards:
             cards.append('    <p class="muted">No account documents published yet.</p>\n')
+        return self._hub_page(member_dir, title="Accounts", subtitle="Documents published from SE-skills",
+                              back_href="../", back_label="Gary Yang Hub", cards=cards)
 
-        # Start from the handover page, drop its cards, then swap in ours.
-        base = re.sub(r'[ \t]*<a href="accounts/[^"]*"[^>]*class="nav-card">.*?</a>\n?', "", handover, flags=re.DOTALL)
-        grid = re.search(r'<div class="nav-grid">[^\n]*\n', base)
-        base = base[: grid.end()] + "".join(cards) + base[grid.end():]
-        base = base.replace("Handover Documents &mdash;", "Accounts &mdash;")
-        base = base.replace("<h1>Handover Documents</h1>", "<h1>Accounts</h1>")
-        base = re.sub(
-            r'(<h1>Accounts</h1>\s*<div class="subtitle">).*?(</div>)',
-            r"\1Documents published from SE-skills\2", base, count=1, flags=re.DOTALL,
+    def _render_outputs_page(self, member_dir: Path, account_dir: Path, account: str) -> str:
+        """`accounts/<account>/outputs.html`: every published output for the account as a card."""
+        cards = [
+            f'    <a href="{self._html_escape(pg["href"])}" class="nav-card">\n'
+            f'      <div class="accent-bar"></div>\n'
+            f'      <span class="arrow">&rarr;</span>\n'
+            f'      <h2>{self._html_escape(pg["label"])}</h2>\n'
+            f'      <p>{self._html_escape(pg["title"])}</p>\n'
+            f'    </a>\n'
+            for pg in self._account_pages(account_dir)
+        ] or ['    <p class="muted">No outputs published yet.</p>\n']
+        overview = self._is_overview(account_dir / "index.html")
+        return self._hub_page(
+            member_dir, title="Opportunity Outputs", subtitle=account,
+            back_href="index.html" if overview else "../",
+            back_label="Overview" if overview else "Accounts", cards=cards)
+
+    def _overview_tile(self, count: int) -> str:
+        """The hero tile on a published Overview that opens the outputs page."""
+        return (
+            f'{self._OUT_START}<style>.hub-tile{{text-decoration:none;color:inherit;cursor:pointer}}'
+            f'.hub-tile:hover .workspace-fact-value{{color:#6366f1}}'
+            f'@media (min-width:900px){{.workspace-facts{{grid-template-columns:repeat(5,minmax(0,1fr))}}}}</style>'
+            f'<a class="workspace-fact hub-tile" href="outputs.html" title="Open this account\'s published outputs">'
+            f'<span class="workspace-fact-value">{count} &rarr;</span>'
+            f'<span class="workspace-fact-label">Opportunity outputs</span></a>{self._OUT_END}'
         )
-        base = base.replace('href="./"', 'href="../"')
-        base = base.replace(
-            "</style>",
-            "  .doc-links a { color: var(--accent); text-decoration: none; margin-right: 14px; font-size: 13px; font-weight: 500; }\n"
-            "  .doc-links a:hover { text-decoration: underline; }\n</style>",
-            1,
-        )
-        return base
+
+    def _refresh_account_pages(self, member_dir: Path, account_dir: Path, account: str) -> None:
+        """Rebuild the account's outputs page and, if its page is an Overview, the
+        Opportunity-outputs tile (with the live count). Runs on every publish."""
+        index = account_dir / "index.html"
+        overview = self._is_overview(index)
+        if overview or self._account_pages(account_dir):
+            self._hub_write(member_dir, account_dir / "outputs.html",
+                            self._render_outputs_page(member_dir, account_dir, account))
+        if not overview:
+            return
+        text = index.read_text(encoding="utf-8")
+        tile = self._overview_tile(len(self._account_pages(account_dir)))
+        region = re.compile(re.escape(self._OUT_START) + r".*?" + re.escape(self._OUT_END), re.DOTALL)
+        if region.search(text):
+            new = region.sub(lambda m: tile, text, count=1)
+        else:
+            end = text.find("</div></section>")  # end of the hero's facts grid
+            if end < 0:
+                raise OutputError(500, "Overview page has no hero facts grid to attach the outputs tile to")
+            new = text[:end] + tile + text[end:]
+        if new != text:
+            self._hub_write(member_dir, index, new)
 
     async def _hub_git(self, args: list[str], repo: Path) -> str:
         try:
@@ -483,29 +619,37 @@ class OutputService:
             raise OutputError(500, security.redact_sensitive(f"{' '.join(args[:3])}: {e}"))
         return out
 
-    async def publish_to_hub(self, body) -> dict:
-        """Render an output into the member's hub folder and auto-merge a PR."""
+    def _hub_inside(self, member_dir: Path, path: Path) -> None:
+        try:
+            path.resolve().relative_to(member_dir.resolve())
+        except ValueError:
+            raise OutputError(
+                500, f"Refusing to write outside {self.HUB_MEMBERS_ROOT}/{self._hub_member()}/: {path}")
+
+    def _hub_write(self, member_dir: Path, path: Path, text: str) -> None:
+        """Write inside the member folder only (resolves symlinks BEFORE creating dirs)."""
+        self._hub_inside(member_dir, path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    @staticmethod
+    def _relink_handover_card(handover_html: str, account_slug: str, href: str) -> str:
+        """Point an existing handover card at a different page of the same account."""
+        pat = re.compile(r'(<a href=")accounts/' + re.escape(account_slug) + r'/[^"]*(")')
+        return pat.sub(lambda m: f"{m.group(1)}{href}{m.group(2)}", handover_html, count=1)
+
+    async def _hub_run(self, *, account: str, account_slug: str, label: str, summary: str, apply) -> dict:
+        """The one fenced path to the hub repo: sync a clean clone to origin/main,
+        let `apply(member_dir)` write files, stage ONLY the member folder, verify the
+        staged set and the final diff vs origin/main are inside it, then PR + auto-merge."""
         if self._internal_repo is None or self._run_cmd is None:
             raise OutputError(500, "Publish dependencies are not configured")
-        plan = self._hub_plan(body.path, body.account, body.member)
-        src, account, account_slug = plan["src"], plan["account"], plan["account_slug"]
-        member, skill = plan["member"], plan["skill"]
-
+        member = self._hub_member()
         repo = self._internal_repo()
         if not (repo / ".git").exists():
             raise OutputError(400, f"internal repo not cloned at {repo}")
         member_dir = repo / self.HUB_MEMBERS_ROOT / member
         prefix = f"{self.HUB_MEMBERS_ROOT}/{member}/"
-
-        # Content to publish.
-        text = src.read_text(encoding="utf-8")
-        if src.suffix == ".md":
-            try:
-                page = internal_html.render_internal_html(text, customer=account)
-            except Exception as e:
-                raise OutputError(500, security.redact_sensitive(f"Internal HTML render failed: {e}"))
-        else:
-            page = text
 
         async with self._hub_lock:
             status = await self._hub_git(["git", "status", "--porcelain"], repo)
@@ -513,32 +657,17 @@ class OutputService:
                 raise OutputError(409, f"The internal repo clone at {repo} has uncommitted changes; clean it first")
             await self._hub_git(["git", "fetch", "origin", "main"], repo)
             ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-            branch = f"se/hub-{account_slug}-{skill}-{ts}"
+            branch = f"se/hub-{account_slug}-{label}-{ts}"
             await self._hub_git(["git", "checkout", "-B", branch, "origin/main"], repo)
             try:
                 if not (member_dir / "handover.html").is_file():
                     raise OutputError(400, f"No handover.html for member '{member}' — expected {member_dir / 'handover.html'}")
-                page_path = member_dir / plan["rel"]
-                page_path.parent.mkdir(parents=True, exist_ok=True)
-                real_member = member_dir.resolve()
-                for w in (page_path, member_dir / "handover.html", member_dir / "accounts" / "index.html"):
-                    try:
-                        w.resolve().relative_to(real_member)
-                    except ValueError:
-                        raise OutputError(500, f"Refusing to write outside {prefix}: {w}")
-                page_path.write_text(page, encoding="utf-8")
-                if plan["is_handoff"]:
-                    stats = self._parse_handoff_stats(page)
-                    handover_path = member_dir / "handover.html"
-                    handover_path.write_text(
-                        self._upsert_handover_card(
-                            handover_path.read_text(encoding="utf-8"), account, account_slug,
-                            body.description.strip(), body.meta.strip() or self._build_card_meta(stats),
-                        ),
-                        encoding="utf-8",
-                    )
-                (member_dir / "accounts" / "index.html").write_text(
-                    self._render_accounts_index(member_dir, {account_slug: account}), encoding="utf-8"
+                apply(member_dir)
+                account_dir = member_dir / "accounts" / account_slug
+                self._refresh_account_pages(member_dir, account_dir, account)
+                self._hub_write(
+                    member_dir, member_dir / "accounts" / "index.html",
+                    self._render_accounts_index(member_dir, {account_slug: account}),
                 )
 
                 await self._hub_git(["git", "add", "-A", "--", prefix], repo)
@@ -547,11 +676,10 @@ class OutputService:
                 if outside:  # defence in depth: never publish outside the member folder
                     raise OutputError(500, f"Refusing to publish: staged paths outside {prefix}: {outside}")
                 if not staged:
-                    return {"status": "unchanged", "pr_url": "", "branch": "", "targets": plan["targets"],
-                            "auto_merge": False}
+                    return {"status": "unchanged", "pr_url": "", "branch": "", "targets": [], "auto_merge": False}
                 await self._hub_git(
                     ["git", "commit", "-m",
-                     f"docs(solutions-team): publish {account} {skill} ({member})\n\n"
+                     f"docs(solutions-team): publish {account} {label} ({member})\n\n"
                      "Published from the SE-skills webapp."], repo)
                 diffed = [l for l in (await self._hub_git(
                     ["git", "diff", "--name-only", "origin/main", "HEAD"], repo)).splitlines() if l]
@@ -559,17 +687,17 @@ class OutputService:
                     raise OutputError(500, f"Refusing to push: commit touches paths outside {prefix}: {diffed}")
                 await self._hub_git(["git", "push", "-u", "origin", branch], repo)
                 pr_body = (
-                    f"Auto-published **{skill}** for **{account}** under "
+                    f"Auto-published **{summary}** for **{account}** under "
                     f"`members/{member}/accounts/{account_slug}/` (plus hub index updates).\n\n"
                     f"Files: {', '.join(f'`{p}`' for p in staged)}\n\n"
                     "Generated from the SE-skills webapp; set to auto-merge once required checks pass."
                 )
                 pr_out = await self._hub_git([
                     "gh", "pr", "create", "--repo", self.HUB_REPO, "--head", branch, "--base", "main",
-                    "--title", f"docs(solutions-team): publish {account} {skill}", "--body", pr_body], repo)
+                    "--title", f"docs(solutions-team): publish {account} {label}", "--body", pr_body], repo)
                 pr_url = pr_out.strip().splitlines()[-1] if pr_out.strip() else ""
                 result = {"status": "published", "pr_url": pr_url, "branch": branch,
-                          "targets": plan["targets"], "auto_merge": False}
+                          "targets": staged, "auto_merge": False}
                 try:
                     await self._hub_git(
                         ["gh", "pr", "merge", pr_url or branch, "--repo", self.HUB_REPO, "--auto", "--squash"], repo)
@@ -586,6 +714,79 @@ class OutputService:
                     await self._run_cmd(["git", "branch", "-D", branch], repo)
                 except Exception:
                     logger.warning("Could not restore internal repo clone to main", exc_info=True)
+
+    async def publish_to_hub(self, body) -> dict:
+        """Render an output into the member's hub folder and auto-merge a PR."""
+        plan = self._hub_plan(body.path, body.account, body.member)
+        src, account, account_slug = plan["src"], plan["account"], plan["account_slug"]
+        skill = plan["skill"]
+
+        text = src.read_text(encoding="utf-8")
+        if src.suffix == ".md":
+            try:
+                page = internal_html.render_internal_html(text, customer=account)
+            except Exception as e:
+                raise OutputError(500, security.redact_sensitive(f"Internal HTML render failed: {e}"))
+        else:
+            page = text
+
+        def apply(member_dir: Path) -> None:
+            account_dir = member_dir / "accounts" / account_slug
+            if plan["is_handoff"]:
+                name = self._handoff_page(account_dir)
+                self._hub_write(member_dir, account_dir / name, page)
+                stats = self._parse_handoff_stats(page)
+                handover_path = member_dir / "handover.html"
+                self._hub_write(
+                    member_dir, handover_path,
+                    self._upsert_handover_card(
+                        handover_path.read_text(encoding="utf-8"), account, account_slug,
+                        body.description.strip(), body.meta.strip() or self._build_card_meta(stats),
+                        href=f"accounts/{account_slug}/" if name == "index.html"
+                        else f"accounts/{account_slug}/{name}",
+                    ),
+                )
+            else:
+                self._hub_write(member_dir, account_dir / f"{skill}.html", page)
+
+        return await self._hub_run(account=account, account_slug=account_slug, label=skill,
+                                   summary=skill, apply=apply)
+
+    async def publish_overview_to_hub(self, account: str, overview_html: str, member: str = "") -> dict:
+        """Publish the Opportunity Overview as the account's landing page
+        (`accounts/<account>/index.html`); its hero's Opportunity-outputs tile opens `outputs.html`."""
+        _, account, account_slug = self._hub_check(account, member)
+        if '<div class="workspace-facts"' not in overview_html or "</div></section>" not in overview_html:
+            raise OutputError(500, "Overview HTML has an unexpected shape (no hero facts grid)")
+        if self.OVERVIEW_MARKER in overview_html:
+            raise OutputError(500, "Overview HTML already carries the hub marker")
+        back = ('<div style="max-width:1100px;margin:14px auto 0;font:12px sans-serif">'
+                '<a href="../" style="color:#6366f1;text-decoration:none">&larr; Accounts</a></div>')
+        page = overview_html.replace("<body>", f"<body>{self.OVERVIEW_MARKER}{back}", 1)
+        if self.OVERVIEW_MARKER not in page:
+            raise OutputError(500, "Overview HTML has no <body> to mark")
+
+        def apply(member_dir: Path) -> None:
+            account_dir = member_dir / "accounts" / account_slug
+            index = account_dir / "index.html"
+            if index.is_file() and not self._is_overview(index):
+                # A coverage handoff holds index.html: move it beside the Overview and re-point its card.
+                dest = account_dir / self._HANDOFF_PAGE
+                self._hub_inside(member_dir, index)
+                self._hub_inside(member_dir, dest)
+                if not dest.exists():
+                    index.replace(dest)
+                handover_path = member_dir / "handover.html"
+                self._hub_write(
+                    member_dir, handover_path,
+                    self._relink_handover_card(
+                        handover_path.read_text(encoding="utf-8"), account_slug,
+                        f"accounts/{account_slug}/{self._HANDOFF_PAGE}"),
+                )
+            self._hub_write(member_dir, index, page)  # tile + outputs page are filled by _refresh_account_pages
+
+        return await self._hub_run(account=account, account_slug=account_slug, label="overview",
+                                   summary="Opportunity Overview", apply=apply)
 
     @staticmethod
     def _html_escape(s: str) -> str:
@@ -624,14 +825,14 @@ class OutputService:
         return " · ".join(parts)
 
     def _upsert_handover_card(self, handover_html: str, account: str, account_slug: str,
-                              description: str, meta: str) -> str:
+                              description: str, meta: str, href: str | None = None) -> str:
         """Insert or replace the account's nav-card in a member's handover.html."""
         acct_e = self._html_escape(account)
         desc_e = self._html_escape(description) or f"Coverage handoff for {acct_e}."
         meta_e = self._html_escape(meta) if meta else ""
         meta_inner = '<span class="badge">Active</span>' + (f" &nbsp; {meta_e}" if meta_e else "")
         card = (
-            f'    <a href="accounts/{account_slug}/" class="nav-card">\n'
+            f'    <a href="{href or "accounts/" + account_slug + "/"}" class="nav-card">\n'
             f'      <div class="accent-bar"></div>\n'
             f'      <span class="arrow">&rarr;</span>\n'
             f'      <h2>{acct_e}</h2>\n'
@@ -640,7 +841,7 @@ class OutputService:
             f'    </a>'
         )
         existing = re.compile(
-            r'[ \t]*<a href="accounts/' + re.escape(account_slug) + r'/"[^>]*>.*?</a>',
+            r'[ \t]*<a href="accounts/' + re.escape(account_slug) + r'/[^"]*"[^>]*>.*?</a>',
             re.DOTALL,
         )
         if existing.search(handover_html):

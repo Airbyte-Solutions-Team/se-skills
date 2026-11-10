@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 import security
 from opportunity_export import export_filename, render_export
 from services.account_service import AccountError
+from services.output_service import OutputError
 from services.opportunity_state_create_service import (
     OpportunityStateCreateError,
     OpportunityStateCreateService,
@@ -29,6 +30,11 @@ router = APIRouter()
 class CreateOverviewBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     transcript_ids: list[str] = Field(min_length=1, max_length=50)
+
+
+class PublishOverviewBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    member: str = Field(default="", max_length=120)
 
 
 class UpdateOverviewBody(BaseModel):
@@ -105,6 +111,45 @@ async def api_current_opportunity_state(account: str, opp_slug: str, request: Re
         return inspected["current"]
     except (AccountError, OpportunityStateError) as exc:
         _raise_domain(exc)
+
+
+@router.get("/api/accounts/{account}/opportunities/{opp_slug}/overview/hub-plan")
+async def api_overview_hub_plan(account: str, opp_slug: str, request: Request, member: str = "") -> dict:
+    """Which hub files publishing this Overview would write (for the confirm dialog)."""
+    try:
+        identity = await _create_service(request).resolve_identity(account, opp_slug)
+        return await request.app.state.output_service.overview_hub_plan(identity["safe_account"], member)
+    except (AccountError, OpportunityStateError) as exc:
+        _raise_domain(exc)
+    except OutputError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from exc
+
+
+@router.post("/api/accounts/{account}/opportunities/{opp_slug}/overview/publish-to-hub")
+async def api_publish_opportunity_overview(
+    account: str, opp_slug: str, body: PublishOverviewBody, request: Request
+) -> dict:
+    """Publish the current Overview as the account's page on the internal hub (auto-merging PR)."""
+    try:
+        identity = await _create_service(request).resolve_identity(account, opp_slug)
+        version = _state_service(request).read_current(identity["safe_account"], identity["safe_opp"])
+    except (AccountError, OpportunityStateError) as exc:
+        _raise_domain(exc)
+    if version is None:
+        raise HTTPException(404, "No canonical overview exists for this opportunity.")
+    try:
+        document = await asyncio.to_thread(
+            render_export, version, "html",
+            account=identity["account"], opportunity=identity["opportunity"],
+        )
+    except Exception as exc:
+        raise HTTPException(500, security.redact_sensitive(f"Overview render failed: {exc}")) from exc
+    try:
+        return await request.app.state.output_service.publish_overview_to_hub(
+            identity["safe_account"], document, body.member
+        )
+    except OutputError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from exc
 
 
 @router.get("/api/accounts/{account}/opportunities/{opp_slug}/overview/export")

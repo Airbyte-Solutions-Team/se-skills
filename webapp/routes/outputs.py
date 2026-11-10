@@ -86,9 +86,9 @@ def api_output_repo_path(account: str, request: Request, member: str = "") -> di
 
 
 @router.get("/api/output/hub-plan")
-def api_hub_plan(path: str, account: str, request: Request, member: str = "") -> dict:
+async def api_hub_plan(path: str, account: str, request: Request, member: str = "") -> dict:
     try:
-        return _get_output_service(request).hub_plan(path, account, member)
+        return await _get_output_service(request).hub_plan(path, account, member)
     except OutputError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
 
