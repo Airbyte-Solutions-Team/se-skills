@@ -28,7 +28,11 @@ Read and weave together — per `~/.claude/skills/_se-playbook.md`:
 2. **Transcripts** — `{transcripts_dir}/<Customer>-*` — most recent in full; older skimmed for the arc and for **promises/commitments** made to the customer.
 3. **Memory** — `memory_dir` (skip if unset) for active blockers / project context (often records live technical threads and access details).
 4. **Salesforce** — per `_se-playbook.md` "Salesforce Enrichment": pull the opportunity (matching rule) + account arc. Fields to pull and **inject verbatim** (see below).
-5. **Source Freshness** — apply the session-dedupe + 14-day rule. If the most recent local transcript is stale, check Gong, then Granola (for meetings Gong doesn't have), and save any transcript you pull (Gong **or** Granola) to `{transcripts_dir}` before using it (`_se-playbook.md` → "Every pulled transcript is saved").
+5. **Source Freshness — always check for a newer call.** A covering SE inherits whatever the owner hasn't saved yet, so do NOT gate this on the 14-day rule. Every run, check Gong, then Granola (for meetings Gong doesn't have), for a completed call **newer than the newest local transcript (by filename date)** on this account/opportunity. Use `transcript_sources` from `config_file` to decide which systems are enabled; a per-run instruction in the prompt overrides it.
+   - Search narrowly (account + date filters, never bulk-pull) and pull the **most recent newer call only**. Gong wins on duplicates (`_se-playbook.md` → "Source Freshness Check").
+   - Save any transcript you pull (Gong **or** Granola) to `{transcripts_dir}` before using it (`_se-playbook.md` → "Every pulled transcript is saved"), then read it in full as the most recent call.
+   - If nothing newer exists, say "checked Gong and Granola, none newer than <newest local date>" — don't silently use stale data. If a source is disabled or unreachable, name it; never present the saved transcript as the latest call when a source couldn't be checked.
+   - If the user supplies a transcript (upload/paste) for a call, use it and don't query Gong/Granola for that call.
 
 Apply **Source Coverage transparency** and **assertive SFDC-vs-reality flagging** (per playbook). Graceful degradation if SFDC/Gong unavailable — mark missing facts "Unknown", never fabricate.
 
@@ -116,6 +120,7 @@ Read `~/.claude/skills/_se-playbook.md` for the source-reading pattern, SFDC fie
 
 ## Changelog
 
+- **2026-11-12** — Source freshness now **always** checks Gong, then Granola, for a call newer than the newest local transcript, instead of only when the newest local transcript is more than 14 days old. A call made within the last 14 days (not yet saved locally) was previously invisible to the handoff. Mirrors the `post-call` default; Source Coverage must report what was freshly pulled, or "checked, none newer".
 - **2026-11-03** — Source freshness now checks Gong, then Granola, and saves any pulled transcript (Gong **or** Granola) before use, per `_se-playbook.md` → "Every pulled transcript is saved". Previously this step named only Gong, so a Granola transcript could be read without being saved locally.
 - **2026-07-10** — "Current State" now surfaces the deployment shape at a glance for the covering SE: displays the current deployment verdict (Cloud / Flex / park) from the deployment-qual doc and any `self_managed_only`/enterprise-connector flags from connector-feasibility's Availability column. Display-only — reads the derived verdicts from saved `outputs/`, does NOT pull the registry/repos to re-derive; "not yet assessed" if the docs are absent (no gate). Fits the existing section 6 — no new HTML template section.
 - **2026-07-10** — Repointed hardcoded `~/airbyte-work/` paths to the workspace-path resolver (`{customers_dir}`/`{transcripts_dir}`/`memory_dir`/`config_file`) per playbook → Workspace Paths; the `template.html` reference is now skill-relative (`~/.claude/skills/coverage-handoff/template.html`) instead of assuming the repo lives at `~/airbyte-work/02-repos/se-skills`. Portable across SE machines.
