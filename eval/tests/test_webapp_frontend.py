@@ -675,3 +675,15 @@ console.log(JSON.stringify({{
     assert "/tech-eval/items/${encodeURIComponent(item.dataset.techEvalItem)}" in app_js
     assert "wireTechEval();" in page
     assert "No structured readiness plan exists yet." not in app_js
+
+
+def test_workspace_outputs_offer_publish_to_hub_and_hide_internal_html_for_html(repo_root: Path) -> None:
+    """Regression: the redesigned Opportunity Outputs rows lost "Publish to hub", leaving only the
+    markdown-only "Export to internal HTML" for HTML outputs (e.g. coverage handoffs)."""
+    src = (repo_root / "webapp" / "static" / "app.js").read_text(encoding="utf-8")
+    start = src.index("function renderWorkspaceOutputArtifact")
+    row = src[start:src.index("function renderWorkspaceOutputGroups", start)]
+    assert "out-push-repo" in row and "Publish to hub" in row
+    menu = src[src.index("function downloadMenuHtml"):]
+    menu = menu[:menu.index("// Move an output to _trash/")]
+    assert 'ext === "html" ? ""' in menu and "Export to internal HTML" in menu

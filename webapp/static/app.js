@@ -364,7 +364,7 @@ async function downloadInternalHtml(path) {
 // ⬇ — used in the doc-reader header so export reads as a document-level action
 // (per UI/UX guidance: don't use icon-only for a primary document action). The
 // compact opp-row menus keep the icon-only ⬇ to stay dense.
-function downloadMenuHtml(path, cls = "", label = "", includeDelete = true) {
+function downloadMenuHtml(path, cls = "", label = "", includeDelete = true, ext = "md") {
   // The doc reader (dl-menu-doc) also offers "with Q&A" exports that append the
   // follow-up thread. Other menus (opp list rows) have no thread, so they don't.
   const withQa = cls.includes("dl-menu-doc")
@@ -380,7 +380,7 @@ function downloadMenuHtml(path, cls = "", label = "", includeDelete = true) {
     <div class="dropdown-menu hidden">
       <button class="menu-item dl-pdf">Download PDF</button>
       <button class="menu-item dl-md">Download Markdown (.md)</button>
-      <button class="menu-item dl-html">Export to internal HTML</button>
+      ${ext === "html" ? "" : '<button class="menu-item dl-html">Export to internal HTML</button>'}
       ${withQa}
       ${deleteItem}
     </div></span>`;
@@ -409,7 +409,8 @@ function wireDownloadMenus(root, onDeleted) {
     };
     wrap.querySelector(".dl-pdf").onclick = (e) => { e.preventDefault(); e.stopPropagation(); closeAll(); downloadPdf(path); };
     wrap.querySelector(".dl-md").onclick = (e) => { e.preventDefault(); e.stopPropagation(); closeAll(); downloadMd(path); };
-    wrap.querySelector(".dl-html").onclick = (e) => { e.preventDefault(); e.stopPropagation(); closeAll(); downloadInternalHtml(path); };
+    const htmlItem = wrap.querySelector(".dl-html");  // absent on HTML outputs (publish those via "Publish to hub")
+    if (htmlItem) htmlItem.onclick = (e) => { e.preventDefault(); e.stopPropagation(); closeAll(); downloadInternalHtml(path); };
     // "with Q&A" exports (doc reader only) — append the live thread. If the
     // thread is empty, fall back to the plain export so the file is never broken.
     wrap.querySelector(".dl-pdf-qa")?.addEventListener("click", (e) => {
@@ -2082,7 +2083,8 @@ function renderWorkspaceOutputArtifact(output, latest = false) {
       <div class="out-item-right">
         <span class="when">${esc(output.modified || "")}${output.modified ? " UTC" : ""}</span>
         ${isHtml ? `<button class="ghost small out-view" data-path="${encodeURIComponent(output.path)}">Open</button>` : '<span class="workspace-open-label">Open →</span>'}
-        ${downloadMenuHtml(encodeURIComponent(output.path), "dl-menu-row")}
+        <button class="ghost small out-push-repo" data-path="${encodeURIComponent(output.path)}" title="Publish to your internal.airbyte.ai hub (auto-merging PR)">Publish to hub</button>
+        ${downloadMenuHtml(encodeURIComponent(output.path), "dl-menu-row", "", true, output.ext || "md")}
       </div>
     </div>`;
 }
