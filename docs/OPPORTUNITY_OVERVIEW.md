@@ -1048,7 +1048,7 @@ This should be separate from Slice 2 because checklist workflow and human contro
 
 Implemented scope:
 
-- Four Business Case areas with knowledge state, confidence, confirmation, evidence references, and explicit gaps.
+- Four Business Case areas (since extended with Urgency and Value proposition) with knowledge state, confidence, confirmation, evidence references, and explicit gaps.
 - Eight stable MEDDPICC dimensions with the same claim semantics plus missing information and suggested discovery.
 - A bounded stakeholder map with stable keys, roles, influence, engagement, stance, blocker context, next steps, evidence, and explicit gaps.
 - Explicit missing Champion, Economic Buyer, and Technical Decision Maker roles when the evidence does not establish them.

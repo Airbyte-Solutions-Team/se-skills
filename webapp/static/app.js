@@ -2230,11 +2230,14 @@ function renderBusinessCase(current) {
     ["future_state", "Future state"],
     ["negative_consequences", "Negative consequences"],
     ["positive_business_outcomes", "Positive business outcomes"],
+    // Sit under negative consequences / positive outcomes: why now, and what it is worth to them.
+    ["urgency", "Urgency — why now?"],
+    ["value_proposition", "Value proposition"],
   ];
   const values = areas.map(([key]) => businessCase[key] || {knowledge: overviewUnknownClaim(), missing_information: ["Not established from authorized evidence."]});
   return `<details class="workspace-disclosure overview-framework-card" id="overview-business-case">
     <summary>
-      <span><strong>Business Case</strong><small>Current state, future state, consequences, and outcomes.</small></span>
+      <span><strong>Business Case</strong><small>Current state, future state, consequences, outcomes, urgency, and value proposition.</small></span>
       <span class="workspace-state">${esc(overviewKnowledgeSummary(values))}</span>
     </summary>
     <div class="workspace-disclosure-body overview-business-case-quad">
@@ -2242,7 +2245,7 @@ function renderBusinessCase(current) {
         const points = values[index].points || [];
         return `<article class="overview-framework-area">
         <div class="overview-framework-head"><h3>${esc(label)}</h3><span class="workspace-status workspace-status--neutral">${esc(overviewLabel(values[index].knowledge?.knowledge_state))}</span></div>
-        ${renderFrameworkKnowledge(values[index])}
+        ${renderFrameworkKnowledge(values[index], {suggestedDiscovery: key === "urgency" || key === "value_proposition"})}
         ${points.length ? `<ul class="overview-framework-points">${points.slice(0, 6).map((point) => `<li>${esc(point)}</li>`).join("")}</ul>` : ""}
       </article>`;
       }).join("")}
@@ -2727,6 +2730,8 @@ function renderOpportunityWorkspace(workspace) {
         </div>
       </section>
 
+      <div id="freebar-status" class="status-stack"></div>
+
       <section class="workspace-panel workspace-brief">
         <div class="workspace-panel-head">
           <div>
@@ -2745,8 +2750,6 @@ function renderOpportunityWorkspace(workspace) {
 
       ${canonicalCreated ? renderOverviewHealth(current) : ""}
       ${canonicalCreated ? renderOverviewRisksActions(current) : ""}
-
-      <div id="freebar-status" class="status-stack"></div>
 
       ${renderBusinessCase(current)}
       ${renderMeddpicc(current)}

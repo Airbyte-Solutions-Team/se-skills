@@ -187,8 +187,19 @@ class ClaudeCanonicalStateExecutor:
                 "Return exactly the requested schema. Do not invent facts. Do not reproduce transcript text or "
                 "quotations. Every material supported claim must cite an authorized source id; transcript "
                 "locators may contain only a speaker/time or line-range pointer, never quoted evidence. "
-                "Generated outputs are not evidence and are not supplied. Complete all four business_case "
-                "areas, all eight meddpicc dimensions, and the stakeholders map. When concrete evidence-backed "
+                "Generated outputs are not evidence and are not supplied. Complete all six business_case "
+                "areas, all eight meddpicc dimensions, and the stakeholders map. The business_case "
+                "urgency area answers whether the customer has an immediate reason to act: look for a "
+                "compelling event or hard deadline (incumbent renewal or sunset, migration cutoff, launch "
+                "date, audit or regulatory date, budget expiry), the quantified cost of inaction and who "
+                "feels it, whether the timeline is customer-driven rather than vendor-driven, and whether "
+                "an alternative (build in-house, competitor) is already in flight. The value_proposition "
+                "area answers what Airbyte is worth to this customer in their own terms: the specific "
+                "capability tied to their stated pain, the quantified outcome they expect, why it beats "
+                "their status quo or alternatives, and whether the customer or the economic buyer has "
+                "articulated and agreed to it rather than the seller inferring it. For urgency and "
+                "value_proposition always add suggested_discovery questions for whatever remains "
+                "unestablished. When concrete evidence-backed "
                 "supporting facts exist for a business_case area beyond its knowledge value, add up to six "
                 "short points capturing them; omit points entirely rather than restating the value field or "
                 "inventing a fact when no such facts exist. Add a stakeholder only when "
@@ -369,6 +380,40 @@ class ClaudeCanonicalStateExecutor:
                 if task is not None and not task.done():
                     task.cancel()
 
+    # CLI result-envelope fields that are safe to log: scalars only, never `result` or the
+    # structured output (model text, possibly derived from evidence).
+    _FAILURE_FIELDS = ("subtype", "is_error", "api_error_status", "terminal_reason", "num_turns", "duration_ms")
+    # Fixed vocabulary matched against stderr so a transient cause can be told apart from a
+    # real defect without ever logging raw stderr (which could echo paths or content).
+    _STDERR_SIGNALS = (
+        "429", "529", "503", "overloaded", "rate limit", "rate_limit", "usage limit",
+        "quota", "authentication", "unauthorized", "401", "403", "credit", "timed out",
+        "econnreset", "enotfound", "network", "max_turns", "structured output",
+    )
+
+    @classmethod
+    def _describe_runtime_failure(cls, stdout: bytes, stderr: bytes) -> str:
+        """Evidence-free summary of why the CLI exited non-zero (for logs only, never the UI)."""
+        parts = [f"stdout_bytes={len(stdout)}", f"stderr_bytes={len(stderr)}"]
+        try:
+            envelope = json.loads(stdout.decode("utf-8", errors="strict"))
+        except (UnicodeError, ValueError):
+            envelope = None
+        if isinstance(envelope, dict):
+            for key in cls._FAILURE_FIELDS:
+                value = envelope.get(key)
+                if isinstance(value, (bool, int)) or value is None and key in envelope:
+                    parts.append(f"{key}={value}")
+                elif isinstance(value, str):
+                    parts.append(f"{key}={value[:60]!r}")
+        else:
+            parts.append("stdout_not_json")
+        lowered = stderr.decode("utf-8", errors="replace").lower()
+        signals = [token for token in cls._STDERR_SIGNALS if token in lowered]
+        if signals:
+            parts.append("stderr_signals=" + ",".join(signals))
+        return " ".join(parts)
+
     @staticmethod
     def _extract_candidate(stdout: bytes) -> OpportunityStateCandidate:
         try:
@@ -491,8 +536,12 @@ class ClaudeCanonicalStateExecutor:
                 raise CanonicalStateExecutionError(
                     "runtime_timeout", "Overview creation timed out; no state was saved."
                 ) from exc
-            return_code, stdout, _stderr = results
+            return_code, stdout, stderr = results
             if return_code != 0:
+                logger.warning(
+                    "Canonical-state runtime failed (exit %s): %s",
+                    return_code, self._describe_runtime_failure(stdout, stderr),
+                )
                 raise CanonicalStateExecutionError(
                     "runtime_failed", "Claude could not create a valid overview; no state was saved."
                 )
@@ -507,6 +556,7 @@ class ClaudeCanonicalStateExecutor:
                 await self._terminate(proc)
             raise
         except (BrokenPipeError, ConnectionError, OSError) as exc:
+            logger.warning("Canonical-state runtime I/O failed: %s", type(exc).__name__)
             if proc is not None:
                 await self._terminate(proc)
             raise CanonicalStateExecutionError(

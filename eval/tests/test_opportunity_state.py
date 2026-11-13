@@ -505,3 +505,15 @@ def test_history_rejects_tampered_parent_relationship_even_with_new_checksum(tmp
     (state_dir / "current.json").write_bytes(service._canonical_bytes(pointer))
     with pytest.raises(OpportunityStateError, match="relationship"):
         service.read_history("Acme", "synthetic-opportunity")
+
+
+def test_business_case_saved_before_urgency_and_value_proposition_still_loads() -> None:
+    payload = candidate().model_dump(mode="json")
+    for key in ("urgency", "value_proposition"):
+        payload["business_case"].pop(key)
+    parsed = OpportunityStateCandidate.model_validate(payload)
+    for key in ("urgency", "value_proposition"):
+        area = getattr(parsed.business_case, key)
+        assert area.knowledge.knowledge_state.value == "unknown"
+        assert area.knowledge.value is None
+        assert area.suggested_discovery == []

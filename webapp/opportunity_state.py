@@ -106,6 +106,8 @@ class BusinessCaseArea(StrictModel):
     knowledge: Claim
     missing_information: list[LongText] = Field(max_length=10)
     points: list[ShortText] = Field(default_factory=list, max_length=6)
+    # What to learn next to firm this area up. Populated mainly for urgency / value_proposition.
+    suggested_discovery: list[LongText] = Field(default_factory=list, max_length=10)
 
 
 class BusinessCase(StrictModel):
@@ -113,6 +115,20 @@ class BusinessCase(StrictModel):
     future_state: BusinessCaseArea
     negative_consequences: BusinessCaseArea
     positive_business_outcomes: BusinessCaseArea
+    # Why now (compelling event, cost of inaction, deadline) -- pairs with negative_consequences.
+    urgency: BusinessCaseArea
+    # What Airbyte is worth to them, in their terms -- pairs with positive_business_outcomes.
+    value_proposition: BusinessCaseArea
+
+    @model_validator(mode="before")
+    @classmethod
+    def upgrade_legacy_business_case(cls, value: Any) -> Any:
+        """Revisions saved before urgency/value_proposition existed load with those as unknown."""
+        if isinstance(value, dict):
+            value = dict(value)
+            for key in ("urgency", "value_proposition"):
+                value.setdefault(key, _legacy_business_case_area().model_dump(mode="json"))
+        return value
 
 
 class MeddpiccDimensionKey(str, Enum):
@@ -154,18 +170,21 @@ def _unknown_claim() -> Claim:
     )
 
 
-def _legacy_business_case() -> BusinessCase:
-    def area() -> BusinessCaseArea:
-        return BusinessCaseArea(
-            knowledge=_unknown_claim(),
-            missing_information=["Not established from authorized evidence."],
-        )
+def _legacy_business_case_area() -> BusinessCaseArea:
+    return BusinessCaseArea(
+        knowledge=_unknown_claim(),
+        missing_information=["Not established from authorized evidence."],
+    )
 
+
+def _legacy_business_case() -> BusinessCase:
     return BusinessCase(
-        current_state=area(),
-        future_state=area(),
-        negative_consequences=area(),
-        positive_business_outcomes=area(),
+        current_state=_legacy_business_case_area(),
+        future_state=_legacy_business_case_area(),
+        negative_consequences=_legacy_business_case_area(),
+        positive_business_outcomes=_legacy_business_case_area(),
+        urgency=_legacy_business_case_area(),
+        value_proposition=_legacy_business_case_area(),
     )
 
 
@@ -507,7 +526,7 @@ class OpportunityStateChangeSet(StrictModel):
     child_version_id: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{32}$")]
     child_revision: int = Field(ge=2, le=1_000_000)
     brief: list[TypedItemChange] = Field(default_factory=list, max_length=5)
-    business_case: list[TypedItemChange] = Field(default_factory=list, max_length=4)
+    business_case: list[TypedItemChange] = Field(default_factory=list, max_length=6)
     meddpicc: list[TypedItemChange] = Field(default_factory=list, max_length=8)
     stakeholders: list[TypedItemChange] = Field(default_factory=list, max_length=48)
     health_indicators: list[TypedItemChange] = Field(default_factory=list, max_length=4)

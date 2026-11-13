@@ -85,6 +85,7 @@ def test_create_schema_and_prompt_require_all_overview_frameworks(tmp_path) -> N
     assert {"business_case", "meddpicc", "stakeholders"} <= set(schema["required"])
     assert set(schema["$defs"]["BusinessCase"]["required"]) == {
         "current_state", "future_state", "negative_consequences", "positive_business_outcomes",
+        "urgency", "value_proposition",
     }
     assert schema["$defs"]["Meddpicc"]["properties"]["dimensions"]["minItems"] == 8
     assert schema["$defs"]["Meddpicc"]["properties"]["dimensions"]["maxItems"] == 8
@@ -92,7 +93,8 @@ def test_create_schema_and_prompt_require_all_overview_frameworks(tmp_path) -> N
     assert schema["$defs"]["Stakeholder"]["properties"]["evidence_refs"]["minItems"] == 1
 
     task = json.loads(executor._prompt(_request()))["task"]
-    assert "all four business_case areas" in task
+    assert "all six business_case areas" in task
+    assert "compelling event" in task and "cost of inaction" in task
     assert "all eight meddpicc dimensions" in task
     assert "suggested_discovery" in task
     assert "stakeholders map" in task
@@ -122,7 +124,7 @@ def test_update_prompt_supplies_baseline_without_treating_it_as_evidence(tmp_pat
     assert [item["source_id"] for item in payload["selected_transcripts"]] == [TRANSCRIPT_ID]
     assert "generated output sentinel" not in json.dumps(payload).lower()
     assert str(tmp_path) not in json.dumps(payload)
-    assert "all four business_case areas" in payload["task"]
+    assert "all six business_case areas" in payload["task"]
     assert "all eight meddpicc dimensions" in payload["task"]
     assert "stakeholders map" in payload["task"]
     assert len(payload["base"]["prior_canonical_state"]["meddpicc"]["dimensions"]) == 8
@@ -329,3 +331,32 @@ async def test_non_validation_failures_are_not_retried(tmp_path, monkeypatch) ->
 
     assert exc.value.code == "runtime_failed"
     assert len(list(tmp_path.glob("stdin_*.json"))) == 1
+
+
+@pytest.mark.asyncio
+async def test_runtime_failure_is_logged_with_safe_diagnostics_only(tmp_path, monkeypatch, caplog) -> None:
+    """A non-zero exit must say why in the log (exit code, result subtype, transient-error
+    signals) without echoing model text, raw stderr or evidence."""
+    executor = _executor(tmp_path)
+    _set_version_command(monkeypatch, executor)
+    envelope = {"is_error": True, "subtype": "error_during_execution", "api_error_status": 529,
+                "result": "MODEL_TEXT_SENTINEL SYNTHETIC_SENTINEL"}
+    code = (
+        "import sys, json\nsys.stdin.buffer.read()\n"
+        f"print(json.dumps({envelope!r}))\n"
+        "sys.stderr.write('API Error: 529 overloaded_error RAW_STDERR_SENTINEL')\n"
+        "raise SystemExit(1)\n"
+    )
+    monkeypatch.setattr(executor, "command", lambda executable=None: [sys.executable, "-c", code])
+
+    with caplog.at_level("WARNING", logger="services.opportunity_state_executor"):
+        with pytest.raises(CanonicalStateExecutionError) as exc:
+            await executor.execute(_request())
+
+    assert exc.value.code == "runtime_failed"
+    logged = " ".join(r.getMessage() for r in caplog.records)
+    assert "exit 1" in logged
+    assert "subtype='error_during_execution'" in logged and "api_error_status=529" in logged
+    assert "stderr_signals=529,overloaded" in logged
+    for forbidden in ("MODEL_TEXT_SENTINEL", "SYNTHETIC_SENTINEL", "RAW_STDERR_SENTINEL"):
+        assert forbidden not in logged

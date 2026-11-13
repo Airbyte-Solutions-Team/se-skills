@@ -48,7 +48,10 @@ _BUSINESS_CASE_AREAS = (
     ("future_state", "Future state"),
     ("negative_consequences", "Negative consequences"),
     ("positive_business_outcomes", "Positive business outcomes"),
+    ("urgency", "Urgency — why now?"),
+    ("value_proposition", "Value proposition"),
 )
+_BUSINESS_CASE_DISCOVERY = {"urgency", "value_proposition"}
 _HEALTH_TONE = {
     "strong": "success", "comfortable": "success", "positive": "success",
     "weak": "error", "blocked": "error", "at_risk": "error", "negative": "error",
@@ -346,14 +349,16 @@ def _business_case(version: OpportunityStateVersion) -> str:
     areas = [getattr(version.state.business_case, key) for key, _ in _BUSINESS_CASE_AREAS]
     cards = "".join(
         f'<article class="overview-framework-area"><div class="overview-framework-head"><h3>{_e(title)}</h3>'
-        f"{_chip(label(area.knowledge.knowledge_state))}</div>{_framework_content(area)}"
+        f"{_chip(label(area.knowledge.knowledge_state))}</div>"
+        f"{_framework_content(area, discovery=key in _BUSINESS_CASE_DISCOVERY)}"
         + (f'<ul class="overview-framework-points">{"".join(f"<li>{_e(p)}</li>" for p in area.points[:6])}</ul>'
            if area.points else "")
         + "</article>"
-        for (_, title), area in zip(_BUSINESS_CASE_AREAS, areas)
+        for (key, title), area in zip(_BUSINESS_CASE_AREAS, areas)
     )
     return _panel(
-        "Commercial case", "Business Case", sub="Current state, future state, consequences, and outcomes.",
+        "Commercial case", "Business Case",
+        sub="Current state, future state, consequences, outcomes, urgency, and value proposition.",
         state=_knowledge_summary([a.knowledge for a in areas]),
         body=f'<div class="overview-business-case-quad">{cards}</div>',
     )
