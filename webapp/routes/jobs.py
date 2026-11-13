@@ -30,3 +30,16 @@ def api_jobs_for(account: str | None = None, opp_slug: str | None = None, reques
     """List jobs, optionally filtered by account and/or opportunity slug."""
     job_service = _get_job_service(request)
     return job_service.list_jobs(account, opp_slug)
+
+
+@router.post("/{job_id}/cancel")
+async def api_cancel_job(job_id: str, request: Request):
+    """Stop a running skill run. 404 unknown job; 409 if it is finished or not a skill run."""
+    job_service = _get_job_service(request)
+    try:
+        job = await job_service.cancel_job(job_id)
+    except KeyError:
+        raise HTTPException(404, "Unknown job") from None
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from None
+    return {k: v for k, v in job.items() if k != "sig"}

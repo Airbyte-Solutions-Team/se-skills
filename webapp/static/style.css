@@ -892,6 +892,9 @@ input[type=text] { font: inherit; background: var(--panel2); color: var(--text);
 .run-head { font-weight: 600; }
 .run-dismiss { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 14px; line-height: 1; padding: 4px 8px; border-radius: 6px; }
 .run-dismiss:hover { color: var(--text); background: var(--panel); }
+.run-cancel { flex: none; background: none; border: 1px solid var(--line-strong); color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 6px; }
+.run-cancel:hover:not(:disabled) { color: #ff6b6b; border-color: #ff6b6b; }
+.run-cancel:disabled { opacity: .6; cursor: default; }
 .status.running { color: var(--warn); }
 .status.ok { color: var(--accent2); }
 .status.warn { color: var(--warn); }

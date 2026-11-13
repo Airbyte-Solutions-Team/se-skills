@@ -642,6 +642,7 @@ async function openSkillOutput(ctx) {
 function showSkillToast(job, ctx) {
   const wrap = document.getElementById("toast-container");
   if (!wrap) return;
+  if (job.status === "cancelled") return;  // the user did this; the status row already says so
   const ok = job.ok;
   const skill = prettySkill(job.skill || ctx.skill || "run");
   const opp = ctx.oppName || job.opportunity || ctx.account || "";
@@ -3211,7 +3212,26 @@ async function pageOpportunity(account, slug, routeOppName) {
     const row = ensureRow(key);
     if (job.status === "running") {
       row.className = "status running";
-      row.innerHTML = `<span class="run-head"><span class="spinner"></span>Running ${esc(job.skill || "instruction")} … (keeps running even if you leave this page)</span>`;
+      const cancelling = !!job.cancel_requested;
+      row.innerHTML = `<span class="run-head"><span class="spinner"></span>${cancelling ? "Cancelling" : "Running"} ${esc(job.skill || "instruction")} … ${cancelling ? "" : "(keeps running even if you leave this page)"}</span>`
+        + `<button class="run-cancel" type="button" title="Stop this run"${cancelling ? " disabled" : ""}>${cancelling ? "Cancelling…" : "Cancel run"}</button>`;
+      row.querySelector(".run-cancel").onclick = async (event) => {
+        const btn = event.currentTarget;
+        btn.disabled = true; btn.textContent = "Cancelling…";
+        try {
+          await api(`/api/jobs/${encodeURIComponent(key)}/cancel`, { method: "POST" });
+        } catch (e) {
+          // 409 = it finished (or isn't cancellable) in the meantime; the next poll shows the real state.
+          btn.disabled = false; btn.textContent = "Cancel run";
+          showToast(`Couldn't cancel: ${e.message}`, "warn");
+        }
+      };
+      return;
+    }
+    if (job.status === "cancelled") {
+      row.className = "status warn";
+      row.innerHTML = `<span class="run-head">■ ${esc(job.skill || "run")}${finishedAt ? ` · ran ${relTime(finishedAt)}` : ""} — cancelled. Any files it had already written stay in Opportunity Outputs.</span><button class="run-dismiss" title="Dismiss">✕</button>`;
+      row.querySelector(".run-dismiss").onclick = () => { row.remove(); rows.delete(key); };
       return;
     }
     const ok = job.ok;

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
@@ -23,6 +24,10 @@ _PERSISTENCE_WARNING = "This job will not survive a server restart because state
 # Skill runs are multi-turn agent loops; observed medians are 330-490s with a tail past 600s
 # (full-qual/prep-call/post-call), so 600s clipped ~25-50% of runs that would have finished.
 _RUN_TIMEOUT_SECONDS = 1200
+
+
+class _JobCancelled(Exception):
+    """Internal signal: the user cancelled this skill run; unwind without recording a result."""
 
 
 class ManagedJobError(Exception):
@@ -56,6 +61,10 @@ class JobService:
         # Create and update orchestration share this lock so their conflict
         # checks and managed-job registration are one event-loop transaction.
         self.opportunity_state_start_lock = asyncio.Lock()
+        # Live handles for cancellation. Process-local and never persisted: after a
+        # restart running jobs are already converted to errors (see persistence.load_jobs).
+        self._tasks: dict[str, asyncio.Task] = {}
+        self._procs: dict[str, asyncio.subprocess.Process] = {}
 
     def get_job(self, job_id: str) -> dict | None:
         return self.jobs.get(job_id)
@@ -172,7 +181,10 @@ class JobService:
             "started_at": datetime.now(timezone.utc).timestamp(),
         }
         persist_warn = await self.save_snapshot(job_id)
-        asyncio.create_task(self._run_job(job_id, prompt, meta))
+        task = asyncio.create_task(self._run_job(job_id, prompt, meta))
+        if task is not None:
+            self._tasks[job_id] = task
+            task.add_done_callback(lambda _t, jid=job_id: self._tasks.pop(jid, None))
         return job_id, persist_warn
 
     async def launch_managed(
@@ -250,6 +262,70 @@ class JobService:
         except Exception:
             pass
 
+    async def cancel_job(self, job_id: str) -> dict:
+        """Cancel a running skill run by stopping its `claude -p` process tree.
+
+        Raises `KeyError` for an unknown job and `ValueError` (message safe to show) when the
+        job is not a running skill run (overview create/update jobs promote state transactionally and
+        are intentionally not cancellable here). Idempotent while the stop is in flight.
+        """
+        job = self.jobs.get(job_id)
+        if job is None:
+            raise KeyError(job_id)
+        if job.get("status") != "running":
+            raise ValueError("This run has already finished.")
+        if job.get("kind") != "skill":
+            raise ValueError("Only skill runs can be cancelled.")
+        job["cancel_requested"] = True
+        proc = self._procs.get(job_id)
+        if proc is not None:
+            await self._kill_process_tree(proc)
+        elif job_id not in self._tasks:
+            # No live runner (should not happen after restart recovery) — don't leave it "running".
+            self._mark_cancelled(job)
+            await self.save_snapshot(job_id)
+        # else: the runner has not spawned the process yet; it checks the flag right after spawning.
+        return job
+
+    @staticmethod
+    def _mark_cancelled(job: dict) -> None:
+        # `ok` stays None: a cancel is neither a success nor a failure, so it must not
+        # raise "Last run failed" markers or Needs-attention items.
+        job.update(
+            status="cancelled",
+            ok=None,
+            produced_output=None,
+            stdout="",
+            stderr="Cancelled by user.",
+            finished_at=datetime.now(timezone.utc).timestamp(),
+        )
+
+    @staticmethod
+    async def _kill_process_tree(proc: asyncio.subprocess.Process) -> None:
+        """Stop `proc` and its children (the `claude` CLI spawns its own workers)."""
+        if proc.returncode is not None:
+            return
+        try:
+            if sys.platform == "win32":
+                killer = await asyncio.create_subprocess_exec(
+                    "taskkill", "/PID", str(proc.pid), "/T", "/F",
+                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                )
+                await killer.wait()
+            else:
+                proc.terminate()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=5)
+                except asyncio.TimeoutError:
+                    proc.kill()
+        except ProcessLookupError:
+            pass  # already exited
+        except OSError:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+
     async def _run_job(self, job_id: str, prompt: str, meta: dict[str, Any]) -> None:
         """Run `claude -p` for `job_id`, updating status, output, and run records."""
         job = self.jobs[job_id]
@@ -272,7 +348,12 @@ class JobService:
                 stderr=asyncio.subprocess.PIPE,
             )
             job["pid"] = proc.pid
+            self._procs[job_id] = proc
+            if job.get("cancel_requested"):  # cancelled before the process existed
+                await self._kill_process_tree(proc)
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=_RUN_TIMEOUT_SECONDS)
+            if job.get("cancel_requested"):
+                raise _JobCancelled
             stdout = security.redact_sensitive(stdout.decode("utf-8", errors="replace"))
             stderr = security.redact_sensitive(stderr.decode("utf-8", errors="replace"))
             ok = proc.returncode == 0
@@ -300,6 +381,8 @@ class JobService:
                 stderr=stderr,
                 finished_at=datetime.now(timezone.utc).timestamp(),
             )
+        except _JobCancelled:
+            self._mark_cancelled(job)
         except FileNotFoundError:
             job.update(
                 status="error",
@@ -324,6 +407,15 @@ class JobService:
                 stderr=security.redact_sensitive(f"{type(e).__name__}: {e}"),
                 finished_at=datetime.now(timezone.utc).timestamp(),
             )
+
+        self._procs.pop(job_id, None)
+        if job.get("status") == "cancelled":
+            # A cancelled run must not overwrite the last good run record for this skill.
+            try:
+                await self.save_snapshot(job_id)
+            except Exception:
+                pass
+            return
 
         # Persist the finished result to disk (one file per skill, overwritten).
         try:

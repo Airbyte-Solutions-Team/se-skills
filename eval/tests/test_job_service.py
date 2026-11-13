@@ -459,3 +459,94 @@ def test_route_api_jobs_response_shape(tmp_path, monkeypatch) -> None:
     # Confirm the router still registered the exact URL patterns.
     assert app_module.app.url_path_for("api_jobs_for") == "/api/jobs"
     assert app_module.app.url_path_for("api_job", job_id="abc123") == "/api/jobs/abc123"
+
+
+class _HangingProc:
+    """A `claude -p` stand-in that blocks until killed (like a long skill run)."""
+
+    def __init__(self) -> None:
+        self.pid = 4242
+        self.returncode: int | None = None
+        self.killed = asyncio.Event()
+
+    async def communicate(self) -> tuple[bytes, bytes]:
+        await self.killed.wait()
+        return b"partial output", b""
+
+    async def wait(self) -> int:
+        await self.killed.wait()
+        return self.returncode or 0
+
+    def terminate(self) -> None:
+        self.returncode = -15
+        self.killed.set()
+
+    kill = terminate
+
+
+def _running_job(service: JobService, **extra) -> str:
+    service.jobs["j1"] = {
+        "kind": "skill", "status": "running", "ok": None, "stdout": "", "stderr": "",
+        "skill": "coverage-handoff", "account": "Acme", "opp_slug": "op1",
+        "started_at": time.time(), **extra,
+    }
+    return "j1"
+
+
+def test_cancel_running_skill_stops_process_and_records_cancelled(service, monkeypatch) -> None:
+    """Cancelling stops the subprocess; the job ends `cancelled` (not an error) and leaves no run record."""
+    persisted: list = []
+    service.persist_run = lambda *a, **k: persisted.append(a)
+    proc = _HangingProc()
+    monkeypatch.setattr("asyncio.create_subprocess_exec", AsyncMock(return_value=proc))
+    # Windows cancel shells out to taskkill; route it to the fake so no real process is touched.
+    async def _kill(p):
+        p.terminate()
+    monkeypatch.setattr(JobService, "_kill_process_tree", staticmethod(_kill))
+    job_id = _running_job(service)
+    meta = {"skill": "coverage-handoff", "account": "Acme", "opp_slug": "op1", "opportunity": "Big Deal"}
+
+    async def scenario() -> dict:
+        run = asyncio.get_running_loop().create_task(JobService._run_job(service, job_id, "prompt", meta))
+        for _ in range(50):
+            if job_id in service._procs:
+                break
+            await asyncio.sleep(0.01)
+        job = await service.cancel_job(job_id)
+        await run
+        return job
+
+    # create_task is patched out by the autouse fixture, so schedule via the loop directly (above).
+    job = asyncio.run(scenario())
+    assert job["status"] == "cancelled"
+    assert job["ok"] is None
+    assert job["stdout"] == "" and "Cancelled" in job["stderr"]
+    assert job.get("finished_at")
+    assert proc.killed.is_set()
+    assert persisted == []          # must not overwrite the last good run record
+    assert job_id not in service._procs
+
+
+def test_cancel_unknown_or_finished_job_is_rejected(service) -> None:
+    with pytest.raises(KeyError):
+        asyncio.run(service.cancel_job("nope"))
+    service.jobs["done1"] = {"kind": "skill", "status": "done", "ok": True}
+    with pytest.raises(ValueError, match="already finished"):
+        asyncio.run(service.cancel_job("done1"))
+    service.jobs["ov1"] = {"kind": "opportunity_state_update", "status": "running", "ok": None}
+    with pytest.raises(ValueError, match="Only skill runs"):
+        asyncio.run(service.cancel_job("ov1"))
+    assert service.jobs["ov1"]["status"] == "running"
+
+
+def test_cancel_route_maps_errors_to_http_statuses(service) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    app = FastAPI()
+    app.state.job_service = service
+    app.include_router(routes_jobs.router)
+    client = TestClient(app)
+    assert client.post("/api/jobs/missing/cancel").status_code == 404
+    service.jobs["done1"] = {"kind": "skill", "status": "done", "ok": True, "sig": "x"}
+    assert client.post("/api/jobs/done1/cancel").status_code == 409
