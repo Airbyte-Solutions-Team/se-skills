@@ -1783,7 +1783,9 @@ function renderOutputGroups(outputs) {
 // else (players, meetings, open items) the skill derives from transcripts+SFDC.
 // Serializes to a text block and hands it to `onGenerate(extraText)`.
 // `titleSuffix` labels the modal header (an opp name, or e.g. "3 accounts").
-async function openHandoffModal(titleSuffix, onGenerate) {
+// `withNotes` (single-opportunity only) adds the "notes since last handoff" box: the
+// skill reconciles them against the previous handoff's commitments/open items/threads.
+async function openHandoffModal(titleSuffix, onGenerate, { withNotes = false } = {}) {
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
   overlay.innerHTML = `
@@ -1796,6 +1798,10 @@ async function openHandoffModal(titleSuffix, onGenerate) {
           <label>Coverage start<input id="hf-start" type="date" /></label>
           <label>Coverage end<input id="hf-end" type="date" /></label>
         </div>
+        ${withNotes ? `
+        <label style="margin-top:10px;">Notes since the last handoff <span style="font-weight:400;">(optional — updates the handoff)</span>
+          <textarea id="hf-notes" maxlength="7000" placeholder="What's changed? e.g. “Sent the sizing doc Tuesday”, “they dropped the Snowflake requirement”. You can also paste the review exported from a handoff page (Copy review as notes). Items you mention are marked done / updated; everything else is re-checked against newer calls."></textarea>
+        </label>` : ""}
       </div>
       <div class="modal-foot">
         <span class="muted" style="margin-right:auto;font-size:12px;">Players, meetings &amp; deal facts are pulled from transcripts + Salesforce automatically.</span>
@@ -1822,12 +1828,15 @@ async function openHandoffModal(titleSuffix, onGenerate) {
 
   overlay.querySelector("#hf-generate").onclick = () => {
     const v = (sel) => (overlay.querySelector(sel)?.value || "").trim();
-    const extra = [
+    const lines = [
       "PTO COVERAGE CONTEXT (use verbatim for the coverage banner):",
       `- SE out: ${v("#hf-out") || "Not specified"}`,
       `- Covering SE: ${v("#hf-cover") || "Not specified"}`,
       `- Coverage window: ${v("#hf-start") || "?"} to ${v("#hf-end") || "?"}`,
-    ].join("\n");
+    ];
+    const notes = v("#hf-notes");
+    if (notes) lines.push("", "HANDOFF UPDATE NOTES (owner's notes since the last handoff; reconcile against the previous handoff per the skill's Updating section):", notes);
+    const extra = lines.join("\n");
     close();
     onGenerate(extra);
   };
@@ -2416,11 +2425,12 @@ function renderWhatChanged(current) {
     evidenceItems.length ? `${evidenceItems.length} evidence source${evidenceItems.length === 1 ? "" : "s"} added or replaced` : "",
   ].filter(Boolean).join(" · ");
   const groups = stateGroups.map(([items, label]) => renderTypedChanges(items, label)).filter(Boolean);
-  return `<section class="workspace-panel overview-changes" aria-labelledby="what-changed-title">
-    <div class="workspace-panel-head"><div><div class="workspace-eyebrow">Deterministic revision diff</div><h2 id="what-changed-title">What Changed</h2></div><span class="workspace-state">Revision ${Number(changes.parent_revision)} → Revision ${Number(changes.child_revision)}</span></div>
+  // Collapsed by default; opened from the Revision badge in the Opportunity Brief header.
+  return `<div class="overview-changes" id="overview-changes-panel" role="region" aria-labelledby="what-changed-title" hidden>
+    <div class="overview-changes-head"><div class="workspace-eyebrow">Deterministic revision diff</div><h3 id="what-changed-title">What Changed <small>Revision ${Number(changes.parent_revision)} → Revision ${Number(changes.child_revision)}</small></h3></div>
     ${materialCount ? `<div class="overview-change-groups">${groups.slice(0, 2).join("")}</div>${groups.length > 2 ? `<details class="overview-change-more"><summary>Show ${groups.length - 2} more change categor${groups.length - 2 === 1 ? "y" : "ies"}</summary><div class="overview-change-groups">${groups.slice(2).join("")}</div></details>` : ""}` : '<p class="overview-no-material"><strong>No material state changes</strong><span>New evidence was evaluated, but the canonical conclusions remained the same.</span></p>'}
     ${evidenceSummary ? `<p class="muted overview-change-evidence">Provenance: ${esc(evidenceSummary)}.</p>` : ""}
-  </section>`;
+  </div>`;
 }
 
 function renderRevisionHistory() {
@@ -2723,14 +2733,16 @@ function renderOpportunityWorkspace(workspace) {
             <div class="workspace-eyebrow">Current understanding</div>
             <h2>Opportunity Brief</h2>
           </div>
-          <span class="workspace-state">${canonicalCreated ? `Revision ${current.revision}` : workspace.canonical_state?.status === "retired" ? "Retired" : "Not created"}</span>
+          ${canonicalCreated && current.change_set
+            ? `<button type="button" class="workspace-state workspace-state--toggle" id="overview-changes-toggle" aria-expanded="false" aria-controls="overview-changes-panel" title="Show what changed from revision ${Number(current.change_set.parent_revision)}">Revision ${current.revision} <span class="dl-caret" aria-hidden="true">▾</span></button>`
+            : `<span class="workspace-state">${canonicalCreated ? `Revision ${current.revision}` : workspace.canonical_state?.status === "retired" ? "Retired" : "Not created"}</span>`}
         </div>
+        ${canonicalCreated ? renderWhatChanged(current) : ""}
         ${canonicalCreated ? renderOverviewBrief(current) : renderCreateOverviewState(workspace)}
         ${canonicalCreated ? renderUpdateJobState(workspace) : ""}
         ${canonicalCreated ? '<p class="muted overview-version-note">Update Overview reconciles explicitly authorized evidence into a new immutable revision. Generate remains a separate artifact workflow.</p>' : workspace.canonical_state?.status === "retired" ? '<p class="muted">The retired revision remains in Overview history for audit.</p>' : '<p class="muted">Create Overview persists one validated canonical version. Generate continues to create separate task-specific artifacts.</p>'}
       </section>
 
-      ${canonicalCreated ? renderWhatChanged(current) : ""}
       ${canonicalCreated ? renderOverviewHealth(current) : ""}
       ${canonicalCreated ? renderOverviewRisksActions(current) : ""}
 
@@ -3105,6 +3117,16 @@ async function pageOpportunity(account, slug, routeOppName) {
   if (workspace.canonical_state?.update_job?.status === "running") {
     void watchUpdate(workspace.canonical_state.update_job.job_id);
   }
+  const changesToggle = document.getElementById("overview-changes-toggle");
+  const changesPanel = document.getElementById("overview-changes-panel");
+  if (changesToggle && changesPanel) {
+    changesToggle.onclick = () => {
+      const open = changesPanel.hidden;  // hidden now → opening
+      changesPanel.hidden = !open;
+      changesToggle.setAttribute("aria-expanded", String(open));
+      changesToggle.classList.toggle("is-open", open);
+    };
+  }
   void loadOverviewHistory(account, slug);
   wireOverviewExport(account, slug, _memberName);
   document.querySelectorAll("[data-scroll-to]").forEach((el) => {
@@ -3272,7 +3294,7 @@ async function pageOpportunity(account, slug, routeOppName) {
     }
   };
 
-  document.getElementById("handoff-btn").onclick = () => openHandoffModal(oppName, startHandoff);
+  document.getElementById("handoff-btn").onclick = () => openHandoffModal(oppName, startHandoff, { withNotes: true });
   view.querySelectorAll("[data-run-skill]").forEach((button) => {
     button.onclick = () => startRun(button.dataset.runSkill);
   });

@@ -390,7 +390,15 @@ button.workspace-fact-link:hover .workspace-fact-value, button.workspace-fact-li
 .overview-freshness { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin-top: 12px; font-size: 12px; }
 .overview-freshness strong { color: var(--text); }
 .overview-freshness span { color: var(--muted); }
-.overview-changes { border-left: 3px solid var(--accent2); }
+.overview-changes { margin: 4px 0 16px; padding: 4px 0 4px 16px; border-left: 3px solid var(--accent2); }
+.overview-changes[hidden] { display: none; }
+.overview-changes-head h3 { margin: 2px 0 0; font-size: 15px; }
+.overview-changes-head h3 small { margin-left: 8px; color: var(--muted); font-size: 11px; font-weight: 650; }
+button.workspace-state--toggle { cursor: pointer; font-family: inherit; gap: 5px; color: var(--accent); border-color: var(--accent); }
+button.workspace-state--toggle:hover, button.workspace-state--toggle.is-open { background: var(--panel); }
+button.workspace-state--toggle .dl-caret { display: inline-block; transition: transform .15s; }
+button.workspace-state--toggle.is-open .dl-caret { transform: rotate(180deg); }
+button.workspace-state--toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .overview-change-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
 .overview-change-group { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel2); }
 .overview-change-group h3 { margin: 0 0 8px; font-size: 13px; }

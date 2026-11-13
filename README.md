@@ -28,7 +28,7 @@ Built by Gary Yang (Solutions Engineer, Airbyte). Designed to be team-shareable.
 | `internal-prep` | Internal meeting prep (ae-sync / forecast / exec-readout / deal-review) | "internal prep", "forecast prep" |
 | `account-refresher` | Fast "catch me up" briefing on an account (players, history, state, open items) | "refresh me on X", "catch me up on X" |
 | `next-move` | Diagnoses where a customer sits + recommends the next skill | "where am I on X", "what's next for X" |
-| `coverage-handoff` | PTO coverage handoff — self-contained HTML page for a covering SE | "coverage handoff", "PTO handoff for X" |
+| `coverage-handoff` | PTO coverage handoff — self-contained HTML page for a covering SE; reviewable items, updates from your notes | "coverage handoff", "PTO handoff for X" |
 | `pov-gsheet` | Create and pre-fill a POV Success Criteria Google Sheet for a prospect | "POV sheet", "success criteria for X", "prep the POV" |
 | `worker-analysis` | Analyze, estimate, and optimize Airbyte Data Worker usage | "worker analysis", "how many workers", "capacity" |
 

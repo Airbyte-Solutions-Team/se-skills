@@ -19,6 +19,7 @@ The deliverable is a **self-contained styled HTML page** in the internal.airbyte
 
 - **Account + opportunity** (the webapp passes both; if run manually and none given, ask).
 - **PTO context**, passed in the invocation as free text (from the webapp modal form). Expect only: SE out, covering SE, coverage window (start/end). Use these verbatim in the coverage banner. If missing, render "Not specified". Everything else — players, meetings, open items — you derive from transcripts + Salesforce (do not expect a form to supply them).
+- **Update notes (optional)**, passed as `HANDOFF UPDATE NOTES:` in the same free text — the owner's free-form notes since the last handoff ("sent the sizing doc Tuesday", "they dropped the Snowflake requirement"), and/or a pasted `HANDOFF REVIEW` block exported from the page's **Copy review as notes** button. Presence of either, **or** an existing prior handoff in `<out_dir>/coverage-handoff/`, puts you in **Update mode** (see *Updating an existing handoff*).
 
 ## Sources (synthesize everything, same discipline as other skills)
 
@@ -40,6 +41,24 @@ Apply **Source Coverage transparency** and **assertive SFDC-vs-reality flagging*
 
 Copy these straight from the SFDC query into the page; IDs and numbers must be exact:
 `Name`, `StageName`, `Stage_Number__c`, `Amount`, `CloseDate`, `Type`, `Owner.Name`, `SE_Name__c`, `Probability__c`, `Next_Step_Date__c`, `Days_Since_Last_Activity__c`, `Champion__c`, `Economic_Buyer__c`, `Identify_Pain__c`, `Primary_Competitor__c`, `Why_buy_anything__c`, `Why_buy_now__c`, `Most_important_sources__c`, `Most_Important_Destinations__c`, `Use_case_description__c`, `Region__c`, `SE_Deal_Risks__c`, `At_risk__c`. If org/workspace IDs are known (raw notes / memory / prior handover), include them in Access & Escalation verbatim.
+
+## Updating an existing handoff (reviewable items)
+
+The three action sections — **In-Flight Commitments**, **Open Items**, **Technical Threads** — go stale fast: something listed as open may already be done. Each item is therefore **reviewable**: it carries a stable `data-item-id` (`CM-<n>`, `OI-<n>`, `TT-<n>`) and a `data-status` (`open` / `in-progress` / `done` / `dropped`), and the page lets the owner set a status + note per item and **Copy review as notes**. Regenerating with those notes produces the next handoff.
+
+**Always, before generating:** look in `<out_dir>/coverage-handoff/` for the newest prior `coverage-handoff-*.html` for this opportunity. If one exists, read it — its items, ids and `data-status` are your baseline. Also read any `HANDOFF UPDATE NOTES` in the prompt. If neither exists, this is a first handoff: number items from 1 and skip the rest of this section.
+
+**Reconcile, item by item** (evidence order: owner notes > a call newer than the prior handoff > older sources):
+1. **Keep ids stable.** An item present in the prior handoff keeps its id, even if reworded. New items continue the numbering (never reuse an id). Never renumber.
+2. **Apply the owner's notes/review.** Done → `data-status="done"`, Status badge `Done`, and add `Closed <date long> — per owner notes` (plus the owner's note) to the row. Dropped → `dropped`, with the reason. In progress → keep, update the state with the note. A note that doesn't match an existing item but describes new work or a new promise → add it as a new item (`Added per owner notes`).
+3. **Check the rest against newer evidence.** For prior items the notes don't mention, a newer transcript / SFDC change may show completion. Mark `done` only on explicit evidence and cite it ("confirmed on the <date> call"). Absence of evidence is **not** completion — leave it `open`.
+4. **Conflicts are flagged, never silently resolved.** If the owner says done but the newest call shows the customer still waiting (or vice versa), keep the owner's status and add a `risk` callout line in Current State naming both.
+5. **Closed-item lifecycle.** Items that went `done`/`dropped` **in this update** stay in their section (struck through by the page) so the covering SE can see what was closed. Items that were *already* `done`/`dropped` in the prior handoff are removed from the tables and only counted in the changes callout.
+6. **"Changes since <prior handoff date>" callout** (Current State; template block marked UPDATE RUNS ONLY): one short paragraph — N closed, N new, N dropped, anything reopened, and the source of each change (owner notes vs. call). First handoffs omit the block.
+7. **Open Items checklist and the page's counter** are driven by `data-status`; set it on every row to match your reconciled status (`done` rows get `data-status="done"`).
+8. **`{{HANDOFF_ID}}`** = `<YYYY-MM-DD>-<account-slug>-<opp-slug>`; it must be unique per regeneration so saved browser review state from an older page never bleeds onto the new one. Source Coverage records which prior handoff was reconciled (filename + date) and whether owner notes were supplied.
+
+Never invent a closure to make the list look clean, and never drop an open item the owner didn't address.
 
 ## Output Format — HTML in the rs-group design system
 
@@ -64,7 +83,7 @@ Copy these straight from the SFDC query into the page; IDs and numbers must be e
 **Produce one self-contained HTML file.** Use `template.html` in this skill's own directory (the installed skill lives at `~/.claude/skills/coverage-handoff/`, so read `~/.claude/skills/coverage-handoff/template.html`) as the exact skeleton:
 
 - Copy its `<style>` block **verbatim** (no external CSS — the file must render standalone and inside the internal repo).
-- Keep the `.airbyte-auth-marker` and `.footer`.
+- Keep the `.airbyte-auth-marker`, `.footer`, the `.review-bar` and the trailing `<script>` (the review UI) verbatim.
 - Replace every `{{PLACEHOLDER}}` and every example/`REPEAT` row with real content.
 - **Delete a section only if its data is genuinely absent** — otherwise fill it, or state "None captured" / "Not specified". Do NOT invent commitments or contacts.
 - Dates in the body: long form (e.g. June 11, 2026), per `_se-playbook.md`.
@@ -79,9 +98,9 @@ Copy these straight from the SFDC query into the page; IDs and numbers must be e
 5. **Story So Far** — dated chronological bullets.
 6. **Current State** — current-state narrative, last contact (days ago), use case; **any upcoming meetings during the coverage window inferred from transcripts/SFDC**; risk callout if SFDC stage ≠ reality.
    - **Surface the deployment shape at a glance** so the covering SE isn't guessing (or re-deriving) it: pull the **current deployment verdict** (Cloud / Flex / park) from the deployment-qualification doc in `outputs/`, and any **`self_managed_only` or enterprise-connector flags** already computed in connector-feasibility's Availability column, and state them in this narrative in one line — e.g. "Deployment: Enterprise Flex (per deployment-qual); one source (`source-db2`) is Self-Managed-only, one is enterprise-tier." This is **display-only** — read the derived verdicts from the saved docs; do NOT pull the connector registry or repos to re-derive them (that's the analytical skills' job, per playbook → Product & Connector Reference Data). If those docs don't exist yet, note "deployment not yet assessed" / "connector availability not yet assessed" — no gate, no refusal.
-7. **In-Flight Commitments** — what the owner SE promised the customer, owner, due, status. (The #1 coverage failure is a dropped promise — mine transcripts/notes hard for these.)
-8. **Open Items** — checkbox list of open items / unanswered questions / pending actions.
-9. **Technical Threads** — mid-investigation questions/blockers, state, who it's waiting on.
+7. **In-Flight Commitments** — what the owner SE promised the customer, owner, due, status. (The #1 coverage failure is a dropped promise — mine transcripts/notes hard for these.) Rows are reviewable (`CM-<n>`).
+8. **Open Items** — reviewable checklist (`OI-<n>`) of open items / unanswered questions / pending actions.
+9. **Technical Threads** — mid-investigation questions/blockers, state, who it's waiting on. Rows are reviewable (`TT-<n>`); a lone "None open" row carries no `data-item-id`.
 10. **Access & Escalation** — SFDC opp link, Airbyte Org ID, workspace IDs, Slack channel, Notion/drive links, prior SE doc filenames. SFDC/raw-derived; mark unknowns.
     - **"If you get stuck" (internal escalation) sub-block** — a covering SE inheriting a deal cold needs a routing map: **owner SE's return date** (from the PTO form), **the AE**, **the internal Slack channel**, and **the one eng/PS contact** for any live technical thread (§9). Names or `TBD` — never invented. This is the human analog of "who do I escalate to when blocked"; keep it in Access & Escalation so it's one glance from the IDs/links.
 11. **Source Coverage** — what was read, with dates (anti-hallucination). **Note which `template.html` version this was built from** (its top-of-file version/date comment) so that if the internal.airbyte.ai rs-group design system changes, a stale handoff is caught and re-generated rather than hand-edited.
@@ -117,9 +136,12 @@ Read `~/.claude/skills/_se-playbook.md` for the source-reading pattern, SFDC fie
 - Drifting into a deal-health verdict (that's `deal-assessment`)
 - Emitting markdown instead of the styled HTML
 - Linking external CSS (the page must be self-contained)
+- Regenerating from scratch and ignoring the prior handoff / owner notes (re-listing items the owner already closed)
+- Marking an item done without explicit evidence, or renumbering/reusing item ids
 
 ## Changelog
 
+- **2026-11-13** — Handoffs are now **reviewable and updatable**. Commitments, Open Items and Technical Threads carry stable ids + a status; the page has per-item status pickers/notes (kept in the browser) and **Copy review as notes**. New *Updating an existing handoff* contract: on every run, read the newest prior handoff and any `HANDOFF UPDATE NOTES`, reconcile item-by-item (owner notes > newer call > older sources), keep ids stable, flag conflicts, and add a "Changes since <date>" callout in Current State. `template.html` → v2 (review bar, status controls, script, `HANDOFF_ID`); section order unchanged.
 - **2026-11-12** — Source freshness now **always** checks Gong, then Granola, for a call newer than the newest local transcript, instead of only when the newest local transcript is more than 14 days old. A call made within the last 14 days (not yet saved locally) was previously invisible to the handoff. Mirrors the `post-call` default; Source Coverage must report what was freshly pulled, or "checked, none newer".
 - **2026-11-03** — Source freshness now checks Gong, then Granola, and saves any pulled transcript (Gong **or** Granola) before use, per `_se-playbook.md` → "Every pulled transcript is saved". Previously this step named only Gong, so a Granola transcript could be read without being saved locally.
 - **2026-07-10** — "Current State" now surfaces the deployment shape at a glance for the covering SE: displays the current deployment verdict (Cloud / Flex / park) from the deployment-qual doc and any `self_managed_only`/enterprise-connector flags from connector-feasibility's Availability column. Display-only — reads the derived verdicts from saved `outputs/`, does NOT pull the registry/repos to re-derive; "not yet assessed" if the docs are absent (no gate). Fits the existing section 6 — no new HTML template section.

@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
   COVERAGE HANDOFF TEMPLATE — reference skeleton for the coverage-handoff skill.
-  TEMPLATE VERSION: v1 (2026-07-09). Bump this when the rs-group design system
+  TEMPLATE VERSION: v2 (2026-11-13). Bump this when the rs-group design system
   changes; the skill records this version in the generated page's Source Coverage
   so a stale handoff is caught and re-generated rather than hand-edited.
   Self-contained styled HTML in the internal.airbyte.ai "rs-group" design system,
@@ -17,12 +17,18 @@
     "Current State" / "Open Items") — there is no dedicated form-fed section.
   - Delete any section whose data is genuinely absent, OR mark it "None captured" — never invent.
   - Keep the .airbyte-auth-marker and .footer as-is.
+  - REVIEWABLE ITEMS (v2): every In-Flight Commitment, Open Item and Technical Thread
+    carries data-item-id (stable across regenerations: CM-1, OI-1, TT-1 ...) and
+    data-status (open | in-progress | done | dropped). Keep the <script> at the bottom
+    and the .review-bar verbatim. On an UPDATE run, carry ids forward from the prior
+    handoff and apply the owner's pasted review notes (see SKILL.md -> Updating).
 -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Coverage Handoff — {{CUSTOMER}}</title>
+<meta name="coverage-handoff-id" content="{{HANDOFF_ID}}"><!-- e.g. 2026-11-13-acme-new-business; unique per regeneration so review state never leaks across versions -->
 <style>
   :root {
     --primary: #1a1a2e;
@@ -119,6 +125,29 @@
   ul, ol { padding-left: 18px; font-size: 13px; }
   ul li, ol li { margin-bottom: 4px; }
 
+  /* Reviewable items (v2) - status picker + note per item; state kept in localStorage */
+  .review-bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 10px 16px; margin-bottom: 8px; font-size: 13px; }
+  .review-bar .rv-count { font-weight: 600; margin-right: auto; }
+  .review-bar button { font: inherit; font-size: 12px; font-weight: 600; padding: 5px 12px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent); color: #fff; cursor: pointer; }
+  .review-bar button.ghost { background: transparent; color: var(--accent); }
+  .review-out { display: none; width: 100%; }
+  .review-out.open { display: block; }
+  .review-out textarea { width: 100%; min-height: 140px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; }
+  .rv { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .rv select, .rv input { font: inherit; font-size: 12px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 6px; background: #fff; color: var(--text); }
+  .rv input { flex: 1; min-width: 110px; }
+  .rv select.s-open { border-color: var(--amber); }
+  .rv select.s-in-progress { border-color: var(--blue); }
+  .rv select.s-done { border-color: var(--green); color: #166534; }
+  .rv select.s-dropped { color: var(--muted); }
+  tr[data-item-id].is-done > td:not(.rv-cell), tr[data-item-id].is-dropped > td:not(.rv-cell) { opacity: .55; text-decoration: line-through; }
+  li[data-item-id].is-done .item-text, li[data-item-id].is-dropped .item-text { opacity: .55; text-decoration: line-through; }
+  .checklist li[data-item-id] { padding-left: 0; display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; }
+  .checklist li[data-item-id]:before { content: none; }
+  .checklist li[data-item-id] .item-text { flex: 1; }
+  .checklist li[data-item-id] .rv { flex: 0 0 340px; }
+  @media print { .review-bar, .review-out { display: none !important; } .rv input { display: none; } }
+
   /* Footer */
   .footer { text-align: center; color: var(--muted); font-size: 11px; margin-top: 32px; padding: 16px 0; }
 
@@ -127,6 +156,8 @@
     .header-inner { flex-direction: column; gap: 16px; align-items: flex-start; }
     .main { padding: 16px 20px; }
     .grid { grid-template-columns: 1fr; }
+    .checklist li[data-item-id] { flex-direction: column; }
+    .checklist li[data-item-id] .rv { flex: 1 1 auto; width: 100%; }
   }
 
   /* Auth marker */
@@ -173,6 +204,17 @@
 </div>
 
 <div class="main">
+
+  <!-- REVIEW BAR (v2) - keep verbatim. Drives the status pickers below. -->
+  <div class="review-bar" id="review-bar">
+    <span class="rv-count" id="rv-count">Review items below</span>
+    <button type="button" id="rv-export">Copy review as notes</button>
+    <button type="button" class="ghost" id="rv-reset">Reset</button>
+    <div class="review-out" id="rv-out">
+      <p style="margin:6px 0;color:var(--muted);">Paste this into <em>Update handoff</em> in the SE Hub (add anything else you want reflected). Regenerating reconciles it against the previous handoff.</p>
+      <textarea id="rv-text" readonly></textarea>
+    </div>
+  </div>
 
   <!-- COVERAGE SNAPSHOT -->
   <div class="section-title">Coverage Snapshot</div>
@@ -230,6 +272,8 @@
     <p>{{CURRENT_STATE_NARRATIVE}}</p>
     <div class="kv" style="margin-top:10px;"><span class="label">Last Contact</span><span class="value">{{LAST_CONTACT}}</span></div>
     <div class="kv"><span class="label">Use Case</span><span class="value">{{USE_CASE}}</span></div>
+    <!-- UPDATE RUNS ONLY (a prior handoff existed): delete this block on a first-ever handoff. -->
+    <div class="callout ok"><strong>Changes since {{PRIOR_HANDOFF_DATE_LONG}}:</strong> {{WHAT_CHANGED}} <!-- closed / new / reopened items; source = owner notes or newer call --></div>
     <!-- If SFDC stage disagrees with reality, add a risk callout: -->
     <div class="callout risk">{{SFDC_VS_REALITY}}</div>
   </div>
@@ -238,10 +282,10 @@
   <div class="section-title">In-Flight Commitments</div>
   <div class="card full">
     <table>
-      <thead><tr><th>Promised To Customer</th><th>Owner</th><th>Due</th><th>Status</th></tr></thead>
+      <thead><tr><th>Promised To Customer</th><th>Owner</th><th>Due</th><th>Status</th><th>Review</th></tr></thead>
       <tbody>
-        <!-- REPEAT -->
-        <tr><td>{{COMMITMENT}}</td><td>{{OWNER}}</td><td>{{DUE}}</td><td><span class="badge in-progress">{{STATUS}}</span></td></tr>
+        <!-- REPEAT. data-item-id CM-<n> is stable across regenerations; data-status mirrors the badge. -->
+        <tr data-item-id="CM-1" data-status="open"><td>{{COMMITMENT}}</td><td>{{OWNER}}</td><td>{{DUE}}</td><td><span class="badge in-progress">{{STATUS}}</span></td><td class="rv-cell"><div class="rv"><select class="s-open" aria-label="Status"><option value="open">Open</option><option value="in-progress">In progress</option><option value="done">Done</option><option value="dropped">Dropped</option></select><input type="text" placeholder="note (what happened?)" aria-label="Note"></div></td></tr>
       </tbody>
     </table>
   </div>
@@ -250,8 +294,8 @@
   <div class="section-title">Open Items</div>
   <div class="card full">
     <ul class="checklist">
-      <!-- REPEAT: open item, unanswered question, pending action -->
-      <li>{{OPEN_ITEM}}</li>
+      <!-- REPEAT: open item, unanswered question, pending action. data-item-id OI-<n> -->
+      <li data-item-id="OI-1" data-status="open"><span class="item-text">{{OPEN_ITEM}}</span><div class="rv"><select class="s-open" aria-label="Status"><option value="open">Open</option><option value="in-progress">In progress</option><option value="done">Done</option><option value="dropped">Dropped</option></select><input type="text" placeholder="note (what happened?)" aria-label="Note"></div></li>
     </ul>
   </div>
 
@@ -259,10 +303,10 @@
   <div class="section-title">Technical Threads</div>
   <div class="card full">
     <table>
-      <thead><tr><th>Question / Blocker</th><th>State</th><th>Waiting On</th></tr></thead>
+      <thead><tr><th>Question / Blocker</th><th>State</th><th>Waiting On</th><th>Review</th></tr></thead>
       <tbody>
-        <!-- REPEAT (or single row "None open") -->
-        <tr><td>{{TECH_ITEM}}</td><td>{{STATE}}</td><td>{{WAITING_ON}}</td></tr>
+        <!-- REPEAT (or a single "None open" row with no data-item-id). data-item-id TT-<n> -->
+        <tr data-item-id="TT-1" data-status="open"><td>{{TECH_ITEM}}</td><td>{{STATE}}</td><td>{{WAITING_ON}}</td><td class="rv-cell"><div class="rv"><select class="s-open" aria-label="Status"><option value="open">Open</option><option value="in-progress">In progress</option><option value="done">Done</option><option value="dropped">Dropped</option></select><input type="text" placeholder="note (what happened?)" aria-label="Note"></div></td></tr>
       </tbody>
     </table>
   </div>
@@ -289,6 +333,71 @@
 
   <div class="footer">Coverage Handoff &middot; {{CUSTOMER}} &middot; {{OPPORTUNITY_NAME}} &middot; Generated {{DATE_LONG}} &middot; Airbyte Internal</div>
 </div>
+
+<script>
+/* Reviewable items (template v2) - keep verbatim. Per-item status + note, stored in
+   localStorage under this handoff's id; export produces notes to paste into the next run. */
+(function () {
+  var id = (document.querySelector('meta[name="coverage-handoff-id"]') || {}).content || document.title;
+  var KEY = 'coverage-handoff-review:' + id;
+  var items = Array.prototype.slice.call(document.querySelectorAll('[data-item-id]'));
+  var saved = {};
+  try { saved = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) {}
+  var LABEL = { 'open': 'Open', 'in-progress': 'In progress', 'done': 'Done', 'dropped': 'Dropped' };
+  function sel(el) { return el.querySelector('select'); }
+  function note(el) { return el.querySelector('input'); }
+  function textOf(el) {
+    var t = el.querySelector('.item-text'); if (t) return t.textContent.trim();
+    var td = el.querySelector('td'); return td ? td.textContent.trim() : el.textContent.trim();
+  }
+  function apply(el, status) {
+    sel(el).value = status; sel(el).className = 's-' + status;
+    el.classList.toggle('is-done', status === 'done');
+    el.classList.toggle('is-dropped', status === 'dropped');
+  }
+  function update() {
+    var open = items.filter(function (el) { var s = sel(el).value; return s === 'open' || s === 'in-progress'; }).length;
+    var c = document.getElementById('rv-count');
+    if (c) c.textContent = items.length ? open + ' of ' + items.length + ' items still open' : 'No reviewable items';
+  }
+  function persist() {
+    var out = {};
+    items.forEach(function (el) {
+      var s = sel(el).value, n = note(el).value;
+      if (s !== el.getAttribute('data-status') || n) out[el.getAttribute('data-item-id')] = { s: s, n: n };
+    });
+    try { localStorage.setItem(KEY, JSON.stringify(out)); } catch (e) {}
+    update();
+  }
+  items.forEach(function (el) {
+    var cur = saved[el.getAttribute('data-item-id')];
+    apply(el, cur ? cur.s : (el.getAttribute('data-status') || 'open'));
+    if (cur && cur.n) note(el).value = cur.n;
+    sel(el).addEventListener('change', function (e) { apply(el, e.target.value); persist(); });
+    note(el).addEventListener('input', persist);
+  });
+  update();
+  document.getElementById('rv-export').addEventListener('click', function () {
+    var lines = ['HANDOFF REVIEW (against the handoff "' + id + '"):'];
+    items.forEach(function (el) {
+      var s = sel(el).value, n = note(el).value.trim();
+      if (s === el.getAttribute('data-status') && !n) return;   // unchanged: nothing to report
+      lines.push('- [' + el.getAttribute('data-item-id') + '] ' + LABEL[s] + ' - ' + textOf(el).slice(0, 140) + (n ? ' | note: ' + n : ''));
+    });
+    if (lines.length === 1) lines.push('- (no changes: every item left as the handoff stated it)');
+    var box = document.getElementById('rv-text');
+    box.value = lines.join('\n');
+    document.getElementById('rv-out').classList.add('open');
+    box.focus(); box.select();
+    try { navigator.clipboard.writeText(box.value); } catch (e) {}
+  });
+  document.getElementById('rv-reset').addEventListener('click', function () {
+    try { localStorage.removeItem(KEY); } catch (e) {}
+    items.forEach(function (el) { apply(el, el.getAttribute('data-status') || 'open'); note(el).value = ''; });
+    update();
+  });
+})();
+</script>
 
 </body>
 </html>
